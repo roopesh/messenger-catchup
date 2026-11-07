@@ -1,7 +1,11 @@
 #!/bin/sh
-# Builds messenger-catchup.zip (the skill folder only) for Customize › Skills › Upload a skill.
+# Builds dist/messenger-catchup.zip (the skill folder only) for Customize › Skills › Upload a skill.
+# Works from a clone with any folder name: the files are staged under a folder named messenger-catchup.
 set -e
-cd "$(dirname "$0")/.."
-rm -f messenger-catchup.zip
-zip -r -X messenger-catchup.zip messenger-catchup/SKILL.md messenger-catchup/VERSION messenger-catchup/assets messenger-catchup/scripts >/dev/null
-echo "built $(pwd)/messenger-catchup.zip"
+root=$(cd "$(dirname "$0")" && pwd)
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/messenger-catchup" "$root/dist"
+cp -R "$root/SKILL.md" "$root/VERSION" "$root/assets" "$root/scripts" "$tmp/messenger-catchup/"
+rm -f "$root/dist/messenger-catchup.zip"
+(cd "$tmp" && zip -r -X -q "$root/dist/messenger-catchup.zip" messenger-catchup -x '*.DS_Store' '*__pycache__*')
+echo "built $root/dist/messenger-catchup.zip"

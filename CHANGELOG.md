@@ -2,6 +2,14 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.4.1] - 2026-11-07
+Tooling only.
+
+### Fixed
+- **B10:** `make-zip.sh` works from a clone with any folder name. It stages the files under `messenger-catchup/` in a temp folder and writes `dist/messenger-catchup.zip` (gitignored) instead of the parent folder. `.DS_Store` and `__pycache__` files are no longer swept into the ZIP. `tools/release.sh` uses the new location; the ZIP test now runs from a folder with a different name and with junk files present.
+
+Components: `PAGE_VERSION` 1.4, helper 1.2 (unchanged).
+
 ## [1.4.0] - 2026-11-07
 SKILL.md now does what the page tells the user it does. MINOR: new procedures. No change to the page or the helper.
 
