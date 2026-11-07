@@ -4,7 +4,7 @@ A Claude skill that keeps a private **catch-up page** for one Facebook Messenger
 
 ## Install
 1. In Claude: Settings › Capabilities › turn on **Code execution and file creation**.
-2. Download `messenger-catchup.zip` from the latest [GitHub release](https://github.com/roopesh/messenger-catchup/releases) (or build it with `./make-zip.sh`), then **Customize › Skills › + › Create skill › Upload a skill** and switch it on.
+2. Download `messenger-catchup.zip` from the latest [GitHub release](https://github.com/roopesh/messenger-catchup/releases) (or build it with `./make-zip.sh`, which writes `dist/messenger-catchup.zip`), then **Customize › Skills › + › Create skill › Upload a skill** and switch it on.
 3. Open your group chat in Chrome and tell Claude: **"set up messenger catch-up"**. Claude creates your page, asks a few questions, loads a first stretch of history and sets up a refresh schedule.
 
 ## Requirements (read this)
