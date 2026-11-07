@@ -7,7 +7,7 @@ _spec=importlib.util.spec_from_file_location('sync_helper',os.path.join(ROOT,'to
 sync=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(sync)
 def read(*p):
     with open(os.path.join(ROOT,*p),encoding='utf-8') as fh: return fh.read()
-SHIPPED=['SKILL.md','assets/page.html','assets/helper.user.js','scripts/catchup.py']
+SHIPPED=['SKILL.md','VERSION','assets/page.html','assets/helper.user.js','scripts/catchup.py']
 
 class TestHelperCopies(unittest.TestCase):
     def setUp(self): self.src=read('assets','helper.user.js');self.page=read('assets','page.html')
@@ -44,6 +44,21 @@ class TestVersions(unittest.TestCase):
         self.assertEqual(len(found),1,found)
     def test_page_version_present(self):
         self.assertRegex(read('assets','page.html'),r'const PAGE_VERSION="\d+\.\d+";')
+
+class TestReleaseVersion(unittest.TestCase):
+    """VERSION is the release version; package.json, its lockfile and the newest CHANGELOG entry must match it."""
+    def setUp(self): self.v=read('VERSION').strip()
+    def test_semver(self): self.assertRegex(self.v,r'^\d+\.\d+\.\d+$')
+    def test_package_json(self):
+        import json
+        self.assertEqual(json.loads(read('package.json'))['version'],self.v)
+        lock=json.loads(read('package-lock.json'));self.assertEqual(lock['version'],self.v);self.assertEqual(lock['packages']['']['version'],self.v)
+    def test_changelog_top_entry(self):
+        top=re.search(r'^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d\d-\d\d)$',read('CHANGELOG.md'),re.M)
+        self.assertTrue(top,'CHANGELOG.md needs "## [X.Y.Z] - YYYY-MM-DD" entries');self.assertEqual(top.group(1),self.v,'newest CHANGELOG entry must be VERSION')
+    def test_changelog_versions_descend(self):
+        vs=[tuple(map(int,v.split('.'))) for v in re.findall(r'^## \[(\d+\.\d+\.\d+)\]',read('CHANGELOG.md'),re.M)]
+        self.assertEqual(vs,sorted(vs,reverse=True));self.assertEqual(len(vs),len(set(vs)),'duplicate CHANGELOG version')
 
 class TestNoLeftoverNames(unittest.TestCase):
     def test_no_pa_names_in_shipped_files(self):

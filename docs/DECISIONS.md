@@ -86,3 +86,5 @@ Recorded during the Nov 6 handoff review. The reasons are inferred from the code
 | A generic skill instead of a second user-specific one | One codebase; the original user switched to it too |
 | Shared as a ZIP upload | The skill Share button only works inside Team/Enterprise orgs |
 | Private GitHub repo `messenger-catchup` | Source of record; `make-zip.sh` builds the upload |
+| Every change via PR, versioned, squash-merged, tagged and released (from v1.1.1) | The owner's rule: a reviewable record of every change and a downloadable ZIP per version |
+| One release version (`VERSION`, semver) for the whole skill; `PAGE_VERSION` and the helper version stay separate | Component versions trigger republish or reinstall for users, so they move only when that part changes |

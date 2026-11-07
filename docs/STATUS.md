@@ -3,7 +3,8 @@
 **Read this first** when picking the project up. Last updated Nov 6, 2026 (late evening, US Pacific), after the rename and test build-out (Phase 8).
 
 ## Where things stand
-- **Shipped:** generic skill `messenger-catchup` v1.1: page `PAGE_VERSION` 1.1, helper 1.1. Shared as a ZIP upload (`make-zip.sh`).
+- **Shipped:** release **v1.1.1** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 1.1, helper 1.1. Each release is a git tag plus a GitHub release with the skill ZIP attached.
+- **Workflow:** every change goes branch → PR → version bump → squash-merge → tag → release. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
 - **In use:** the original user's page (v44) and hourly loop moved to the generic skill on Nov 6. Live refreshes 244 (injected helper v1.1) and 245 (old helper v2.2 still installed) both finished cleanly (DEVELOPMENT.md › Phase 6).
 - **Renamed (Phase 8):** the build tool is now `scripts/catchup.py` (was `cctool.py`), the helper functions are `mcScan` / `mcVerify` / `mcCapture`, and the page accepts only `mc-capture`. Same commands and behavior. **Re-upload the skill ZIP** so installed copies pick up `catchup.py`; until then the old ZIP keeps working with its own `cctool.py`.
 - **Tests:** `npm test` runs three suites, 165 checks (below). A mutation run confirmed they catch real breakage.
@@ -29,6 +30,8 @@ Known bugs are written as tests of the *fixed* behavior: Python marks them `expe
 | Doc | Use it for |
 |---|---|
 | [README.md](../README.md) | What it is, install, requirements |
+| [CLAUDE.md](../CLAUDE.md) | The workflow rules (PR, versioning, release) |
+| [CHANGELOG.md](../CHANGELOG.md) | What changed in each release |
 | [SKILL.md](../SKILL.md) | The procedure Claude follows. **Changing it changes behavior.** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the parts fit; full database reference; helper bridge; capture format; tests; legacy code |
 | [BACKLOG.md](BACKLOG.md) | Everything open, by priority |
@@ -66,11 +69,15 @@ python3 scripts/catchup.py build WORK RUNDIR spec.json
 2. Claude republishes a user's page when `meta/chat.pageVersion` is older (SKILL.md setup step 2). The database survives a republish.
 3. `npm test`. The page suite loads the real file.
 
-### Release
-1. `npm test`.
-2. Update SKILL.md › Tested and the version map in DEVELOPMENT.md.
-3. `./make-zip.sh` (the repo folder must be named `messenger-catchup`; the ZIP is written to the parent folder, BACKLOG B10). The ZIP contains only `SKILL.md`, `assets/` and `scripts/`, which `test_tools.py` checks.
-4. Upload: Customize › Skills › + › Create skill › Upload a skill.
+### Every change: PR, version, merge, release
+1. Branch from an up-to-date `main`.
+2. Make the change. Bump `VERSION`, `package.json` (`npm install --package-lock-only` updates the lockfile) and add a `CHANGELOG.md` entry. MAJOR / MINOR / PATCH rules are in [CLAUDE.md](../CLAUDE.md). `npm test` fails if these disagree.
+3. `npm test`, then `gh pr create`. Fill in the template's checklist (`.github/pull_request_template.md`).
+4. `gh pr merge --squash --delete-branch`, then `git switch main && git pull`.
+5. `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`.
+6. `./make-zip.sh` (the repo folder must be named `messenger-catchup`; the ZIP is written to the parent folder, BACKLOG B10). The ZIP holds `SKILL.md`, `VERSION`, `assets/` and `scripts/`, which `test_tools.py` checks.
+7. `gh release create vX.Y.Z ../messenger-catchup.zip --title vX.Y.Z --notes "<changelog entry>"`.
+8. Users install or update from the release ZIP: Customize › Skills › + › Create skill › Upload a skill.
 
 ## Gotchas worth knowing before you touch anything
 - The reader is tied to Messenger's English labels and markup. When a scan suddenly fails, check those first (LEARNINGS.md › Messenger DOM).

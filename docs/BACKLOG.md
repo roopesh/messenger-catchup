@@ -21,6 +21,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G3 | P2 | doc gap | Page offers "say reply 3232 to Claude"; SKILL.md has no procedure for it |
 | R2 | P2 | risk | Capture size is unbounded (photos travel inline as base64) |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
+| R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs |
 | R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
@@ -148,6 +149,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### R6 · P2 · Scheduling tool names
 - **Where:** SKILL.md › Scheduling
 - **What:** Options A and B name `send_later`, `create_trigger` and `requires_local_device: true`. These come from the environment the skill was built in. Check that they still exist under those names wherever the skill is installed, and give a fallback if they don't.
+
+### R8 · P2 · PR rule not enforced
+- **What:** from v1.1.1 every change must go through a PR with a version bump (CLAUDE.md), but `main` still accepts direct pushes, and nothing runs `npm test` on a PR. The version-consistency tests only catch a missing bump when someone runs them.
+- **Fix:** branch protection on `main` requiring a PR (and, once T5 exists, a passing check). Check whether the plan allows it on a private repo. Then T5: a GitHub Actions job running `npm test` on every PR.
 
 ### R7 · P3 · Helper housekeeping
 - **Where:** `helper.user.js:16`, `helper.user.js:162`
