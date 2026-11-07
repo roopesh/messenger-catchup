@@ -1,29 +1,37 @@
 # Status and handoff
 
-**Read this first** when picking the project up. Last updated Nov 6, 2026 (late evening, US Pacific), after the rename and test build-out (Phase 8).
+**Read this first** when picking the project up. Last updated Nov 7, 2026 (early morning, US Pacific), after the overnight defect run (DEVELOPMENT.md › Phase 9).
 
 ## Where things stand
-- **Shipped:** release **v1.2.0** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 1.2, helper 1.1. Both P1 issues (B2, R1) are fixed. Each release is a git tag plus a GitHub release with the skill ZIP attached.
-- **Workflow:** every change goes branch → PR → version bump → squash-merge → tag → release. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
+- **Shipped:** release **v1.7.1** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 1.7, helper 1.4. Every release is a git tag plus a GitHub release with the skill ZIP attached.
+- **Defects:** none open. All 37 bugs found so far are fixed, plus the doc gaps (G1–G5) and P1 risks (R1, R8, mostly):
+  - B1–B11 came from the handoff review
+  - B12–B37 came from three independent reviews run overnight; each round's fixes were checked by the next
+  - every fix has a test that fails on the code before it
+- **Workflow:** every change goes branch → PR → version bump → CI → squash-merge → `tools/release.sh`. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
 - **Enforcement:** GitHub Actions runs `npm test` and a version-bump check on every PR, and flags any commit on `main` that didn't come from a merged PR. A local `pre-push` hook blocks direct pushes to `main`. GitHub branch protection isn't available on this private repo's plan (BACKLOG R8).
-- **In use:** the original user's page (v44) and hourly loop moved to the generic skill on Nov 6. Live refreshes 244 (injected helper v1.1) and 245 (old helper v2.2 still installed) both finished cleanly (DEVELOPMENT.md › Phase 6).
-- **Renamed (Phase 8):** the build tool is now `scripts/catchup.py` (was `cctool.py`), the helper functions are `mcScan` / `mcVerify` / `mcCapture`, and the page accepts only `mc-capture`. Same commands and behavior. **Re-upload the skill ZIP** so installed copies pick up `catchup.py`; until then the old ZIP keeps working with its own `cctool.py`.
-- **Tests:** `npm test` runs three suites, 165 checks (below). A mutation run confirmed they catch real breakage.
+- **In use:** the original user's page and hourly loop run the generic skill. **Re-upload the skill ZIP from the latest release.** On the next refresh, Claude republishes the page to `PAGE_VERSION` 1.7 by itself and reports that the userscript has an update (1.4).
 - **Repo:** private, `github.com/roopesh/messenger-catchup`, branch `main`.
-- **Not done:** live test of an end-to-end encrypted chat, multi-chat, and the backlog.
 
 ## Test suites
+`npm test` runs all three (about 3 minutes); CI runs the same on every PR.
+
 | Suite | Command | What it covers | Now |
 |---|---|---|---|
-| Python | `npm run test:py` | `tests/test_catchup.py`: every default-link rule, every assert, and a check that a rejected build never advances WORK. `tests/test_tools.py`: helper copies in sync, the sync tool, helper version strings agree, no `cc*` names in shipped files, every file SKILL.md names exists, ZIP contents | 43 pass + 6 expected failures (known bugs B1–B5, B11) |
-| Sim | `npm run test:sim` | `tests/sim.js`: the helper on a simulated Messenger (first run, incremental, mid-run arrivals, a message deleted mid-run, photo replies, short chat, date labels, stale results, jump links, injected vs installed) | 37 pass |
-| Page | `npm run test:page` | `tests/page.test.js`: the page in Chromium with a stand-in claude.ai runtime. Every importer check, the full pipeline (sim captures → page import → `catchup.py` → render), summary cards, threaded view, markers, the date-entry fix, outbox, Ask Claude, Views | 79 pass + 3 KNOWN (B7, B8, B9) |
+| Python | `npm run test:py` | `tests/test_catchup.py`: every link rule and assert, restore, bootstrap edge cases (unbuilt messages, chunks ahead of `meta/chat`), review regressions. `tests/test_tools.py`: helper copies in sync, version strings, `PAGE_VERSION` bumped when the page changed since the last tag, SKILL.md documents every db path, `meta/chat` field and outbox state the page uses, ZIP contents, release script, pre-push hook. ResourceWarnings are errors. | 97 pass |
+| Sim | `npm run test:sim` | `tests/sim.js`: the helper on a simulated Messenger (first run, incremental, mid-run arrivals and deletions, photo replies, short chat, 20 pinned-date label cases including New Year, follow-on messages that look like status lines, deleted/unsent messages, jump links, injected vs installed) | 46 pass |
+| Page | `npm run test:page` | `tests/page.test.js`: the page in Chromium with a stand-in claude.ai runtime. Every importer check, leases, fresh reads, repairs (including across chunks), photo slots and retries, the full pipeline (sim captures → import → `catchup.py` → render), markers, date entry, outbox states and Dismiss, safe links, Ask, Views | 112 pass |
 
-Known bugs are written as tests of the *fixed* behavior: Python marks them `expectedFailure` and the page test prints `KNOWN`. When one starts passing you'll see "unexpected success" or `FIXED?`. Remove the marker and close the backlog item.
+When a bug is found, write its test as the *fixed* behavior first. Python can mark it `expectedFailure`, and the page test has `known()`, which prints `KNOWN` without failing the run. Remove the marker in the PR that fixes it.
 
 ## Where to start
-1. **Re-upload the skill ZIP from the v1.2.0 release.** Existing pages upgrade themselves to `PAGE_VERSION` 1.2 on their next refresh.
-4. **G1–G3**: bring SKILL.md in line with what the page does.
+1. **Run one live refresh on the real chat with v1.7.x.** The mock can't prove these, and they're the main remaining risk:
+   - Messenger's real labels still parse: no `DATES-GUESSED`, senders right on follow-on messages
+   - outbox name matching works (R9)
+   - the page republishes cleanly
+2. **R2:** measure a large capture (many photos) to see whether the clipboard and paste hold up.
+3. **F4:** a helper self-check that names exactly which Messenger selector or label vanished, to catch markup changes early.
+4. **C1:** remove the page's unreachable legacy code, once the live run confirms nothing relies on it.
 
 ## Doc map
 | Doc | Use it for |
