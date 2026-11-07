@@ -13,5 +13,12 @@ Read this when the page, the reader or catchup.py reports an error that SKILL.md
 - `nothing left to build: WORK already covers RUN` (or `nothing to build`): another session already built these messages. Skip the build, and write only `meta/chat` `{lastRefresh}` and `refresh/status` by SKILL.md › Refresh steps, step 7's rule.
 - "meta/chat.lastI (#x) is ahead of the newest saved message (#y)": update `meta/chat` (pinned) with `lastI: y`, `lastMid` = message #y's `m` (it's in chunk `c` + the 4-digit `floor(y/chunkSize)*chunkSize`), and `anchorMids` = the `m` of the three newest saved messages, then paste again.
 
+
+## Import toasts (SKILL.md › Refresh steps, step 4)
+- A toast starting "REPAIRED: #a–#b (chunks …)" means an earlier import saved those messages but stopped before updating `meta/chat`; the page counted them in. Carry on, and in step 5 fetch every chunk it names as well.
+- "Photos: upload failed … paste again": the messages are saved and the photos that landed are indexed. Paste again once (photos already stored are skipped). If it fails again, say so in the report and carry on.
+- "Photos not stored: this view can't upload them": the page was opened somewhere it can't upload. Don't paste again; tell the user to open the page on claude.ai as its owner.
+- "Another import is running in another open copy of this page": close any other page tabs you opened, wait 2 minutes, and paste again.
+
 ## Tested
 The skill's version is in `VERSION` (shipped with it). Every release passes the repo's test suites: the reader on a simulated Messenger thread (first run, incremental runs, messages arriving or deleted mid-run, photo replies, a chat shorter than the first-run count, older date labels, stale results, jump links, with and without the helper), the page's importer and rendering, and `catchup.py`. Version 1.1 was also tested against a real Messenger group in Chrome (first run without the helper, import, build, page). Facebook changes its page often; if the reader starts failing, the page's labels may have changed.

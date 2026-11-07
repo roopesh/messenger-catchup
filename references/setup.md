@@ -33,6 +33,10 @@ Tell the user in one line what's about to happen, then:
 6. **First build**: write the seeded docs as JSON into a folder (`seed/meta/chat.json` with `lastI:-1`, `seed/threading/current.json`, `seed/summary/current.json`), run `python3 catchup.py bootstrap WORK seed`, then build as usual. Replies to messages from before the first window print `WARN reply parent not found … left unlinked`: that's expected. On a first run, review GUESS lines only for the newest ~150 messages; older ones keep the default. After the batch write, set `markerMode:"time"` and `markerFrom` to the first message's local time ("YYYY-MM-DDTHH:MM") so the page shows everything captured.
 7. **Set up the schedule** (Scheduling), then report: page created, how many messages, what the summary found, and the requirements in two lines.
 
+
+## Updating the page (on a refresh, when `meta/chat.pageVersion` is behind)
+If `meta/chat.pageVersion` is older than `PAGE_VERSION` in `assets/page.html`, update the page before anything else: `Artifact read` its url, publish `assets/page.html` to that url (leave out `capabilities` so the stored ones carry over; the database survives), then update `meta/chat` `{pageVersion}` pinned with `if_version`, and say so in the report.
+
 ## Installing the helper
 - Install: with Tampermonkey or Violentmonkey in Chrome, open the install link (https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js, also on the page under Refreshing › "Jump to a message: set up") and press **Install** on the extension's install page. From helper 1.5 on it **updates itself** from the latest GitHub release (the extension checks about once a day). In current Chrome the extension needs user scripts allowed: chrome://extensions › the extension › Details › "Allow User Scripts" (on older Chrome versions, turn on Developer mode at the top right of chrome://extensions instead). Reload the Messenger tab. Check that `document.documentElement.dataset.mcHelper` is set, then set `meta/chat.helper:"installed"`.
 

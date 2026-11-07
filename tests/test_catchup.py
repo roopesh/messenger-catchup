@@ -862,6 +862,62 @@ class TestReview3Fixes(unittest.TestCase):
             quiet(catchup.build, e.work, run, p)
 
 
+class TestRelink(unittest.TestCase):
+    """F3: correct the link on a message an earlier build already threaded, in a build spec or on its own."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+        self.e.seed()
+        self.e.build(self.e.run(SCENARIO), SPEC)  # built #0-#10: 1 -> 0 i, 2 -> 1 c, 9 unlinked, 10 -> 5 i
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def relink(self, spec):
+        p = os.path.join(self.t.name, "relink.json")
+        w(p, spec)
+        out = os.path.join(self.t.name, "rout")
+        return quiet(catchup.relink, self.e.work, out, p), out
+
+    def test_relink_in_a_build_spec(self):
+        run = self.e.run([msg(11, "Dee", "later", h=13, mi=40)])
+        out = self.e.build(run, {"join": {"gear1106": [11]}, "relink": {"2": [0, "i"], "9": [8, "i"]}})
+        self.assertIn("RELINK 2 -> 0 i", out)
+        self.assertIn("RELINK 9 -> 8 i", out)
+        links = r(os.path.join(run, "out", "threading.json"))["links"]
+        self.assertEqual((links["2"], links["9"], links["11"][0]), ([0, "i"], [8, "i"], 10))
+
+    def test_relink_on_its_own(self):
+        out, d = self.relink({"relink": {"10": None, "2": [0, "i"]}})
+        self.assertIn("UNLINK 10", out)
+        self.assertIn("relink ok: 2 change(s)", out)
+        t = r(os.path.join(d, "threading.json"))
+        self.assertNotIn("10", t["links"])
+        self.assertEqual(t["links"]["2"], [0, "i"])
+        self.assertEqual(r(os.path.join(self.e.work, "base", "threading.json")), t, "WORK's base follows")
+        self.assertTrue(t["builtAt"])
+        self.assertRegex(t["note"], r"^\d+ reply links read straight from Messenger")
+        quiet(catchup.restore, self.e.work)  # a refused write: undo
+        self.assertEqual(r(os.path.join(self.e.work, "base", "threading.json"))["links"]["10"], [5, "i"])
+
+    def test_relink_rejects(self):
+        for spec, msg_re in (
+            ({"relink": {"11": [0, "i"]}}, r"only messages already built \(through #10\)"),
+            ({"relink": {"5": [7, "i"]}}, "earlier stored message"),
+            ({"relink": {"5": [0, "x"]}}, "link type must be one of"),
+            ({"relink": {"5": [0, "i"]}, "join": {}}, 'takes only a non-empty "relink"'),
+        ):
+            before = r(os.path.join(self.e.work, "base", "threading.json"))
+            with self.assertRaisesRegex(AssertionError, msg_re):
+                self.relink(spec)
+            self.assertEqual(r(os.path.join(self.e.work, "base", "threading.json")), before, "WORK untouched")
+
+    def test_relink_across_conversations_warns(self):
+        out, _ = self.relink({"relink": {"7": [5, "i"]}})  # 7 is in pics1106, 5 in gear1106
+        self.assertIn("WARN link 7 -> 5 crosses conversations (pics1106 -> gear1106)", out)
+
+
 class TestCli(unittest.TestCase):
     def test_usage_on_unknown_command(self):
         import subprocess
