@@ -114,7 +114,6 @@ Every outcome goes to `refresh/lastImport`. A dry run reports what it would do, 
 - Summary v1 renderer (`renderSummary` non-v2 branch, line 612): the generic skill always writes `version:2`.
 - Range summaries (`renderRangeSummary`, line 793): only trigger when `summary.fromI` is set, and `catchup.py` never sets it.
 - `dayMap()` / `meta.dates` (line 544): every message now carries `d`.
-- "Notes from Claude" (`notes` collection): nothing writes it.
 See BACKLOG C1.
 
 ## Build tool (`scripts/catchup.py`)
@@ -135,7 +134,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `meta/chat` | Claude at setup | `kind`, `pageVersion`, `thread`, `chatUrl`, `threadName`, `shortName`, `ownerName`, `ownerAliases`, `topic`, `outboxAuto`, `refreshPhrase`, `tz`, `helper`, `chunkSize`, `schedule`, initial `lastI:-1`, `anchorMids:[]`, `markerMode`, `markerFrom` |
 | | Page importer | `lastI`, `lastMid`, `lastT`*, `anchorMids`, `ownLastI`, `ownLastMid`* |
 | | Page UI | `markerMode`, `markerSetAt`*, `markerFrom`, `markerTo`*, `caughtUpI`, `caughtUpAt`* |
-| | Claude per refresh | `lastRefresh`, `coverage` |
+| | Claude per refresh | `lastRefresh`, `coverage`, `ideasSeenAt` |
 | | (read only, legacy) | `dates` |
 | `chunks/cNNNN` | Page importer | `{start, msgs}` |
 | `threading/current` | Claude (from catchup.py) | `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
@@ -148,7 +147,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `qa/*` | Page (Ask) | `q`, `a`, `at`, `scope`, `toI` |
 | `views/*` | Page (Views) | `kind:"view"` (title, intro, sections, prompt, at, toI) or `kind:"idea"` (prompt, at) |
 | `rangeSummaries/*` | Page (unreachable today) | same shape as summary plus `by:"page"`, `fromI` |
-| `notes/*` | nobody (legacy) | `title`, `when`, `at`, `intro`, `table`, `sections`, `footer` |
+| `notes/*` | Claude (SKILL.md › What the page saves for Claude) | `title`, `when`, `at`, `intro`, `table`, `sections`, `footer` |
 
 \* not listed in SKILL.md (BACKLOG G1).
 

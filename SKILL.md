@@ -33,11 +33,12 @@ Only Claude in Chrome is supported (the user's real, signed-in Chrome). Don't us
 - Keep the user informed in short bullets. Analysis goes on the page; chat gets a short report.
 
 ## Database (ArtifactData on the user's page)
-- `meta/chat`: `kind:"messenger-catchup"`, `pageVersion`, `thread` (Messenger thread id), `chatUrl` (full chat URL), `threadName`, `shortName`, `ownerName`, `ownerAliases` (names others call them), `topic`, `outboxAuto`, `refreshPhrase`, `tz` (IANA), `helper` ("installed" | "inject"), `chunkSize:82`, `lastI`, `lastMid`, `anchorMids` (newest 3 ids; reversed = STOPS), `caughtUpI`, `ownLastI`, `markerMode`, `markerFrom`, `lastRefresh`, `coverage`, `schedule`.
+- `meta/chat`: `kind:"messenger-catchup"`, `pageVersion`, `thread` (Messenger thread id), `chatUrl` (full chat URL), `threadName`, `shortName`, `ownerName`, `ownerAliases` (names others call them), `topic`, `outboxAuto`, `refreshPhrase`, `tz` (IANA), `helper` ("installed" | "inject"), `chunkSize:82`, `lastI`, `lastMid`, `lastT`, `anchorMids` (newest 3 ids; reversed = STOPS), `caughtUpI`, `caughtUpAt`, `ownLastI`, `ownLastMid`, `markerMode` (`caught` | `own` | `time`), `markerSetAt`, `markerFrom`, `markerTo`, `lastRefresh`, `coverage`, `schedule`, `ideasSeenAt`. The page writes `lastI` … `ownLastMid` when it imports, and the marker fields when the user picks a catch-up start; Claude writes the rest.
 - `chunks/cNNNN` `{start, msgs:[...]}`: message fields `i` (number from 0), `t` ("Fri 8:41 AM"), `d` (date), `f` (sender; the user = "You"), `b` (text), `m` (Messenger id), `r` (replied-to name), `q` (quoted text), `pi`/`pmid`/`pq`/`perr` (reply parent), `p` (photo), `a` (link preview), `l` (links), `x` (reactions).
-- `threading/current`: `convs:[{id,title,members}]`, `links:{i:[parent,type]}` (r = Messenger link, rq = matched by quote, rg = photo reply best match, i = answers, c = same person continuing).
-- `summary/current`: `version:2`, `convs:[{id,tag,synopsis:[{t,refs}],outcome,key}]`, `open`, `answered`, `deals`, `mentions`, `toI`, `generatedAt`.
+- `threading/current`: `convs:[{id,title,members}]`, `links:{i:[parent,type]}` (r = Messenger link, rq = matched by quote, rg = photo reply best match, i = answers, c = same person continuing), `to`, `note`, `builtAt`.
+- `summary/current`: `version:2`, `convs:[{id,tag,synopsis:[{t,refs}],outcome,key}]`, `open`, `answered`, `deals`, `mentions`, `toI`, `generatedAt` (optional `mentionsNote`).
 - `photos/index` `{byI,gifs}`, `refresh/status` (lock and status line), `refresh/lastImport`, `refresh/importLock` (the page's import lease; never write it), `outbox/*` (replies queued on the page).
+- Written by the page: `qa/*` `{q,a,at,scope,toI}` (questions asked on the page's Ask tab), `views/*` (`kind:"view"`: a view the user built; `kind:"idea"`: a method idea left for Claude, `{prompt,at}`), `rangeSummaries/*` (summaries the page wrote for a past span). Written by Claude: `notes/*` `{title, when, at, intro?, table?:{cols,rows}, sections?:[{h,items:[{b?,t}]}], footer?}` (see What the page saves for Claude).
 
 ## First run: setup (when the user has no page yet)
 
@@ -113,6 +114,19 @@ Before each run: `ArtifactData get meta/chat` (and keep the versions). Work in a
   - Update the row to `state:"sending"`, then press Enter with the computer tool.
   - Check that the box emptied and the newest "You replied to <name>" message contains the text; set `state:"sent"`, `sentAt`, `sentMid` (or `failed` and `error`).
 - To clear a box: click it, cmd+a (ctrl+a), Delete.
+
+## What the page saves for Claude
+The page promises the user that Claude sees these, so act on them:
+- **Method ideas** (`views` with `kind:"idea"`): at the end of each refresh, query `views` for ideas whose `at` is newer than `meta/chat.ideasSeenAt` (all of them if it's unset). List each in the report in one line and offer to apply it, for example a different grouping or a new kind of call-out. Change how catch-ups are built only after the user says yes. Then set `ideasSeenAt` to the newest `at` (pinned). During a scheduled run, just list them.
+- **Questions asked on the page** (`qa`): when the user refers to something they asked on the page, read `qa` (newest first) for context.
+- **Notes from Claude** (`notes`): when the user asks how the page or a refresh works, or for an analysis worth keeping, answer in chat and also save it as `notes/<short-id>` (shape in Database). It appears under Views › Notes from Claude.
+
+## Open a message ("reply 3232", "open #3232")
+The page tells the user they can ask for this. It needs the computer online, like a refresh.
+1. Find the message: it's in chunk `c` + the 4-digit number `floor(n/chunkSize)*chunkSize` (chunkSize 82: #3232 → `chunks/c3198`). Take the message whose `i` is n: its `m`, `f` and `b`. If it isn't stored, say so.
+2. Get the Messenger tab ready as in Refresh step 1.
+3. Start `jump{mid:m, reply:true}` for "reply" (`reply:false` for "open"), with the helper or after injecting it, and poll until `#mcjump-tip` reads "reply box is ready" or "found it". If it reads "couldn't find that message", tell the user.
+4. Tell the user it's open in their Messenger tab: who wrote it and what it says. Don't type into the box. If they give you the reply text, queue it and post it under the Outbox rules.
 
 ## Scheduling (walk the user through this at setup)
 Explain in a few bullets, then set it up yourself:

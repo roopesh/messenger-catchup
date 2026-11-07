@@ -74,6 +74,19 @@ class TestNoLeftoverNames(unittest.TestCase):
             self.assertNotRegex(read(f),r'\bcc(Scan|Verify|Capture)\b|cctool|cc-capture|cc-cmd|cc_result',f)
 
 class TestSkillReferences(unittest.TestCase):
+    def test_every_db_path_the_page_uses_is_documented(self):
+        page,skill=read('assets','page.html'),read('SKILL.md')
+        paths=set(re.findall(r'db\.(?:collection|doc)\("([^"]+)"\)',page));self.assertGreater(len(paths),10)
+        for p in paths:
+            top=p.split('/')[0];self.assertTrue(('`%s`'%p in skill) or ('`%s/'%top in skill),'SKILL.md never mentions '+p)
+    def test_every_meta_chat_field_the_page_writes_is_documented(self):
+        page,skill=read('assets','page.html'),read('SKILL.md')
+        lits=re.findall(r'const upd=\{([^{}]*)\}',page)+re.findall(r'doc\("meta/chat"\)\.update\(\{([^{}]*)\}',page)+re.findall(r'Object\.assign\(\{(markerMode[^{}]*)\}',page)+re.findall(r'setMarker\("time",\{([^{}]*)\}',page)
+        fields=set(k for l in lits for k in re.findall(r'(\w+):',l))|set(re.findall(r'\bupd\.(\w+)=',page))
+        self.assertTrue({'lastI','ownLastMid','markerTo','caughtUpAt'}<=fields,fields)
+        meta=re.search(r'^- `meta/chat`:(.*)$',skill,re.M).group(1)
+        for f in fields: self.assertIn('`%s`'%f,meta,'meta/chat field not documented in SKILL.md: '+f)
+
     def test_every_referenced_file_exists(self):
         refs=set(re.findall(r'`((?:assets|scripts)/[\w.\-]+)`',read('SKILL.md')))
         self.assertTrue(refs)
