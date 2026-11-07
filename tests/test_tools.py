@@ -209,6 +209,21 @@ class TestSkillReferences(unittest.TestCase):
         for l in shared:
             self.assertIn(l, ref)
 
+    def test_every_catchup_command_is_documented(self):
+        cmds = re.findall(r'cmd == "(\w+)"', read("scripts", "catchup.py"))
+        self.assertEqual(sorted(cmds), ["bootstrap", "build", "relink", "restore"])
+        for c in cmds:
+            self.assertIn("catchup.py " + c, read("SKILL.md"), c)
+
+    def test_rare_import_toasts_are_reachable_from_step_4(self):
+        step4 = re.search(r"^4\. Import by paste:.*?(?=^5\. )", read("SKILL.md"), re.M | re.S).group(0)
+        self.assertIn("`references/troubleshooting.md` › Import toasts", step4)
+        toasts = re.search(
+            r"^## Import toasts.*?(?=^## )", read("references", "troubleshooting.md"), re.M | re.S
+        ).group(0)
+        for t in ("REPAIRED", "Photos: upload failed", "Photos not stored", "Another import is running"):
+            self.assertIn(t, toasts)
+
     def test_setup_points_at_the_field_names_it_seeds(self):
         """Setup seeds meta/chat from the user's answers; the field names live in references/database.md."""
         seed = re.search(r"^4\. \*\*Seed the database\*\*.*$", read("references", "setup.md"), re.M).group(0)

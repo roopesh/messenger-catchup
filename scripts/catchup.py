@@ -5,13 +5,17 @@
   catchup.py build WORK RUNDIR SPEC  RUNDIR = out_dir with the touched chunks/*.json + meta/chat.json fetched after import.
                                      Writes RUNDIR/out/{threading,summary}.json, then advances WORK (all.json, base, state),
                                      keeping the previous WORK in WORK/prev.
-  catchup.py restore WORK            Undo the last build (WORK back to WORK/prev): after a refused DB write, or to rebuild
-                                     the same RUN with a corrected spec.
+  catchup.py restore WORK            Undo the last build or relink (WORK back to WORK/prev): after a refused DB write, or to
+                                     rebuild the same RUN with a corrected spec.
+  catchup.py relink WORK OUTDIR SPEC Correct links on messages already built, when there's nothing new to build. SPEC holds
+                                     only "relink". Writes OUTDIR/threading.json (write it to threading/current, pinned),
+                                     then advances WORK's threading, keeping the previous WORK in WORK/prev.
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
   "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs}],
   "dealEdit":{"convid":{"text":"...","addRefs":[...],"index":n}} (index only when the conv has several deals), "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
-  "answered":[{conv,ask,answer,refs}], "mentions":[{"note","refs":[[i],...]}]}
+  "answered":[{conv,ask,answer,refs}], "mentions":[{"note","refs":[[i],...]}],
+  "relink":{"i":[parent,type] or null}} (relink: messages an earlier build threaded; null removes the link)
 Link defaults per new message: Messenger reply link (pi / pmid) -> 'r' ('rq' if matched by quote in-browser);
 else quote match against stored history (same author + first 20 chars, latest wins) -> 'rq';
 reply to a photo with no Messenger link -> latest photo by that author, 'rg' + a CHECK warning;
@@ -111,6 +115,60 @@ LINK_TYPES = ("r", "rq", "rg", "i", "c")
 NOTE_RE = r"^\d+ reply links.*?\(replies to photos\) by best match"
 
 WFILES = ("all.json", "base/threading.json", "base/summary.json", "state.json")
+
+
+def _note(t):  # the Messages tab's line on where reply links came from
+    cn = collections.Counter(v[1] for v in t["links"].values())
+    note = (
+        "%d reply links read straight from Messenger; %d matched by their quoted text and %d (replies to photos) by best match"
+        % (cn["r"], cn["rq"], cn["rg"])
+    )
+    old = t.get("note") or ""
+    t["note"] = re.sub(NOTE_RE, note, old) if re.match(NOTE_RE, old) else note + (". " + old if old else "")
+
+
+def _relink(t, sp, stored, base):  # correct the link on messages an earlier build already threaded
+    conv = lambda i: next((c["id"] for c in t["convs"] if i in c["members"]), None)
+    for k, L in sp.get("relink", {}).items():
+        i = int(k)
+        assert i <= base and i in stored, (
+            "relink #%d: only messages already built (through #%d); use links for new ones"
+            % (
+                i,
+                base,
+            )
+        )
+        if L is None:
+            if t["links"].pop(str(i), None) is not None:
+                print("UNLINK", i)
+            continue
+        assert len(L) == 2 and L[1] in LINK_TYPES, ("link type must be one of %s" % "/".join(LINK_TYPES), i, L)
+        assert L[0] in stored and L[0] < i, ("relink parent must be an earlier stored message", i, L)
+        t["links"][str(i)] = L
+        print("RELINK %d -> %d %s" % (i, L[0], L[1]))
+        if conv(i) and conv(L[0]) and conv(i) != conv(L[0]):
+            print(
+                "WARN link %d -> %d crosses conversations (%s -> %s); the page shows %d as a new thread"
+                % (i, L[0], conv(i), conv(L[0]), i)
+            )
+
+
+def relink(work, out, specp):
+    global TZ
+    sp = _load(specp)
+    assert (
+        set(sp) == {"relink"} and sp["relink"]
+    ), 'relink SPEC takes only a non-empty "relink" (use build for the rest)'
+    st = _load(work + "/state.json")
+    TZ = st.get("tz") or TZ
+    t = _load(work + "/base/threading.json")
+    _relink(t, sp, {m["i"]: m for m in _load(work + "/all.json")}, st["base"])
+    _note(t)
+    t["builtAt"] = _ts()
+    _dump(t, out + "/threading.json")
+    _snapshot(work)
+    _dump(t, work + "/base/threading.json")
+    print("relink ok: %d change(s); write %s/threading.json to threading/current (pinned)" % (len(sp["relink"]), out))
 
 
 def _snapshot(work):  # the WORK a build started from, so `restore` can undo it
@@ -231,6 +289,7 @@ def build(work, run, specp):
     bym = {m.get("m"): m["i"] for m in al + new if m.get("m")}
     t = _load(work + "/base/threading.json")
     s = _load(work + "/base/summary.json")
+    _relink(t, sp, byi, base)
     C = {cv["id"]: cv for cv in t["convs"]}
     for nc in sp.get("newconvs", []):
         assert nc["id"] not in C, ("conv id exists", nc["id"])
@@ -304,13 +363,7 @@ def build(work, run, specp):
                     % (i, L[0], joined[i], pc, i)
                 )
     t["to"] = ids[-1]
-    Cn = collections.Counter(v[1] for v in t["links"].values())
-    note = (
-        "%d reply links read straight from Messenger; %d matched by their quoted text and %d (replies to photos) by best match"
-        % (Cn["r"], Cn["rq"], Cn["rg"])
-    )
-    old = t.get("note") or ""
-    t["note"] = re.sub(NOTE_RE, note, old) if re.match(NOTE_RE, old) else note + (". " + old if old else "")
+    _note(t)
     seen = collections.Counter(x for cv in t["convs"] for x in cv["members"])
     lo = min(min(cv["members"]) for cv in t["convs"] if cv["members"])
     for i in range(lo, ids[-1] + 1):
@@ -404,5 +457,7 @@ if __name__ == "__main__":
         build(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4])
     elif cmd == "restore":
         restore(sys.argv[2].rstrip("/"))
+    elif cmd == "relink":
+        relink(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4])
     else:
         sys.exit(__doc__)
