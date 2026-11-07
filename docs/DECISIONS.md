@@ -67,6 +67,19 @@ Each entry has what was decided, why, and what was rejected.
 | Two options in the skill: an in-session loop, or a scheduled task that requires the local computer | Refreshes need the computer awake with Chrome open |
 | A missed run is skipped; the next run catches up | No pile-up |
 
+## Seen in the code, not written down before
+Recorded during the Nov 6 handoff review. The reasons are inferred from the code and earlier docs.
+
+| Decision | Why (inferred) | Where |
+|---|---|---|
+| The page, not Claude, writes chunks and the import counters in `meta/chat` | The paste lands in the page; the page checks and writes in one place, then Claude reads back | `page.html` `importCore` |
+| A first import must start at `#0`; later imports must overlap or continue exactly at `lastI+1` | Numbering is the integrity check; any gap is refused | `importCore` |
+| Chunks are read back and compared after writing | Proof the write landed before `meta/chat` moves forward | `importCore` |
+| Messages that arrive during a run (`extra`) are left for the next run | Keeps scan and verify windows identical; no extra round | `paVerify`, SKILL step 3 |
+| The page carries its own copy of the helper and a bookmarklet | Install by copy and paste from the page, including on a computer without the repo | `#jump-us`, `#jump-bm` |
+| The generic page has no in-page Refresh button | It needs a scheduled-trigger id and a connector the generic setup doesn't create; refreshes are asked for in chat | `REFRESH_TASK="__TRIGGER_ID__"`, button `hidden` |
+| Dates are stored per message (`d`) instead of deriving them from weekday names | Weekday labels are ambiguous past a week; the old `meta.dates` map is only a fallback | `paCapture`, `tsOf` |
+
 ## Sharing and repo
 | Decision | Why |
 |---|---|

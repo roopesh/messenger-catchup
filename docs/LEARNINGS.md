@@ -35,7 +35,7 @@ Platform limits, gotchas, and what was changed because of them.
 ## Build tool (`patool.py`)
 - **Asserts catch mistakes before any write:** bullet and outcome length, every message in one conversation, backward links, a meta check first.
 - **Conversation ID collisions** came up as topics recurred. Use date suffixes (e.g. `weather1106`).
-- **Running `build` twice** fails the second assert harmlessly. Restore the workspace from backup before rebuilding.
+- **Running `build` twice** fails the second assert harmlessly (a bare `AssertionError: []`). `build` advances WORK as soon as it succeeds and keeps no backup, so copy WORK yourself before a build you may need to redo, or re-run `bootstrap` from a fresh database fetch (BACKLOG B2).
 - **`links` value `null`** means "no link" (start of a new topic).
 
 ## Tooling and process
@@ -47,8 +47,13 @@ Platform limits, gotchas, and what was changed because of them.
 - **Status timestamps** were sometimes written wrong by hand. Take times from the tool clock, not memory.
 - **Measure before shipping:** hand labels showed that clever linkers scored worse than the existing judgment, and saved a regression.
 
+## Keeping copies in sync
+- **The helper exists three times:** the file, an HTML-escaped copy inside the page (for "Copy userscript"), and its `jump()` as a URL-encoded bookmarklet. An edit to one must be carried to the others by hand (BACKLOG C2; check in EXPERIMENTS.md §10).
+- **The page writes `meta/chat` too** (import counters, marker choice), not only Claude. Read it fresh before every write and pin the write.
+
 ## Open issues
-- Facebook changes Messenger's markup often; the reader depends on the labels above.
-- End-to-end encrypted chats are untested.
-- Distant photo-reply parents are slow to reach.
-- One chat per page and loop; multi-chat is not built.
+All open issues now live in [BACKLOG.md](BACKLOG.md). The long-standing ones:
+- Facebook changes Messenger's markup often; the reader depends on the labels above (R3, F4).
+- End-to-end encrypted chats are untested (R5).
+- Distant photo-reply parents are slow to reach (F2).
+- One chat per page and loop; multi-chat is not built (F1).
