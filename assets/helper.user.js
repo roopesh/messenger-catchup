@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.7
+// @version      1.8
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -11,8 +11,8 @@
 // ==/UserScript==
 (function () {
   if (window.__mcHelper || document.documentElement.hasAttribute('data-mc-helper')) return;
-  window.__mcHelper = '1.7';
-  document.documentElement.setAttribute('data-mc-helper', '1.7');
+  window.__mcHelper = '1.8';
+  document.documentElement.setAttribute('data-mc-helper', '1.8');
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener(
     'click',
@@ -86,6 +86,43 @@
   }
   /* people{count,maxMs}: read-only. Scrolls back through up to count messages (or to the top, or for maxMs) and reads
      each sender's shown name and avatar name. Returns {seen, top, ms, people:[[shown, full, messages]]}. */
+  /* selfcheck: read-only and immediate. Confirms that each part of Messenger's page the reader relies on is present in
+     the open chat, so a markup change reads "Messenger changed: <what>" instead of failing somewhere inside a scan.
+     missing = the reader can't work; warn = it works with less (no full names, guessed dates). */
+  function mcSelfcheck() {
+    const missing = [];
+    const warn = [];
+    const AT = /^At (.+?(?:AM|PM|am|pm)), /;
+    const log = document.querySelector('[role="log"]');
+    if (!log || log.getBoundingClientRect().width < 300) missing.push('chat log ([role="log"])');
+    const msgs = log ? Array.from(log.querySelectorAll('[data-message-id]')) : [];
+    if (log && !msgs.length) missing.push('message ids (data-message-id)');
+    const sc =
+      log &&
+      Array.from(log.querySelectorAll('div')).find(
+        x => /(auto|scroll)/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight,
+      );
+    if (log && msgs.length && !sc) missing.push('scrolling message list');
+    const labels = msgs.map(e => e.getAttribute('aria-label') || '').filter(l => AT.test(l));
+    if (msgs.length && labels.length < msgs.length / 2) missing.push('message labels ("At <time>, <name>: ...")');
+    const texts = msgs.map(e => e.innerText || '');
+    const replyLines = texts.filter(t => / replied to /.test(t.split('\n')[0])).length;
+    const replyLinks = msgs.filter(e => e.querySelector('[aria-label="Go to replied message"]')).length;
+    if (replyLines && !replyLinks) missing.push('"Go to replied message" links');
+    if (replyLinks && !texts.some(t => t.includes('Original message:'))) missing.push('"Original message:" quotes');
+    const others = msgs.filter(e => !/, You: /.test(e.getAttribute('aria-label') || ''));
+    const named = others.filter(e => avatar(e)).length;
+    if (others.length >= 3 && !named) warn.push('sender avatars (full names)');
+    const undated = labels.filter(l => !mcDate(l.match(AT)[1], new Date())).length;
+    if (labels.length && undated > labels.length / 2)
+      warn.push('date labels (' + undated + ' of ' + labels.length + ' unreadable)');
+    return {
+      ok: !missing.length,
+      missing,
+      warn,
+      counts: { messages: msgs.length, labeled: labels.length, named, replies: replyLinks },
+    };
+  }
   async function mcPeople(a) {
     const count = (a && a.count) || 2000;
     const maxMs = (a && a.maxMs) || 480000;
@@ -918,6 +955,7 @@
     verify: () => mcVerify(),
     capture: a => mcCapture(a.base),
     people: a => mcPeople(a),
+    selfcheck: () => mcSelfcheck(),
     full: a => full(a),
     jump: a => {
       history.replaceState(
@@ -928,7 +966,7 @@
       jump();
       return { started: true };
     },
-    ping: () => ({ v: '1.7' }),
+    ping: () => ({ v: '1.8' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
   document.addEventListener('mc-cmd', async function (e) {

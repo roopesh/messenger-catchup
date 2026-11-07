@@ -2,6 +2,25 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.13.0] - 2026-11-07
+A self-check that names exactly what changed when Messenger's page changes (BACKLOG F4). MINOR: a new refresh step. Helper 1.8; installed copies update themselves. Page unchanged.
+
+### Added
+- **Helper 1.8 `selfcheck`:** read-only and immediate. Returns `{ok, missing, warn, counts}`.
+  - **`missing`, the reader can't work:**
+    - the chat log, message ids or the scrolling list
+    - the `At <time>, <name>: ` labels
+    - "Go to replied message" links, when reply lines exist
+    - "Original message:" quotes, when reply links exist
+  - **`warn`, it works with less:** no sender avatars (no full names), or mostly unreadable date labels.
+- **SKILL.md step 2** runs it after the tab is ready, installed or injected. On `ok:false` the status becomes "Messenger changed: …", the run stops, and the user is told even during a scheduled run. Warnings go in the report.
+- **`references/troubleshooting.md`:** what to do when `selfcheck` fails.
+
+### Tests
+- Sim: `selfcheck` passes on the mock. It then names each hook when that hook is broken: relabelled messages, removed reply links, removed avatars (a warning only) and a renamed chat log.
+
+Components: `PAGE_VERSION` 2.2 (unchanged), helper 1.8.
+
 ## [1.12.0] - 2026-11-07
 Correct a link on a message that's already built (BACKLOG F3). MINOR: a new spec key, a new `catchup.py` command and a new procedure. Page and helper unchanged.
 

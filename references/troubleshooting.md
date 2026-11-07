@@ -13,6 +13,7 @@ Read this when the page, the reader or catchup.py reports an error that SKILL.md
 - `nothing left to build: WORK already covers RUN` (or `nothing to build`): another session already built these messages. Skip the build, and write only `meta/chat` `{lastRefresh}` and `refresh/status` by SKILL.md › Refresh steps, step 7's rule.
 - "meta/chat.lastI (#x) is ahead of the newest saved message (#y)": update `meta/chat` (pinned) with `lastI: y`, `lastMid` = message #y's `m` (it's in chunk `c` + the 4-digit `floor(y/chunkSize)*chunkSize`), and `anchorMids` = the `m` of the three newest saved messages, then paste again.
 
+- `selfcheck` says `ok:false` ("Messenger changed: …"): Facebook changed a part of Messenger's page the reader relies on, named in `missing`. Nothing was read or saved, so don't try to scan around it. Tell the user what changed, and that the skill needs an update (github.com/roopesh/messenger-catchup). Each run stops at this check until it passes again. `warn` alone (no full names, unreadable dates) doesn't stop the run: mention it in the report.
 
 ## Import toasts (SKILL.md › Refresh steps, step 4)
 - A toast starting "REPAIRED: #a–#b (chunks …)" means an earlier import saved those messages but stopped before updating `meta/chat`; the page counted them in. Carry on, and in step 5 fetch every chunk it names as well.

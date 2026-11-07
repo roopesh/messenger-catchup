@@ -55,6 +55,9 @@ All code sits inside one IIFE guarded by `window.__mcHelper` / `data-mc-helper` 
 | `mcVerify()` | 79 | After a reload: ID-only pass (fast 0.6/500 ms, then slow 0.35/900 ms if needed). OK when `gap==0` and the new window starts with exactly the scanned window (`prefixSame`). `extra` = messages that arrived since the scan; they are *not* captured (next run gets them). |
 | `mcCapture(BASE)` | 87 | Turns each saved DOM record into a message object (fields below), numbering from `BASE+1`. Parses sender, body, quote, reactions, links (strips tracking params), attachment title, date (`dOf`) and time. Fetches photos as base64. Builds the capture, then **replaces the page body** with the COPY CAPTURE button (`#__copy`, status `#__copyst`). |
 | `jump()` | 124 | Handles `#mcjump=<mid>[&noreply]`: scrolls to bottom, then up until the message exists, outlines it, hovers it and clicks "Reply to this message". Shows status in `#mcjump-tip`. |
+| `avatar(e)` | — | The sender's full name: alt text of the ~28 px square image at the message's left edge (v1.6). |
+| `mcSelfcheck()` | — | `selfcheck` (v1.8): confirms the chat log, message ids, scroller, `At <time>, <name>: ` labels, reply links and "Original message:" quotes are present (`missing`), and that avatars and date labels read (`warn`). Run at refresh step 2. |
+| `mcPeople(a)` | — | `people{count,maxMs}` (v1.7): read-only scroll back collecting `[shown, full, n]` for the one-time name backfill. |
 | `probe(anchor)` | 151 | Quick check: visibility, loaded count, whether the anchor is on screen. |
 | `full(a)` / `resumePipe()` | 156 / 158 | Scan → `mc_pipe` in sessionStorage → reload → (on load) verify → capture → `mc_result`. `full` clears `mc_result` first; results carry `run`. |
 | Bridge | 167 | `document` event `mc-cmd` with `{id, cmd, args}`; result in `sessionStorage['mc_res_'+id]` (`{running:true}` until done). |
