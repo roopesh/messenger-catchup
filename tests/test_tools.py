@@ -118,11 +118,12 @@ class TestReleaseScript(unittest.TestCase):
 class TestZip(unittest.TestCase):
     def test_make_zip_contents(self):
         with tempfile.TemporaryDirectory() as t:
-            dst=os.path.join(t,'messenger-catchup')        # make-zip.sh needs this folder name (BACKLOG B10)
+            dst=os.path.join(t,'some-other-clone-name')     # any folder name works (B10)
             for f in SHIPPED+['make-zip.sh']:
                 os.makedirs(os.path.dirname(os.path.join(dst,f)),exist_ok=True);shutil.copy2(os.path.join(ROOT,f),os.path.join(dst,f))
+            open(os.path.join(dst,'assets','.DS_Store'),'w').write('junk');os.makedirs(os.path.join(dst,'scripts','__pycache__'));open(os.path.join(dst,'scripts','__pycache__','x.pyc'),'w').write('junk')
             subprocess.run(['sh',os.path.join(dst,'make-zip.sh')],check=True,capture_output=True)
-            names=sorted(n for n in zipfile.ZipFile(os.path.join(t,'messenger-catchup.zip')).namelist() if not n.endswith('/'))
-            self.assertEqual(names,sorted('messenger-catchup/'+f for f in SHIPPED))
+            names=sorted(n for n in zipfile.ZipFile(os.path.join(dst,'dist','messenger-catchup.zip')).namelist() if not n.endswith('/'))
+            self.assertEqual(names,sorted('messenger-catchup/'+f for f in SHIPPED),'ZIP holds exactly the shipped files, no junk')
 
 if __name__=='__main__': unittest.main()

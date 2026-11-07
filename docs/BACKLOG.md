@@ -35,7 +35,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
 | B7 | P3 | bug | A mention of message #0 renders without its content · **done** (v1.2.2) |
 | B9 | P3 | bug | "Queued" confirmation says "and confirm" even with auto-posting on · **done** (v1.2.2) |
-| B10 | P3 | bug | `make-zip.sh` only works when the repo folder is named `messenger-catchup` |
+| B10 | P3 | bug | `make-zip.sh` only works when the repo folder is named `messenger-catchup` · **done** (v1.4.1) |
 | G4 | P3 | doc gap | Page text refers to a Refresh button that is hidden · **done** (v1.2.2) |
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) |
@@ -124,7 +124,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Seen:** `tests/test_catchup.py::TestKnownBugs.test_B11_messenger_link_to_message_zero`: a photo reply clicked to #0 was linked to #1, Ana's later photo.
 - **Fix:** `if m.get('pi') is not None`.
 
-### B10 · P3 · `make-zip.sh` depends on the folder name
+### B10 · P3 · `make-zip.sh` depends on the folder name · done (v1.4.1)
 - **Where:** `make-zip.sh:4-6`
 - **What:** it `cd`s to the parent folder and zips `messenger-catchup/…`, so a clone under any other name fails, and the ZIP lands outside the repo (the `*.zip` entry in `.gitignore` never applies).
 - **Fix:** stage into a temp dir named `messenger-catchup/` and write the ZIP into the repo (or `dist/`).

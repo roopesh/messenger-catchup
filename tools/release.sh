@@ -15,7 +15,8 @@ mkdir "$tmp/messenger-catchup"
 git tag -a "$tag" -m "$tag"
 git archive "$tag" | tar -x -C "$tmp/messenger-catchup"
 sh "$tmp/messenger-catchup/make-zip.sh" >/dev/null
-zv=$(unzip -p "$tmp/messenger-catchup.zip" messenger-catchup/VERSION)
+zip="$tmp/messenger-catchup/dist/messenger-catchup.zip"
+zv=$(unzip -p "$zip" messenger-catchup/VERSION)
 if [ "$zv" != "$v" ]; then git tag -d "$tag" >/dev/null; echo "release: ZIP says $zv, expected $v" >&2; exit 1; fi
 git push -q origin "$tag"
-printf '%s\n' "$notes" | gh release create "$tag" "$tmp/messenger-catchup.zip" --title "$tag" --notes-file - --verify-tag
+printf '%s\n' "$notes" | gh release create "$tag" "$zip" --title "$tag" --notes-file - --verify-tag
