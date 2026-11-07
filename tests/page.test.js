@@ -4,7 +4,7 @@
    Run from the repo root after tests/sim.js (it writes tests/out/sim_caps.json): node tests/page.test.js
    KNOWN lines are docs/BACKLOG.md bugs; they don't fail the run. A FIXED? line means one now passes: close it. */
 const {chromium}=require('playwright');const fs=require('fs');const os=require('os');const path=require('path');const crypto=require('crypto');const {execFileSync}=require('child_process');
-const ROOT=path.join(__dirname,'..');const PAGE=fs.readFileSync(path.join(ROOT,'assets/page.html'),'utf8');const URL='http://localhost:9917/catchup';
+const ROOT=path.join(__dirname,'..');const PAGE=fs.readFileSync(process.env.PAGE_FILE||path.join(ROOT,'assets/page.html'),'utf8');   /* PAGE_FILE: test another copy, e.g. an older page */const URL='http://localhost:9917/catchup';
 const CATCHUP=path.join(ROOT,'scripts/catchup.py');const CAPS=path.join(__dirname,'out/sim_caps.json');
 const ok=(c,msg)=>{console.log((c?'PASS ':'FAIL ')+msg);if(!c)process.exitCode=1;};
 const known=(c,msg)=>console.log(c?'FIXED? '+msg+' (passes now: update the test and docs/BACKLOG.md)':'KNOWN '+msg);
@@ -17,23 +17,32 @@ const PNG='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEh
 
 /* Stand-in for the claude.ai artifact runtime. Runs before the page script. */
 function runtime(seed){
-  const store=new Map(),subs=new Map(),writes=[],uploads=[],samples=[];const clone=o=>o==null?o:JSON.parse(JSON.stringify(o));
+  const opts=(seed&&seed.__opts)||{};if(seed)delete seed.__opts;
+  const store=new Map(),subs=new Map(),writes=[],uploads=[],samples=[],leases=new Map(),fails=[];const clone=o=>o==null?o:JSON.parse(JSON.stringify(o));
   const sub=(k,cb)=>{if(!subs.has(k))subs.set(k,[]);subs.get(k).push(cb);};
   const docSnap=p=>{const v=store.get(p);return {exists:v!==undefined,id:p.split('/').pop(),data:()=>clone(v)};};
   const collSnap=c=>({docs:[...store.keys()].filter(k=>k.split('/')[0]===c&&k.split('/').length===2).sort().map(k=>({id:k.split('/')[1],data:()=>clone(store.get(k))}))});
   const notify=p=>setTimeout(()=>{(subs.get('d:'+p)||[]).forEach(cb=>cb(docSnap(p)));const c=p.split('/')[0];(subs.get('c:'+c)||[]).forEach(cb=>cb(collSnap(c)));},0);
-  function doc(p){return {
+  const failIf=(p,op)=>{const k=fails.findIndex(f=>f.p===p&&f.op===op);if(k>=0){fails.splice(k,1);throw Object.assign(new Error('injected failure'),{code:'unavailable'});}};
+  function doc(p){const ref={
     get:async()=>docSnap(p),
-    set:async o=>{store.set(p,clone(o));writes.push({p,op:'set',v:clone(o)});notify(p);},
-    update:async o=>{if(!store.has(p))throw Object.assign(new Error('missing '+p),{code:'not_found'});store.set(p,Object.assign(clone(store.get(p)),clone(o)));writes.push({p,op:'update',v:clone(o)});notify(p);},
-    onSnapshot:cb=>{sub('d:'+p,cb);setTimeout(()=>cb(docSnap(p)),0);return ()=>{};}};}
+    set:async o=>{failIf(p,'set');store.set(p,clone(o));writes.push({p,op:'set',v:clone(o)});notify(p);},
+    update:async o=>{failIf(p,'update');if(!store.has(p))throw Object.assign(new Error('missing '+p),{code:'invalid_argument'});store.set(p,Object.assign(clone(store.get(p)),clone(o)));writes.push({p,op:'update',v:clone(o)});notify(p);},
+    acquire:async o=>{const now=Date.now(),l=leases.get(p);if(l&&l.exp>now&&l.holder!==o.holder)return {acquired:false,expiresAt:new Date(l.exp).toISOString()};
+      const exp=now+(o.ttlMs||30000);leases.set(p,{holder:o.holder,exp});return {acquired:true,version:1,expiresAt:new Date(exp).toISOString(),holder:o.holder};},
+    onSnapshot:cb=>{sub('d:'+p,cb);setTimeout(()=>cb(docSnap(p)),0);return ()=>{};}};
+    if(opts.noAcquire)delete ref.acquire;   /* an older runtime contract */
+    return ref;}
   let auto=0;
-  const collection=c=>({doc:id=>doc(c+'/'+id),add:async o=>{const id='a'+(++auto);await doc(c+'/'+id).set(o);return {id};},onSnapshot:cb=>{sub('c:'+c,cb);setTimeout(()=>cb(collSnap(c)),0);return ()=>{};}});
+  const query=(c,ord,lim)=>({orderBy:(f,d)=>query(c,{f,d:d||'asc'},lim),limit:n=>query(c,ord,n),
+    get:async()=>{let docs=collSnap(c).docs;if(ord)docs=docs.slice().sort((a,b)=>{const x=a.data()[ord.f],y=b.data()[ord.f];return (x<y?-1:x>y?1:0)*(ord.d==='desc'?-1:1);});if(lim)docs=docs.slice(0,lim);return {docs,size:docs.length,empty:!docs.length};},
+    onSnapshot:cb=>{sub('c:'+c,cb);setTimeout(()=>cb(collSnap(c)),0);return ()=>{};}});
+  const collection=c=>Object.assign(query(c),{doc:id=>doc(c+'/'+id),add:async o=>{const id='a'+(++auto);await doc(c+'/'+id).set(o);return {id};}});
   const assets={upload:async(blob,o)=>{const id='blob'+(uploads.length+1);uploads.push({id,size:blob.size,type:o.type});return {id,sizeBytes:blob.size,contentType:o.type};}};
   async function sample(msgs,o){samples.push(msgs);const text='Ben offered one [#1]. Ana asked [#0, #2].';if(o&&o.onText)o.onText({text});return {text};}
   sample.json=async prompt=>{samples.push(prompt);return {title:'By person',intro:'Grouped by who posted.',sections:[{heading:'Ben',tag:'open',summary:'Sells things [#1].',refs:[1]}]};};
   Object.entries(seed||{}).forEach(([p,v])=>store.set(p,clone(v)));
-  window.__rt={store,writes,uploads,samples,write:(p,v)=>doc(p).set(v),get:p=>clone(store.get(p)),all:()=>Object.fromEntries([...store].map(([k,v])=>[k,clone(v)]))};
+  window.__rt={store,writes,uploads,samples,leases,fails,silent:(p,v)=>store.set(p,clone(v)),write:(p,v)=>doc(p).set(v),get:p=>clone(store.get(p)),all:()=>Object.fromEntries([...store].map(([k,v])=>[k,clone(v)]))};
   window.claude={use:async n=>({db:{doc,collection},assets,sample})[n]||null};
 }
 const META={kind:'messenger-catchup',pageVersion:'1.1',thread:'4242',chatUrl:'https://www.facebook.com/messages/e2ee/t/4242',threadName:'Trail Crew',shortName:'Trail',ownerName:'Sam',ownerAliases:['Sam','Sammy'],topic:'gear',outboxAuto:false,refreshPhrase:'refresh my catch-up',tz:'America/Los_Angeles',helper:'inject',chunkSize:82,lastI:-1,anchorMids:[],markerMode:null};
@@ -107,6 +116,51 @@ async function importer(){
   r=await viaButton(p,JSON.stringify(cap(range(131,132))));ok(r&&r.ok&&r.src==='button'&&r.fresh===2&&(await p.inputValue('#imp-in'))==='','Import button: valid capture imported, box cleared');
   ok((await get(p,'meta/chat')).lastI===132,'store ends at #132 after all of the above');
   ok(p.errors.length===0,'importer: no page errors '+JSON.stringify(p.errors));
+  await p.context().close();}
+
+/* ---------- 1b. R1: lease, fresh reads, half-finished imports ---------- */
+const lastImp=p=>get(p,'refresh/lastImport');
+async function robustness(){
+  let p=await open(SEED());
+  // meta/chat update fails after the chunk was saved and read back
+  await p.evaluate(()=>__rt.fails.push({p:'meta/chat',op:'update'}));
+  let r=await paste(p,JSON.stringify(cap(range(0,9))));
+  ok(r&&!r.ok&&/injected failure/.test(r.msg)&&(await get(p,'chunks/c0000')).msgs.length===10&&(await get(p,'meta/chat')).lastI===-1,'half-finished: chunk saved, meta/chat not updated ('+(r&&r.msg)+')');
+  const w0=await nWrites(p,'^meta/chat$');r=await paste(p,JSON.stringify(cap(range(20,22))));
+  ok(r&&!r.ok&&/Gap/.test(r.msg)&&await nWrites(p,'^meta/chat$')===w0&&(await get(p,'meta/chat')).lastI===-1,'half-finished + a refused capture: the repair is not written either ("Nothing saved" stays true)');
+  r=await paste(p,JSON.stringify(cap(range(0,9),{dry:true})));
+  ok(r&&r.ok&&/^Would repair: #0–#9 \(chunk c0000\)/.test(r.msg)&&(await get(p,'meta/chat')).lastI===-1,'dry run reports the repair it would make, writes nothing');
+  r=await paste(p,JSON.stringify(cap(range(0,9))));let m=await get(p,'meta/chat');
+  ok(r&&r.ok&&/^REPAIRED: #0–#9 \(chunk c0000\).*Nothing new/.test(r.msg)&&r.repaired&&r.repaired.to===9&&JSON.stringify(r.chunks)==='["c0000"]','re-paste: REPAIRED #0–#9, nothing new, names the chunk ('+(r&&r.msg)+')');
+  ok(m.lastI===9&&m.lastMid==='mid.9'&&JSON.stringify(m.anchorMids)==='["mid.7","mid.8","mid.9"]'&&m.ownLastI===7&&m.ownLastMid==='mid.7','re-paste: meta/chat counters repaired (lastI, anchorMids, ownLastI)');
+  r=await paste(p,JSON.stringify(cap(range(10,12))));ok(r&&r.ok&&r.fresh===3&&!r.repaired&&(await get(p,'meta/chat')).lastI===12,'after the repair, the next capture imports normally');
+  // second chunk write fails during a rollover
+  r=await paste(p,JSON.stringify(cap(range(13,79))));ok(r&&r.ok&&(await get(p,'meta/chat')).lastI===79,'filled to #79');
+  await p.evaluate(()=>__rt.fails.push({p:'chunks/c0082',op:'set'}));r=await paste(p,JSON.stringify(cap(range(80,85))));
+  ok(r&&!r.ok&&(await get(p,'chunks/c0000')).msgs.length===82&&!(await get(p,'chunks/c0082'))&&(await get(p,'meta/chat')).lastI===79,'rollover interrupted: c0000 filled to #81, c0082 missing, lastI still #79');
+  r=await paste(p,JSON.stringify(cap(range(80,85))));m=await get(p,'meta/chat');
+  ok(r&&r.ok&&/^REPAIRED: #80–#81 \(chunk c0000\).*IMPORT OK: 4 new messages, #82–#85 \(chunks c0000, c0082\)/.test(r.msg),'re-paste: repairs #80–#81 and imports #82–#85 into a new chunk ('+(r&&r.msg)+')');
+  ok(m.lastI===85&&JSON.stringify(m.anchorMids)==='["mid.83","mid.84","mid.85"]'&&(await get(p,'chunks/c0082')).msgs.length===4,'rollover repaired: lastI #85, anchors, c0082 holds 4');
+  // counters ahead of the saved messages
+  await p.evaluate(()=>{const m=__rt.get('meta/chat');m.lastI=90;__rt.silent('meta/chat',m);});let w=await nWrites(p,'^(chunks|meta)/');
+  r=await paste(p,JSON.stringify(cap(range(86,88))));ok(r&&!r.ok&&/lastI \(#90\) is ahead of the newest saved message \(#85\)/.test(r.msg)&&await nWrites(p,'^(chunks|meta)/')===w,'meta/chat ahead of the chunks: refused with what to fix, nothing written');
+  await p.evaluate(()=>{const m=__rt.get('meta/chat');m.lastI=85;__rt.silent('meta/chat',m);});
+  // another open copy of the page holds the import lease
+  await p.evaluate(()=>__rt.leases.set('refresh/importLock',{holder:'other-tab',exp:Date.now()+60000}));w=await nWrites(p,'^(chunks|meta)/');
+  r=await paste(p,JSON.stringify(cap(range(86,88))));ok(r&&!r.ok&&r.lock==='busy'&&/Another import is running/.test(r.msg)&&await nWrites(p,'^(chunks|meta)/')===w,'lease held by another copy: refused, nothing written');
+  await p.evaluate(()=>__rt.leases.delete('refresh/importLock'));r=await paste(p,JSON.stringify(cap(range(86,88))));
+  ok(r&&r.ok&&r.lock==='held'&&r.fresh===3,'lease free again: import goes through and holds the lease');
+  // the page's snapshot is stale: the store moved on without telling it
+  await p.evaluate(([a,b])=>{const c=__rt.get('chunks/c0082');c.msgs.push(...a);__rt.silent('chunks/c0082',c);const m=__rt.get('meta/chat');Object.assign(m,b);__rt.silent('meta/chat',m);},
+    [range(89,91),{lastI:91,lastMid:'mid.91',anchorMids:['mid.89','mid.90','mid.91']}]);
+  ok(await p.evaluate(()=>!document.querySelector('#cov').textContent.includes('#91')),'stale snapshot set up: the page still shows the old end');
+  r=await paste(p,JSON.stringify(cap(range(90,93))));const c82=await get(p,'chunks/c0082');
+  ok(r&&r.ok&&r.fresh===2&&(await get(p,'meta/chat')).lastI===93&&c82.msgs.map(x=>x.i).join()===range(82,93).map(x=>x.i).join(),'stale snapshot: fresh reads used, overlap checked against the store, #92–#93 appended with nothing lost');
+  ok(p.errors.length===0,'robustness: no page errors '+JSON.stringify(p.errors));
+  await p.context().close();
+  // a runtime without acquire() still imports (older contract)
+  p=await open(Object.assign(SEED(),{__opts:{noAcquire:true}}));
+  r=await paste(p,JSON.stringify(cap(range(0,2))));ok(r&&r.ok&&r.lock==='unsupported','runtime without acquire(): imports without a lease ('+(r&&r.lock)+')');
   await p.context().close();}
 
 /* ---------- 2. real pipeline: sim captures -> page import -> catchup.py -> render ---------- */
@@ -222,5 +276,5 @@ async function variants(){
   await p.context().close();}
 
 (async()=>{browser=await chromium.launch();
-  try{await importer();await pipeline();await variants();}catch(e){ok(false,'crashed: '+(e&&e.stack||e));}
+  try{await importer();await robustness();await pipeline();await variants();}catch(e){ok(false,'crashed: '+(e&&e.stack||e));}
   await browser.close();})();

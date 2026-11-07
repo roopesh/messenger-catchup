@@ -490,7 +490,7 @@ return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#
 <script>
 let THREAD="", CHAT="https://www.facebook.com/messages/";
 /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-const PAGE_VERSION="1.1";
+const PAGE_VERSION="1.2";
 const CFG=()=>S.meta||{};
 const RP=()=>CFG().refreshPhrase||"refresh my catch-up";
 const OWNER=()=>CFG().ownerName||"the page owner";
@@ -945,6 +945,14 @@ async function sha256hex(t){const d=await crypto.subtle.digest("SHA-256",new Tex
    cap.lab: photos go to a lab report only (photos/index untouched). Every run records its outcome in refresh/lastImport. */
 function b64ToBlob(b64,type){const bin=atob(b64);const u=new Uint8Array(bin.length);for(let k=0;k<bin.length;k++)u[k]=bin.charCodeAt(k);return new Blob([u],{type});}
 async function logImport(o){try{if(S.db)await S.db.doc("refresh/lastImport").set(Object.assign({at:new Date().toISOString()},o));}catch(e){}}
+/* Database writes are last-writer-wins with no transactions, so an import (1) holds a short cooperative lease, so two
+   open copies of this page never import at once, and (2) reads meta/chat and the newest chunk fresh from the store
+   instead of trusting snapshots, which can lag or come from cache. */
+const TAB=Math.random().toString(36).slice(2,10);
+async function importLease(){const ref=S.db.doc("refresh/importLock");if(typeof ref.acquire!=="function")return {ok:true,lock:"unsupported"};
+  try{const r=await ref.acquire({holder:TAB,ttlMs:120000});return r.acquired?{ok:true,lock:"held"}:{ok:false,lock:"busy",until:r.expiresAt};}catch(e){return {ok:true,lock:"unavailable"};}}
+async function newestChunk(){try{const q=await S.db.collection("chunks").orderBy("start","desc").limit(1).get();const d=q.docs[0];return d?Object.assign({id:d.id},d.data()):null;}
+  catch(e){const ids=Object.keys(S.chunks).sort((a,b)=>S.chunks[a].start-S.chunks[b].start);if(!ids.length)return null;const id=ids[ids.length-1];const g=await S.db.doc("chunks/"+id).get();return g.exists?Object.assign({id},g.data()):null;}}
 async function importCore(raw,opts){const src=(opts&&opts.src)||"button";const R={src,ok:false};
   const done=(msg,extra)=>{Object.assign(R,{msg},extra||{});return R;};
   raw=(raw||"").trim();if(!raw)return done("Paste a capture first.");
@@ -954,32 +962,45 @@ async function importCore(raw,opts){const src=(opts&&opts.src)||"button";const R
   if(await sha256hex(JSON.stringify(cap.msgs))!==cap.sha)return done("Checksum mismatch: the capture was cut off or changed. Nothing saved.");
   const photos=Array.isArray(cap.photos)?cap.photos:[];
   if(photos.length&&await sha256hex(JSON.stringify(photos))!==cap.phsha)return done("Photo checksum mismatch. Nothing saved.");
-  const first=!!(S.meta&&S.meta.lastI===-1&&!Object.keys(S.chunks).length);
-  if(!S.db||!S.meta||(!first&&!Object.keys(S.chunks).length))return done("The page's data isn't loaded yet; try again in a moment.");
-  const lastI=S.meta.lastI;const ms=cap.msgs.slice().sort((a,b)=>a.i-b.i);
+  if(!S.db)return done("The page's data isn't loaded yet; try again in a moment.");
+  if(!dry){const L=await importLease();R.lock=L.lock;if(!L.ok)return done("Another import is running in another open copy of this page. Nothing saved. Try again in a minute"+(L.until?" (after "+fmtTs(L.until)+")":"")+".");}
+  const mg=await S.db.doc("meta/chat").get();const meta=mg.exists?mg.data():null;
+  if(!meta)return done("The page's data isn't loaded yet; try again in a moment.");
+  const top=await newestChunk();let lastI=meta.lastI;const first=lastI===-1&&!top;
+  if(!first&&!top)return done("meta/chat says the store ends at #"+lastI+" but no saved messages were found. Nothing saved. Tell Claude.");
+  if(top)for(let k=0;k<top.msgs.length;k++)if(top.msgs[k].i!==top.start+k)return done("Saved chunk "+top.id+" isn't numbered consecutively. Nothing saved. Tell Claude.");
+  const end=top?(top.msgs.length?top.msgs[top.msgs.length-1].i:top.start-1):-1;
+  if(end<lastI)return done("meta/chat.lastI (#"+lastI+") is ahead of the newest saved message (#"+end+"). Nothing saved. Tell Claude: set meta/chat lastI, lastMid and anchorMids from #"+end+", then paste again.");
+  /* Chunks newer than lastI: an earlier import saved (and read back) its messages but stopped before updating meta/chat. Count them in. */
+  let repaired=null,repairUpd=null;
+  if(end>lastI){const pool=S.msgs.filter(x=>x.i<top.start).concat(top.msgs);const z=top.msgs[top.msgs.length-1];
+    const upd={lastI:end,lastMid:z.m,lastT:z.t,anchorMids:pool.slice(-3).map(x=>x.m)};const own=top.msgs.filter(x=>x.i>lastI&&x.f==="You");if(own.length){upd.ownLastI=own[own.length-1].i;upd.ownLastMid=own[own.length-1].m;}
+    repaired={from:lastI+1,to:end,chunk:top.id};R.repaired=repaired;repairUpd=upd;lastI=end;}/* written below, only once the capture passes every check */
+  const repNote=repaired?(dry?"Would repair":"REPAIRED")+": #"+repaired.from+"–#"+repaired.to+" (chunk "+repaired.chunk+") were saved by an earlier import that didn't finish"+(dry?"":"; meta/chat now counts them")+". ":"";
+  const stored=i=>top&&i>=top.start?top.msgs[i-top.start]:S.byI.get(i);
+  const ms=cap.msgs.slice().sort((a,b)=>a.i-b.i);
   for(let k=1;k<ms.length;k++)if(ms[k].i!==ms[k-1].i+1)return done("Message numbers aren't consecutive at #"+ms[k].i+". Nothing saved.");
   if(ms.length&&ms[0].i>lastI+1)return done("Gap: the capture starts at #"+ms[0].i+" but the store ends at #"+lastI+". Nothing saved.");
-  for(const m of ms)if(m.i<=lastI){const st=S.byI.get(m.i);if(!st||st.m!==m.m)return done("#"+m.i+" doesn't match the stored message. Nothing saved.");}
+  for(const m of ms)if(m.i<=lastI){const st=stored(m.i);if(!st||st.m!==m.m)return done("#"+m.i+" doesn't match the stored message. Nothing saved.");}
   const fresh=ms.filter(m=>m.i>lastI).map(m=>{const o={};["i","t","f","b","m","r","q","x","l","a","p","d","pi","pq","pmid","pl","perr"].forEach(k=>{if(m[k]!=null&&m[k]!=="")o[k]=m[k];});if(o.b==null)o.b="";return o;});
   for(const m of fresh)if(!m.f||!m.m||!m.t||!/^\d{4}-\d\d-\d\d$/.test(m.d||""))return done("#"+m.i+" is missing a field. Nothing saved.");
   const inCap=new Set(ms.map(m=>m.i));
   for(const ph of photos){if(!inCap.has(ph.i)||!/^image\/(jpeg|png|webp|gif)$/.test(ph.type||"")||!ph.b64)return done("Photo for #"+ph.i+" is malformed. Nothing saved.");}
-  const size=S.meta.chunkSize||82;const writes=[];let cur;
+  const size=meta.chunkSize||82;const writes=[];let cur;
   if(first){if(!fresh.length||fresh[0].i!==0)return done("A first import must start at #0. Nothing saved.");cur={id:"c0000",start:0,msgs:[]};}
-  else{const ids=Object.keys(S.chunks).sort((a,b)=>S.chunks[a].start-S.chunks[b].start);const lastId=ids[ids.length-1];const lc=S.chunks[lastId];
-  if(!lc.msgs.length||lc.msgs[lc.msgs.length-1].i!==lastI)return done("The newest stored chunk doesn't end at #"+lastI+". Nothing saved.");
-  cur={id:lastId,start:lc.start,msgs:lc.msgs.map(x=>Object.assign({},x))};}
+  else cur={id:top.id,start:top.start,msgs:top.msgs.map(x=>Object.assign({},x))};
   for(const m of fresh){if(cur.msgs.length>=size){writes.push(cur);cur={id:"c"+String(m.i).padStart(4,"0"),start:m.i,msgs:[]};}cur.msgs.push(m);}writes.push(cur);
   const phInfo=photos.map(ph=>({i:ph.i,k:ph.k,type:ph.type,bytes:Math.floor(ph.b64.length*3/4)}));
-  if(dry)return done("DRY RUN OK: "+(fresh.length?fresh.length+" new messages, #"+fresh[0].i+"–#"+fresh[fresh.length-1].i+" (chunks "+writes.map(w=>w.id).join(", ")+")":"nothing new")+(photos.length?"; "+photos.length+" photo"+(photos.length>1?"s":"")+" verified":"")+". Nothing written.",{ok:true,fresh:fresh.length,chunks:writes.map(w=>w.id),photos:phInfo});
-  let msgPart="Nothing new: everything in this capture is already stored.";
+  if(dry)return done(repNote+"DRY RUN OK: "+(fresh.length?fresh.length+" new messages, #"+fresh[0].i+"–#"+fresh[fresh.length-1].i+" (chunks "+writes.map(w=>w.id).join(", ")+")":"nothing new")+(photos.length?"; "+photos.length+" photo"+(photos.length>1?"s":"")+" verified":"")+". Nothing written.",{ok:true,fresh:fresh.length,chunks:writes.map(w=>w.id),photos:phInfo});
+  if(repairUpd)await S.db.doc("meta/chat").update(repairUpd);
+  let msgPart=repNote+"Nothing new: everything in this capture is already stored.";
   if(fresh.length){
     for(const w of writes)await S.db.doc("chunks/"+w.id).set({start:w.start,msgs:w.msgs});
     for(const w of writes){const g=await S.db.doc("chunks/"+w.id).get();const d=g.exists?g.data():null;if(!d||JSON.stringify(d.msgs.map(x=>[x.i,x.m,x.b]))!==JSON.stringify(w.msgs.map(x=>[x.i,x.m,x.b])))return done("Saved, but the read-back of "+w.id+" didn't match. Tell Claude.");}
-    const z=fresh[fresh.length-1];const upd={lastI:z.i,lastMid:z.m,lastT:z.t,anchorMids:S.msgs.filter(x=>x.i<fresh[0].i).concat(fresh).slice(-3).map(x=>x.m)};
+    const z=fresh[fresh.length-1];const upd={lastI:z.i,lastMid:z.m,lastT:z.t,anchorMids:S.msgs.filter(x=>x.i<writes[0].start).concat(...writes.map(w=>w.msgs)).slice(-3).map(x=>x.m)};
     const own=fresh.filter(m=>m.f==="You");if(own.length){const o=own[own.length-1];upd.ownLastI=o.i;upd.ownLastMid=o.m;}
     await S.db.doc("meta/chat").update(upd);
-    msgPart="IMPORT OK: "+fresh.length+" new messages, #"+fresh[0].i+"–#"+z.i+" (chunks "+writes.map(w=>w.id).join(", ")+"). Checksum and read-back OK.";}
+    msgPart=repNote+"IMPORT OK: "+fresh.length+" new messages, #"+fresh[0].i+"–#"+z.i+" (chunks "+writes.map(w=>w.id).join(", ")+"). Checksum and read-back OK.";}
   R.fresh=fresh.length;R.chunks=writes.map(w=>w.id);
   if(photos.length){const assets=await claude.use("assets");if(!assets)return done(msgPart+" Photos not stored: this view can't upload.",{ok:!!fresh.length});
     const up=[];for(const ph of photos){try{const r=await assets.upload(b64ToBlob(ph.b64,ph.type),{type:ph.type});up.push({i:ph.i,k:ph.k,id:r.id,bytes:r.sizeBytes,type:r.contentType});}catch(e){return done(msgPart+" Photo upload failed at #"+ph.i+" ("+(e&&e.code||e)+").",{ok:!!fresh.length,uploaded:up});}}

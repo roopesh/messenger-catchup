@@ -90,8 +90,20 @@ Everything (summary cards, counts, mentions, open questions) filters to the wind
 ### Threading display (`convTree`, line 703)
 One tree for cards and the Messages tab. `r`/`rq`/`rg`/`i` links nest under their parent; `c` (same person continuing) sits right after the earlier message at the same level; depth is capped at 3. **A link only nests when its parent is in the same conversation**; otherwise the message shows as a root.
 
-### Importer (`importCore`, line 948)
-Checks, in order: JSON → `kind` → message checksum → photo checksum → data loaded → consecutive numbers → no gap after `lastI` → overlapping messages match stored ids → required fields (`f`, `m`, `t`, `d` as a date) → photo shape. First import must start at `#0`. Appends to the newest chunk, rolling to a new `cNNNN` at `chunkSize` (82). Writes chunks, **reads each back and compares**, then updates `meta/chat` (`lastI`, `lastMid`, `lastT`, `anchorMids`, `ownLastI`, `ownLastMid`), then uploads photos and merges `photos/index`. Every outcome goes to `refresh/lastImport`. These page writes are not version-pinned (BACKLOG R1).
+### Importer (`importCore`, line 957)
+The page's database has **no version-checked writes and no transactions** (runtime contract: last-writer-wins). So since v1.2.0 the importer protects itself in three ways:
+- **Import lease:** before writing, it takes a 2-minute cooperative lease on `refresh/importLock` (`acquire`, holder = a per-tab id), so two open copies of the page can't import at once. Renewing it from the same tab is fine. If the runtime has no `acquire`, it imports without a lease (`lock:"unsupported"` in `refresh/lastImport`).
+- **Fresh reads:** `meta/chat` and the newest chunk (`orderBy("start","desc").limit(1)`) are read from the store, not from the page's snapshots, which can lag or come from cache.
+- **Repair:** if the newest chunk ends *after* `meta/chat.lastI`, an earlier import saved and read back its messages but stopped before updating `meta/chat`. The importer counts them in (`lastI`, `lastMid`, `lastT`, `anchorMids`, `ownLastI`) and prefixes its message with `REPAIRED: #a–#b (chunk …)`. If the chunk ends *before* `lastI`, it refuses and says what to set.
+
+Checks, in order: JSON → `kind` → message checksum → photo checksum → lease → stored state (consecutive newest chunk, chunk end vs `lastI`) → consecutive numbers → no gap after `lastI` → overlapping messages match the stored ids → required fields (`f`, `m`, `t`, `d` as a date) → photo shape. A first import must start at `#0`. **Nothing, not even a repair, is written until every check passes.** It then:
+1. writes the repair, if any
+2. appends to the newest chunk, rolling to a new `cNNNN` at `chunkSize` (82)
+3. **reads each chunk back and compares**
+4. updates `meta/chat` (`lastI`, `lastMid`, `lastT`, `anchorMids`, `ownLastI`, `ownLastMid`)
+5. uploads photos and merges `photos/index`
+
+Every outcome goes to `refresh/lastImport`. A dry run reports what it would do, including "Would repair", and writes nothing.
 
 ### Outbox
 "Reply here" writes `outbox/r<timestamp>` `{i, mid, to, snip, text, state:"queued", queuedAt}`; Cancel sets `state:"cancelled"`. Claude moves rows to `sending` → `sent` (`sentAt`, `sentMid`) or `failed` (`error`).
@@ -107,7 +119,8 @@ See BACKLOG C1.
 ## Build tool (`scripts/catchup.py`)
 
 - `bootstrap WORK DBDIR`: loads all chunks, asserts numbering has no gaps and `meta.lastI` matches, writes `WORK/all.json`, `WORK/base/{threading,summary}.json`, `WORK/state.json` (`base`, `stops`, `tz`).
-- `build WORK RUN SPEC`: loads new messages from `RUN/chunks` (must be exactly `base+1…`), applies the spec, picks default links, runs the asserts, writes `RUN/out/{threading,summary}.json`, then **advances WORK in place** (no backup, BACKLOG B2).
+- `build WORK RUN SPEC`: loads new messages from `RUN/chunks` (must be exactly `base+1…`), applies the spec, picks default links, runs the asserts, writes `RUN/out/{threading,summary}.json`, copies the WORK it started from to `WORK/prev/`, then **advances WORK**. Building the same RUN again fails with "RUN already built into WORK … run: catchup.py restore WORK".
+- `restore WORK`: puts `WORK/prev/` back and removes it (one step of undo). Used after a refused DB write or to rebuild with a corrected spec. `bootstrap` clears any stale `WORK/prev/`.
 - Default link for each new message, in order: Messenger parent in window (`pi` → `r`, or `rq` if quote-matched in the browser) → Messenger parent by id from history (`pmid`) → quote match on stored history (`resolve`: same author, first 20 normalized chars, 300-message window, latest wins → `rq`; empty or "Photo"-type quote → author's latest media → `rg` + CHECK) → previous member of its conversation if ≤3 h older (`c` same author, else `i`, printed as GUESS) → none (ROOT).
 - Asserts: conv ids new; every new message joined exactly once; every message from the lowest member up is in exactly one conversation; links point backward; bullets ≤15 words; outcomes ≤12; bullet/key/open/answered refs belong to their conversation; deals name a real conversation; `meta/chat` was updated by the import.
 - Timestamps (`builtAt`, `generatedAt`) come from the system clock in `meta.tz` (falls back to America/Los_Angeles).
@@ -128,7 +141,8 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `summary/current` | Claude (from catchup.py) | `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
 | `photos/index` | Page importer | `byI{i:["/_blob/<id>",…]}`, `gifs[i]` |
 | `refresh/status` | Claude | `state` (idle/running/done/error), `startedAt`, `step`, `by`, `finishedAt`, `added`, `message` |
-| `refresh/lastImport` | Page importer | `at`, `src`, `ok`, `msg`, `dry`, `sha`, `count`, `fresh`, `chunks`, `uploaded` |
+| `refresh/lastImport` | Page importer | `at`, `src`, `ok`, `msg`, `dry`, `sha`, `count`, `fresh`, `chunks`, `uploaded`, `lock`, `repaired` |
+| `refresh/importLock` | Page importer (lease only) | the platform's lease state; holds no data |
 | `outbox/*` | Page, then Claude | see Outbox above |
 | `qa/*` | Page (Ask) | `q`, `a`, `at`, `scope`, `toI` |
 | `views/*` | Page (Views) | `kind:"view"` (title, intro, sections, prompt, at, toI) or `kind:"idea"` (prompt, at) |
@@ -161,6 +175,6 @@ Nothing here ships in the skill ZIP.
 | Thing | Where | Now |
 |---|---|---|
 | Skill | `SKILL.md` "Tested" section | 1.1 |
-| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion` | 1.1 |
+| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.2 |
 | Helper | 4 places in `helper.user.js` + the page's embedded copy | 1.1 |
 | Summary schema | `summary/current.version` | 2 (the "v3" cards are a display change, same schema) |

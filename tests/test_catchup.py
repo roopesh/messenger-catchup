@@ -163,6 +163,45 @@ class TestBuild(unittest.TestCase):
         old=msg(0,'A',d='2025-10-12');old['t']='October 12, 2025 at 9:00 AM'      # any label form: time by regex
         self.assertEqual(catchup._min(old)%1440,9*60)
 
+class TestRestore(unittest.TestCase):
+    """B2: a build keeps the WORK it started from in WORK/prev; `restore` undoes it so the same RUN can be built again."""
+    def setUp(self):
+        self.t=tempfile.TemporaryDirectory();self.e=Env(self.t.name);self.e.seed()
+        self.run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b')]);self.spec={'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]}}
+    def tearDown(self): self.t.cleanup()
+    def W(self,f): return r(os.path.join(self.e.work,f))
+    def test_rebuild_without_restore_says_what_to_do(self):
+        self.e.build(self.run,self.spec)
+        with self.assertRaisesRegex(AssertionError,r'RUN already built into WORK \(WORK is at #1, RUN ends at #1\)\. To build it again, run: catchup.py restore WORK'):
+            self.e.build(self.run,self.spec)
+    def test_restore_then_rebuild_with_a_new_spec(self):
+        self.e.build(self.run,self.spec);self.assertEqual(self.e.state()['base'],1)
+        out=quiet(catchup.restore,self.e.work);self.assertIn('restore ok: WORK back at #-1',out)
+        self.assertEqual(self.e.state()['base'],-1);self.assertEqual(self.W('all.json'),[]);self.assertEqual(self.W('base/threading.json')['convs'],[])
+        self.assertFalse(os.path.exists(os.path.join(self.e.work,'prev')))
+        self.e.build(self.run,{'newconvs':[{'id':'b','title':'B'}],'join':{'b':[0,1]}})
+        self.assertEqual([c['id'] for c in r(os.path.join(self.run,'out','threading.json'))['convs']],['b'])
+        self.assertEqual(self.e.state()['base'],1)
+    def test_restore_only_undoes_the_last_build(self):
+        self.e.build(self.run,self.spec);run2=self.e.run([msg(2,'Cy','c')]);self.e.build(run2,{'join':{'a':[2]}})
+        quiet(catchup.restore,self.e.work);self.assertEqual(self.e.state()['base'],1);self.assertEqual(len(self.W('all.json')),2)
+        with self.assertRaisesRegex(AssertionError,'nothing to restore'): catchup.restore(self.e.work)
+    def test_nothing_to_restore_after_bootstrap(self):
+        with self.assertRaisesRegex(AssertionError,'nothing to restore'): catchup.restore(self.e.work)
+    def test_bootstrap_clears_a_stale_prev(self):
+        self.e.build(self.run,self.spec);self.assertTrue(os.path.exists(os.path.join(self.e.work,'prev')))
+        self.e.seed();self.assertFalse(os.path.exists(os.path.join(self.e.work,'prev')))
+    def test_rejected_build_leaves_prev_alone(self):
+        self.e.build(self.run,self.spec);before=self.W('prev/state.json')
+        run2=self.e.run([msg(2,'Cy','c')])
+        with self.assertRaises(AssertionError): self.e.build(run2,{'join':{'nope':[2]}})
+        self.assertEqual(self.W('prev/state.json'),before)
+    def test_cli_restore(self):
+        import subprocess
+        self.e.build(self.run,self.spec)
+        p=subprocess.run([sys.executable,os.path.join(ROOT,'scripts','catchup.py'),'restore',self.e.work],capture_output=True,text=True)
+        self.assertEqual(p.returncode,0,p.stderr);self.assertIn('restore ok',p.stdout)
+
 class TestBuildRejects(unittest.TestCase):
     """Every assert fires before anything is written, so WORK never advances on a rejected build."""
     def setUp(self):
@@ -224,10 +263,6 @@ class TestKnownBugs(unittest.TestCase):
         run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b',r='Ana',q='a',pi=0)])
         self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]}})
         self.assertIn('reply links',r(os.path.join(run,'out','threading.json'))['note'])
-    @unittest.expectedFailure
-    def test_B2_retry_after_failed_db_write(self):
-        run=self.e.run([msg(0,'Ana','a')]);spec={'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0]}}
-        self.e.build(run,spec);self.e.build(run,spec)     # a retry of the same RUN should be possible (or restorable)
     @unittest.expectedFailure
     def test_B3_dealEdit_without_deal_is_a_clear_error(self):
         run=self.e.run([msg(0,'Ana','a')])
