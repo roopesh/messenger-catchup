@@ -38,7 +38,7 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
 | [README.md](../README.md) | What it is, install, requirements |
 | [CLAUDE.md](../CLAUDE.md) | The workflow rules (PR, versioning, release) |
 | [CHANGELOG.md](../CHANGELOG.md) | What changed in each release |
-| [SKILL.md](../SKILL.md) | The procedure Claude follows. **Changing it changes behavior.** |
+| [SKILL.md](../SKILL.md) and [references/](../references) | The procedure Claude follows: `SKILL.md` every run, references when needed. **Changing either changes behavior.** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the parts fit; full database reference; helper bridge; capture format; tests; range summaries |
 | [BACKLOG.md](BACKLOG.md) | Everything open, by priority |
 | [DECISIONS.md](DECISIONS.md) | What was chosen, why, and what was rejected |
@@ -81,7 +81,7 @@ python3 scripts/catchup.py build WORK RUNDIR spec.json
 2. Make the change. Bump `VERSION`, `package.json` (`npm install --package-lock-only` updates the lockfile) and add a `CHANGELOG.md` entry. MAJOR / MINOR / PATCH rules are in [CLAUDE.md](../CLAUDE.md). `npm test` fails if these disagree.
 3. `npm test`, then `gh pr create`. Fill in the template's checklist (`.github/pull_request_template.md`).
 4. `gh pr checks --watch` until CI (`test`, `version-bump`) is green, then `gh pr merge --squash --delete-branch` and `git switch main && git pull`.
-5. `tools/release.sh`: tags `vX.Y.Z` on the merge commit, builds the ZIP from the tag (`SKILL.md`, `VERSION`, `assets/`, `scripts/`), checks its `VERSION`, and publishes the GitHub release with the changelog entry.
+5. `tools/release.sh`: tags `vX.Y.Z` on the merge commit, builds the ZIP from the tag (`SKILL.md`, `VERSION`, `assets/`, `scripts/`, `references/`), checks its `VERSION`, and publishes the GitHub release with the changelog entry.
 6. Users install or update from the release ZIP: Customize › Skills › + › Create skill › Upload a skill.
 
 ## Gotchas worth knowing before you touch anything
