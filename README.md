@@ -33,6 +33,12 @@ node sim.js        # needs Playwright with Chromium
 ```
 35 checks: first run, incremental runs, messages arriving mid-run, photo replies, a chat shorter than the first-run count, older date labels, stale results, jump links, with and without the helper.
 
+## Development docs
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): history, phase by phase
+- [docs/DECISIONS.md](docs/DECISIONS.md): what was chosen, why, and what was rejected
+- [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md): benchmarks, threading evaluations, test results
+- [docs/LEARNINGS.md](docs/LEARNINGS.md): platform limits, gotchas, open issues
+
 ## Privacy
 - Each user's data lives only in their own private claude.ai artifact.
 - The skill contains no personal data. Messenger is read-only except for the replies you queue, and those are posted only if you turn on auto-posting at setup or confirm each one in chat.
