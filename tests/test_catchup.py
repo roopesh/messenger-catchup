@@ -32,7 +32,7 @@ class Env:
         os.makedirs(os.path.join(db,'chunks'),exist_ok=True)
         last=self.msgs[-1] if self.msgs else None
         w(os.path.join(db,'meta','chat.json'),dict({'lastI':last['i'] if last else -1,'anchorMids':[m['m'] for m in self.msgs[-3:]],'tz':'America/Los_Angeles'},**(meta or {})))
-        w(os.path.join(db,'threading','current.json'),threading or {'convs':[],'links':{},'to':-1,'note':''})
+        w(os.path.join(db,'threading','current.json'),threading or {'convs':[],'links':{},'to':last['i'] if last else -1,'note':''})  # seeded history counts as built
         w(os.path.join(db,'summary','current.json'),summary or {'version':2,'convs':[],'open':[],'answered':[],'deals':[],'mentions':[],'toI':-1})
         return quiet(catchup.bootstrap,self.work,db)
     def run(self,new,meta=None):
@@ -71,14 +71,14 @@ SPEC={'newconvs':[{'id':'gear1106','title':'30L pack','tag':'For sale','outcome'
       'deals':[{'kind':'sale','tag':'For sale','conv':'gear1106','text':'30L pack $120','refs':[1]}],
       'open':[{'conv':'gear1106','ask':8,'to':'anyone','note':''}],
       'answered':[{'conv':'gear1106','ask':0,'answer':'Ben has one for $120','refs':[1]}],
-      'mentions':[{'note':'Ben replied to you','refs':[[3]]}]}
+      'mentions':[{'note':'Ben offered one','refs':[[1]]}]}
 
 class TestBootstrap(unittest.TestCase):
     def setUp(self): self.t=tempfile.TemporaryDirectory();self.e=Env(self.t.name)
     def tearDown(self): self.t.cleanup()
     def test_empty_seed(self):
         out=self.e.seed()
-        self.assertIn('bootstrap ok: 0 messages, last #-1',out)
+        self.assertIn('bootstrap ok: 0 messages built through #-1',out)
         self.assertEqual(self.e.state(),{'base':-1,'stops':[],'tz':'America/Los_Angeles'})
         self.assertEqual(r(os.path.join(self.e.work,'all.json')),[])
     def test_existing_history_and_stops(self):
@@ -118,7 +118,7 @@ class TestBuild(unittest.TestCase):
         self.assertEqual([c['id'] for c in s['convs']],['gear1106','pics1106'])   # newest activity first
         g=s['convs'][0];self.assertEqual(g['outcome'],'Sold to You');self.assertEqual(len(g['synopsis']),2)
         self.assertEqual(s['open'][0]['ask'],8);self.assertEqual(s['answered'][0]['ask'],0)
-        self.assertEqual(s['deals'][0]['refs'],[1]);self.assertEqual(s['mentions'][0]['refs'],[[3]])
+        self.assertEqual(s['deals'][0]['refs'],[1]);self.assertEqual(s['mentions'][0]['refs'],[[1]])
     def test_work_advances(self):
         self.first();st=self.e.state()
         self.assertEqual(st['base'],10);self.assertEqual(st['stops'],['mid.10','mid.9','mid.8'])
@@ -147,14 +147,14 @@ class TestBuild(unittest.TestCase):
 
     def test_quote_match_latest_wins_and_window(self):
         ms=[msg(0,'Ana','same words here again'),msg(1,'Ana','same words here again'),msg(2,'Ben','ok')]
-        self.assertEqual(catchup.resolve(dict(msg(3,'Ben','x'),r='Ana',q='same words here again'),ms),(1,'rq'))
+        self.assertEqual(catchup.resolve(dict(msg(3,'Ben','x'),r='Ana',q='same words here again'),ms),(1,'rq',None))
         far=[msg(0,'Ana','far away words')]
-        self.assertEqual(catchup.resolve(dict(msg(301,'Ben','x'),r='Ana',q='far away words'),far),(None,None))
-        self.assertEqual(catchup.resolve(dict(msg(300,'Ben','x'),r='Ana',q='far away words'),far),(0,'rq'))
+        self.assertEqual(catchup.resolve(dict(msg(301,'Ben','x'),r='Ana',q='far away words'),far),(None,None,None))
+        self.assertEqual(catchup.resolve(dict(msg(300,'Ben','x'),r='Ana',q='far away words'),far),(0,'rq',None))
     def test_quote_match_you_and_themself(self):
         ms=[msg(0,'You','my own words here'),msg(1,'Ben','ben says something')]
-        self.assertEqual(catchup.resolve(dict(msg(2,'Ana','x'),r='you',q='my own words here'),ms),(0,'rq'))
-        self.assertEqual(catchup.resolve(dict(msg(2,'Ben','x'),r='themself',q='ben says something'),ms),(1,'rq'))
+        self.assertEqual(catchup.resolve(dict(msg(2,'Ana','x'),r='you',q='my own words here'),ms),(0,'rq',None))
+        self.assertEqual(catchup.resolve(dict(msg(2,'Ben','x'),r='themself',q='ben says something'),ms),(1,'rq',None))
     def test_normalize(self):
         self.assertEqual(catchup._n('🔥🔥 Great   DEAL…'),'great deal')
         self.assertEqual(catchup._n('  "Quoted"  '),'"quoted"')
@@ -307,6 +307,79 @@ class TestBugFixes(unittest.TestCase):
         self.assertIn('WARN reply parent not found 1 - left unlinked',out);self.assertNotIn('GUESS 1',out)
     def test_C5_timestamp_format(self):
         self.assertRegex(catchup._ts(),r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d\d [AP]M$')
+
+class TestReviewFixes(unittest.TestCase):
+    """B13, B18, B21 (v1.5.0), from the independent review of v1.4.1."""
+    def setUp(self): self.t=tempfile.TemporaryDirectory();self.e=Env(self.t.name);self.e.seed()
+    def tearDown(self): self.t.cleanup()
+    # B13: short quotes
+    def test_B13_short_quote_never_matches_inside_another_word(self):
+        ms=[msg(0,'Ana','it looks great')]
+        self.assertEqual(catchup.resolve(dict(msg(1,'Ben','x'),r='Ana',q='ok'),ms),(None,None,None))
+    def test_B13_short_quote_needs_the_same_text_and_is_flagged(self):
+        ms=[msg(0,'Ana','ok'),msg(1,'Ana','Yes please, the blue one')]
+        self.assertEqual(catchup.resolve(dict(msg(2,'Ben','x'),r='Ana',q='ok'),ms),(0,'rq','short quote, same text'))
+        self.assertEqual(catchup.resolve(dict(msg(2,'Ben','x'),r='Ana',q='Yes'),ms),(None,None,None))
+    def test_B13_long_quote_found_inside_is_flagged(self):
+        ms=[msg(0,'Ana','@Ben meet at the trailhead at nine')]
+        pr=catchup.resolve(dict(msg(1,'Ben','x'),r='Ana',q='meet at the trailhead at nine'),ms)
+        self.assertEqual(pr[:2],(0,'rq'));self.assertTrue(pr[2])
+    def test_B13_build_prints_CHECK_for_doubtful_matches(self):
+        run=self.e.run([msg(0,'Ana','ok'),msg(1,'Ben','great',r='Ana',q='ok')])
+        out=self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]}})
+        self.assertIn('CHECK quote match (short quote, same text) 1 -> 0',out)
+    # B18: validations
+    def first(self):
+        run=self.e.run([msg(0,'Ana','selling a stove'),msg(1,'Ben','how much?'),msg(2,'You','me too')])
+        self.e.build(run,{'newconvs':[{'id':'a','title':'A'},{'id':'b','title':'B'}],'join':{'a':[0,1],'b':[2]},'open':[{'conv':'a','ask':1,'to':'Ana'}]})
+    def rej(self,spec,pat):
+        run=self.e.run([msg(3,'Cy','c')])
+        with self.assertRaisesRegex(AssertionError,pat): self.e.build(run,dict({'join':{'a':[3]}},**spec))
+    def test_B18_deal_needs_refs_in_its_conversation(self):
+        self.first();self.rej({'deals':[{'kind':'sale','tag':'x','conv':'a','text':'t','refs':[]}]},'deal refs must be')
+    def test_B18_deal_ref_outside_conversation(self):
+        self.first();self.rej({'deals':[{'kind':'sale','tag':'x','conv':'a','text':'t','refs':[2]}]},'deal refs must be')
+    def test_B18_mention_of_your_own_message(self):
+        self.first();self.rej({'mentions':[{'note':'n','refs':[[2]]}]},'mention ref must be')
+    def test_B18_mention_of_a_missing_message(self):
+        self.first();self.rej({'mentions':[{'note':'n','refs':[[99]]}]},'mention ref must be')
+    def test_B18_closeOpen_must_match(self):
+        self.first();self.rej({'closeOpen':[0]},'no open question asks at #0')
+    def test_B18_open_question_listed_twice(self):
+        self.first();self.rej({'open':[{'conv':'a','ask':1,'to':'Ana'}]},'already open')
+    def test_B18_dealEdit_addRefs_in_conversation(self):
+        run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b')])
+        self.e.build(run,{'newconvs':[{'id':'a','title':'A'},{'id':'b','title':'B'}],'join':{'a':[0],'b':[1]},'deals':[{'kind':'sale','tag':'x','conv':'a','text':'t','refs':[0]}]})
+        run=self.e.run([msg(2,'Cy','c')])
+        with self.assertRaisesRegex(AssertionError,'addRefs must be in'): self.e.build(run,{'join':{'b':[2]},'dealEdit':{'a':{'addRefs':[1]}}})
+    def test_B18_valid_close_and_reopen_in_one_build(self):
+        self.first();run=self.e.run([msg(3,'Ana','80 dollars')])
+        self.e.build(run,{'join':{'a':[3]},'closeOpen':[1],'answered':[{'conv':'a','ask':1,'answer':'$80','refs':[3]}]})
+        self.assertEqual(r(os.path.join(run,'out','summary.json'))['open'],[])
+    # B21: stored but never built
+    def seed_partly_built(self):
+        e=Env(tempfile.mkdtemp(dir=self.t.name));ms=[msg(i,'Ana' if i%2 else 'Ben','m%d'%i,mi=i%60) for i in range(90)]
+        th={'convs':[{'id':'a','title':'A','members':list(range(80))}],'links':{},'to':79,'note':''}
+        sm={'version':2,'convs':[{'id':'a','tag':'','synopsis':[],'outcome':'','key':[]}],'open':[],'answered':[],'deals':[],'mentions':[],'toI':79}
+        out=e.seed(ms,threading=th,summary=sm);return e,out
+    def test_B21_bootstrap_bases_on_what_was_built(self):
+        e,out=self.seed_partly_built()
+        self.assertEqual(e.state()['base'],79);self.assertIn('#80-#89 are stored but not built yet',out)
+        self.assertEqual(len(r(os.path.join(e.work,'all.json'))),80)
+    def test_B21_run_missing_the_unbuilt_messages_names_the_chunks(self):
+        e,_=self.seed_partly_built();e.msgs=e.msgs[:90]
+        run=os.path.join(e.d,'runX');new=[msg(i,'Cy','n%d'%i,mi=i%60) for i in range(90,96)];e.msgs+=new;e._chunks(run,90)   # only c0082 (82-95) fetched
+        w(os.path.join(run,'meta','chat.json'),{'lastI':95,'anchorMids':['mid.93','mid.94','mid.95'],'chunkSize':82})
+        p=os.path.join(e.d,'s.json');w(p,{'join':{'a':list(range(80,96))}})
+        # c0082 covers 82-95, so 80-81 (in c0000) are missing
+        with self.assertRaisesRegex(AssertionError,r'RUN is missing #80-#81 \(stored, not built yet\): fetch chunks/c0000 into RUN too'): quiet(catchup.build,e.work,run,p)
+    def test_B21_full_run_threads_the_unbuilt_messages(self):
+        e,_=self.seed_partly_built();e.msgs=e.msgs[:90]
+        run=os.path.join(e.d,'runY');new=[msg(i,'Cy','n%d'%i,mi=i%60) for i in range(90,96)];e.msgs+=new;e._chunks(run,80)
+        w(os.path.join(run,'meta','chat.json'),{'lastI':95,'anchorMids':['mid.93','mid.94','mid.95']})
+        p=os.path.join(e.d,'s.json');w(p,{'join':{'a':list(range(80,96))}})
+        out=quiet(catchup.build,e.work,run,p);self.assertIn('build ok: #80-#95',out)
+        self.assertEqual(r(os.path.join(run,'out','threading.json'))['convs'][0]['members'],list(range(96)))
 
 class TestCli(unittest.TestCase):
     def test_usage_on_unknown_command(self):

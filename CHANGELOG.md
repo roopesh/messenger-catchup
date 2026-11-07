@@ -2,6 +2,34 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.5.0] - 2026-11-07
+The rest of the review fixes: `catchup.py` and the refresh and outbox procedures. MINOR because SKILL.md's steps change. No change to the page or the helper.
+
+### Fixed
+- **B21, interrupted runs** (found while tracing B15): `bootstrap` assumed every stored message was already threaded. If a run imported and then stopped before building, every later build failed with "message in 0 conversations". `bootstrap` now bases WORK on `threading/current.to` and says which messages still need building. `build` names the chunks to fetch if the RUN lacks them.
+- **B13, quote matching:** a short quote ("ok", "Yes") could link to any message containing those letters ("ok" inside "looks"), shown as a plain "matched by quote". Quotes under 12 characters now need the same whole text, and a long quote found inside a message (not at its start) is still matched. Both print `CHECK quote match (…)` for review.
+- **B18, validation:** `build` now also refuses:
+  - deal refs that are empty or outside the deal's conversation (the page hid such deals)
+  - `dealEdit` additions outside the conversation
+  - mentions of a missing message or of your own
+  - a `closeOpen` that matches no open question
+  - a question opened twice
+- **B15, refresh procedure:**
+  - the versions step 7 pins are now actually read (step 5)
+  - WORK is re-bootstrapped when another session has built since
+  - a run is skipped while another one is recent
+  - a refused write is retried with fresh versions when only `meta/chat` or `refresh/status` changed, and rebuilt from a fresh bootstrap only when another build happened
+- **B19, nothing new:** a scan with nothing new skips the import and build and records only `lastRefresh`. Any early stop sets `refresh/status` to error instead of leaving "refreshing" for 25 minutes.
+- **B16, outbox:**
+  - only "reply box is ready" allows typing
+  - the reply bar must quote the queued message's text, which catches a reply box left open from an earlier attempt
+  - a send that can't be confirmed in 15 s stays `sending` instead of `failed`, so it isn't queued and posted twice
+
+### Tests
+- 15 new `catchup.py` tests, including the reviewer's exact repros ("ok" vs "it looks great", "Yes" vs "Yes please…"). 14 of them fail against v1.4.2's `catchup.py`; the 15th is a control that passes on both. Two fixtures corrected: seeded history now counts as built, and the scenario no longer lists a mention of your own message.
+
+Components: `PAGE_VERSION` 1.5, helper 1.3 (unchanged).
+
 ## [1.4.2] - 2026-11-07
 Fixes from an independent review of v1.4.1 (BACKLOG B12–B21; the rest follow in 1.5.0). Pages republish on their next refresh (`PAGE_VERSION` 1.5), and Claude reports the helper update (1.3).
 

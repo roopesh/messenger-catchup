@@ -30,16 +30,22 @@ def _who_ok(m,p):
     if r.lower()=='you': return p['f']=='You'
     if r.lower() in('themself','themselves','himself','herself'): return p['f']==m['f']
     return p['f']==r or r.startswith(p['f']) or p['f'].startswith(r)
-def resolve(m,pool,window=300,n=20):
-    if not m.get('r'): return None,None
+def resolve(m,pool,window=300,n=20,short=12):
+    """Parent of a reply from its quote -> (i, type, doubt). doubt is None when the match is solid, else why to CHECK it."""
+    if not m.get('r'): return None,None,None
     cand=[p for p in pool if m['i']-window<=p['i']<m['i'] and _who_ok(m,p)]
     q=_n(m.get('q'))
+    latest=lambda c:max(c,key=lambda p:p['i'])['i']
     if q in('','attachment','photo','gif','video','sticker'):
         c=[p for p in cand if p.get('p') or p.get('a') or not p.get('b')]
-        return (max(c,key=lambda p:p['i'])['i'],'rg') if c else (None,None)
-    key=q[:n]
-    c=[p for p in cand if _n(p.get('b')).startswith(key)] or [p for p in cand if key in _n(p.get('b'))]
-    return (max(c,key=lambda p:p['i'])['i'],'rq') if c else (None,None)
+        return (latest(c),'rg',None) if c else (None,None,None)
+    if len(q)<short:  # "ok", "Yes": only the same whole text counts, and it's still worth a look
+        c=[p for p in cand if _n(p.get('b'))==q]
+        return (latest(c),'rq','short quote, same text') if c else (None,None,None)
+    key=q[:n]; c=[p for p in cand if _n(p.get('b')).startswith(key)]
+    if c: return latest(c),'rq',None
+    c=[p for p in cand if key in _n(p.get('b'))]
+    return (latest(c),'rq','quote found inside the text, not at its start') if c else (None,None,None)
 
 def _min(m):  # date from d, time by regex from t, so any Messenger label form (old dates) parses
     d=datetime.date.fromisoformat(m['d']); x=re.search(r'(\d{1,2}):(\d{2})\s*([AP]M)',m.get('t') or '',re.I)
@@ -81,9 +87,11 @@ def bootstrap(work,db):
     al=[byi[i] for i in sorted(byi)]
     assert [m['i'] for m in al]==list(range(len(al))),'gap in stored messages'
     mt=_load(db+'/meta/chat.json'); assert mt['lastI']==(al[-1]['i'] if al else -1),(mt['lastI'],len(al))
-    _dump(al,work+'/all.json'); _dump(_load(db+'/threading/current.json'),work+'/base/threading.json'); _dump(_load(db+'/summary/current.json'),work+'/base/summary.json')
-    st={'base':al[-1]['i'] if al else -1,'stops':(mt.get('anchorMids') or [])[::-1],'tz':mt.get('tz') or 'America/Los_Angeles'}; _dump(st,work+'/state.json')
-    print('bootstrap ok: %d messages, last #%d; STOPS=%s'%(len(al),st['base'],json.dumps(st['stops'])))
+    th=_load(db+'/threading/current.json'); last=al[-1]['i'] if al else -1; to=th.get('to'); base=last
+    if isinstance(to,int) and -1<=to<last: base=to  # stored but never built (a run that stopped after its import): the next build covers them
+    _dump(al[:base+1],work+'/all.json'); _dump(th,work+'/base/threading.json'); _dump(_load(db+'/summary/current.json'),work+'/base/summary.json')
+    st={'base':base,'stops':(mt.get('anchorMids') or [])[::-1],'tz':mt.get('tz') or 'America/Los_Angeles'}; _dump(st,work+'/state.json')
+    print('bootstrap ok: %d messages built through #%d; STOPS=%s'%(base+1,base,json.dumps(st['stops']))+('' if base==last else '; #%d-#%d are stored but not built yet: the next RUN must include them'%(base+1,last)))
 
 def build(work,run,specp):
     global TZ
@@ -96,7 +104,11 @@ def build(work,run,specp):
         if m['i'] in byi: assert byi[m['i']]==m,('stored copy differs',m['i'])
     new=sorted({m['i']:m for m in ms if m['i']>base}.values(),key=lambda m:m['i']); N={m['i']:m for m in new}
     assert new or not ms,'RUN already built into WORK (WORK is at #%d, RUN ends at #%d). To build it again, run: catchup.py restore WORK'%(base,max(m['i'] for m in ms))
-    ids=[m['i'] for m in new]; assert ids and ids==list(range(base+1,base+1+len(ids))),('new messages must be #%d onward with no gaps'%(base+1),ids)
+    ids=[m['i'] for m in new]; mt=_load(run+'/meta/chat.json')
+    if ids and ids[0]>base+1:
+        cs=mt.get('chunkSize') or 82; need=sorted({'c%04d'%(x//cs*cs) for x in range(base+1,ids[0])})
+        raise AssertionError('RUN is missing #%d-#%d (stored, not built yet): fetch %s into RUN too'%(base+1,ids[0]-1,', '.join('chunks/'+c for c in need)))
+    assert ids and ids==list(range(base+1,base+1+len(ids))),('new messages must be #%d onward with no gaps'%(base+1),ids)
     bym={m.get('m'):m['i'] for m in al+new if m.get('m')}
     t=_load(work+'/base/threading.json'); s=_load(work+'/base/summary.json'); C={cv['id']:cv for cv in t['convs']}
     for nc in sp.get('newconvs',[]):
@@ -114,9 +126,9 @@ def build(work,run,specp):
             if m.get('pi') is not None: L=[m['pi'],'rq' if m.get('pq') else 'r']  # pi can be 0
             elif m.get('pmid') and m['pmid'] in bym: L=[bym[m['pmid']],'rq' if m.get('pq') else 'r']
             elif m.get('r'):
-                pr,k=resolve(m,al+new)
+                pr,k,doubt=resolve(m,al+new)
                 if pr is not None:
-                    L=[pr,k]; print(('CHECK photo-reply guess' if k=='rg' else 'matched by quote'),i,'->',pr)
+                    L=[pr,k]; print('CHECK photo-reply guess' if k=='rg' else ('CHECK quote match (%s)'%doubt if doubt else 'matched by quote'),i,'->',pr)
                 else: print('WARN reply parent not found',i,'- left unlinked; set "links" by hand if you know it'); unfound=True
             if not L and prev and not unfound:  # a reply whose parent wasn't found is not guessed as an answer
                 p=max(prev); P=byi.get(p) or N.get(p)
@@ -141,13 +153,25 @@ def build(work,run,specp):
         for tx,refs in bs: assert len(tx.split())<=15,('bullet over 15 words',tx); SC[cid]['synopsis'].append({'t':tx,'refs':refs})
     for cid,o in sp.get('outcome',{}).items(): assert len(o.split())<=12,('outcome over 12 words',o); SC[cid]['outcome']=o
     for cid,k in sp.get('key',{}).items(): SC[cid]['key']=k
+    pool={m['i']:m for m in al+new}; cmem=lambda cid:set(C[cid]['members']) if cid in C else set()
+    for d in sp.get('deals',[]):
+        assert d.get('conv') in C,('deal conv missing',d.get('conv'))
+        assert d.get('refs') and all(r in cmem(d['conv']) for r in d['refs']),('deal refs must be messages in its conversation (the page hides a deal without them)',d)
+    for x in sp.get('mentions',[]):
+        for r in x.get('refs',[]):
+            k=r[0] if isinstance(r,list) else r
+            assert k in pool and pool[k]['f']!='You',('mention ref must be a stored message by someone else',k,x.get('note'))
+    open_asks={o['ask'] for o in s['open']}
+    for k in sp.get('closeOpen',[]): assert k in open_asks,('closeOpen: no open question asks at #%s'%k)
+    for o in sp.get('open',[]): assert o['ask'] not in open_asks or o['ask'] in sp.get('closeOpen',[]),('already open',o['ask'])
     s['deals']+=sp.get('deals',[])
     for cid,e in sp.get('dealEdit',{}).items():
         ds=[d for d in s['deals'] if d['conv']==cid]; assert ds,('dealEdit: no deal in conversation',cid)
         assert len(ds)==1 or 'index' in e,('dealEdit: %d deals in %s; add "index" (0 = the first listed)'%(len(ds),cid))
         d=ds[e.get('index',0)]
         if 'text' in e: d['text']=e['text']
-        d['refs']=sorted(set(d['refs']+e.get('addRefs',[])))
+        assert all(r in cmem(cid) for r in e.get('addRefs',[])),('dealEdit addRefs must be in the conversation',cid)
+        d['refs']=sorted(set(d.get('refs',[])+e.get('addRefs',[])))
     s['open']=sp.get('open',[])+[o for o in s['open'] if o['ask'] not in sp.get('closeOpen',[])]
     s['answered']=sp.get('answered',[])+s['answered']; s['mentions']=sp.get('mentions',[])+s['mentions']
     s['toI']=ids[-1]
@@ -159,7 +183,7 @@ def build(work,run,specp):
     for o in s['open']+s['answered']: assert all(r in cm[o['conv']] for r in [o['ask']]+o.get('refs',[])),('ref not in conv',o)
     for d in s['deals']: assert d['conv'] in cm,('deal conv missing',d['conv'])
     last={c:max(m) for c,m in cm.items() if m}; s['convs'].sort(key=lambda c:-last.get(c['id'],0))
-    mt=_load(run+'/meta/chat.json'); a=mt['anchorMids']; assert mt['lastI']==ids[-1] and a[-1]==new[-1]['m'],'meta/chat not updated by import'
+    a=mt['anchorMids']; assert mt['lastI']==ids[-1] and a[-1]==new[-1]['m'],'meta/chat not updated by import'
     ts=_ts(); t['builtAt']=ts; s['generatedAt']=ts
     _dump(t,run+'/out/threading.json'); _dump(s,run+'/out/summary.json')
     _snapshot(work)
