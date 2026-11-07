@@ -43,9 +43,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B22 | P1 | bug | `bootstrap` crashed when chunks run past `meta/chat.lastI` (the state REPAIRED fixes), so fresh sessions never got to paste · **done** (v1.5.1) |
 | B23 | P2 | bug | Conflict recovery dead-ended: "restore WORK" after a fresh bootstrap that has nothing to restore · **done** (v1.5.1) |
 | B24 | P2 | bug | Capture replaced any message mentioning "deleted a message" with "(deleted a message)" · **done** (v1.5.1) |
-| B25 | P2 | bug | Outbox: a `sending` reply has no rule when it's not found; the check only looks at what's on screen |
-| B26 | P2 | bug | A session that loses the race for the run lock overwrites the winner's status with "error" |
-| B27 | P2 | bug | Step 7 marks the run done (releasing the lock) before step 8 posts replies in the Messenger tab |
+| B25 | P2 | bug | Outbox: a `sending` reply has no rule when it's not found; the check only looks at what's on screen · **done** (v1.6.0) |
+| B26 | P2 | bug | A session that loses the race for the run lock overwrites the winner's status with "error" · **done** (v1.6.0) |
+| B27 | P2 | bug | Step 7 marks the run done (releasing the lock) before step 8 posts replies in the Messenger tab · **done** (v1.6.0) |
 | B28 | P2 | bug | Re-paste after a failed upload could store a photo twice when a capture skipped a photo slot · **done** (v1.5.1) |
 | B29 | P3 | bug | "You replied to yourself" not recognized: such replies never linked · **done** (v1.5.1) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
@@ -159,8 +159,8 @@ A fresh agent with no context read the code and the procedure (B12–B20; B12 an
 - **B19:** step 3 notes `win:0` but doesn't skip the rest; without the helper an empty capture reaches `build`, which fails. A scan error never resets `refresh/status`.
 - **B21:** `bootstrap` sets WORK's base to the last *stored* message. If a run imported and then died before building, those messages are in no conversation, and every later build fails "message in 0 conversations". Fix: base = `threading/current.to`; the next RUN must carry #to+1 onward.
 
-### B22–B29 · found by a second independent review (Nov 7, of v1.5.0)
-A fresh agent reviewed the code after the night's changes; B22 and B23 were confirmed by running them. Fixed: B22, B23, B24, B28, B29 in v1.5.1. Open (SKILL.md procedure, next):
+### B22–B29 · found by a second independent review (Nov 7, of v1.5.0) · all done
+A fresh agent reviewed the code after the night's changes; B22 and B23 were confirmed by running them. All fixed: B22, B23, B24, B28, B29 in v1.5.1 and B25–B27 in v1.6.0. What the procedure ones were:
 - **B25:** the `sending` check says "look in Messenger", which only sees what's on screen, and nothing says what to do if the reply isn't found. Fix: check the saved chunks (`f:"You"`, `r` = `to`, `b` = text, after `queuedAt`); if it's not there, mark it `unconfirmed`, tell the user, never repost.
 - **B26:** step 2's pinned write can be refused when two sessions start together, and the "stopped early → set error" rule then overwrites the winner's `running`. Fix: on a refused step-2 write, re-read and skip quietly.
 - **B27:** step 7 writes `refresh/status` done before step 8 drives the Messenger tab, so another run can take the tab mid-post. Fix: keep `running` (step `outbox`) through step 8.

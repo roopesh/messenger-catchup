@@ -2,6 +2,23 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.6.0] - 2026-11-07
+The procedure half of the second review. MINOR: SKILL.md's refresh and outbox steps change. No change to the page, helper or `catchup.py`.
+
+### Fixed
+- **B25, unconfirmed replies:**
+  - a reply left `sending` is now checked against the saved messages (your reply to `to` with that text after `queuedAt`), not against whatever is on screen
+  - found → `sent`; not found once the chat has been read past it → `unconfirmed`, and the user is told
+  - it's never posted again automatically; the page (since 1.5.1) keeps these listed until resolved
+- **B26, run-lock race:** when two sessions start together, the one whose pinned step-2 write is refused re-reads the status and backs off quietly. It used to fall into "stopped early → set error" and overwrite the winner's `running`.
+- **B27, lock held while posting:** with replies to post, step 7 leaves the status at `running` (step `outbox`) and step 8 marks it done afterwards. Another run can no longer take the Messenger tab mid-post.
+- **B29 (outbox part):** for a reply to your own message, the reply bar check expects "Replying to yourself".
+
+### Tests
+- `tests/test_tools.py` checks that the page has a label for every outbox state SKILL.md uses (so `unconfirmed` can't go unrendered).
+
+Components: `PAGE_VERSION` 1.6, helper 1.4 (unchanged).
+
 ## [1.5.1] - 2026-11-07
 Fixes from a second independent review (BACKLOG B22–B29; the procedure ones follow in 1.6.0). Pages republish on their next refresh (`PAGE_VERSION` 1.6); Claude reports the helper update (1.4).
 

@@ -106,6 +106,15 @@ class TestPrePushHook(unittest.TestCase):
         for job in ('  test:','  version-bump:','  pr-only:'): self.assertIn('\n'+job+'\n',wf)
         self.assertIn('npm test',wf)
 
+class TestOutboxStates(unittest.TestCase):
+    def test_page_labels_every_outbox_state_skill_uses(self):
+        skill,page=read('SKILL.md'),read('assets','page.html')
+        out=re.search(r'^## Outbox.*?(?=^## )',skill,re.M|re.S).group(0)
+        states={st for st in ('queued','sending','sent','failed','unconfirmed') if re.search(r'\b%s\b'%st,out)}
+        self.assertTrue({'queued','sending','sent','failed','unconfirmed'}<=states,states)
+        labels=re.search(r'\{queued:"queued",[^}]*\}',page).group(0)
+        for st in states-{'cancelled'}: self.assertIn(st+':',labels,'page has no label for outbox state '+st)
+
 class TestReleaseScript(unittest.TestCase):
     def test_release_script(self):
         f=os.path.join(ROOT,'tools','release.sh');self.assertTrue(os.access(f,os.X_OK))
