@@ -139,7 +139,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `chunks/cNNNN` | Page importer | `{start, msgs}` |
 | `threading/current` | Claude (from catchup.py) | `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
 | `summary/current` | Claude (from catchup.py) | `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
-| `photos/index` | Page importer | `byI{i:["/_blob/<id>",…]}`, `gifs[i]` |
+| `photos/index` | Page importer | `byI{i:["/_blob/<id>",…]}` (what the page shows), `byK{i:{k:"/_blob/<id>"}}` (which capture slot each came from, so a re-paste skips the right ones), `gifs[i]` |
 | `refresh/status` | Claude | `state` (idle/running/done/error), `startedAt`, `step`, `by`, `finishedAt`, `added`, `message` |
 | `refresh/lastImport` | Page importer | `at`, `src`, `ok`, `msg`, `dry`, `sha`, `count`, `fresh`, `chunks`, `uploaded`, `lock`, `repaired` |
 | `refresh/importLock` | Page importer (lease only) | the platform's lease state; holds no data |
@@ -175,6 +175,6 @@ Nothing here ships in the skill ZIP.
 | Thing | Where | Now |
 |---|---|---|
 | Skill | `SKILL.md` "Tested" section | 1.1 |
-| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.5 |
-| Helper | 4 places in `helper.user.js` + the page's embedded copy | 1.3 |
+| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.6 |
+| Helper | 4 places in `helper.user.js` + the page's embedded copy | 1.4 |
 | Summary schema | `summary/current.version` | 2 (the "v3" cards are a display change, same schema) |

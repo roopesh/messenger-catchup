@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.3
+// @version      1.4
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 (function(){
-  if(window.__mcHelper||document.documentElement.hasAttribute('data-mc-helper'))return;window.__mcHelper='1.3';
-  document.documentElement.setAttribute('data-mc-helper','1.3');
+  if(window.__mcHelper||document.documentElement.hasAttribute('data-mc-helper'))return;window.__mcHelper='1.4';
+  document.documentElement.setAttribute('data-mc-helper','1.4');
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href]');if(a&&window.__rf&&!window.__rf.done)e.preventDefault();},true);
 /* A message's date from its Messenger time label: "9:15 AM" (today), "Yesterday 9:15 AM", "Monday 9:15 AM" or "Mon 9:15 AM"
@@ -53,7 +53,7 @@ R.phase='replies';const reps=R.win.filter(id=>R.info[id].reply);R.replyCount=rep
 /* 1) quote match: a reply's quote must match exactly one earlier loaded message from the replied-to person (12+ chars) */
 const posOf=id=>R.order.indexOf(id);
 for(const id of reps){const m=R.info[id];const lines=m.text.split('\n');const rm=(lines[0]||'').match(/^(.*) replied to (.*)$/);if(!rm)continue;
- let who=rm[2];if(/^you$/i.test(who))who='You';else if(/^(themself|themselves|himself|herself)$/i.test(who))who=rm[1]==='You'?'You':rm[1];else if(/^participant$/i.test(who))continue;
+ let who=rm[2];if(/^you$/i.test(who))who='You';else if(/^(themself|themselves|himself|herself|yourself)$/i.test(who))who=rm[1]==='You'?'You':rm[1];else if(/^participant$/i.test(who))continue;
  const lab=m.label.replace(/^At .+?(?:AM|PM|am|pm), /,'');const from=rm[1];const lb=lab.indexOf(from+': ')===0?lab.slice(from.length+2):'';
  const oi=m.text.indexOf('Original message:\n');if(oi<0)continue;const r2=m.text.slice(oi+18);const bi=lb?r2.lastIndexOf(lb.slice(0,Math.min(20,lb.length))):-1;
  const qn=N(bi>0?r2.slice(0,bi):r2.split('\n')[0]).replace(/…$/,'').trim();if(qn.length<12)continue;
@@ -98,7 +98,8 @@ const out=R.win.map((id,k)=>{const m=R.info[id];const lab=m.label;const wm=lab.m
  const body=lines.slice(j);while(body.length&&(/^\d+$/.test(body[body.length-1].trim())||/^(Sent \d+[smhd] ago|Sent|Seen|Delivered)$/.test(body[body.length-1].trim())))body.pop();
  let bt=body.join('\n').trim().replace(/^(?:·\s*\n)?Edited\n/,'').trim();if(/^(GIPHY|Edited|·)$/.test(N(bt)))bt='';
  const a=(m.att.filter(x=>/^Open Attachment, /.test(x)).map(x=>x.replace(/^Open Attachment, /,''))[0]||'');
- let b;if(a&&!lb)b='';else if(lb&&N(bt).indexOf(N(lb))===0)b=bt;else if(lb)b=lb;else b=bt;if(a&&lb&&N(b)!==N(lb))b=lb;if(/deleted a message/.test(m.text))b='(deleted a message)';
+ let b;if(a&&!lb)b='';else if(lb&&N(bt).indexOf(N(lb))===0)b=bt;else if(lb)b=lb;else b=bt;if(a&&lb&&N(b)!==N(lb))b=lb;{const del=lines.map(x=>x.trim()).find(x=>/^(?:You|.+?) (?:deleted|unsent|removed) a message\.?$/.test(x));/* Messenger's own line, alone; never a message that merely says it */
+  if(del&&!lines.some(x=>x.trim()&&x.trim()!==del&&x.trim()!==from))b='(deleted a message)';}
  let q='';const oi=m.text.indexOf('Original message:\n');if(oi>=0){const r2=m.text.slice(oi+18);const bi=b?r2.lastIndexOf(b.slice(0,Math.min(20,b.length))):-1;q=(bi>0?r2.slice(0,bi):r2.split('\n')[0]).trim();}
  const media=m.links.find(l=>/messenger_media/.test(l))||'';const pm=media.match(/attachment_id=(\d+)/);
  const ext=m.links.filter(l=>!/messenger_media|l\.facebook|facebook\.com\/share\//.test(l)).map(l=>l.replace(/[?&](utm_[^&]+|srtk=[^&]+|fs=e|s=m|ref=[^&]+|fbclid=[^&]+)/g,'').replace(/\?&/,'?').replace(/[?&]$/,'').replace(/^([^?#]*)&/,'$1?'));
@@ -162,7 +163,7 @@ return 'count '+out.length+' len '+text.length+' sha '+cap.sha.slice(0,8)+' phot
     out.ms=Date.now()-p.t0;sessionStorage.setItem('mc_result',JSON.stringify(out));}
   const CMDS={probe:a=>probe(a.anchor),scan:a=>mcScan(a.stops,a.first),verify:()=>mcVerify(),capture:a=>mcCapture(a.base),full:a=>full(a),
     jump:a=>{history.replaceState(null,'',location.pathname+'#mcjump='+encodeURIComponent(a.mid)+(a.reply===false?'&noreply':''));jump();return {started:true};},
-    ping:()=>({v:'1.3'})};
+    ping:()=>({v:'1.4'})};
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
   document.addEventListener('mc-cmd',async function(e){let d;try{d=JSON.parse(e.detail);}catch(x){return;}if(!CMDS[d.cmd])return;
     sessionStorage.setItem('mc_res_'+d.id,JSON.stringify({running:true}));

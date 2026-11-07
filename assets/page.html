@@ -306,15 +306,15 @@ button.link.rh{font-size:.8rem}
         <textarea id="jump-us" readonly spellcheck="false" rows="6">// ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.3
+// @version      1.4
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 (function(){
-  if(window.__mcHelper||document.documentElement.hasAttribute(&#x27;data-mc-helper&#x27;))return;window.__mcHelper=&#x27;1.3&#x27;;
-  document.documentElement.setAttribute(&#x27;data-mc-helper&#x27;,&#x27;1.3&#x27;);
+  if(window.__mcHelper||document.documentElement.hasAttribute(&#x27;data-mc-helper&#x27;))return;window.__mcHelper=&#x27;1.4&#x27;;
+  document.documentElement.setAttribute(&#x27;data-mc-helper&#x27;,&#x27;1.4&#x27;);
   /* While a scan runs, clicks on links are swallowed so scrolling can&#x27;t navigate away. Registered once per page load. */
   document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest&amp;&amp;e.target.closest(&#x27;a[href]&#x27;);if(a&amp;&amp;window.__rf&amp;&amp;!window.__rf.done)e.preventDefault();},true);
 /* A message&#x27;s date from its Messenger time label: &quot;9:15 AM&quot; (today), &quot;Yesterday 9:15 AM&quot;, &quot;Monday 9:15 AM&quot; or &quot;Mon 9:15 AM&quot;
@@ -358,7 +358,7 @@ R.phase=&#x27;replies&#x27;;const reps=R.win.filter(id=&gt;R.info[id].reply);R.r
 /* 1) quote match: a reply&#x27;s quote must match exactly one earlier loaded message from the replied-to person (12+ chars) */
 const posOf=id=&gt;R.order.indexOf(id);
 for(const id of reps){const m=R.info[id];const lines=m.text.split(&#x27;\n&#x27;);const rm=(lines[0]||&#x27;&#x27;).match(/^(.*) replied to (.*)$/);if(!rm)continue;
- let who=rm[2];if(/^you$/i.test(who))who=&#x27;You&#x27;;else if(/^(themself|themselves|himself|herself)$/i.test(who))who=rm[1]===&#x27;You&#x27;?&#x27;You&#x27;:rm[1];else if(/^participant$/i.test(who))continue;
+ let who=rm[2];if(/^you$/i.test(who))who=&#x27;You&#x27;;else if(/^(themself|themselves|himself|herself|yourself)$/i.test(who))who=rm[1]===&#x27;You&#x27;?&#x27;You&#x27;:rm[1];else if(/^participant$/i.test(who))continue;
  const lab=m.label.replace(/^At .+?(?:AM|PM|am|pm), /,&#x27;&#x27;);const from=rm[1];const lb=lab.indexOf(from+&#x27;: &#x27;)===0?lab.slice(from.length+2):&#x27;&#x27;;
  const oi=m.text.indexOf(&#x27;Original message:\n&#x27;);if(oi&lt;0)continue;const r2=m.text.slice(oi+18);const bi=lb?r2.lastIndexOf(lb.slice(0,Math.min(20,lb.length))):-1;
  const qn=N(bi&gt;0?r2.slice(0,bi):r2.split(&#x27;\n&#x27;)[0]).replace(/…$/,&#x27;&#x27;).trim();if(qn.length&lt;12)continue;
@@ -403,7 +403,8 @@ const out=R.win.map((id,k)=&gt;{const m=R.info[id];const lab=m.label;const wm=la
  const body=lines.slice(j);while(body.length&amp;&amp;(/^\d+$/.test(body[body.length-1].trim())||/^(Sent \d+[smhd] ago|Sent|Seen|Delivered)$/.test(body[body.length-1].trim())))body.pop();
  let bt=body.join(&#x27;\n&#x27;).trim().replace(/^(?:·\s*\n)?Edited\n/,&#x27;&#x27;).trim();if(/^(GIPHY|Edited|·)$/.test(N(bt)))bt=&#x27;&#x27;;
  const a=(m.att.filter(x=&gt;/^Open Attachment, /.test(x)).map(x=&gt;x.replace(/^Open Attachment, /,&#x27;&#x27;))[0]||&#x27;&#x27;);
- let b;if(a&amp;&amp;!lb)b=&#x27;&#x27;;else if(lb&amp;&amp;N(bt).indexOf(N(lb))===0)b=bt;else if(lb)b=lb;else b=bt;if(a&amp;&amp;lb&amp;&amp;N(b)!==N(lb))b=lb;if(/deleted a message/.test(m.text))b=&#x27;(deleted a message)&#x27;;
+ let b;if(a&amp;&amp;!lb)b=&#x27;&#x27;;else if(lb&amp;&amp;N(bt).indexOf(N(lb))===0)b=bt;else if(lb)b=lb;else b=bt;if(a&amp;&amp;lb&amp;&amp;N(b)!==N(lb))b=lb;{const del=lines.map(x=&gt;x.trim()).find(x=&gt;/^(?:You|.+?) (?:deleted|unsent|removed) a message\.?$/.test(x));/* Messenger&#x27;s own line, alone; never a message that merely says it */
+  if(del&amp;&amp;!lines.some(x=&gt;x.trim()&amp;&amp;x.trim()!==del&amp;&amp;x.trim()!==from))b=&#x27;(deleted a message)&#x27;;}
  let q=&#x27;&#x27;;const oi=m.text.indexOf(&#x27;Original message:\n&#x27;);if(oi&gt;=0){const r2=m.text.slice(oi+18);const bi=b?r2.lastIndexOf(b.slice(0,Math.min(20,b.length))):-1;q=(bi&gt;0?r2.slice(0,bi):r2.split(&#x27;\n&#x27;)[0]).trim();}
  const media=m.links.find(l=&gt;/messenger_media/.test(l))||&#x27;&#x27;;const pm=media.match(/attachment_id=(\d+)/);
  const ext=m.links.filter(l=&gt;!/messenger_media|l\.facebook|facebook\.com\/share\//.test(l)).map(l=&gt;l.replace(/[?&amp;](utm_[^&amp;]+|srtk=[^&amp;]+|fs=e|s=m|ref=[^&amp;]+|fbclid=[^&amp;]+)/g,&#x27;&#x27;).replace(/\?&amp;/,&#x27;?&#x27;).replace(/[?&amp;]$/,&#x27;&#x27;).replace(/^([^?#]*)&amp;/,&#x27;$1?&#x27;));
@@ -467,7 +468,7 @@ return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#
     out.ms=Date.now()-p.t0;sessionStorage.setItem(&#x27;mc_result&#x27;,JSON.stringify(out));}
   const CMDS={probe:a=&gt;probe(a.anchor),scan:a=&gt;mcScan(a.stops,a.first),verify:()=&gt;mcVerify(),capture:a=&gt;mcCapture(a.base),full:a=&gt;full(a),
     jump:a=&gt;{history.replaceState(null,&#x27;&#x27;,location.pathname+&#x27;#mcjump=&#x27;+encodeURIComponent(a.mid)+(a.reply===false?&#x27;&amp;noreply&#x27;:&#x27;&#x27;));jump();return {started:true};},
-    ping:()=&gt;({v:&#x27;1.3&#x27;})};
+    ping:()=&gt;({v:&#x27;1.4&#x27;})};
   /* Bridge: Claude&#x27;s browser tool dispatches &#x27;mc-cmd&#x27; with a JSON string; the answer lands in sessionStorage &#x27;mc_res_&lt;id&gt;&#x27;. Works whether the userscript runs in the page or in the extension&#x27;s own world. */
   document.addEventListener(&#x27;mc-cmd&#x27;,async function(e){let d;try{d=JSON.parse(e.detail);}catch(x){return;}if(!CMDS[d.cmd])return;
     sessionStorage.setItem(&#x27;mc_res_&#x27;+d.id,JSON.stringify({running:true}));
@@ -501,7 +502,7 @@ return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#
 <script>
 let THREAD="", CHAT="https://www.facebook.com/messages/";
 /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-const PAGE_VERSION="1.5";
+const PAGE_VERSION="1.6";
 const CFG=()=>S.meta||{};
 const RP=()=>CFG().refreshPhrase||"refresh my catch-up";
 const OWNER=()=>CFG().ownerName||"the page owner";
@@ -701,12 +702,13 @@ function composer(m,loc){const box=el("div","compose");box.dataset.ci=m.i;
 function replyHereBtn(m,host,loc){const b=el("button","link rh","Reply here");b.onclick=()=>{const ex=host.querySelector(':scope > .compose[data-ci="'+m.i+'"]');if(ex){ex.querySelector("textarea").focus();return;}const old=document.querySelectorAll('.compose[data-ci="'+m.i+'"]');old.forEach(x=>x.remove());S.composing.set(m.i,loc);S.focusI=m.i;host.append(composer(m,loc));};return b;}
 function composingAt(i,loc){return S.composing.get(i)===loc;}
 function pendingTag(m){const q=queuedFor(m.i);return q.length?el("span","chip open",q.length>1?q.length+" replies queued":"reply queued"):null;}
-function renderOutbox(v){const items=(S.outbox||[]).filter(o=>o.state!=="cancelled"&&(o.state==="queued"||o.state==="failed"||Date.now()-Date.parse(o.sentAt||o.queuedAt||0)<36e5*24));
+function renderOutbox(v){/* queued, failed, still sending, or not confirmed: shown until resolved; sent: shown for a day */
+  const items=(S.outbox||[]).filter(o=>o.state!=="cancelled"&&(/^(queued|failed|sending|unconfirmed)$/.test(o.state)||Date.now()-Date.parse(o.sentAt||o.queuedAt||0)<36e5*24));
   if(!items.length)return;items.sort((a,b)=>(b.queuedAt||"").localeCompare(a.queuedAt||""));
   const q=items.filter(o=>o.state==="queued").length;
   const bo=block("Your replies",q?q+" queued. "+(CFG().outboxAuto?"Claude posts these on its next run; ask Claude to "+RP()+" to post them now.":"On its next run Claude shows them to you in chat and posts each one only after you confirm."):"Sent in the last day.");const l=el("div","list");
-  items.forEach(o=>{const d=el("div","item ob "+o.state);const r=el("div","row");r.append(el("span","chip "+(o.state==="sent"?"answered":"open"),{queued:"queued",sending:"sending…",sent:"sent",failed:"failed"}[o.state]||o.state),el("span","note","to "+o.to+" · replying to “"+trunc(o.snip,70)+"”"));d.append(r,el("p",null,o.text));
-    if(o.state==="failed"&&o.error)d.append(el("p","note",o.error));
+  items.forEach(o=>{const d=el("div","item ob "+o.state);const r=el("div","row");r.append(el("span","chip "+(o.state==="sent"?"answered":"open"),{queued:"queued",sending:"sending…",sent:"sent",failed:"failed",unconfirmed:"not confirmed"}[o.state]||o.state),el("span","note","to "+o.to+" · replying to “"+trunc(o.snip,70)+"”"));d.append(r,el("p",null,o.text));
+    if((o.state==="failed"||o.state==="unconfirmed")&&o.error)d.append(el("p","note",o.error));
     if(o.state==="queued"){const x=el("button","link","Cancel this reply");x.onclick=async()=>{x.disabled=true;try{await S.db.doc("outbox/"+o.id).update({state:"cancelled",cancelledAt:new Date().toISOString()});}catch(e){x.disabled=false;}};d.append(x);}
     l.append(d);});bo.append(l);v.append(bo);}
 /* Summary v3: one card per conversation. The open question, the deal and the settled answer for a conversation sit inside its card (never repeated in separate lists), and the full thread expands in place. */
@@ -1024,13 +1026,17 @@ async function importCore(raw,opts){const src=(opts&&opts.src)||"button";const R
   const gifsNew=(cap.gifs||[]).filter(i=>inCap.has(i));
   if(photos.length||(gifsNew.length&&!cap.lab)){
     const g=await S.db.doc("photos/index").get();const d=g.exists?g.data():{byI:{},gifs:[]};const byI=Object.assign({},d.byI||{});
-    const todo=cap.lab?photos:photos.filter(ph=>!(byI[ph.i]||[])[ph.k]);const up=[];let fail=null;
+    /* byK[i][k]: the stored photo for capture slot k of message i (byI is the compact list the page shows). A capture can skip a
+       slot (a photo the helper couldn't fetch), so "already stored" must be decided by slot, not by position in byI. */
+    const byK=JSON.parse(JSON.stringify(d.byK||{}));const have=ph=>byK[ph.i]?!!byK[ph.i][ph.k]:!!(byI[ph.i]||[])[ph.k];/* older indexes: by position */
+    const todo=cap.lab?photos:photos.filter(ph=>!have(ph));const up=[];let fail=null;
     if(todo.length){const assets=await claude.use("assets");if(!assets)fail="this view can't upload";
       else for(const ph of todo){try{const r=await assets.upload(b64ToBlob(ph.b64,ph.type),{type:ph.type});up.push({i:ph.i,k:ph.k,id:r.id,bytes:r.sizeBytes,type:r.contentType});}catch(e){fail="upload failed at #"+ph.i+" ("+(e&&e.code||e)+")";break;}}}
     R.uploaded=up;
-    if(!cap.lab){const grp={};up.forEach(u=>{(grp[u.i]=grp[u.i]||(byI[u.i]||[]).slice())[u.k]="/_blob/"+u.id;});Object.keys(grp).forEach(i=>{byI[i]=grp[i].filter(Boolean);});
+    if(!cap.lab){up.forEach(u=>{const m=byK[u.i]||(byK[u.i]=Object.fromEntries((byI[u.i]||[]).map((p,k)=>[k,p])));m[u.k]="/_blob/"+u.id;});
+      new Set(up.map(u=>String(u.i))).forEach(i=>{byI[i]=Object.keys(byK[i]).sort((a,b)=>a-b).map(k=>byK[i][k]);});
       const gifs=[...new Set([...(d.gifs||[]),...gifsNew])].sort((a,b)=>a-b);
-      if(up.length||gifs.length!==(d.gifs||[]).length)await S.db.doc("photos/index").set(Object.assign({},d,{byI,gifs}));}
+      if(up.length||gifs.length!==(d.gifs||[]).length)await S.db.doc("photos/index").set(Object.assign({},d,{byI,byK,gifs}));}
     const skipped=photos.length-todo.length;
     if(up.length||skipped)msgPart+=" "+up.length+" photo"+(up.length===1?"":"s")+" stored"+(skipped?" ("+skipped+" already stored)":"")+(cap.lab?" (lab test, not linked)":"")+".";
     if(fail)return done(msgPart+" Photos: "+fail+"; paste again to store the rest.",{ok:!!fresh.length,uploaded:up});}

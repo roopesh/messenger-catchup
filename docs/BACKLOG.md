@@ -40,6 +40,14 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B19 | P2 | bug | SKILL.md has no "nothing new" path (empty capture → build fails); a scan error leaves the status "running" · **done** (v1.5.0) |
 | B20 | P3 | bug | Page never releases its import lease (other tabs wait 2 min) · **done** (v1.4.2) |
 | B21 | P1 | bug | `bootstrap` assumes every stored message is threaded: an import whose build never ran breaks every later build · **done** (v1.5.0) |
+| B22 | P1 | bug | `bootstrap` crashed when chunks run past `meta/chat.lastI` (the state REPAIRED fixes), so fresh sessions never got to paste · **done** (v1.5.1) |
+| B23 | P2 | bug | Conflict recovery dead-ended: "restore WORK" after a fresh bootstrap that has nothing to restore · **done** (v1.5.1) |
+| B24 | P2 | bug | Capture replaced any message mentioning "deleted a message" with "(deleted a message)" · **done** (v1.5.1) |
+| B25 | P2 | bug | Outbox: a `sending` reply has no rule when it's not found; the check only looks at what's on screen |
+| B26 | P2 | bug | A session that loses the race for the run lock overwrites the winner's status with "error" |
+| B27 | P2 | bug | Step 7 marks the run done (releasing the lock) before step 8 posts replies in the Messenger tab |
+| B28 | P2 | bug | Re-paste after a failed upload could store a photo twice when a capture skipped a photo slot · **done** (v1.5.1) |
+| B29 | P3 | bug | "You replied to yourself" not recognized: such replies never linked · **done** (v1.5.1) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -150,6 +158,12 @@ A fresh agent with no context read the code and the procedure (B12–B20; B12 an
 - **B18:** deal refs (empty or out of the conversation), mention refs (missing, or "You"), `closeOpen` that matches nothing, and an open question listed twice are all accepted. A deal with no refs never shows, and `dealEdit` on it raises `KeyError`.
 - **B19:** step 3 notes `win:0` but doesn't skip the rest; without the helper an empty capture reaches `build`, which fails. A scan error never resets `refresh/status`.
 - **B21:** `bootstrap` sets WORK's base to the last *stored* message. If a run imported and then died before building, those messages are in no conversation, and every later build fails "message in 0 conversations". Fix: base = `threading/current.to`; the next RUN must carry #to+1 onward.
+
+### B22–B29 · found by a second independent review (Nov 7, of v1.5.0)
+A fresh agent reviewed the code after the night's changes; B22 and B23 were confirmed by running them. Fixed: B22, B23, B24, B28, B29 in v1.5.1. Open (SKILL.md procedure, next):
+- **B25:** the `sending` check says "look in Messenger", which only sees what's on screen, and nothing says what to do if the reply isn't found. Fix: check the saved chunks (`f:"You"`, `r` = `to`, `b` = text, after `queuedAt`); if it's not there, mark it `unconfirmed`, tell the user, never repost.
+- **B26:** step 2's pinned write can be refused when two sessions start together, and the "stopped early → set error" rule then overwrites the winner's `running`. Fix: on a refused step-2 write, re-read and skip quietly.
+- **B27:** step 7 writes `refresh/status` done before step 8 drives the Messenger tab, so another run can take the tab mid-post. Fix: keep `running` (step `outbox`) through step 8.
 
 ## Risks
 
