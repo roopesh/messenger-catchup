@@ -2,6 +2,39 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.10.0] - 2026-11-07
+Full names and nicknames, part 1 (BACKLOG F9). MINOR: new data and page behavior. Pages republish (`PAGE_VERSION` 2.1). The helper goes to 1.6 and installed 1.5 copies update themselves.
+
+### Added
+- **Helper 1.6:** each captured message carries `fn`, the sender's full name. It comes from the alt text of their avatar (the ~28 px image at the message's left edge), while Messenger's own name line shows only a nickname or the first name. The scan keeps it across the reload. Your own messages carry none.
+- **Page 2.1:**
+  - keeps `fn` (a string of 80 characters or fewer, never on "You") and writes `people/index`, mapping each full name to the names Messenger showed it as
+  - **names people as the owner chose:** the first name; the full name when two or more people share that first name; a nickname as "nickname (first name)", or "nickname (full name)" when the first name is shared
+  - uses those names in message rows, snippets, threads, replies, links, photo captions and Ask Claude's prompt
+  - the Messages filter also matches full names
+  - "people posting" counts people, not displayed names
+- **SKILL.md:**
+  - documents `fn` and `people/index`
+  - a spec rule: name people the way the page does, and tell them apart by `fn`. `f`, `r` and the outbox's `to` stay as Messenger shows them, since replies match on those.
+  - the reference-file list is folded into one line to stay under the 20 KB budget
+
+### Live findings (read-only, Nov 7)
+- Labels and name lines show a nickname or the first name; the avatar carries the full name.
+- In about 150 messages, each displayed name maps to exactly one full name.
+- Recorded in LEARNINGS.md › Messenger DOM, using no real names.
+
+### Tests
+- **Mock:** senders get avatars with full names, plus a second "Ben" (#101) and a nickname, "Captain Cy" (#108).
+- **Sim:** every capture checks `fn`. These checks fail on helper 1.5.
+- **Page:** 10 new checks, which fail on page 2.0:
+  - the people map, including the nickname
+  - the display rule for shared first names and nicknames
+  - `fn` filtering
+  - the filter by full name
+- **Python:** 105; the database lines shared by `SKILL.md` and the reference include `people/index`.
+
+Components: `PAGE_VERSION` 2.1, helper 1.6.
+
 ## [1.9.0] - 2026-11-07
 `SKILL.md` now holds only what every refresh needs. The rest moved to reference files Claude reads when needed (BACKLOG C7). MINOR: the procedure files change, but no step does.
 

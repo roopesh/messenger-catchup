@@ -47,9 +47,16 @@ function checkCap(cap, base, mockFrom, n, label) {
     label + ': numbering #' + (base + 1) + '.. and ids match mock ' + mockFrom + '..' + (mockFrom + n - 1),
   );
   const names = ['Ana', 'Ben', 'You', 'Cy', 'Dee'];
+  const shown = i => (i === 108 ? 'Captain Cy' : names[i % 5]);
+  const full = i =>
+    i === 101 ? 'Ben Ortiz' : { Ana: 'Ana Alvarez', Ben: 'Ben Brooks', Cy: 'Cy Chen', Dee: 'Dee Diaz' }[names[i % 5]];
   ok(
-    cap.msgs.every((m, k) => m.f === names[(mockFrom + k) % 5]),
-    label + ': senders right, incl. "You"',
+    cap.msgs.every((m, k) => m.f === shown(mockFrom + k)),
+    label + ': senders right, incl. "You" and a nickname',
+  );
+  ok(
+    cap.msgs.every((m, k) => (m.f === 'You' ? m.fn === undefined : m.fn === full(mockFrom + k))),
+    label + ': full names read from the avatars (fn), none on your own messages',
   );
   return cap;
 }

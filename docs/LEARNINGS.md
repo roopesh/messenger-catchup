@@ -17,6 +17,7 @@ Platform limits, gotchas, and what was changed because of them.
 
 ## Messenger DOM
 - Messages carry `data-message-id`, and the log is `[role="log"]`.
+- **Names (checked live Nov 7):** the name line and the `At <time>, <name>: ` label show what Messenger displays: the member's nickname in that chat if one is set, otherwise the **first name only**. The **full name** is the alt text of the sender's avatar, a 28×28 image at the message's left edge, present on nearly every message. Reaction emoji (14–16 px) and "seen" faces are smaller. In about 150 messages, each displayed name mapped to exactly one full name. A nickname shows up as a label that isn't the start of the full name.
 - **Reply links** are labeled "Go to replied message". Photo replies have no "Original message:" text, or their first quote line is Attachment/Photo/GIF/Video/Sticker.
 - **Status labels** ("Sent", "Seen", "Delivered") leak into message text and are stripped.
 - **Emoji at the start of a quote** broke matching; normalization strips them.

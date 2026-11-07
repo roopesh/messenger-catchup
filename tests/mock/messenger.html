@@ -34,6 +34,8 @@
       /* Simulated Messenger thread: lazy-loads older messages when scrolled to the top, persists the total across reloads,
    English labels like the real UI ("X replied to Y", "Original message:", aria-label "At 5:52 PM, Name: text"). */
       const NAMES = ["Ana", "Ben", "You", "Cy", "Dee"];
+      /* full names, carried as the alt text of each sender's 28 px avatar, as in Messenger */
+      const FULL = { Ana: "Ana Alvarez", Ben: "Ben Brooks", Cy: "Cy Chen", Dee: "Dee Diaz" };
       const total = () => +(localStorage.getItem("mock_total") || 120);
       const skip = () =>
         new Set(JSON.parse(localStorage.getItem("mock_skip") || "[]")); /* message numbers treated as deleted */
@@ -62,7 +64,9 @@
                       : i < 25
                         ? "Yesterday " + t
                         : t;
-        const o = { i, id: "mid.$mock" + i, f, t: tl, b: txt(i) };
+        const o = { i, id: "mid.$mock" + i, f, t: tl, b: txt(i), full: FULL[f] };
+        if (i === 101) o.full = "Ben Ortiz"; /* a second Ben: same first name, another person */
+        if (i === 108) o.f = "Captain Cy"; /* a nickname: shown instead of the name; the avatar still says Cy Chen */
         if (i === 26) {
           o.follow = true;
           o.b = "Mike replied to my email yesterday";
@@ -105,6 +109,13 @@
           lines.push(o.photoReply ? "Photo" : p.b.length > 30 ? p.b.slice(0, 30) + "…" : p.b);
         } else if (who !== "You" && !o.follow) lines.push(who);
         if (o.b) lines.push(o.b);
+        if (o.full) {
+          const av = document.createElement("img");
+          av.alt = o.full;
+          av.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'/%3E";
+          av.style.cssText = "width:28px;height:28px;display:block";
+          d.append(av);
+        }
         const t = document.createElement("div");
         t.innerText = lines.join("\n");
         d.append(t);
