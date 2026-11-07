@@ -93,7 +93,7 @@ def bootstrap(work,db):
     if isinstance(to,int) and -1<=to<last: base=to  # stored but never built (a run that stopped after its import): the next build covers them
     _dump(al[:base+1],work+'/all.json'); _dump(th,work+'/base/threading.json'); _dump(_load(db+'/summary/current.json'),work+'/base/summary.json')
     st={'base':base,'stops':(mt.get('anchorMids') or [])[::-1],'tz':mt.get('tz') or 'America/Los_Angeles'}; _dump(st,work+'/state.json')
-    print('bootstrap ok: %d messages built through #%d; STOPS=%s'%(base+1,base,json.dumps(st['stops']))+('' if base==last else '; #%d-#%d are stored but not built yet: the next RUN must include them'%(base+1,last))
+    print('bootstrap ok: %d messages built through #%d; STOPS=%s'%(base+1,base,json.dumps(st['stops']))+('' if base==last else '; #%d-#%d are stored but not built yet: the next RUN must include %s'%(base+1,last,', '.join(sorted({'chunks/c%04d'%(x//(mt.get('chunkSize') or 82)*(mt.get('chunkSize') or 82)) for x in range(base+1,last+1)}))))
           +('; #%d-#%d are saved but not counted in meta/chat yet: the next paste repairs them (REPAIRED)'%(last+1,stored) if ahead else ''))
 
 def build(work,run,specp):
@@ -109,10 +109,11 @@ def build(work,run,specp):
     if not new and ms:
         if os.path.exists(work+'/prev/state.json'): raise AssertionError('RUN already built into WORK (WORK is at #%d, RUN ends at #%d). To build it again, run: catchup.py restore WORK'%(base,max(m['i'] for m in ms)))
         raise AssertionError('nothing left to build: WORK already covers RUN (through #%d; another build did it). Write only meta/chat {lastRefresh} and refresh/status'%base)
-    ids=[m['i'] for m in new]; mt=_load(run+'/meta/chat.json')
-    if ids and ids[0]>base+1:
-        cs=mt.get('chunkSize') or 82; need=sorted({'c%04d'%(x//cs*cs) for x in range(base+1,ids[0])})
-        raise AssertionError('RUN is missing #%d-#%d (stored, not built yet): fetch %s into RUN too'%(base+1,ids[0]-1,', '.join('chunks/'+c for c in need)))
+    ids=[m['i'] for m in new]; mt=_load(run+'/meta/chat.json'); hi=(ids[0]-1) if ids else mt.get('lastI',base)
+    if hi>base:  # messages after WORK's base that RUN doesn't carry (it may carry no chunks at all)
+        cs=mt.get('chunkSize') or 82; need=sorted({'c%04d'%(x//cs*cs) for x in range(base+1,hi+1)})
+        raise AssertionError('RUN is missing #%d-#%d (stored, not built yet): fetch %s into RUN too'%(base+1,hi,', '.join('chunks/'+c for c in need)))
+    assert ids,'nothing to build: meta/chat ends at #%d and WORK already covers it'%base
     assert ids and ids==list(range(base+1,base+1+len(ids))),('new messages must be #%d onward with no gaps'%(base+1),ids)
     bym={m.get('m'):m['i'] for m in al+new if m.get('m')}
     t=_load(work+'/base/threading.json'); s=_load(work+'/base/summary.json'); C={cv['id']:cv for cv in t['convs']}

@@ -43,7 +43,7 @@ function runtime(seed){
   sample.json=async prompt=>{samples.push(prompt);return {title:'By person',intro:'Grouped by who posted.',sections:[{heading:'Ben',tag:'open',summary:'Sells things [#1].',refs:[1]}]};};
   Object.entries(seed||{}).forEach(([p,v])=>store.set(p,clone(v)));
   window.__rt={store,writes,uploads,samples,leases,fails,silent:(p,v)=>store.set(p,clone(v)),write:(p,v)=>doc(p).set(v),get:p=>clone(store.get(p)),all:()=>Object.fromEntries([...store].map(([k,v])=>[k,clone(v)]))};
-  window.claude={use:async n=>({db:{doc,collection},assets,sample})[n]||null};
+  window.claude={use:async n=>({db:{doc,collection},assets:opts.noAssets?null:assets,sample})[n]||null};
 }
 const META={kind:'messenger-catchup',pageVersion:'1.1',thread:'4242',chatUrl:'https://www.facebook.com/messages/e2ee/t/4242',threadName:'Trail Crew',shortName:'Trail',ownerName:'Sam',ownerAliases:['Sam','Sammy'],topic:'gear',outboxAuto:false,refreshPhrase:'refresh my catch-up',tz:'America/Los_Angeles',helper:'inject',chunkSize:82,lastI:-1,anchorMids:[],markerMode:null};
 const SEED=()=>({'meta/chat':Object.assign({},META),'threading/current':{convs:[],links:{},to:-1,note:''},'summary/current':{version:2,convs:[],open:[],answered:[],deals:[],mentions:[],toI:-1},'photos/index':{byI:{},gifs:[]},'refresh/status':{state:'idle'}});
@@ -179,7 +179,15 @@ async function robustness(){
   // B25 groundwork: unconfirmed and sending replies stay listed until resolved
   await p.evaluate(()=>{const old=new Date(Date.now()-3*864e5).toISOString();__rt.write('outbox/u1',{i:205,mid:'mid.205',to:'Ana',snip:'message 205',text:'see you there',state:'unconfirmed',queuedAt:old,error:'Sent? Not found in the chat afterwards.'});__rt.write('outbox/s1',{i:204,mid:'mid.204',to:'Dee',snip:'message 204',text:'ok',state:'sending',queuedAt:old});});
   ok(await until(p,()=>{const t=document.getElementById('v-summary').textContent;return /not confirmed/.test(t)&&/Sent\? Not found/.test(t)&&/sending…/.test(t);}),'outbox: 3-day-old unconfirmed and sending replies are still shown, with the note');
+  // B36: failed/unconfirmed replies can be dismissed; the header says they need a look
+  ok(await until(p,()=>/2 need a look/.test(document.getElementById('v-summary').textContent)),'outbox header: "2 need a look" for the unconfirmed and sending rows');
+  await p.evaluate(()=>{const b=[...document.querySelectorAll('#v-summary .item.ob button')].find(x=>x.textContent==='Dismiss');b.click();});
+  ok(await until(p,()=>__rt.get('outbox/u1').state==='dismissed'&&!/not confirmed/.test(document.getElementById('v-summary').textContent)),'Dismiss sets state dismissed and the row leaves the list');
   ok(p.errors.length===0,'photos/repair: no page errors '+JSON.stringify(p.errors));
+  await p.context().close();
+  // B37: a view that can't upload says so, without "paste again"
+  p=await open(Object.assign(SEED(),{__opts:{noAssets:true}}));r=await paste(p,JSON.stringify(cap(range(0,1),{photos:[{i:1,k:0,type:'image/png',b64:PNG}]})));
+  ok(r&&r.ok&&r.fresh===2&&/Photos not stored: this view can't upload/.test(r.msg)&&!/paste again/.test(r.msg),'no upload capability: messages saved, photos not, and no endless "paste again" ('+(r&&r.msg.slice(-80))+')');
   await p.context().close();
   // a runtime without acquire() still imports (older contract)
   p=await open(Object.assign(SEED(),{__opts:{noAcquire:true}}));

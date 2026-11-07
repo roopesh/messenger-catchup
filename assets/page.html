@@ -502,7 +502,7 @@ return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#
 <script>
 let THREAD="", CHAT="https://www.facebook.com/messages/";
 /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-const PAGE_VERSION="1.6";
+const PAGE_VERSION="1.7";
 const CFG=()=>S.meta||{};
 const RP=()=>CFG().refreshPhrase||"refresh my catch-up";
 const OWNER=()=>CFG().ownerName||"the page owner";
@@ -703,13 +703,17 @@ function replyHereBtn(m,host,loc){const b=el("button","link rh","Reply here");b.
 function composingAt(i,loc){return S.composing.get(i)===loc;}
 function pendingTag(m){const q=queuedFor(m.i);return q.length?el("span","chip open",q.length>1?q.length+" replies queued":"reply queued"):null;}
 function renderOutbox(v){/* queued, failed, still sending, or not confirmed: shown until resolved; sent: shown for a day */
-  const items=(S.outbox||[]).filter(o=>o.state!=="cancelled"&&(/^(queued|failed|sending|unconfirmed)$/.test(o.state)||Date.now()-Date.parse(o.sentAt||o.queuedAt||0)<36e5*24));
+  const items=(S.outbox||[]).filter(o=>o.state!=="cancelled"&&o.state!=="dismissed"&&(/^(queued|failed|sending|unconfirmed)$/.test(o.state)||Date.now()-Date.parse(o.sentAt||o.queuedAt||0)<36e5*24));
   if(!items.length)return;items.sort((a,b)=>(b.queuedAt||"").localeCompare(a.queuedAt||""));
   const q=items.filter(o=>o.state==="queued").length;
-  const bo=block("Your replies",q?q+" queued. "+(CFG().outboxAuto?"Claude posts these on its next run; ask Claude to "+RP()+" to post them now.":"On its next run Claude shows them to you in chat and posts each one only after you confirm."):"Sent in the last day.");const l=el("div","list");
-  items.forEach(o=>{const d=el("div","item ob "+o.state);const r=el("div","row");r.append(el("span","chip "+(o.state==="sent"?"answered":"open"),{queued:"queued",sending:"sending…",sent:"sent",failed:"failed",unconfirmed:"not confirmed"}[o.state]||o.state),el("span","note","to "+o.to+" · replying to “"+trunc(o.snip,70)+"”"));d.append(r,el("p",null,o.text));
+  const att=items.filter(o=>/^(failed|unconfirmed|sending)$/.test(o.state)).length;
+  const sub=[q?q+" queued. "+(CFG().outboxAuto?"Claude posts these on its next run; ask Claude to "+RP()+" to post them now.":"On its next run Claude shows them to you in chat and posts each one only after you confirm."):"",
+    att?att+" need"+(att===1?"s":"")+" a look: check Messenger, then dismiss it or tell Claude it went through.":"",(!q&&!att)?"Sent in the last day.":""].filter(Boolean).join(" ");
+  const bo=block("Your replies",sub);const l=el("div","list");
+  items.forEach(o=>{const d=el("div","item ob "+o.state);const r=el("div","row");r.append(el("span","chip "+(o.state==="sent"?"answered":"open"),{queued:"queued",sending:"sending…",sent:"sent",failed:"failed",unconfirmed:"not confirmed",dismissed:"dismissed"}[o.state]||o.state),el("span","note","to "+o.to+" · replying to “"+trunc(o.snip,70)+"”"));d.append(r,el("p",null,o.text));
     if((o.state==="failed"||o.state==="unconfirmed")&&o.error)d.append(el("p","note",o.error));
     if(o.state==="queued"){const x=el("button","link","Cancel this reply");x.onclick=async()=>{x.disabled=true;try{await S.db.doc("outbox/"+o.id).update({state:"cancelled",cancelledAt:new Date().toISOString()});}catch(e){x.disabled=false;}};d.append(x);}
+    if(o.state==="failed"||o.state==="unconfirmed"){const x=el("button","link","Dismiss");x.title="Checked it in Messenger: remove it from this list";x.onclick=async()=>{x.disabled=true;try{await S.db.doc("outbox/"+o.id).update({state:"dismissed",dismissedAt:new Date().toISOString()});}catch(e){x.disabled=false;}};d.append(x);}
     l.append(d);});bo.append(l);v.append(bo);}
 /* Summary v3: one card per conversation. The open question, the deal and the settled answer for a conversation sit inside its card (never repeated in separate lists), and the full thread expands in place. */
 const SUMF={all:"All",open:"Open questions",deal:"Deals & sales",answered:"Answered"};
@@ -1030,7 +1034,7 @@ async function importCore(raw,opts){const src=(opts&&opts.src)||"button";const R
        slot (a photo the helper couldn't fetch), so "already stored" must be decided by slot, not by position in byI. */
     const byK=JSON.parse(JSON.stringify(d.byK||{}));const have=ph=>byK[ph.i]?!!byK[ph.i][ph.k]:!!(byI[ph.i]||[])[ph.k];/* older indexes: by position */
     const todo=cap.lab?photos:photos.filter(ph=>!have(ph));const up=[];let fail=null;
-    if(todo.length){const assets=await claude.use("assets");if(!assets)fail="this view can't upload";
+    if(todo.length){const assets=await claude.use("assets");if(!assets)return done(msgPart+" Photos not stored: this view can't upload them (open the page on claude.ai, signed in as its owner).",{ok:!!fresh.length});
       else for(const ph of todo){try{const r=await assets.upload(b64ToBlob(ph.b64,ph.type),{type:ph.type});up.push({i:ph.i,k:ph.k,id:r.id,bytes:r.sizeBytes,type:r.contentType});}catch(e){fail="upload failed at #"+ph.i+" ("+(e&&e.code||e)+")";break;}}}
     R.uploaded=up;
     if(!cap.lab){up.forEach(u=>{const m=byK[u.i]||(byK[u.i]=Object.fromEntries((byI[u.i]||[]).map((p,k)=>[k,p])));m[u.k]="/_blob/"+u.id;});

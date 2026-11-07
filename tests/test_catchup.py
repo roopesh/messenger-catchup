@@ -410,6 +410,23 @@ class TestReview2Fixes(unittest.TestCase):
         ms=[msg(0,'You','my own long message here'),msg(1,'Ana','other')]
         self.assertEqual(catchup.resolve(dict(msg(2,'You','x'),r='yourself',q='my own long message here'),ms),(0,'rq',None))
 
+class TestReview3Fixes(unittest.TestCase):
+    def setUp(self): self.t=tempfile.TemporaryDirectory()
+    def tearDown(self): self.t.cleanup()
+    def test_B34_run_with_no_chunks_names_what_to_fetch(self):
+        e=Env(self.t.name);ms=[msg(i,'Ana','m%d'%i) for i in range(8)]
+        th={'convs':[{'id':'a','title':'A','members':list(range(6))}],'links':{},'to':5,'note':''}
+        sm={'version':2,'convs':[{'id':'a','tag':'','synopsis':[],'outcome':'','key':[]}],'open':[],'answered':[],'deals':[],'mentions':[],'toI':5}
+        out=e.seed(ms,threading=th,summary=sm);self.assertIn('the next RUN must include chunks/c0000',out)
+        run=os.path.join(e.d,'runN');w(os.path.join(run,'meta','chat.json'),{'lastI':7,'anchorMids':['mid.5','mid.6','mid.7']});os.makedirs(os.path.join(run,'chunks'))
+        p=os.path.join(e.d,'s.json');w(p,{'join':{'a':[6,7]}})
+        with self.assertRaisesRegex(AssertionError,r'RUN is missing #6-#7 \(stored, not built yet\): fetch chunks/c0000 into RUN too'): quiet(catchup.build,e.work,run,p)
+    def test_B34_nothing_to_build_with_empty_run(self):
+        e=Env(self.t.name);e.seed([msg(0,'Ana','a')])
+        run=os.path.join(e.d,'runE');w(os.path.join(run,'meta','chat.json'),{'lastI':0,'anchorMids':['mid.0']});os.makedirs(os.path.join(run,'chunks'))
+        p=os.path.join(e.d,'s.json');w(p,{'join':{}})
+        with self.assertRaisesRegex(AssertionError,'nothing to build'): quiet(catchup.build,e.work,run,p)
+
 class TestCli(unittest.TestCase):
     def test_usage_on_unknown_command(self):
         import subprocess

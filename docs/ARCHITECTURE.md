@@ -107,7 +107,7 @@ Checks, in order: JSON → `kind` → message checksum → photo checksum → le
 Every outcome goes to `refresh/lastImport`. A dry run reports what it would do, including "Would repair", and writes nothing.
 
 ### Outbox
-"Reply here" writes `outbox/r<timestamp>` `{i, mid, to, snip, text, state:"queued", queuedAt}`; Cancel sets `state:"cancelled"`. Claude moves rows to `sending` → `sent` (`sentAt`, `sentMid`) or `failed` (`error`).
+"Reply here" writes `outbox/r<timestamp>` `{i, mid, to, snip, text, state:"queued", queuedAt}`; Cancel sets `state:"cancelled"`. Claude moves rows to `sending` → `sent` (`sentAt`, `sentMid`), `failed` (`error`) or `unconfirmed` (sent but never found in the chat; never reposted). Failed and unconfirmed rows have a Dismiss button (`state:"dismissed"`), and they stay listed until resolved.
 
 ### Legacy / unreachable code (kept from the user-specific page)
 - In-page Refresh button: `#refresh-btn` is `hidden` and never shown; `REFRESH_TASK="__TRIGGER_ID__"`, `S.mcp=null`, so `startRefresh` / `fire_trigger` (line 1015) never run.
@@ -175,6 +175,6 @@ Nothing here ships in the skill ZIP.
 | Thing | Where | Now |
 |---|---|---|
 | Skill | `SKILL.md` "Tested" section | 1.1 |
-| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.6 |
+| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.7 |
 | Helper | 4 places in `helper.user.js` + the page's embedded copy | 1.4 |
 | Summary schema | `summary/current.version` | 2 (the "v3" cards are a display change, same schema) |
