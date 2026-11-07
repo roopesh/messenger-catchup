@@ -23,7 +23,7 @@ Known bugs are written as tests of the *fixed* behavior: Python marks them `expe
 
 ## Where to start
 1. **Re-upload the skill ZIP from the v1.2.0 release.** Existing pages upgrade themselves to `PAGE_VERSION` 1.2 on their next refresh.
-2. **B6 + B8**: silent bad dates and the render crash. B8 already has a page test waiting to flip.
+2. **B6**: silent bad dates in the capture (helper).
 4. **G1–G3**: bring SKILL.md in line with what the page does.
 
 ## Doc map

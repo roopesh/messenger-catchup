@@ -292,7 +292,7 @@ button.link.rh{font-size:.8rem}
     <ul>
       <li>To pull new messages, ask Claude in chat to <b data-rp>refresh my catch-up</b>. Claude reads your open Messenger tab in your own Chrome, scrolls back only to the last message already stored, appends the new ones here and rebuilds the summary. This page can't reach your Messenger tab itself.</li>
       <li><b>Your computer has to be online.</b> Every refresh, scheduled or not, drives the Messenger tab in your Chrome: the computer must be on and awake, the screen unlocked, Chrome open with the Claude in Chrome extension connected, Facebook signed in, and the Messenger tab open. If it isn't, that run is skipped and the next one catches up.</li>
-      <li><b>Mark caught up</b> (Summary tab) sets the "Last Mark caught up" marker to the newest stored message and switches to it. You choose which marker the catch-up starts from (top of the page, and again each time you press Refresh): your last Mark caught up, or your last message in the chat. The summary, questions, deals and topics then cover only what comes after that point; nothing older is carried forward.</li>
+      <li><b>Mark caught up</b> (Summary tab) sets the "Last Mark caught up" marker to the newest stored message and switches to it. At the top of the page you choose where the catch-up starts: your last Mark caught up, your last message in the chat, or a date range. The summary, questions, deals and topics then cover only what comes after that point; nothing older is carried forward.</li>
       <li>Older messages are kept as history. See them under Messages with "Show older messages", or include them in Ask Claude with its checkbox.</li>
       <li><b>Reply in Messenger ↗</b> (on every card, open question and message) opens Messenger at that exact message with the Reply box ready, once the helper below is set up. Without it, the link just opens the chat. Older messages take 10–20 seconds while it scrolls back.</li>
       <li><b>Reply here</b> (works from your phone): type your reply on this page. It waits under “Your replies” at the top of Summary. <span data-outbox-mode>On its next run Claude shows you each queued reply in chat and posts it only after you confirm there.</span> Cancel any time before then.</li>
@@ -301,8 +301,8 @@ button.link.rh{font-size:.8rem}
     <details class="item" id="jump">
       <summary><h3>Jump to a message: set up (pick one)</h3><div class="note">Makes every “Reply in Messenger ↗” link land on the exact message with Reply open.</div></summary>
       <div class="composer">
-        <p><b>1. Automatic (recommended, optional): Messenger Catch-up Helper userscript</b> (Violentmonkey or Tampermonkey). Every link jumps by itself, and Claude's refreshes run faster and use far less of your usage. Without it Claude injects the same code into your Messenger tab on each run.</p>
-        <ul class="steps"><li>Click <b>Copy userscript</b> below.</li><li>Violentmonkey icon › <b>+</b> (create a new script) › select all › paste › <b>Save &amp; Close</b>. If Chrome asks, allow user scripts (chrome://extensions › Violentmonkey › Details › Allow User Scripts).</li><li>Reload your Messenger tab. Tell Claude “installed” and it checks the helper is running (it marks the page with <code>data-mc-helper</code>).</li></ul>
+        <p><b>1. Automatic (recommended, optional): Messenger Catch-up Helper userscript</b> (Tampermonkey or Violentmonkey). Every link jumps by itself, and Claude's refreshes run faster and use far less of your usage. Without it Claude injects the same code into your Messenger tab on each run.</p>
+        <ul class="steps"><li>Click <b>Copy userscript</b> below.</li><li>In Tampermonkey (recommended) or Violentmonkey: create a new script (<b>+</b>) › select all › paste › <b>Save</b>. In current Chrome, allow user scripts: chrome://extensions › the extension › Details › <b>Allow User Scripts</b> (older Chrome: turn on Developer mode at the top right instead).</li><li>Reload your Messenger tab. Tell Claude “installed” and it checks the helper is running (it marks the page with <code>data-mc-helper</code>).</li></ul>
         <textarea id="jump-us" readonly spellcheck="false" rows="6">// ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
@@ -490,7 +490,7 @@ return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#
 <script>
 let THREAD="", CHAT="https://www.facebook.com/messages/";
 /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-const PAGE_VERSION="1.2";
+const PAGE_VERSION="1.3";
 const CFG=()=>S.meta||{};
 const RP=()=>CFG().refreshPhrase||"refresh my catch-up";
 const OWNER=()=>CFG().ownerName||"the page owner";
@@ -529,6 +529,11 @@ let toastT;function toast(nodes){let t=$("#toast");if(!t){t=el("div","toast");t.
 /* Jump links: Messenger has no per-message URL, so the link carries the message id in the hash (#mcjump=mid) and the helper in the owner's Chrome scrolls to it and opens Reply. Without the helper it just opens the chat. */
 function jumpHref(m){return m&&m.m?CHAT+"#mcjump="+encodeURIComponent(m.m):CHAT;}
 function replyLink(m,label){const a=el("a","replylink",label||(m&&m.m?"Reply in Messenger ↗":"Open chat ↗"));a.href=jumpHref(m);a.target="_blank";a.rel="noopener";a.title="Opens Messenger at this message with the Reply box ready (needs the helper: see Refreshing › Jump to a message)";return a;}
+/* Outside links come from chat messages (and summaries written from them): show the host, make only http(s) URLs
+   clickable, and never let a malformed entry break a render. */
+function hostOf(u){try{return new URL(u).hostname.replace(/^www\./,"")||String(u);}catch(e){return String(u);}}
+function safeHref(u){try{return /^https?:$/.test(new URL(u).protocol)?u:null;}catch(e){return null;}}
+function outLink(label,u){const a=el("a",null,label);const h=safeHref(u);if(h){a.href=h;a.target="_blank";a.rel="noopener";}else a.title="Not a web link";return a;}
 function extLink(m){const s=el("span","xl");s.append(replyLink(m));
   if(m&&m.p){const L=msgLink(m);const b=el("a",null,"Open photo ↗");b.href=L.href;b.target="_blank";b.rel="noopener";s.append(" · ",b);}return s;}
 function findPanel(m){const ph=findPhrase(m);const code=el("code",null,ph);
@@ -628,7 +633,7 @@ function renderSummary(){
   // market
   const bk=block("For sale, raffles & deals",null);const lk=el("div","list");
   (sm.market||[]).forEach(a=>{const d=el("div","item");const r=el("div","row");r.append(el("span","chip "+(a.kind||"sale"),a.tag||a.kind),el("h3",null,a.title));if(a.status)r.append(el("span","note",a.status));d.append(r);
-    if(a.body)d.append(el("p",null,a.body));if(a.links){const p=el("p","note");a.links.forEach(([l,h],k)=>{const x=el("a",null,l);x.href=h;x.target="_blank";x.rel="noopener";if(k)p.append(" · ");p.append(x);});d.append(p);}
+    if(a.body)d.append(el("p",null,a.body));if(a.links){const p=el("p","note");a.links.forEach(([l,h],k)=>{if(k)p.append(" · ");p.append(outLink(l,h));});d.append(p);}
     d.append(refList(a.refs));lk.append(d);});bk.append(lk);v.append(bk);
   // threads
   const bt=block("Conversations","Grouped by topic. Tap one for its key messages.");const lt=el("div","list");
@@ -636,7 +641,7 @@ function renderSummary(){
     d.append(s,el("p",null,t.body),refList(t.refs));lt.append(d);});bt.append(lt);v.append(bt);
   // links (derived from data)
   const bl=block("Links shared","Outside links in the window, in order.");const tw=el("div","tablewrap");const tb=el("table");tb.innerHTML="<thead><tr><th>When</th><th>From</th><th>Link</th><th></th></tr></thead>";const body=el("tbody");
-  S.msgs.filter(m=>inWindow(m)&&m.l&&m.l.length).forEach(m=>m.l.forEach(u=>{const tr=el("tr");tr.append(el("td","t",m.t),el("td",null,m.f));const td=el("td");const a=el("a",null,(m.a?m.a.split("\n")[0].slice(0,80)+" · ":"")+new URL(u).hostname.replace(/^www\./,""));a.href=u;a.target="_blank";a.rel="noopener";td.append(a);
+  S.msgs.filter(m=>inWindow(m)&&m.l&&m.l.length).forEach(m=>m.l.forEach(u=>{const tr=el("tr");tr.append(el("td","t",m.t),el("td",null,m.f));const td=el("td");td.append(outLink((m.a?m.a.split("\n")[0].slice(0,80)+" · ":"")+hostOf(u),u));
     const tj=el("td","lnk");const j=el("a",null,"#"+m.i);j.href="#messages";j.onclick=e=>{e.preventDefault();goMsg(m.i);};tj.append(j);tr.append(td,tj);body.append(tr);}));
   tb.append(body);tw.append(tb);bl.append(tw);v.append(bl);
 }
@@ -677,7 +682,7 @@ function composer(m,loc){const box=el("div","compose");box.dataset.ci=m.i;
   q.onclick=async()=>{const text=ta.value.trim();if(!text){st.textContent="Type a reply first.";return;}if(!S.db){st.textContent="Can't save from this view.";return;}
     q.disabled=true;st.textContent="Saving…";const id="r"+Date.now();
     try{await S.db.doc("outbox/"+id).set({i:m.i,mid:m.m||null,to:m.f,snip:trunc(m.b||(m.p?"[photo]":""),120),text,state:"queued",queuedAt:new Date().toISOString()});
-      S.composing.delete(m.i);delete S.drafts[m.i];st.textContent="Queued. Tell Claude “send” in chat (or wait for the next refresh) and confirm.";ta.disabled=true;c.textContent="Close";q.hidden=true;}
+      S.composing.delete(m.i);delete S.drafts[m.i];st.textContent=CFG().outboxAuto?"Queued. Claude posts it on its next run (or ask Claude to “"+RP()+"” to post it now).":"Queued. Tell Claude “send” in chat (or wait for the next refresh) and confirm.";ta.disabled=true;c.textContent="Close";q.hidden=true;}
     catch(e){q.disabled=false;st.textContent="Couldn't save: "+(e&&e.message||e);}};
   const row=el("div","btns");row.append(q,c,st);box.append(ta,row);
   if(S.focusI===m.i)requestAnimationFrame(()=>{ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length);});
@@ -742,7 +747,7 @@ function convCard(c,ctx){const mem=convMembers(c.id).filter(ctx.after);const a=S
   const show=ids=>{thr.open=true;build();requestAnimationFrame(()=>flashIn(built,ids));};
   /* call-outs: what needs an answer, what's for sale, what's settled */
   opens.forEach(o=>{const b=el("div","callout open");const am=S.byI.get(o.ask);b.append(el("div","lab","Unanswered · asked of "+o.to),quoteMsg(o.ask,{onClick:()=>show([o.ask])}));if(am){const r=el("div","cv-act");r.append(replyLink(am,"Reply to "+am.f+" ↗"));if(S.db)r.append(replyHereBtn(am,b,"open:"+c.id));const pt=pendingTag(am);if(pt)r.append(pt);b.append(r);if(composingAt(am.i,"open:"+c.id))b.append(composer(am,"open:"+c.id));}if(o.note)b.append(el("div","note",o.note));d.append(b);});
-  deals.forEach(x=>{const b=el("div","callout deal");b.append(el("div","lab",x.tag||"Deal"),el("p",null,x.text));if((x.links||[]).length){const p=el("p","note");x.links.forEach(([lab,u],k)=>{const l=el("a",null,lab+" ↗");l.href=u;l.target="_blank";l.rel="noopener";if(k)p.append(" · ");p.append(l);});b.append(p);}d.append(b);});
+  deals.forEach(x=>{const b=el("div","callout deal");b.append(el("div","lab",x.tag||"Deal"),el("p",null,x.text));if((x.links||[]).length){const p=el("p","note");x.links.forEach(([lab,u],k)=>{if(k)p.append(" · ");p.append(outLink(lab+" ↗",u));});b.append(p);}d.append(b);});
   ans.forEach(x=>{const b=el("div","callout ans");b.append(el("div","lab","Answered"),quoteMsg(x.ask,{len:220,onClick:()=>show([x.ask].concat(x.refs||[]))}),el("p","a",x.answer));d.append(b);});
   /* outcome + bullets; a bullet opens the thread at its messages */
   if(c.outcome&&!(opens.length&&/^No repl/i.test(c.outcome)))d.append(el("p","outcome",c.outcome));
@@ -762,9 +767,9 @@ function renderSummaryV2(v,sm){const R=winRange();const ws=R.lo;const after=i=>i
   if(!S.msgs.some(inWindow)){v.append(el("div","empty",mode==="time"?"No stored messages in that span. Pick another, or ask Claude in chat to "+RP()+" for newer ones.":"You're caught up through #"+ws+". Nothing new is stored yet. Ask Claude in chat to "+RP()+"."));return;}
   renderOutbox(v);
   /* Needs you: only messages that name you or reply to you */
-  const ments=(sm.mentions||[]).filter(x=>(x.refs||[]).some(r=>after(r[0]||r)));
+  const ments=(sm.mentions||[]).filter(x=>(x.refs||[]).some(r=>after(r[0]??r)));
   const bn=block("Needs you",null);
-  if(ments.length){const ln=el("div","list");ments.forEach(x=>{const d=el("div","item mention");if(x.note)d.append(el("p",null,x.note));d.append(snips((x.refs||[]).map(r=>r[0]||r)));ln.append(d);});bn.append(ln);}
+  if(ments.length){const ln=el("div","list");ments.forEach(x=>{const d=el("div","item mention");if(x.note)d.append(el("p",null,x.note));d.append(snips((x.refs||[]).map(r=>r[0]??r)));ln.append(d);});bn.append(ln);}
   else bn.append(el("p","note","Nobody mentioned you or replied to you"+(wsm?" since "+wsm.t:"")+"."));
   v.append(bn);
   /* index the call-outs by conversation */
@@ -783,7 +788,7 @@ function renderSummaryV2(v,sm){const R=winRange();const ws=R.lo;const after=i=>i
   const rows=[];S.msgs.filter(m=>inWindow(m)&&m.l&&m.l.length).forEach(m=>m.l.forEach(u=>rows.push([m,u])));
   if(rows.length){const dl=el("details","item linksbox");const s=el("summary");s.append(el("h3",null,"Links shared ("+rows.length+")"),el("div","note","Outside links in the window, in order."));dl.append(s);
     const tw=el("div","tablewrap");const tb=el("table");tb.innerHTML="<thead><tr><th>When</th><th>From</th><th>Link</th><th></th></tr></thead>";const body=el("tbody");
-    rows.forEach(([m,u])=>{const tr=el("tr");tr.append(el("td","t",m.t),el("td",null,m.f));const td=el("td");let host="";try{host=new URL(u).hostname.replace(/^www\./,"");}catch(e){host=u;}const a2=el("a",null,(m.a?m.a.split("\n")[0].slice(0,80)+" · ":"")+host);a2.href=u;a2.target="_blank";a2.rel="noopener";td.append(a2);
+    rows.forEach(([m,u])=>{const tr=el("tr");tr.append(el("td","t",m.t),el("td",null,m.f));const td=el("td");td.append(outLink((m.a?m.a.split("\n")[0].slice(0,80)+" · ":"")+hostOf(u),u));
       const tj=el("td","lnk");const j=el("button","link","#"+m.i);j.onclick=()=>goMsg(m.i);tj.append(j);tr.append(td,tj);body.append(tr);});
     tb.append(body);tw.append(tb);dl.append(tw);v.append(dl);}}
 
@@ -834,7 +839,7 @@ function msgRow(m,lk,showQuote){const r=el("div","msg"+(m.f==="You"?" own":""));
   const pics=(S.photos&&S.photos[m.i])||[];
   if(pics.length){const pw=el("div","pics"+(pics.length>2?" many":""));pics.forEach((u,k)=>{const a=el("a");a.href=u;a.title="View full size";a.onclick=e=>{e.preventDefault();lightbox(pics,k,"#"+m.i+" · "+m.f+" · "+m.t);};const im=el("img");im.src=u;im.alt="Photo "+(k+1)+" from "+m.f;im.loading="lazy";a.append(im);pw.append(a);});c.append(pw);}
   const sub=el("div","sub");if(m.p&&!pics.length)sub.append(el("span",null,S.gifs&&S.gifs.has(m.i)?"🎞 GIF (open in Messenger)":"📷 photo"));if(m.a)sub.append(el("span",null,"🔗 "+m.a.split("\n")[0].slice(0,90)));
-  (m.l||[]).forEach(u=>{const a=el("a",null,new URL(u).hostname.replace(/^www\./,""));a.href=u;a.target="_blank";a.rel="noopener";sub.append(a);});
+  (m.l||[]).forEach(u=>sub.append(outLink(hostOf(u),u)));
   if(m.x)sub.append(el("span",null,m.x));sub.append(extLink(m));
   if(S.db)sub.append(replyHereBtn(m,c,"row"));const pt=pendingTag(m);if(pt)sub.append(pt);
   c.append(sub);if(composingAt(m.i,"row"))c.append(composer(m,"row"));r.append(c);return r;}
