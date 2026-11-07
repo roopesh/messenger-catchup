@@ -2,6 +2,29 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.11.0] - 2026-11-07
+Full names and nicknames, part 2: a one-time backfill of older senders and the alias question (BACKLOG F9). MINOR: new procedure, a new helper command, and the page republishes (`PAGE_VERSION` 2.2). Helper 1.7; installed copies update themselves.
+
+### Added
+- **Helper 1.7, `people{count, maxMs}`:**
+  - **Read-only:** scrolls back through up to `count` messages (or to the top, or for 8 minutes) reading each sender's shown name and avatar name, with no clicks.
+  - Returns `{seen, top, ms, people:[[shown, full, n]]}`.
+  - The avatar reader is shared with the scan.
+- **`references/people.md`:**
+  - **One-time name scan:** runs when `people/index` has no `scannedAt`, as its own short run holding the lock after a refresh's report, and merges the result into `people/index`. It's skipped while the installed helper is older than 1.7, which can't run it; it updates itself within a day.
+  - **Alias question:** once, only with the user present, asks which of their full name, last name and other names count as mentions, then sets `meta/chat.aliasesAskedAt`.
+- **SKILL.md:** step 8 points there, and the helper's command list includes `people`. It's still under 20 KB.
+
+### Fixed (page 2.2)
+- Entries Claude's scan writes have no `firstI`/`lastI`. An import now fills them in. Before, the result would have been `NaN`, saved as null.
+
+### Tests
+- Sim: `people` scans the mock back to the top and maps every shown name to its full name: both Bens, the nickname, and nothing for "You".
+- Page: an entry without positions gets them on import, and `scannedAt` survives imports. This check fails on page 2.1.
+- Python: `references/people.md` is shipped and named in `SKILL.md`.
+
+Components: `PAGE_VERSION` 2.2, helper 1.7.
+
 ## [1.10.0] - 2026-11-07
 Full names and nicknames, part 1 (BACKLOG F9). MINOR: new data and page behavior. Pages republish (`PAGE_VERSION` 2.1). The helper goes to 1.6 and installed 1.5 copies update themselves.
 
