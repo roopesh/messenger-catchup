@@ -28,8 +28,18 @@ class TestHelperCopies(unittest.TestCase):
     def test_page_in_sync(self):
         self.assertEqual(sync.generate(self.page, self.src), self.page, "run tools/sync-helper.py")
 
-    def test_userscript_copy_is_the_file(self):
-        self.assertEqual(self.textarea(self.page, "jump-us"), self.src)
+    def test_page_installs_the_userscript_from_the_release(self):
+        """The page links the userscript's release URL (no embedded copy), and the helper updates itself from that URL."""
+        url = "https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js"
+        self.assertNotIn('id="jump-us"', self.page)
+        self.assertRegex(self.page, r'<a\s+id="us-install"\s+href="%s"' % re.escape(url))
+        self.assertEqual(re.search(r"^// @updateURL\s+(\S+)$", self.src, re.M).group(1), url)
+        self.assertEqual(re.search(r"^// @downloadURL\s+(\S+)$", self.src, re.M).group(1), url)
+
+    def test_release_attaches_the_userscript(self):
+        rel = read("tools", "release.sh")
+        self.assertRegex(rel, r'gh release create "\$tag" "\$zip" "\$us"')
+        self.assertIn("helper.user.js", rel)
 
     def test_bookmarklet_is_the_jump_code(self):
         bm = self.textarea(self.page, "jump-bm")
@@ -50,7 +60,6 @@ class TestHelperCopies(unittest.TestCase):
         edited = self.src.replace("say('Jump: found it.')", "say('Jump: found it!')")
         self.assertNotEqual(edited, self.src)
         out = sync.generate(self.page, edited)
-        self.assertEqual(self.textarea(out, "jump-us"), edited)
         self.assertIn("found it!", urllib.parse.unquote(self.textarea(out, "jump-bm")))
         self.assertEqual(sync.generate(out, edited), out, "generate is not idempotent")
 
@@ -77,6 +86,16 @@ class TestVersions(unittest.TestCase):
         page = read("assets", "page.html")
         self.assertTrue(page.startswith("<title>"), page[:60])
         self.assertNotRegex(page, r"(?i)<!doctype|<html[\s>]|<body[\s>]")
+
+    def test_component_versions_read_the_same_as_decimals(self):
+        """Minor parts stay one digit (1.9 -> 2.0, never 1.10): read as decimals, 1.1 and 1.10 look equal and a
+        republish or update notice could be skipped."""
+        page, src = read("assets", "page.html"), read("assets", "helper.user.js")
+        for name, v in (
+            ("PAGE_VERSION", re.search(r'const PAGE_VERSION\s*=\s*"([^"]+)"', page).group(1)),
+            ("helper @version", re.search(r"@version\s+(\S+)", src).group(1)),
+        ):
+            self.assertRegex(v, r"^\d+\.\d$", name + " " + v)
 
     def test_page_version_present(self):
         self.assertRegex(read("assets", "page.html"), r'const PAGE_VERSION\s*=\s*"\d+\.\d+";')

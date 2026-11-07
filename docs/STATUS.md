@@ -67,8 +67,8 @@ python3 scripts/catchup.py build WORK RUNDIR spec.json
 
 ### Change the helper
 1. Edit `assets/helper.user.js`.
-2. `npm run fmt` formats and then runs `npm run sync`, which regenerates the page's userscript copy and bookmarklet. `npm test` fails if you forget.
-3. To release a new helper version, bump all four version strings (header `@version`, `window.__mcHelper`, `data-mc-helper`, `ping`; a test checks they agree), run `npm run sync`, and update the `1.1` checks in `tests/sim.js`.
+2. `npm run fmt` formats and then runs `npm run sync`, which regenerates the page's bookmarklet. `npm test` fails if you forget.
+3. To release a new helper version, bump all four version strings (header `@version`, `window.__mcHelper`, `data-mc-helper`, `ping`; a test checks they agree; minor stays one digit, 1.9 → 2.0). Installed copies update themselves from the release, which `tools/release.sh` attaches the userscript to.
 4. `npm test`.
 
 ### Change the page
