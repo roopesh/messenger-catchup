@@ -360,6 +360,56 @@ function checkCap(cap, base, mockFrom, n, label) {
   ok(/^count 2 /.test(c), 'B: capture ' + c);
   const cap3 = checkCap(JSON.parse(await q.evaluate(() => window.__capText)), 54, 125, 2, 'B');
   fs.writeFileSync(D + 'tests/out/sim_caps.json', JSON.stringify([cap1, cap2, cap3]));
+  // ---------- D: photo replies whose parents are far up the chat (not loaded; Messenger takes seconds to bring them) ----------
+  const ctxD = await b.newContext({ viewport: { width: 900, height: 800 } });
+  await ctxD.addInitScript('document.addEventListener("DOMContentLoaded",function(){' + HELPER + '\n});');
+  const dp = await ctxD.newPage();
+  await dp.goto(URL);
+  await dp.evaluate(() => {
+    localStorage.setItem('mock_total', '140');
+    localStorage.removeItem('mock_skip');
+  });
+  await dp.goto(URL);
+  await dp.waitForTimeout(800);
+  const t0 = Date.now();
+  const ds = await bridge(dp, 'scan', { stops: ['mid.$mock127', 'mid.$mock126', 'mid.$mock125'] });
+  const saved = await dp.evaluate(() => JSON.parse(sessionStorage.getItem('__mcsave') || 'null'));
+  const par = id => ((saved && saved.parents[id]) || {}).p || ((saved && saved.parents[id]) || {}).err;
+  ok(
+    ds &&
+      !ds.err &&
+      ds.win === 12 &&
+      ds.photoReplies === 2 &&
+      ds.perr === 0 &&
+      par('mid.$mock130') === 'mid.$mock20' &&
+      par('mid.$mock136') === 'mid.$mock23',
+    'D: both far-up photo-reply parents found by clicking (#130 -> ' +
+      par('mid.$mock130') +
+      ', #136 -> ' +
+      par('mid.$mock136') +
+      '; ' +
+      Math.round((Date.now() - t0) / 1000) +
+      ' s)',
+  );
+  // a parent slower than the 10 s wait: its late focus lands while the next reply is clicked; never a wrong link
+  await dp.evaluate(() => localStorage.setItem('mock_parent_delay', '12000'));
+  await dp.goto(URL);
+  await dp.waitForTimeout(800);
+  const ds2 = await bridge(dp, 'scan', { stops: ['mid.$mock127', 'mid.$mock126', 'mid.$mock125'] });
+  const saved2 = await dp.evaluate(() => JSON.parse(sessionStorage.getItem('__mcsave') || 'null'));
+  const p2 = id => (saved2 && saved2.parents[id]) || {};
+  ok(
+    ds2 &&
+      !ds2.err &&
+      !p2('mid.$mock130').p &&
+      !p2('mid.$mock136').p &&
+      p2('mid.$mock130').err &&
+      p2('mid.$mock136').err === 'nofocus',
+    'D: a parent that loads too late is an error to check, never a wrong link (' +
+      JSON.stringify([p2('mid.$mock130'), p2('mid.$mock136')]) +
+      ')',
+  );
+  await dp.evaluate(() => localStorage.removeItem('mock_parent_delay'));
   // ---------- C: the page's jump bookmarklet, run as a browser runs a javascript: URL (no helper) ----------
   const PAGE = fs.readFileSync(D + 'assets/page.html', 'utf8');
   const bm = PAGE.match(/<textarea id="jump-bm"[^>]*>([^<]*)<\/textarea>/)[1]

@@ -85,7 +85,11 @@
           o.photo = true;
           o.b = "";
         }
-        if (i === 103) {
+        if (i === 130 || i === 136) {
+          o.reply = i === 130 ? 20 : 23; /* photo replies whose parents are far up the chat (not loaded) */
+          o.photoReply = true;
+          o.b = i === 130 ? "that one" : "this?";
+        } else if (i === 103) {
           o.reply = 100;
           o.photoReply = true;
           o.b = "nice pack";
@@ -136,8 +140,16 @@
           g.setAttribute("aria-label", "Go to replied message");
           g.textContent = "↩";
           g.onclick = () => {
-            const e = document.querySelector('[data-message-id="' + CSS.escape(p.id) + '"]');
-            if (e) e.focus();
+            const find = () => document.querySelector('[data-message-id="' + CSS.escape(p.id) + '"]');
+            if (find()) return find().focus();
+            /* a parent far up: like Messenger, load history down to it first, which takes a few seconds */
+            setTimeout(
+              () => {
+                loadOlder(p.i);
+                if (find()) find().focus();
+              },
+              +(localStorage.getItem("mock_parent_delay") || 3000),
+            );
           };
           d.append(g);
         }
@@ -155,18 +167,21 @@
       }
       render();
       let loading = false;
+      function loadOlder(nlo) {
+        nlo = Math.max(0, Math.min(nlo, lo));
+        const h0 = sc.scrollHeight;
+        const frag = document.createDocumentFragment();
+        const sk = skip();
+        for (let i = nlo; i < lo; i++) if (!sk.has(i)) frag.append(el(spec(i)));
+        sc.prepend(frag);
+        lo = nlo;
+        sc.scrollTop += sc.scrollHeight - h0;
+      }
       sc.addEventListener("scroll", () => {
         if (sc.scrollTop < 40 && lo > 0 && !loading) {
           loading = true;
           setTimeout(() => {
-            const h0 = sc.scrollHeight;
-            const nlo = Math.max(0, lo - 20);
-            const frag = document.createDocumentFragment();
-            const sk = skip();
-            for (let i = nlo; i < lo; i++) if (!sk.has(i)) frag.append(el(spec(i)));
-            sc.prepend(frag);
-            lo = nlo;
-            sc.scrollTop += sc.scrollHeight - h0;
+            loadOlder(lo - 20);
             loading = false;
           }, 250);
         }

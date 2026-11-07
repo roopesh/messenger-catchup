@@ -2,6 +2,23 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.14.0] - 2026-11-07
+Faster, safer photo replies whose parents are far up the chat (BACKLOG F2, B38). MINOR: the reader behaves differently, and a new error can reach Claude as a CHECK. Helper 1.9; installed copies update themselves. Page unchanged.
+
+### Changed (helper 1.9)
+- **F2, speed:** after each click on "Go to replied message", the reader jumps back to the bottom before finding the next reply. Before, it stepped down from the far-up parent 0.8 screen at a time, which was slow and could end in `notfound`. It also waits up to 10 s for the parent to take focus, up from 2.5 s.
+
+### Fixed (helper 1.9)
+- **B38, wrong link:** a parent that loaded too late could take focus while the next reply was clicked, and be recorded as that reply's parent with no warning. Now the focused message must be from the person the reply names; otherwise the result is `perr:"wrongfocus"`, which `catchup.py` shows as a CHECK.
+
+### Tests
+- **Mock:** a reply link whose parent isn't loaded now loads history down to it after a delay, like Messenger (`mock_parent_delay`, 3 s by default). Two photo replies with far-up parents are #130 → #20 and #136 → #23.
+- **Sim section D:**
+  - both parents are found, in about 9 s. On helper 1.8 this fails: one `nofocus`, and the other linked to the wrong message.
+  - with a 12 s delay, both are errors and neither is a wrong link.
+
+Components: `PAGE_VERSION` 2.2 (unchanged), helper 1.9.
+
 ## [1.13.0] - 2026-11-07
 A self-check that names exactly what changed when Messenger's page changes (BACKLOG F4). MINOR: a new refresh step. Helper 1.8; installed copies update themselves. Page unchanged.
 
