@@ -308,6 +308,34 @@ async function variants(){
   ok(p.errors.length===0,'variants: no page errors '+JSON.stringify(p.errors));
   await p.context().close();}
 
+/* ---------- 4. range summaries and the status line ----------
+   Pages carried over from the original chat have a summary with fromI (catchup.py keeps it), so rewinding before it
+   by date asks Claude, via this page, for a summary of just that span and saves it in rangeSummaries/r<lo>_<hi>. */
+async function ranges(){
+  const TH={convs:[{id:'a',title:'Packs',members:[0,1,2,3,4,5,6,7,8,9]}],links:{},to:9,note:''};
+  const SM={version:2,convs:[{id:'a',tag:'',synopsis:[{t:'Later part',refs:[5]}],outcome:'',key:[5]}],open:[],answered:[],deals:[],mentions:[],fromI:5,toI:9,generatedAt:'now'};
+  let p=await open(SEED());await paste(p,JSON.stringify(cap(range(0,9))));
+  await p.evaluate(([t,s])=>{__rt.write('threading/current',t);__rt.write('summary/current',s);},[TH,SM]);await p.waitForTimeout(200);
+  ok(!(await p.$('#v-summary .rangebox'))&&/Later part/.test(await p.textContent('#v-summary')),'range: in caught mode the saved summary shows, no range box');
+  ok(/ask Claude in chat to “refresh my catch-up”/.test(await p.textContent('#refresh-st')),'status line: tells you to ask Claude in chat to refresh');
+  ok(!(await p.$('#refresh-btn')),'C1: no Refresh button in the page (removed; refreshes are asked for in chat)');
+  await p.evaluate(d=>{const m=__rt.get('meta/chat');__rt.write('meta/chat',Object.assign(m,{markerMode:'time',markerFrom:d+'T00:00',markerTo:null}));},ymd(TODAY));
+  const box=await until(p,()=>{const b=document.querySelector('#v-summary .rangebox');return b&&b.textContent;});
+  ok(box&&/All 10 messages in this span/.test(box)&&/only covers #5 onward/.test(box),'range: a date window before fromI offers a summary for that span ('+(box||'').slice(0,60)+'…)');
+  await p.click('#v-summary .rangebox button.primary');
+  const rs=await until(p,()=>__rt.get('rangeSummaries/r0_9'));
+  ok(rs&&rs.by==='page'&&rs.fromI===0&&rs.toI===9&&rs.version===2,'range: the button saves rangeSummaries/r0_9 (by page, #0–#9)');
+  ok(await p.evaluate(()=>/MESSAGES:\n#0 \[/.test(__rt.samples[__rt.samples.length-1])),'range: the prompt carries the span\'s messages');
+  ok(await until(p,()=>!document.querySelector('#v-summary .rangebox')),'range: once written, the span\'s summary replaces the box');
+  ok(p.errors.length===0,'range: no page errors '+JSON.stringify(p.errors));
+  await p.context().close();
+  // a span summarized before: shown straight away
+  p=await open(Object.assign(SEED(),{'meta/chat':Object.assign({},META,{markerMode:'time',markerFrom:ymd(TODAY)+'T00:00'}),'threading/current':TH,'summary/current':SM,
+    'rangeSummaries/r0_9':{version:2,by:'page',fromI:0,toI:9,convs:[{id:'a',tag:'',synopsis:[{t:'Whole span',refs:[0]}],outcome:'',key:[0]}],open:[],answered:[],deals:[],mentions:[],generatedAt:'then'}}));
+  await paste(p,JSON.stringify(cap(range(0,9))));
+  ok(await until(p,()=>/Whole span/.test(document.getElementById('v-summary').textContent)&&!document.querySelector('#v-summary .rangebox')),'range: a saved span summary renders without asking again');
+  await p.context().close();}
+
 (async()=>{browser=await chromium.launch();
-  try{await importer();await robustness();await pipeline();await variants();}catch(e){ok(false,'crashed: '+(e&&e.stack||e));}
+  try{await importer();await robustness();await pipeline();await variants();await ranges();}catch(e){ok(false,'crashed: '+(e&&e.stack||e));}
   await browser.close();})();
