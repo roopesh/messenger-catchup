@@ -381,6 +381,35 @@ class TestReviewFixes(unittest.TestCase):
         out=quiet(catchup.build,e.work,run,p);self.assertIn('build ok: #80-#95',out)
         self.assertEqual(r(os.path.join(run,'out','threading.json'))['convs'][0]['members'],list(range(96)))
 
+class TestReview2Fixes(unittest.TestCase):
+    """B22, B23, B29 (v1.5.1), from the second independent review."""
+    def setUp(self): self.t=tempfile.TemporaryDirectory()
+    def tearDown(self): self.t.cleanup()
+    def test_B22_bootstrap_with_chunks_ahead_of_meta(self):
+        e=Env(self.t.name);ms=[msg(i,'Ana','m%d'%i) for i in range(7)]
+        th={'convs':[{'id':'a','title':'A','members':[0,1,2,3]}],'links':{},'to':3,'note':''}
+        sm={'version':2,'convs':[{'id':'a','tag':'','synopsis':[],'outcome':'','key':[]}],'open':[],'answered':[],'deals':[],'mentions':[],'toI':3}
+        out=e.seed(ms,threading=th,summary=sm,meta={'lastI':3,'anchorMids':['mid.1','mid.2','mid.3']})   # chunks hold #0-#6, meta says #3
+        self.assertEqual(e.state()['base'],3);self.assertIn('#4-#6 are saved but not counted in meta/chat yet',out)
+        self.assertEqual(len(r(os.path.join(e.work,'all.json'))),4)
+        run=os.path.join(e.d,'runR');e.msgs=ms;e._chunks(run,4)   # after the REPAIRED paste: chunk + repaired meta/chat
+        w(os.path.join(run,'meta','chat.json'),{'lastI':6,'anchorMids':['mid.4','mid.5','mid.6']})
+        p=os.path.join(e.d,'s.json');w(p,{'join':{'a':[4,5,6]}})
+        out=quiet(catchup.build,e.work,run,p);self.assertIn('build ok: #4-#6',out)
+    def test_B22_meta_ahead_of_chunks_is_still_refused(self):
+        e=Env(self.t.name)
+        with self.assertRaisesRegex(AssertionError,'is ahead of the newest saved message'): e.seed([msg(0,'Ana')],meta={'lastI':5})
+    def test_B23_nothing_left_after_a_fresh_bootstrap(self):
+        e=Env(self.t.name);e.seed();run=e.run([msg(0,'Ana','a'),msg(1,'Ben','b')])
+        e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]}})
+        e2=Env(tempfile.mkdtemp(dir=self.t.name));th=r(os.path.join(run,'out','threading.json'));sm=r(os.path.join(run,'out','summary.json'))
+        e2.seed(e.msgs,threading=th,summary=sm)                                   # the other session already built #0-#1
+        p=os.path.join(e2.d,'s.json');w(p,{'join':{'a':[0,1]}})
+        with self.assertRaisesRegex(AssertionError,'nothing left to build: WORK already covers RUN'): quiet(catchup.build,e2.work,run,p)
+    def test_B29_reply_to_yourself(self):
+        ms=[msg(0,'You','my own long message here'),msg(1,'Ana','other')]
+        self.assertEqual(catchup.resolve(dict(msg(2,'You','x'),r='yourself',q='my own long message here'),ms),(0,'rq',None))
+
 class TestCli(unittest.TestCase):
     def test_usage_on_unknown_command(self):
         import subprocess
