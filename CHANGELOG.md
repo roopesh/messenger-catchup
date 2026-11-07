@@ -2,6 +2,22 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.4.0] - 2026-11-07
+SKILL.md now does what the page tells the user it does. MINOR: new procedures. No change to the page or the helper.
+
+### Added
+- **G3, open a message:** the page tells the user to say "reply 3232" or "open #3232". SKILL.md now has the procedure: find the message's chunk, start `jump`, report; never type for the user.
+- **G2, what the page saves for Claude:**
+  - after each refresh, new method ideas (`views` with `kind:"idea"`) are listed in the report with an offer to apply them; `meta/chat.ideasSeenAt` tracks which were seen
+  - questions asked on the page (`qa`) are read when the user refers to them
+  - analyses worth keeping are saved as `notes/*`, so the page's "Notes from Claude" section finally has a writer
+
+### Fixed
+- **G1:** SKILL.md's database section lists every `meta/chat` field the page writes (`lastT`, `ownLastMid`, `caughtUpAt`, `markerSetAt`, `markerTo`) and every collection the page uses (`qa`, `views`, `notes`, `rangeSummaries`).
+- Two new tests in `tests/test_tools.py` derive the database paths and the `meta/chat` fields from the page source and fail if SKILL.md is missing any.
+
+Components: `PAGE_VERSION` 1.4, helper 1.2 (unchanged).
+
 ## [1.3.0] - 2026-11-06
 Helper 1.2: dates read reliably. MINOR because the helper version changes and SKILL.md gains two report steps. Installed userscripts keep working; Claude tells you when an update is available.
 
