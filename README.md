@@ -31,9 +31,12 @@ A Claude skill that keeps a private **catch-up page** for one Facebook Messenger
 cd tests && python3 -m http.server 8765 &
 node sim.js        # needs Playwright with Chromium
 ```
-35 checks: first run, incremental runs, messages arriving mid-run, photo replies, a chat shorter than the first-run count, older date labels, stale results, jump links, with and without the helper.
+35 checks: first run, incremental runs, messages arriving mid-run, photo replies, a chat shorter than the first-run count, older date labels, stale results, jump links, with and without the helper. There's no `package.json` yet; [docs/STATUS.md](docs/STATUS.md) shows how to run it with Playwright installed outside the repo.
 
 ## Development docs
+- [docs/STATUS.md](docs/STATUS.md): **start here**: current state, how to test, change and release
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the parts fit, full database reference
+- [docs/BACKLOG.md](docs/BACKLOG.md): open bugs, risks, gaps and ideas, by priority
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): history, phase by phase
 - [docs/DECISIONS.md](docs/DECISIONS.md): what was chosen, why, and what was rejected
 - [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md): benchmarks, threading evaluations, test results

@@ -117,3 +117,35 @@ A refresh of 183 messages took about 17 min:
 | 11 | Short chat drops its oldest message; GUESS review impractical on a 1,000-message first build | Fixed: `__top__` anchor captures all; first run reviews only the newest ~150 | helper scan, SKILL.md step 6 |
 | 12 | Cosmetic leftovers from the original chat | Fixed Nov 6, 8:30 PM: "bags" placeholder and "Pacific" comment removed; a chat-specific deal kind → `raffle`/`group` (chip classes, deal kind, prompt, heading); storage key `ccSumFilter` → `mcSumFilter`. Kept on purpose: `cctool` falls back to America/Los_Angeles only when `meta/chat.tz` is missing. Rendered page text checked identical before and after | page, `cctool` |
 
+## 10. Handoff review (Nov 6, evening)
+- **How:** read every file against every doc at `c3186da`, then ran the checks below. Findings are filed in [BACKLOG.md](BACKLOG.md).
+
+| Check | Result |
+|---|---|
+| `tests/sim.js` on macOS, Node 26, Playwright 1.x in a scratch folder (`NODE_PATH`) | 35/35 pass, exit 0 |
+| Page's userscript textarea (HTML-unescaped) vs `assets/helper.user.js` | Identical (21,744 chars) |
+| Page's bookmarklet (URL-decoded) vs the helper's `jump()` body | Same code |
+| `cctool` replay: seed → bootstrap → build of 6 messages (text reply, photo reply with no photo, a cross-conversation link, a mention of #0) | Build OK. `note` stays `''` (B1). Cross-conversation link accepted silently (B4). Reply with no parent: WARN, then auto `GUESS … i` (B5) |
+| Same RUN built a second time (a retry after a failed DB write) | `AssertionError: []`; WORK had already advanced, no backup (B2) |
+| `dealEdit` on a conversation with no deal | `IndexError` (B3) |
+
+- **Capture date parser** (`dOf` in the helper), run with "now" set to local noon:
+
+| "Now" | Label | Parsed `d` | |
+|---|---|---|---|
+| 2026-11-06 | `November 3, 2026 9:15 AM` | 2026-11-03 | ✓ |
+| 2026-11-06 | `Monday 9:15 AM` | 2026-11-02 | ✓ |
+| 2026-11-06 | `9:15 AM` | 2026-11-06 | ✓ (today) |
+| 2026-11-06 | `Nov 3, 2026 9:15 AM` | 2026-11-06 | ✗ falls back to today |
+| 2026-11-06 | `Mon 9:15 AM` | 2026-11-06 | ✗ falls back to today |
+| 2027-01-04 | `December 28 9:15 AM` | 2027-12-28 | ✗ in the future |
+
+- **Finding:** whether real Messenger labels ever use the short forms is unknown (the mock uses full names only), so B6 is a latent risk rather than an observed failure. The year-boundary case will happen every January for year-less labels.
+- **Copy check, for reuse** (run from the repo root):
+```python
+import html, re
+p = open('assets/page.html').read()
+us = html.unescape(re.search(r'<textarea id="jump-us"[^>]*>(.*?)</textarea>', p, re.S).group(1))
+print(us == open('assets/helper.user.js').read())
+```
+

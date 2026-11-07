@@ -3,6 +3,9 @@
 How this skill got here, in order. Built late Oct – Nov 6, 2026 (US Pacific time) against one real, busy group chat: roughly 3,900 messages by the end.
 
 Related docs:
+- [STATUS.md](STATUS.md): where things stand now, and how to work on it (start here)
+- [ARCHITECTURE.md](ARCHITECTURE.md): how the parts fit, full database reference
+- [BACKLOG.md](BACKLOG.md): everything open
 - [DECISIONS.md](DECISIONS.md): what was chosen and why
 - [EXPERIMENTS.md](EXPERIMENTS.md): what was measured, with the numbers
 - [LEARNINGS.md](LEARNINGS.md): platform limits and gotchas found along the way
@@ -73,6 +76,15 @@ Related docs:
   - live refresh 244: injected helper v1.1
   - live refresh 245: old helper v2.2 still installed
 - **Repo:** published to GitHub.
+
+## Phase 7: handoff review (Nov 6, evening)
+- **Goal:** make the project easy to pick up later.
+- **Done:**
+  - read all code against all docs
+  - re-ran the sim tests (35/35)
+  - replayed `cctool` on synthetic data and probed the capture date parser
+- **Added docs:** STATUS.md (start here), ARCHITECTURE.md (structure, full database reference), BACKLOG.md (10 bugs, 7 risks, 5 doc gaps, plus cleanup, test and feature items).
+- **No code changed.** Fixes are queued in the backlog.
 
 ## Version map
 | Thing | Versions |
