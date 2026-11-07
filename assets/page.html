@@ -306,19 +306,33 @@ button.link.rh{font-size:.8rem}
         <textarea id="jump-us" readonly spellcheck="false" rows="6">// ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.1
+// @version      1.2
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 (function(){
-  if(window.__mcHelper||document.documentElement.hasAttribute(&#x27;data-mc-helper&#x27;))return;window.__mcHelper=&#x27;1.1&#x27;;
-  document.documentElement.setAttribute(&#x27;data-mc-helper&#x27;,&#x27;1.1&#x27;);
+  if(window.__mcHelper||document.documentElement.hasAttribute(&#x27;data-mc-helper&#x27;))return;window.__mcHelper=&#x27;1.2&#x27;;
+  document.documentElement.setAttribute(&#x27;data-mc-helper&#x27;,&#x27;1.2&#x27;);
+  /* While a scan runs, clicks on links are swallowed so scrolling can&#x27;t navigate away. Registered once per page load. */
+  document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest&amp;&amp;e.target.closest(&#x27;a[href]&#x27;);if(a&amp;&amp;window.__rf&amp;&amp;!window.__rf.done)e.preventDefault();},true);
+/* A message&#x27;s date from its Messenger time label: &quot;9:15 AM&quot; (today), &quot;Yesterday 9:15 AM&quot;, &quot;Monday 9:15 AM&quot; or &quot;Mon 9:15 AM&quot;
+   (the last 7 days), &quot;November 3, 2026 9:15 AM&quot; or &quot;Nov 3 9:15 AM&quot; (a year-less date in the future means last year).
+   Returns &quot;YYYY-MM-DD&quot;, or null for a label it can&#x27;t read. */
+function mcDate(when,now){now=now||new Date();const W=[&#x27;sunday&#x27;,&#x27;monday&#x27;,&#x27;tuesday&#x27;,&#x27;wednesday&#x27;,&#x27;thursday&#x27;,&#x27;friday&#x27;,&#x27;saturday&#x27;],M=[&#x27;january&#x27;,&#x27;february&#x27;,&#x27;march&#x27;,&#x27;april&#x27;,&#x27;may&#x27;,&#x27;june&#x27;,&#x27;july&#x27;,&#x27;august&#x27;,&#x27;september&#x27;,&#x27;october&#x27;,&#x27;november&#x27;,&#x27;december&#x27;];
+  const ymd=d=&gt;d.getFullYear()+&#x27;-&#x27;+String(d.getMonth()+1).padStart(2,&#x27;0&#x27;)+&#x27;-&#x27;+String(d.getDate()).padStart(2,&#x27;0&#x27;);const ago=n=&gt;{const d=new Date(now);d.setDate(d.getDate()-n);return ymd(d);};
+  const pick=(names,w)=&gt;{w=w.toLowerCase();return w.length&gt;=3?names.findIndex(x=&gt;x.indexOf(w)===0):-1;};const s=String(when||&#x27;&#x27;).trim();
+  if(/^\d{1,2}:\d{2}/.test(s)||/^today\b/i.test(s))return ymd(now);
+  if(/^yesterday\b/i.test(s))return ago(1);
+  const md=s.match(/^([A-Za-z]+)\.? (\d{1,2})(?![\d:])(?:,? (\d{4}))?/);
+  if(md){const mi=pick(M,md[1]);if(mi&gt;=0){let d=new Date(md[3]?+md[3]:now.getFullYear(),mi,+md[2]);if(!md[3]&amp;&amp;d-now&gt;864e5)d=new Date(now.getFullYear()-1,mi,+md[2]);return ymd(d);}}
+  const dw=s.match(/^([A-Za-z]+)\.?\s/);if(dw){const wi=pick(W,dw[1]);if(wi&gt;=0)return ago(((now.getDay()-wi)+7)%7||7);}
+  return null;}
+window.__mcDate=mcDate;
 async function mcScan(STOPS,FIRST){STOPS=STOPS||[];sessionStorage.removeItem(&#x27;__mcsave&#x27;);
 for(let w=0;w&lt;40;w++){const l=document.querySelector(&#x27;[role=&quot;log&quot;]&#x27;);if(l&amp;&amp;l.getBoundingClientRect().width&gt;=300)break;await new Promise(r=&gt;setTimeout(r,500));}
 window.__rf={phase:&#x27;collect&#x27;,order:[],info:{},parents:{},done:false,err:null,steps:0,t0:Date.now()};
-document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest&amp;&amp;e.target.closest(&#x27;a[href]&#x27;);if(a&amp;&amp;window.__rf&amp;&amp;!window.__rf.done)e.preventDefault();},true);
 await (async()=&gt;{const R=window.__rf;try{
 
 const sleep=ms=&gt;new Promise(r=&gt;setTimeout(r,ms));const N=s=&gt;(s||&#x27;&#x27;).replace(/\s+/g,&#x27; &#x27;).trim();
@@ -377,11 +391,8 @@ V.mode=&#x27;fast&#x27;;let ok=await pass(0.6,500);if(!ok){V.mode=&#x27;slow&#x2
 const X=window.__v;return {ok:!!X.ok,gap:X.gap,prefixSame:!!X.prefixSame,extra:X.extra,err:X.err,win:X.win?X.win.length:0,mode:X.mode};}
 async function mcCapture(BASE){
 return await (async()=&gt;{const R=JSON.parse(sessionStorage.getItem(&#x27;__mcsave&#x27;));const N=s=&gt;(s||&#x27;&#x27;).replace(/\s+/g,&#x27; &#x27;).trim();
-const now=new Date();const DAYS=[&#x27;sunday&#x27;,&#x27;monday&#x27;,&#x27;tuesday&#x27;,&#x27;wednesday&#x27;,&#x27;thursday&#x27;,&#x27;friday&#x27;,&#x27;saturday&#x27;];const MON=[&#x27;january&#x27;,&#x27;february&#x27;,&#x27;march&#x27;,&#x27;april&#x27;,&#x27;may&#x27;,&#x27;june&#x27;,&#x27;july&#x27;,&#x27;august&#x27;,&#x27;september&#x27;,&#x27;october&#x27;,&#x27;november&#x27;,&#x27;december&#x27;];
-const ymd=d=&gt;d.getFullYear()+&#x27;-&#x27;+String(d.getMonth()+1).padStart(2,&#x27;0&#x27;)+&#x27;-&#x27;+String(d.getDate()).padStart(2,&#x27;0&#x27;);
-function dOf(when){if(/^yesterday/i.test(when)){const d=new Date(now);d.setDate(d.getDate()-1);return ymd(d);}const dw=when.match(/^(\w+day)\s/i);if(dw){const back=((now.getDay()-DAYS.indexOf(dw[1].toLowerCase()))+7)%7||7;const d=new Date(now);d.setDate(d.getDate()-back);return ymd(d);}
- const md=when.match(/^([A-Za-z]+) (\d{1,2})(?:,? (\d{4}))?/);if(md&amp;&amp;MON.indexOf(md[1].toLowerCase())&gt;=0){const y=md[3]?+md[3]:now.getFullYear();return ymd(new Date(y,MON.indexOf(md[1].toLowerCase()),+md[2]));}return ymd(now);}
-const D=[&#x27;Sun&#x27;,&#x27;Mon&#x27;,&#x27;Tue&#x27;,&#x27;Wed&#x27;,&#x27;Thu&#x27;,&#x27;Fri&#x27;,&#x27;Sat&#x27;];const today=D[now.getDay()];
+const now=new Date();const todayD=mcDate(&#x27;12:00&#x27;,now);const guessed=[];let lastD=null;
+const D=[&#x27;Sun&#x27;,&#x27;Mon&#x27;,&#x27;Tue&#x27;,&#x27;Wed&#x27;,&#x27;Thu&#x27;,&#x27;Fri&#x27;,&#x27;Sat&#x27;];
 const pos=new Map(R.win.map((id,k)=&gt;[id,BASE+1+k]));const firsts=Object.values(R.info).map(x=&gt;x.text.split(&#x27;\n&#x27;)[0]);
 const out=R.win.map((id,k)=&gt;{const m=R.info[id];const lab=m.label;const wm=lab.match(/^At (.+?(?:AM|PM|am|pm)), /);const when=wm?wm[1]:&#x27;&#x27;;const after=wm?lab.slice(wm[0].length):&#x27;&#x27;;
  const lines=m.text.split(&#x27;\n&#x27;);const first=lines[0]||&#x27;&#x27;;let from=&#x27;&#x27;,rTo=&#x27;&#x27;;const rm=first.match(/^(.*) replied to (.*)$/);
@@ -396,7 +407,7 @@ const out=R.win.map((id,k)=&gt;{const m=R.info[id];const lab=m.label;const wm=la
  let q=&#x27;&#x27;;const oi=m.text.indexOf(&#x27;Original message:\n&#x27;);if(oi&gt;=0){const r2=m.text.slice(oi+18);const bi=b?r2.lastIndexOf(b.slice(0,Math.min(20,b.length))):-1;q=(bi&gt;0?r2.slice(0,bi):r2.split(&#x27;\n&#x27;)[0]).trim();}
  const media=m.links.find(l=&gt;/messenger_media/.test(l))||&#x27;&#x27;;const pm=media.match(/attachment_id=(\d+)/);
  const ext=m.links.filter(l=&gt;!/messenger_media|l\.facebook|facebook\.com\/share\//.test(l)).map(l=&gt;l.replace(/[?&amp;](utm_[^&amp;]+|srtk=[^&amp;]+|fs=e|s=m|ref=[^&amp;]+|fbclid=[^&amp;]+)/g,&#x27;&#x27;).replace(/\?&amp;/,&#x27;?&#x27;).replace(/[?&amp;]$/,&#x27;&#x27;).replace(/^([^?#]*)&amp;/,&#x27;$1?&#x27;));
- const dd=dOf(when);const tmm=when.match(/(\d{1,2}:\d{2})\s*([AP]M)/i);const tm=tmm?tmm[1]+&#x27; &#x27;+tmm[2].toUpperCase():&#x27;12:00 AM&#x27;;const wd=D[new Date(dd+&#x27;T12:00:00&#x27;).getDay()];
+ let dd=mcDate(when,now);if(!dd){guessed.push(BASE+1+k);dd=lastD||todayD;}lastD=dd;/* unreadable label: borrow the previous message&#x27;s date */const tmm=when.match(/(\d{1,2}:\d{2})\s*([AP]M)/i);const tm=tmm?tmm[1]+&#x27; &#x27;+tmm[2].toUpperCase():&#x27;12:00 AM&#x27;;const wd=D[new Date(dd+&#x27;T12:00:00&#x27;).getDay()];
  const o={i:BASE+1+k,t:wd+&#x27; &#x27;+tm,f:from,b,m:id,d:dd};if(rTo)o.r=rTo;if(q)o.q=q.slice(0,160);
  if(m.rx.length)o.x=m.rx.map(r=&gt;r.replace(/; see who reacted to this\.?/,&#x27;&#x27;).replace(/ reactions? with /,&#x27; &#x27;)).join(&#x27;; &#x27;);
  if(ext.length)o.l=[...new Set(ext)];if(a)o.a=a.slice(0,220);if(pm)o.p=pm[1];
@@ -413,7 +424,7 @@ document.body.innerHTML=&#x27;&#x27;;const bt=document.createElement(&#x27;butto
 const st=document.createElement(&#x27;div&#x27;);st.id=&#x27;__copyst&#x27;;st.style.cssText=&#x27;position:fixed;left:300px;top:30px;font:16px system-ui;z-index:2147483647&#x27;;
 bt.onclick=async()=&gt;{try{await navigator.clipboard.writeText(text);st.textContent=&#x27;COPIED &#x27;+text.length+&#x27; chars&#x27;;}catch(e){st.textContent=&#x27;COPY FAILED: &#x27;+e;}};
 const art=document.createElement(&#x27;article&#x27;);art.style.marginTop=&#x27;90px&#x27;;const pre=document.createElement(&#x27;pre&#x27;);pre.style.whiteSpace=&#x27;pre-wrap&#x27;;pre.textContent=msgsTxt;art.append(pre);document.body.append(bt,st,art);
-return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#x27;+cap.sha.slice(0,8)+&#x27; photos &#x27;+photos.length+(failed.length?&#x27; FAILED &#x27;+failed:&#x27;&#x27;)+&#x27; gifs &#x27;+gifs+&#x27; you &#x27;+out.filter(o=&gt;o.f===&#x27;You&#x27;).map(o=&gt;o.i);})();
+return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#x27;+cap.sha.slice(0,8)+&#x27; photos &#x27;+photos.length+(failed.length?&#x27; FAILED &#x27;+failed:&#x27;&#x27;)+&#x27; gifs &#x27;+gifs+&#x27; you &#x27;+out.filter(o=&gt;o.f===&#x27;You&#x27;).map(o=&gt;o.i)+(guessed.length?&#x27; DATES-GUESSED &#x27;+guessed:&#x27;&#x27;);})();
 }
   function jump(){
 (async function mcJump(){
@@ -456,7 +467,7 @@ return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#
     out.ms=Date.now()-p.t0;sessionStorage.setItem(&#x27;mc_result&#x27;,JSON.stringify(out));}
   const CMDS={probe:a=&gt;probe(a.anchor),scan:a=&gt;mcScan(a.stops,a.first),verify:()=&gt;mcVerify(),capture:a=&gt;mcCapture(a.base),full:a=&gt;full(a),
     jump:a=&gt;{history.replaceState(null,&#x27;&#x27;,location.pathname+&#x27;#mcjump=&#x27;+encodeURIComponent(a.mid)+(a.reply===false?&#x27;&amp;noreply&#x27;:&#x27;&#x27;));jump();return {started:true};},
-    ping:()=&gt;({v:&#x27;1.1&#x27;})};
+    ping:()=&gt;({v:&#x27;1.2&#x27;})};
   /* Bridge: Claude&#x27;s browser tool dispatches &#x27;mc-cmd&#x27; with a JSON string; the answer lands in sessionStorage &#x27;mc_res_&lt;id&gt;&#x27;. Works whether the userscript runs in the page or in the extension&#x27;s own world. */
   document.addEventListener(&#x27;mc-cmd&#x27;,async function(e){let d;try{d=JSON.parse(e.detail);}catch(x){return;}if(!CMDS[d.cmd])return;
     sessionStorage.setItem(&#x27;mc_res_&#x27;+d.id,JSON.stringify({running:true}));

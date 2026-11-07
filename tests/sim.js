@@ -2,7 +2,7 @@
    Run from the repo root: npm test (tests/run.js serves the mock and sets MOCK_URL).
    Or by hand: cd tests && python3 -m http.server 8765 &  then  node sim.js */
 const {chromium}=require('playwright');const fs=require('fs');const path=require('path');const D=path.join(__dirname,'..')+'/';fs.mkdirSync(D+'tests/out',{recursive:true});const URL=process.env.MOCK_URL||'http://localhost:8765/mock/messenger.html';
-const HELPER=fs.readFileSync(D+'assets/helper.user.js','utf8');
+const HELPER=fs.readFileSync(D+'assets/helper.user.js','utf8');const HV=HELPER.match(/@version\s+(\S+)/)[1];
 
 const ok=(c,msg)=>{console.log((c?'PASS ':'FAIL ')+msg);if(!c)process.exitCode=1;};
 const bridge=async(p,cmd,args)=>p.evaluate(async([cmd,args])=>{const id='x'+Date.now()+Math.random();document.dispatchEvent(new CustomEvent('mc-cmd',{detail:JSON.stringify({id,cmd,args})}));let r;for(let k=0;k<240;k++){await new Promise(z=>setTimeout(z,250));r=JSON.parse(sessionStorage.getItem('mc_res_'+id)||'null');if(r&&!r.running)break;}return r;},[cmd,args]);
@@ -16,8 +16,17 @@ function checkCap(cap,base,mockFrom,n,label){
  // ---------- A: helper installed (userscript manager emulated with an init script) ----------
  const ctxA=await b.newContext({viewport:{width:900,height:800}});await ctxA.addInitScript('document.addEventListener("DOMContentLoaded",function(){'+HELPER+'\n});');const p=await ctxA.newPage();
  await p.goto(URL);await p.evaluate(()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('mock_total','120');});await p.reload();await p.waitForTimeout(800);
- ok(await p.evaluate(()=>document.documentElement.dataset.mcHelper==='1.1'),'A: helper running (data-mc-helper=1.1)');
- ok((await bridge(p,'ping',{})).v==='1.1','A: bridge ping');
+ ok(await p.evaluate(v=>document.documentElement.dataset.mcHelper===v,HV),'A: helper running (data-mc-helper='+HV+')');
+ ok((await bridge(p,'ping',{})).v===HV,'A: bridge ping reports '+HV);
+ // date labels, with "now" pinned so the year boundary is tested whatever day this runs (B6)
+ const DATES=[['2026-11-06','9:15 AM','2026-11-06'],['2026-11-06','Yesterday 9:15 AM','2026-11-05'],['2026-11-06','Monday 9:15 AM','2026-11-02'],['2026-11-06','Mon 9:15 AM','2026-11-02'],
+  ['2026-11-06','Thurs 9:15 AM','2026-11-05'],['2026-11-06','Friday 9:15 AM','2026-10-30'],['2026-11-06','November 3, 2026 9:15 AM','2026-11-03'],['2026-11-06','Nov 3, 2026 9:15 AM','2026-11-03'],
+  ['2026-11-06','Nov 3 9:15 AM','2026-11-03'],['2026-11-06','Sept 9, 2025 9:15 AM','2025-09-09'],['2026-11-06','Oct. 12, 2025 at 9:00 AM','2025-10-12'],
+  ['2027-01-04','December 28 9:15 AM','2026-12-28'],['2027-01-04','Dec 31 9:15 AM','2026-12-31'],['2027-01-04','Jan 3 9:15 AM','2027-01-03'],['2027-01-04','Sunday 9:15 AM','2027-01-03'],
+  ['2026-03-01','Feb 28 9:15 AM','2026-02-28'],['2026-03-01','Saturday 9:15 AM','2026-02-28'],
+  ['2026-11-06','Someday 9:15 AM',null],['2026-11-06','',null],['2026-11-06','Mont 3 9:15 AM',null]];
+ const got=await p.evaluate(rows=>rows.map(([now,l])=>window.__mcDate(l,new Date(now+'T12:00:00'))),DATES);
+ const bad=DATES.filter((r,k)=>got[k]!==r[2]).map((r,k)=>r[1]+' @'+r[0]+' -> '+got[DATES.indexOf(r)]);ok(!bad.length,'B6: '+DATES.length+' date labels parse as expected (incl. short names, New Year, unreadable -> null)'+(bad.length?' BAD '+bad.join('; '):''));
  let r=await bridge(p,'full',{first:{count:50},base:-1});ok(r.stage==='reloading'&&r.scan.win===50,'A1 first run: scan found 50, reloading (scan '+JSON.stringify({win:r.scan.win,reps:r.scan.reps,qm:r.scan.qm,photoReplies:r.scan.photoReplies,perr:r.scan.perr})+')');
  await p.waitForLoadState('load');let res=await pollResult(p);
  ok(res&&res.stage==='captured'&&res.verify.ok&&res.verify.extra===0,'A1: verify after reload ok, captured');
@@ -56,6 +65,11 @@ function checkCap(cap,base,mockFrom,n,label){
  const cap4=checkCap(JSON.parse(await p.evaluate(()=>window.__capText)),-1,0,30,'A4');
  const m0=cap4.msgs[0],m12=cap4.msgs[12],m22=cap4.msgs[22],m27=cap4.msgs[27];
  ok(m0.d==='2025-10-12'&&m0.t==='Sun 9:00 AM','A4: full-date label -> d=2025-10-12, t="Sun 9:00 AM" (got '+m0.d+' / '+m0.t+')');
+ const now=new Date(),dec28=new Date(now.getFullYear(),11,28),yr=(dec28-now>864e5?now.getFullYear()-1:now.getFullYear())+'-12-28';
+ ok(cap4.msgs[5].d==='2025-10-13'&&cap4.msgs[6].d==='2025-10-13','A4: short-month label "Oct 13, 2025" -> 2025-10-13');
+ ok(cap4.msgs[8].d===yr,'A4: year-less "December 28" -> '+yr+' (got '+cap4.msgs[8].d+')');
+ ok(cap4.msgs[9].d===cap4.msgs[8].d&&/DATES-GUESSED 9$/.test(res.capture),'A4: unreadable label borrows the previous date and is reported ('+res.capture.split(' you ')[1]+')');
+ ok(cap4.msgs[15].d===cap4.msgs[12].d&&/^Thu /.test(cap4.msgs[15].t),'A4: short weekday "Thu" = "Thursday"');
  ok(/^Thu \d/.test(m12.t)&&/^\d{4}-\d\d-\d\d$/.test(m12.d),'A4: weekday label -> '+m12.t+' '+m12.d);
  ok(/^\w{3} \d/.test(m22.t)&&m22.d!==m27.d,'A4: "Yesterday" label -> '+m22.t+' '+m22.d+' (today '+m27.d+')');
  fs.writeFileSync(D+'tests/out/sim_cap4.json',JSON.stringify(cap4));

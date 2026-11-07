@@ -2,6 +2,24 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.3.0] - 2026-11-06
+Helper 1.2: dates read reliably. MINOR because the helper version changes and SKILL.md gains two report steps. Installed userscripts keep working; Claude tells you when an update is available.
+
+### Fixed
+- **B6:** capture dates.
+  - Short names ("Nov 3, 2026", "Sept 9", "Mon 9:15 AM", "Thurs") used to be dated *today*. They're now read correctly.
+  - A year-less date in the future ("December 28" read on Jan 4) is now last year's.
+  - A label the helper still can't read takes the previous message's date and is reported (`DATES-GUESSED #…` in the capture summary), instead of silently becoming today.
+- **R7 (part):** the scan's link-click guard is registered once per page load, not once per scan.
+
+### Added
+- `mcDate(label, now)` in the helper (also `window.__mcDate`), so tests can pin "now". `tests/sim.js` checks 20 fixed-date cases, including the New Year rollback, plus new mock labels end to end (short month, year-less date, unreadable label, short weekday). The sim reads the helper version from the file instead of hard-coding it.
+- SKILL.md:
+  - mention a userscript update when the installed helper is older than the shipped one
+  - list `DATES-GUESSED` messages in the report
+
+Components: `PAGE_VERSION` 1.3 (embedded helper copy regenerated), **helper 1.2** (was 1.1).
+
 ## [1.2.2] - 2026-11-06
 Page fixes. Claude republishes existing pages on their next refresh (`PAGE_VERSION` 1.3).
 

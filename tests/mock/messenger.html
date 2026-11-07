@@ -9,7 +9,8 @@ const total=()=>+(localStorage.getItem('mock_total')||120);
 const skip=()=>new Set(JSON.parse(localStorage.getItem('mock_skip')||'[]'));/* message numbers treated as deleted */
 function txt(i){return 'Message number '+i+' about trail shoes and packs';}
 function spec(i){const f=NAMES[i%5];const tm=new Date(2026,10,6,9,0+i);let h=tm.getHours()%12||12;const t=h+':'+String(tm.getMinutes()).padStart(2,'0')+' '+(tm.getHours()<12?'AM':'PM');
-  const tl=i<10?('October 12, 2025 '+t):(i<20?('Thursday '+t):(i<25?('Yesterday '+t):t));const o={i,id:'mid.$mock'+i,f,t:tl,b:txt(i)};
+  /* label forms: full date, short month (5-6), year-less date (8), unreadable (9), weekday, short weekday (15-16), Yesterday, time only */
+  const tl=i===8?('December 28 '+t):i===9?('Someday '+t):(i===5||i===6)?('Oct 13, 2025 '+t):i<10?('October 12, 2025 '+t):(i===15||i===16)?('Thu '+t):(i<20?('Thursday '+t):(i<25?('Yesterday '+t):t));const o={i,id:'mid.$mock'+i,f,t:tl,b:txt(i)};
   if(i===100){o.photo=true;o.b='';}
   if(i===103){o.reply=100;o.photoReply=true;o.b='nice pack';}
   else if(i%7===0&&i>3){o.reply=i-3;}
