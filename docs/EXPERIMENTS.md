@@ -92,7 +92,7 @@ A refresh of 183 messages took about 17 min:
 | Live sandbox page, first run, no helper | OK |
 | Live switch: refreshes 244 (injected v1.1) and 245 (old v2.2 helper) | Both done, no errors |
 | Old vs new page, rendered side by side | Title, header, summary and messages identical; only the "Refreshing" text and jump tag differ |
-| Independent cold review of the skill (fresh agent that hadn't seen the work) | 12 issues; 11 fixed, 1 partly (see section 9) |
+| Independent cold review of the skill (fresh agent that hadn't seen the work) | 12 issues, all fixed (see section 9) |
 
 ## 8. Outbox posting
 - **Method:** insert the text into Messenger's Lexical editor with `execCommand('insertText')`, check that the box text equals the stored text and that "Replying to …" is shown, press Enter, then check for a new "You:" message.
@@ -115,5 +115,5 @@ A refresh of 183 messages took about 17 min:
 | 9 | End-to-end encrypted chats (`/messages/e2ee/t/`) not handled | Fixed: full `chatUrl` stored and used; still untested live | SKILL.md, page |
 | 10 | `out_dir` format and write versions unclear | Fixed: files hold the bare doc; take `if_version` from the read | SKILL.md steps 5 and 7 |
 | 11 | Short chat drops its oldest message; GUESS review impractical on a 1,000-message first build | Fixed: `__top__` anchor captures all; first run reviews only the newest ~150 | helper scan, SKILL.md step 6 |
-| 12 | Cosmetic leftovers from the original chat | Partly: "bags" placeholder and "Pacific" comment removed. Still there: `paffle` chip class and "paffles" wording, `paSumFilter` storage key, `patool` time-zone fallback (used only when `meta/chat.tz` is missing). None affect behavior | page, `patool` |
+| 12 | Cosmetic leftovers from the original chat | Fixed Nov 6, 8:30 PM: "bags" placeholder and "Pacific" comment removed; `paffle` → `raffle`/`group` (chip classes, deal kind, prompt, heading); storage key `paSumFilter` → `mcSumFilter`. Kept on purpose: `patool` falls back to America/Los_Angeles only when `meta/chat.tz` is missing. Rendered page text checked identical before and after | page, `patool` |
 
