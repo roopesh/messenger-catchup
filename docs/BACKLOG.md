@@ -16,9 +16,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B6 | P2 | bug | Capture date parser: unknown label forms silently become "today"; year-less dates break at New Year · **done** (v1.3.0) |
 | B8 | P2 | bug | One malformed link in a message crashes the Messages tab render · **done** (v1.2.2) |
 | B4 | P2 | bug | `catchup.py` accepts links to a parent in another conversation; the page then hides the link · **done** (v1.2.1) |
-| G1 | P2 | doc gap | `meta/chat` fields written by the page are missing from SKILL.md; `pageVersion` never updated on republish · **half done** (pageVersion, v1.2.0) |
-| G2 | P2 | doc gap | Page says Claude reads `views`, ideas and `qa`; SKILL.md never tells it to |
-| G3 | P2 | doc gap | Page offers "say reply 3232 to Claude"; SKILL.md has no procedure for it |
+| G1 | P2 | doc gap | `meta/chat` fields written by the page are missing from SKILL.md; `pageVersion` never updated on republish · **done** (v1.2.0, v1.4.0) |
+| G2 | P2 | doc gap | Page says Claude reads `views`, ideas and `qa`; SKILL.md never tells it to · **done** (v1.4.0) |
+| G3 | P2 | doc gap | Page offers "say reply 3232 to Claude"; SKILL.md has no procedure for it · **done** (v1.4.0) |
 | R2 | P2 | risk | Capture size is unbounded (photos travel inline as base64) |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
 | R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **mostly done** (no server-side block: plan) |
@@ -181,16 +181,18 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 ## Doc and instruction gaps (SKILL.md / page text vs code)
 
-### G1 · P2 · `meta/chat` fields not in SKILL.md
+### G1 · P2 · `meta/chat` fields not in SKILL.md · done (v1.4.0)
 - **What:** the page writes `lastT`, `ownLastMid`, `caughtUpAt`, `markerSetAt` and `markerTo`, and catchup.py writes `threading.builtAt`; none are in SKILL.md's schema. The full list is in ARCHITECTURE.md › Database reference. Separately, SKILL.md says to republish the page when `meta/chat.pageVersion` is older than `PAGE_VERSION`, but never says to update `pageVersion` afterwards, so it stays old and every run republishes.
 - **Fix:** add the fields; add "then update `meta/chat.pageVersion`" to setup step 2.
-- **Half done in v1.2.0:** setup step 2 and the new refresh-time upgrade both set `pageVersion`. The missing field list is still open.
+- **Half done in v1.2.0:** setup step 2 and the new refresh-time upgrade both set `pageVersion`.
+- **Done in v1.4.0:** the field list and the page's collections are in SKILL.md, and two tests derive both from the page source so they can't drift again.
 
-### G2 · P2 · Collections Claude is said to read but doesn't
+### G2 · P2 · Collections Claude is said to read but doesn't · done (v1.4.0)
 - **What:** the page says saved questions are kept "so Claude can see what you asked" and that views and method ideas are what "Claude reads … when improving how catch-ups are built". SKILL.md never mentions `qa`, `views` or `notes`.
 - **Fix:** either add a step (for example, glance at new `views` with `kind:"idea"` after each refresh and mention them in the report) or reword the page.
+- **Done in v1.4.0:** SKILL.md › What the page saves for Claude covers new ideas listed after each refresh (tracked by `ideasSeenAt`, applied only on a yes), `qa` read when the user refers to it, and `notes/*` written for analyses worth keeping.
 
-### G3 · P2 · "Reply 3232" has no procedure
+### G3 · P2 · "Reply 3232" has no procedure · done (v1.4.0)
 - **Where:** `page.html:475`
 - **What:** the page tells the user to say “reply 3232” or “open #3232” to Claude. SKILL.md has the `jump{mid,reply}` command but no section for this request (look up `m` for that `i`, open the tab, start `jump`, report).
 - **Fix:** add a short "Open a message" section to SKILL.md.
@@ -206,7 +208,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ## Cleanup
 
 ### C1 · P3 · Unreachable code in the page
-- **What:** about 80 lines kept from the user-specific page: the Refresh trigger (`REFRESH_TASK`, `startRefresh`, `fire_trigger`, `S.mcp`, and the non-`NO_TASK` branches of `renderRefresh`; its `NO_TASK` branch is live and shows the status line), the summary v1 renderer, range summaries (need `summary.fromI`, which nothing sets), `dayMap`/`meta.dates`, and the "Notes from Claude" section. Details in ARCHITECTURE.md › Legacy.
+- **What:** about 80 lines kept from the user-specific page: the Refresh trigger (`REFRESH_TASK`, `startRefresh`, `fire_trigger`, `S.mcp`, and the non-`NO_TASK` branches of `renderRefresh`; its `NO_TASK` branch is live and shows the status line), the summary v1 renderer, range summaries (need `summary.fromI`, which nothing sets), and `dayMap`/`meta.dates`. Details in ARCHITECTURE.md › Legacy. (The "Notes from Claude" section has a writer again since v1.4.0.)
 - **Decide:** remove, or revive. Range summaries could come back if `catchup.py` wrote `fromI`, and the Refresh button if scheduled triggers can be fired from a page again.
 
 ### C2 · P2 · Helper copies and version strings · done
