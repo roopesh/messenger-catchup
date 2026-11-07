@@ -14,7 +14,7 @@
 - **Repo:** public (since Nov 7), `github.com/roopesh/messenger-catchup`, branch `main`. **Never commit real names or text from a user's chat**: tests use the mock cast (Ana, Ben, Cy, Dee, You).
 
 ## Test suites
-`npm test` runs all three (about 3 minutes); CI runs the same on every PR.
+`npm test` checks formatting, then runs all three (about 3 minutes); CI runs the same on every PR.
 
 | Suite | Command | What it covers | Now |
 |---|---|---|---|
@@ -52,8 +52,9 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
 From the repo root:
 ```sh
 npm install        # once: Playwright (pinned in package.json)
-npm run setup      # once: Playwright's Chromium + the pre-push hook
-npm test           # Python suites, then sim, then page (about 3 minutes)
+npm run setup      # once: Playwright's Chromium, the pre-push hook, .venv with pinned Ruff
+npm run fmt        # before committing: Prettier + Ruff, then npm run sync
+npm test           # format check, Python suites, sim, page (about 3 minutes)
 ```
 Exit code 0 means everything passed. The page suite reads `tests/out/sim_caps.json`, which the sim writes, so run `test:sim` before `test:page` when you run them separately. `tests/out/` is gitignored.
 
@@ -66,12 +67,12 @@ python3 scripts/catchup.py build WORK RUNDIR spec.json
 
 ### Change the helper
 1. Edit `assets/helper.user.js`.
-2. `npm run sync` regenerates the page's userscript copy and bookmarklet. `npm test` fails if you forget.
+2. `npm run fmt` formats and then runs `npm run sync`, which regenerates the page's userscript copy and bookmarklet. `npm test` fails if you forget.
 3. To release a new helper version, bump all four version strings (header `@version`, `window.__mcHelper`, `data-mc-helper`, `ping`; a test checks they agree), run `npm run sync`, and update the `1.1` checks in `tests/sim.js`.
 4. `npm test`.
 
 ### Change the page
-1. Edit `assets/page.html`; bump `PAGE_VERSION` when users' pages should be republished.
+1. Edit `assets/page.html`. It has no `<!doctype>…<body>` skeleton, because the Artifact tool adds that at publish time (the page test adds the same one). Bump `PAGE_VERSION` whenever the page changes; a test enforces it.
 2. Claude republishes a user's page when `meta/chat.pageVersion` is older (SKILL.md setup step 2). The database survives a republish.
 3. `npm test`. The page suite loads the real file.
 
