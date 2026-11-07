@@ -118,7 +118,7 @@ A refresh of 183 messages took about 17 min:
 | 12 | Cosmetic leftovers from the original chat | Fixed Nov 6, 8:30 PM: "bags" placeholder and "Pacific" comment removed; a chat-specific deal kind → `raffle`/`group` (chip classes, deal kind, prompt, heading); storage key `ccSumFilter` → `mcSumFilter`. Kept on purpose: `cctool` falls back to America/Los_Angeles only when `meta/chat.tz` is missing. Rendered page text checked identical before and after | page, `cctool` |
 
 ## 10. Handoff review (Nov 6, evening)
-- **How:** read every file against every doc at `c3186da`, then ran the checks below. Findings are filed in [BACKLOG.md](BACKLOG.md).
+- **How:** read every file against every doc at `9c353de`, then ran the checks below. Findings are filed in [BACKLOG.md](BACKLOG.md).
 
 | Check | Result |
 |---|---|

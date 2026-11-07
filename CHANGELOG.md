@@ -2,6 +2,16 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.14.2] - 2026-11-07
+Docs only. Follows the owner-approved rewrite of the git history.
+
+### Changed
+- **Git history rewritten** so that no commit, commit message or tag names the original chat, its raffle term or its old code names. The old code names now read with a neutral `cc` prefix (`cctool.py`, `ccScan`, …). Every released version's shipped files are unchanged, so the release ZIPs still match their tags. Old commit ids no longer exist.
+- **Commit references in the docs** point at the rewritten commits.
+- **`docs/DEVELOPMENT.md` › Phase 10** records the rewrite and how it was checked.
+
+Components: `PAGE_VERSION` 2.2, helper 1.9 (unchanged).
+
 ## [1.14.1] - 2026-11-07
 Docs only.
 
@@ -483,6 +493,6 @@ No behavior change for users. Re-upload the skill ZIP to pick up the renamed bui
 Components: `PAGE_VERSION` 1.1, helper 1.1 (unchanged).
 
 ## [1.1.0] - 2026-11-06
-The generic, shareable skill as it stood before the handoff review (commits `30ad68e` … `c3186da`, tagged retroactively). History in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) › Phase 6.
+The generic, shareable skill as it stood before the handoff review (commits `45afe28` … `9c353de`, tagged retroactively). History in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) › Phase 6.
 
 Components: `PAGE_VERSION` 1.1, helper 1.1.

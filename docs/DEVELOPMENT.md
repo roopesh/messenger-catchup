@@ -137,6 +137,10 @@ Related docs:
   - component minor versions one digit
   - the page stores no document skeleton
   - the release attaches the userscript
+- **History rewrite (owner-approved, the one exception to PR-only):** the original chat's name, its raffle term and the old chat-prefixed code names were removed from every commit, commit message and tag with `git-filter-repo`. The old code names now read with a `cc` prefix (`cctool.py`, `ccScan`, …).
+  - Checked before pushing: today's files matched the tested tree, and every released version's shipped files stayed byte-identical. Only the pre-release v1.1.0 changed.
+  - Force-push was allowed for the one push, and protection was then restored as it was. All 26 tags were moved; release ZIPs were already clean.
+  - Commit references in these docs point at the new commits (v1.14.2). GitHub still shows old PR diffs, which only GitHub Support can purge.
 - **Left:** live checks (R2, R3, R5, R6, R9), G6, F1, F5, F6, F7.
 
 ## Version map
@@ -147,4 +151,4 @@ Related docs:
 | Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) → … → 2.2 |
 | Skill | user-specific skill (named after the original chat) → generic `messenger-catchup` v1.1 |
 | Build tool | `cctool.py` → `catchup.py` (Phase 8, same commands and behavior) |
-| Release (`VERSION`) | v1.1.0 (tagged retroactively at `c3186da`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2) → … → v1.7.1 (Phase 9) → v1.14.1 (Phase 10). From here on, see CHANGELOG.md |
+| Release (`VERSION`) | v1.1.0 (tagged retroactively at `9c353de`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2) → … → v1.7.1 (Phase 9) → v1.14.1 (Phase 10). From here on, see CHANGELOG.md |
