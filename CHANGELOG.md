@@ -2,6 +2,22 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.7.3] - 2026-11-07
+Cleanup (BACKLOG C1). Pages republish (`PAGE_VERSION` 1.8); nothing users can see changes.
+
+### Removed (page)
+- The in-page Refresh trigger, which was hidden and never wired up (`REFRESH_TASK` placeholder, `startRefresh`, `fire_trigger`, `S.mcp`). The status line, which tells you to ask Claude in chat or shows that a refresh is running, is unchanged.
+- The summary v1 renderer, since every summary is version 2.
+- `dayMap`/`meta.dates`, since every stored message carries its own date. Also removed an unused `DAYS` table.
+
+### Kept
+- **Range summaries.** C1 called them unreachable, but the original page's summary has `fromI`, so they're live there. A read-only check of that page's data found `fromI` 1654, two saved span summaries, version-2 summaries, and a date on every one of 3,992 messages.
+
+### Tests
+- Page: 9 new checks. Range summaries: offered, written, saved, reused. The status line, and the Refresh button being gone. Apart from the button check, they pass on the v1.7 page too.
+
+Components: `PAGE_VERSION` 1.8, helper 1.4 (unchanged).
+
 ## [1.7.2] - 2026-11-07
 Repo and docs only.
 

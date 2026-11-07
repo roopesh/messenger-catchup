@@ -31,7 +31,6 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
    - the page republishes cleanly
 2. **R2:** measure a large capture (many photos) to see whether the clipboard and paste hold up.
 3. **F4:** a helper self-check that names exactly which Messenger selector or label vanished, to catch markup changes early.
-4. **C1:** remove the page's unreachable legacy code, once the live run confirms nothing relies on it.
 
 ## Doc map
 | Doc | Use it for |
@@ -40,7 +39,7 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
 | [CLAUDE.md](../CLAUDE.md) | The workflow rules (PR, versioning, release) |
 | [CHANGELOG.md](../CHANGELOG.md) | What changed in each release |
 | [SKILL.md](../SKILL.md) | The procedure Claude follows. **Changing it changes behavior.** |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | How the parts fit; full database reference; helper bridge; capture format; tests; legacy code |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How the parts fit; full database reference; helper bridge; capture format; tests; range summaries |
 | [BACKLOG.md](BACKLOG.md) | Everything open, by priority |
 | [DECISIONS.md](DECISIONS.md) | What was chosen, why, and what was rejected |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | History, phase by phase |

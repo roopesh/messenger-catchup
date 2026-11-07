@@ -68,7 +68,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) |
 | R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
-| C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) |
+| C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) · **done** (v1.7.3; range summaries kept, they're live) |
 | C3 | P3 | cleanup | Leftover `cc*` names and chat-specific comments · **done** |
 | C4 | P3 | cleanup | Minified one-line style in helper and page |
 | C5 | P3 | cleanup | `catchup._ts` shells out to `date` · **done** (v1.2.1) |
@@ -255,9 +255,16 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 
 ## Cleanup
 
-### C1 · P3 · Unreachable code in the page
+### C1 · P3 · Unreachable code in the page · done (v1.7.3)
 - **What:** about 80 lines kept from the user-specific page: the Refresh trigger (`REFRESH_TASK`, `startRefresh`, `fire_trigger`, `S.mcp`, and the non-`NO_TASK` branches of `renderRefresh`; its `NO_TASK` branch is live and shows the status line), the summary v1 renderer, range summaries (need `summary.fromI`, which nothing sets), and `dayMap`/`meta.dates`. Details in ARCHITECTURE.md › Legacy. (The "Notes from Claude" section has a writer again since v1.4.0.)
 - **Decide:** remove, or revive. Range summaries could come back if `catchup.py` wrote `fromI`, and the Refresh button if scheduled triggers can be fired from a page again.
+- **Done in v1.7.3, after checking the original user's live data (read-only) first:**
+  - **Range summaries were not dead.** Their stored summary has `fromI` (1654), which `catchup.py` carries forward, and two span summaries are saved. They stay and now have page tests.
+  - **Removed:**
+    - the Refresh trigger: the live page still has the `__TRIGGER_ID__` placeholder
+    - the summary v1 renderer: the live summary is version 2
+    - `dayMap`/`meta.dates` and an unused `DAYS`: all 3,992 stored messages carry `d`
+  - About 65 lines gone. `PAGE_VERSION` 1.8.
 
 ### C2 · P2 · Helper copies and version strings · done
 - **What:** `helper.user.js`, the HTML-escaped copy in `page.html` `#jump-us`, and the URL-encoded `jump()` bookmarklet in `#jump-bm`; plus `1.1` in four places inside the helper. Nothing enforced the sync.
@@ -292,7 +299,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - chunk rollover at 82, photos and GIFs, overlap, dry runs, and the paste and button paths
   - the full pipeline: sim captures → page import → `catchup.py` → page render, including summary cards and filters, threaded nesting, markers, the date-entry fix, outbox, Ask Claude and Views
   - KNOWN checks for B7–B9
-- **Still not covered:** range summaries and the legacy v1 renderer (C1), the lightbox, and the "Find in Messenger" panel.
+- **Still not covered:** the lightbox and the "Find in Messenger" panel. (Range summaries got tests in v1.7.3; the v1 renderer was removed.)
 
 ### T4 · P3 · More date-label forms in the mock · done (v1.3.0)
 - Add short month/weekday labels and a year-boundary case once B6 is fixed.

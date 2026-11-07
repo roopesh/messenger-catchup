@@ -109,12 +109,10 @@ Every outcome goes to `refresh/lastImport`. A dry run reports what it would do, 
 ### Outbox
 "Reply here" writes `outbox/r<timestamp>` `{i, mid, to, snip, text, state:"queued", queuedAt}`; Cancel sets `state:"cancelled"`. Claude moves rows to `sending` → `sent` (`sentAt`, `sentMid`), `failed` (`error`) or `unconfirmed` (sent but never found in the chat; never reposted). Failed and unconfirmed rows have a Dismiss button (`state:"dismissed"`), and they stay listed until resolved.
 
-### Legacy / unreachable code (kept from the user-specific page)
-- In-page Refresh button: `#refresh-btn` is `hidden` and never shown; `REFRESH_TASK="__TRIGGER_ID__"`, `S.mcp=null`, so `startRefresh` / `fire_trigger` (line 1015) never run.
-- Summary v1 renderer (`renderSummary` non-v2 branch, line 612): the generic skill always writes `version:2`.
-- Range summaries (`renderRangeSummary`, line 793): only trigger when `summary.fromI` is set, and `catchup.py` never sets it.
-- `dayMap()` / `meta.dates` (line 544): every message now carries `d`.
-See BACKLOG C1.
+### Range summaries (pages carried over from the original chat)
+- `renderRangeSummary` / `writeRangeSummary`: when the catch-up window is set by date (`markerMode:"time"`) and starts before `summary/current.fromI`, the page offers to have Claude (through the page's `sample`) summarize exactly that span, and saves it in `rangeSummaries/r<lo>_<hi>`.
+- Only summaries written before the generic skill have `fromI`. `catchup.py` never sets it but keeps it, because each build edits the stored summary. So new pages never show range summaries, while the original page does (checked live Nov 7: `fromI` 1654, two saved spans).
+- The removed legacy code (C1, v1.7.3): the in-page Refresh trigger (`REFRESH_TASK`, `startRefresh`, `fire_trigger`), the summary v1 renderer, and `dayMap`/`meta.dates`. Every stored message carries `d`; checked live: 3,992 of 3,992.
 
 ## Build tool (`scripts/catchup.py`)
 
@@ -135,7 +133,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | | Page importer | `lastI`, `lastMid`, `lastT`*, `anchorMids`, `ownLastI`, `ownLastMid`* |
 | | Page UI | `markerMode`, `markerSetAt`*, `markerFrom`, `markerTo`*, `caughtUpI`, `caughtUpAt`* |
 | | Claude per refresh | `lastRefresh`, `coverage`, `ideasSeenAt` |
-| | (read only, legacy) | `dates` |
+| | (no longer read) | `dates` (left in old pages; the page stopped reading it in v1.7.3) |
 | `chunks/cNNNN` | Page importer | `{start, msgs}` |
 | `threading/current` | Claude (from catchup.py) | `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
 | `summary/current` | Claude (from catchup.py) | `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
@@ -146,7 +144,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `outbox/*` | Page, then Claude | see Outbox above |
 | `qa/*` | Page (Ask) | `q`, `a`, `at`, `scope`, `toI` |
 | `views/*` | Page (Views) | `kind:"view"` (title, intro, sections, prompt, at, toI) or `kind:"idea"` (prompt, at) |
-| `rangeSummaries/*` | Page (unreachable today) | same shape as summary plus `by:"page"`, `fromI` |
+| `rangeSummaries/*` | Page (only when `summary/current` has `fromI`) | same shape as summary plus `by:"page"`, `fromI` |
 | `notes/*` | Claude (SKILL.md › What the page saves for Claude) | `title`, `when`, `at`, `intro`, `table`, `sections`, `footer` |
 
 \* not listed in SKILL.md (BACKLOG G1).
