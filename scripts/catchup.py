@@ -28,7 +28,7 @@ def _n(s):
 def _who_ok(m,p):
     r=(m.get('r') or '')
     if r.lower()=='you': return p['f']=='You'
-    if r.lower() in('themself','themselves','himself','herself'): return p['f']==m['f']
+    if r.lower() in('themself','themselves','himself','herself','yourself'): return p['f']==m['f']
     return p['f']==r or r.startswith(p['f']) or p['f'].startswith(r)
 def resolve(m,pool,window=300,n=20,short=12):
     """Parent of a reply from its quote -> (i, type, doubt). doubt is None when the match is solid, else why to CHECK it."""
@@ -86,12 +86,15 @@ def bootstrap(work,db):
     for m in ms: byi[m['i']]=m
     al=[byi[i] for i in sorted(byi)]
     assert [m['i'] for m in al]==list(range(len(al))),'gap in stored messages'
-    mt=_load(db+'/meta/chat.json'); assert mt['lastI']==(al[-1]['i'] if al else -1),(mt['lastI'],len(al))
-    th=_load(db+'/threading/current.json'); last=al[-1]['i'] if al else -1; to=th.get('to'); base=last
+    mt=_load(db+'/meta/chat.json'); stored=al[-1]['i'] if al else -1
+    assert mt['lastI']<=stored,('meta/chat.lastI (#%d) is ahead of the newest saved message (#%d): fix meta/chat first (SKILL.md Troubleshooting)'%(mt['lastI'],stored))
+    last=mt['lastI']; ahead=stored-last  # chunks past lastI: an import that stopped before meta/chat; the next paste repairs them
+    th=_load(db+'/threading/current.json'); to=th.get('to'); base=last
     if isinstance(to,int) and -1<=to<last: base=to  # stored but never built (a run that stopped after its import): the next build covers them
     _dump(al[:base+1],work+'/all.json'); _dump(th,work+'/base/threading.json'); _dump(_load(db+'/summary/current.json'),work+'/base/summary.json')
     st={'base':base,'stops':(mt.get('anchorMids') or [])[::-1],'tz':mt.get('tz') or 'America/Los_Angeles'}; _dump(st,work+'/state.json')
-    print('bootstrap ok: %d messages built through #%d; STOPS=%s'%(base+1,base,json.dumps(st['stops']))+('' if base==last else '; #%d-#%d are stored but not built yet: the next RUN must include them'%(base+1,last)))
+    print('bootstrap ok: %d messages built through #%d; STOPS=%s'%(base+1,base,json.dumps(st['stops']))+('' if base==last else '; #%d-#%d are stored but not built yet: the next RUN must include them'%(base+1,last))
+          +('; #%d-#%d are saved but not counted in meta/chat yet: the next paste repairs them (REPAIRED)'%(last+1,stored) if ahead else ''))
 
 def build(work,run,specp):
     global TZ
@@ -103,7 +106,9 @@ def build(work,run,specp):
     for m in ms:
         if m['i'] in byi: assert byi[m['i']]==m,('stored copy differs',m['i'])
     new=sorted({m['i']:m for m in ms if m['i']>base}.values(),key=lambda m:m['i']); N={m['i']:m for m in new}
-    assert new or not ms,'RUN already built into WORK (WORK is at #%d, RUN ends at #%d). To build it again, run: catchup.py restore WORK'%(base,max(m['i'] for m in ms))
+    if not new and ms:
+        if os.path.exists(work+'/prev/state.json'): raise AssertionError('RUN already built into WORK (WORK is at #%d, RUN ends at #%d). To build it again, run: catchup.py restore WORK'%(base,max(m['i'] for m in ms)))
+        raise AssertionError('nothing left to build: WORK already covers RUN (through #%d; another build did it). Write only meta/chat {lastRefresh} and refresh/status'%base)
     ids=[m['i'] for m in new]; mt=_load(run+'/meta/chat.json')
     if ids and ids[0]>base+1:
         cs=mt.get('chunkSize') or 82; need=sorted({'c%04d'%(x//cs*cs) for x in range(base+1,ids[0])})

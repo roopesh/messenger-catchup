@@ -37,7 +37,7 @@ Only Claude in Chrome is supported (the user's real, signed-in Chrome). Don't us
 - `chunks/cNNNN` `{start, msgs:[...]}`: message fields `i` (number from 0), `t` ("Fri 8:41 AM"), `d` (date), `f` (sender; the user = "You"), `b` (text), `m` (Messenger id), `r` (replied-to name), `q` (quoted text), `pi`/`pmid`/`pq`/`perr` (reply parent), `p` (photo), `a` (link preview), `l` (links), `x` (reactions).
 - `threading/current`: `convs:[{id,title,members}]`, `links:{i:[parent,type]}` (r = Messenger link, rq = matched by quote, rg = photo reply best match, i = answers, c = same person continuing), `to`, `note`, `builtAt`.
 - `summary/current`: `version:2`, `convs:[{id,tag,synopsis:[{t,refs}],outcome,key}]`, `open`, `answered`, `deals`, `mentions`, `toI`, `generatedAt` (optional `mentionsNote`).
-- `photos/index` `{byI,gifs}`, `refresh/status` (lock and status line), `refresh/lastImport`, `refresh/importLock` (the page's import lease; never write it), `outbox/*` (replies queued on the page).
+- `photos/index` `{byI,byK,gifs}`, `refresh/status` (lock and status line), `refresh/lastImport`, `refresh/importLock` (the page's import lease; never write it), `outbox/*` (replies queued on the page).
 - Written by the page: `qa/*` `{q,a,at,scope,toI}` (questions asked on the page's Ask tab), `views/*` (`kind:"view"`: a view the user built; `kind:"idea"`: a method idea left for Claude, `{prompt,at}`), `rangeSummaries/*` (summaries the page wrote for a past span). Written by Claude: `notes/*` `{title, when, at, intro?, table?:{cols,rows}, sections?:[{h,items:[{b?,t}]}], footer?}` (see What the page saves for Claude).
 
 ## First run: setup (when the user has no page yet)
@@ -149,6 +149,8 @@ The skill's version is in `VERSION` (shipped with it). Every release passes the 
 - Chunk or checksum errors: nothing was saved; capture again.
 - `RUN already built into WORK`: run `python3 catchup.py restore WORK`, then build again.
 - `RUN is missing #a-#b (stored, not built yet): fetch chunks/… into RUN too`: fetch the chunks it names into RUN and build again.
+- bootstrap says "#a-#b are saved but not counted in meta/chat yet": an earlier import stopped before updating `meta/chat`. Carry on: this run's paste repairs it (the toast starts with REPAIRED), and the build then covers those messages too.
+- `nothing left to build: WORK already covers RUN`: another session already built these messages. Skip the build and write only `meta/chat` `{lastRefresh}` and `refresh/status` done.
 - "meta/chat.lastI (#x) is ahead of the newest saved message (#y)": update `meta/chat` (pinned) with `lastI: y`, `lastMid` = message #y's `m`, and `anchorMids` = the `m` of the three newest saved messages, then paste again.
 
 ## catchup.py

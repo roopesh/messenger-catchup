@@ -171,6 +171,14 @@ async function robustness(){
   ok(r&&r.fresh===3&&/1 photo stored\. Photos: upload failed at #204 .*paste again/.test(r.msg)&&ix['203']&&!ix['204'],'upload fails at the 2nd photo: messages saved, the 1st photo indexed, told to paste again ('+(r&&r.msg.slice(-90))+')');
   const n0=await p.evaluate(()=>__rt.uploads.length);r=await paste(p,JSON.stringify(cap(range(203,205),{photos:P3})));ix=(await get(p,'photos/index')).byI;
   ok(r&&r.ok&&/2 photos stored \(1 already stored\)/.test(r.msg)&&ix['204']&&ix['205']&&await p.evaluate(()=>__rt.uploads.length)-n0===2,'paste again: only the 2 missing photos upload, all 3 indexed');
+  // B28: a capture that skips a photo slot, then a failed upload and a re-paste: no duplicate
+  const PK=[{i:206,k:1,type:'image/png',b64:PNG},{i:206,k:2,type:'image/png',b64:PNG},{i:207,k:0,type:'image/png',b64:PNG}];
+  await p.evaluate(()=>{window.__failUploadAt=__rt.uploads.length+2;});r=await paste(p,JSON.stringify(cap(range(206,207),{photos:PK})));
+  let n1=await p.evaluate(()=>__rt.uploads.length);r=await paste(p,JSON.stringify(cap(range(206,207),{photos:PK})));ix=await get(p,'photos/index');
+  ok(r&&r.ok&&await p.evaluate(()=>__rt.uploads.length)-n1===1&&ix.byI['206'].length===2&&ix.byI['207'].length===1&&ix.byK['206']['1']&&ix.byK['206']['2'],'B28: slot 0 missing, upload fails, paste again: only #207 uploads, #206 keeps 2 photos (no duplicate)');
+  // B25 groundwork: unconfirmed and sending replies stay listed until resolved
+  await p.evaluate(()=>{const old=new Date(Date.now()-3*864e5).toISOString();__rt.write('outbox/u1',{i:205,mid:'mid.205',to:'Ana',snip:'message 205',text:'see you there',state:'unconfirmed',queuedAt:old,error:'Sent? Not found in the chat afterwards.'});__rt.write('outbox/s1',{i:204,mid:'mid.204',to:'Dee',snip:'message 204',text:'ok',state:'sending',queuedAt:old});});
+  ok(await until(p,()=>{const t=document.getElementById('v-summary').textContent;return /not confirmed/.test(t)&&/Sent\? Not found/.test(t)&&/sending…/.test(t);}),'outbox: 3-day-old unconfirmed and sending replies are still shown, with the note');
   ok(p.errors.length===0,'photos/repair: no page errors '+JSON.stringify(p.errors));
   await p.context().close();
   // a runtime without acquire() still imports (older contract)
