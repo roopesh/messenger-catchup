@@ -57,6 +57,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B35 | P2 | bug | Unbuilt messages went unnoticed when WORK was reused in a session · **done** (v1.7.0) |
 | B36 | P3 | bug | `unconfirmed`/`failed` replies could never be resolved or dismissed · **done** (v1.7.0) |
 | B37 | P3 | bug | A page that can't upload said "paste again" with no end · **done** (v1.7.0) |
+| B38 | P2 | bug | A photo-reply parent that loaded late could be recorded as the next reply's parent: a silent wrong link · **done** (v1.14.0) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -78,7 +79,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | T4 | P3 | test | Sim doesn't cover other date-label forms · **done** (v1.3.0) |
 | T5 | P3 | test | No CI · **done** |
 | F1 | P3 | feature | More than one chat per page |
-| F2 | P3 | feature | Faster distant photo-reply parents |
+| F2 | P3 | feature | Faster distant photo-reply parents · **done** (v1.14.0) |
 | F5 | P3 | feature | Page shows "update available" when its version is behind |
 | F6 | P3 | feature | Ask Claude over long histories |
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically |
@@ -181,6 +182,11 @@ A fresh agent reviewed the code after the night's changes; B22 and B23 were conf
 
 ### B30–B37 · third independent review (Nov 7, regressions since v1.4.1) · all done (v1.7.0)
 A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by running it. Most findings were about the run lock's rules interacting across paths. All are fixed in v1.7.0 (details in CHANGELOG.md). It also flagged an unverified risk, that Messenger may show first names where the chat shows full names; reply matching now tolerates that (R9).
+
+### B38 · P2 · A late-loading photo-reply parent became the next reply's parent · done (v1.14.0)
+- **Found:** by the F2 test on helper 1.8. Reply #136 timed out waiting for focus. Its parent then loaded and took focus while #130 was being clicked, so #130 was linked to #136's parent with no warning.
+- **Fix:** the focused parent must be from the person the reply names ("X replied to Y", including you, themself and a first-name/full-name prefix). Otherwise the result is `perr:"wrongfocus"`, which becomes a CHECK at build time, never a link.
+- **Test:** sim section D with a parent slower than the 10 s wait gives `wrongfocus` and `nofocus`, and no link.
 
 ## Risks
 
@@ -335,8 +341,13 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### F1 · P3 · Several chats
 - One page and one loop per chat today (LEARNINGS.md › Open issues). Simplest path: one page per chat, keyed by `meta/chat.thread`, and a loop that walks them.
 
-### F2 · P3 · Faster distant photo-reply parents
+### F2 · P3 · Faster distant photo-reply parents · done (v1.14.0)
 - Bringing a far-up parent into view is slow and can fail with `notfound` (EXPERIMENTS.md §3, refresh 240). LEARNINGS.md suggests opening the reply through its jump link and clicking from there.
+- **Done in v1.14.0 (helper 1.9):**
+  - **Cause:** after each click on "Go to replied message", the view sat at the parent, far up the chat. Finding the next reply meant stepping back down 0.8 screen at a time, which was slow and could end in `notfound`. Also, focus was awaited for only 2.5 s, so far parents ended in `nofocus`.
+  - **Fix:** jump to the bottom before the next reply, and wait up to 10 s for focus.
+  - **Tests:** the mock now loads history down to an unloaded parent after a delay, like Messenger. Sim section D (two far-up parents) passes in about 9 s; on helper 1.8 it fails.
+  - **Found along the way:** B38.
 
 ### F3 · P2 · Correct an existing link · done (v1.12.0)
 - The spec's `links` only applies to messages in the current build, so a wrong link found later can only be fixed by editing `threading/current` by hand. Add a `relink` key (`{i: [parent,type] | null}` for older messages), checked by the same asserts.

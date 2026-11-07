@@ -23,7 +23,8 @@ Platform limits, gotchas, and what was changed because of them.
 - **Emoji at the start of a quote** broke matching; normalization strips them.
 - **Date labels** change with age ("Yesterday", weekday, full date). The generic helper derives the weekday from the date and pulls the time out with a regex.
 - **Fast scrolling skips messages.** Verify with a second pass and a gap detector.
-- **Bringing a far-up photo reply's parent into view is slow** and can fail ("notfound"). Open the reply with its jump link and click from there.
+- **Bringing a far-up photo reply's parent into view was slow** and could fail ("notfound"). The cause was stepping back down from wherever the last click left the view, plus a 2.5 s focus wait. Since helper 1.9: jump to the bottom between replies, and wait up to 10 s.
+- **A late focus is not an answer:** a parent that loads after the wait can take focus during the next reply's click. Check that the focused message is from the person the reply names (B38).
 - **English UI only.** The labels above are English.
 
 ## Userscript and injection
