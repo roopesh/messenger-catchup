@@ -14,7 +14,10 @@ def read(*p):
         return fh.read()
 
 
-SHIPPED = ["SKILL.md", "VERSION", "assets/page.html", "assets/helper.user.js", "scripts/catchup.py"]
+REFERENCES = ["database.md", "open-message.md", "outbox.md", "setup.md", "troubleshooting.md"]
+SHIPPED = ["SKILL.md", "VERSION", "assets/page.html", "assets/helper.user.js", "scripts/catchup.py"] + [
+    "references/" + f for f in REFERENCES
+]
 
 
 class TestHelperCopies(unittest.TestCase):
@@ -157,7 +160,7 @@ class TestNoLeftoverNames(unittest.TestCase):
 
 class TestSkillReferences(unittest.TestCase):
     def test_every_db_path_the_page_uses_is_documented(self):
-        page, skill = read("assets", "page.html"), read("SKILL.md")
+        page, skill = read("assets", "page.html"), read("SKILL.md") + read("references", "database.md")
         paths = set(re.findall(r'db\s*\.(?:collection|doc)\(\s*"([^"]+)"\s*\)', page))
         self.assertGreater(len(paths), 10)
         for p in paths:
@@ -165,7 +168,7 @@ class TestSkillReferences(unittest.TestCase):
             self.assertTrue(("`%s`" % p in skill) or ("`%s/" % top in skill), "SKILL.md never mentions " + p)
 
     def test_every_meta_chat_field_the_page_writes_is_documented(self):
-        page, skill = read("assets", "page.html"), read("SKILL.md")
+        page, skill = read("assets", "page.html"), read("references", "database.md")
         lits = (
             re.findall(r"const upd\s*=\s*\{([^{}]*)\}", page)
             + re.findall(r'doc\("meta/chat"\)\s*\.update\(\{([^{}]*)\}', page)
@@ -179,10 +182,44 @@ class TestSkillReferences(unittest.TestCase):
             self.assertIn("`%s`" % f, meta, "meta/chat field not documented in SKILL.md: " + f)
 
     def test_every_referenced_file_exists(self):
-        refs = set(re.findall(r"`((?:assets|scripts)/[\w.\-]+)`", read("SKILL.md")))
+        text = read("SKILL.md") + "".join(read("references", f) for f in REFERENCES)
+        refs = set(re.findall(r"`((?:assets|scripts|references)/[\w.\-]+)`", text))
         self.assertTrue(refs)
         for r in refs:
             self.assertTrue(os.path.exists(os.path.join(ROOT, r)), r)
+
+    def test_skill_names_every_reference_file(self):
+        """Claude only opens a reference file SKILL.md tells it about; an unnamed file would never be read."""
+        skill = read("SKILL.md")
+        self.assertEqual(sorted(os.listdir(os.path.join(ROOT, "references"))), REFERENCES)
+        for f in REFERENCES:
+            self.assertIn("`references/%s`" % f, skill, f)
+
+    def test_skill_stays_small(self):
+        """SKILL.md is read on every refresh (hourly); keep on-demand material in references/ (BACKLOG C7)."""
+        self.assertLess(len(read("SKILL.md").encode()), 20000)
+
+    def test_skill_database_lines_match_the_reference(self):
+        """The few database lines SKILL.md repeats must stay word for word the same as references/database.md."""
+        ref = read("references", "database.md").split("\n")
+        core = re.search(r"^## Database.*?(?=^## )", read("SKILL.md"), re.M | re.S).group(0)
+        shared = [
+            l for l in core.split("\n") if l.startswith(("- `chunks/", "- `threading/", "- `summary/", "- `photos/"))
+        ]
+        self.assertEqual(len(shared), 4)
+        for l in shared:
+            self.assertIn(l, ref)
+
+    def test_setup_points_at_the_field_names_it_seeds(self):
+        """Setup seeds meta/chat from the user's answers; the field names live in references/database.md."""
+        seed = re.search(r"^4\. \*\*Seed the database\*\*.*$", read("references", "setup.md"), re.M).group(0)
+        self.assertIn("`references/database.md`", seed)
+
+    def test_outbox_is_read_before_any_reply_is_posted(self):
+        skill = read("SKILL.md")
+        step8 = re.search(r"^8\. Handle the outbox.*$", skill, re.M).group(0)
+        self.assertIn("read `references/outbox.md` in full first", step8)
+        self.assertIn("Never send a message", skill, "the hard rule stays in SKILL.md")
 
 
 class TestPrePushHook(unittest.TestCase):
@@ -217,8 +254,7 @@ class TestPrePushHook(unittest.TestCase):
 
 class TestOutboxStates(unittest.TestCase):
     def test_page_labels_every_outbox_state_skill_uses(self):
-        skill, page = read("SKILL.md"), read("assets", "page.html")
-        out = re.search(r"^## Outbox.*?(?=^## )", skill, re.M | re.S).group(0)
+        out, page = read("references", "outbox.md"), read("assets", "page.html")
         states = {st for st in ("queued", "sending", "sent", "failed", "unconfirmed") if re.search(r"\b%s\b" % st, out)}
         self.assertTrue({"queued", "sending", "sent", "failed", "unconfirmed"} <= states, states)
         labels = re.search(r'\{\s*queued:\s*"queued",[^}]*\}', page).group(0)

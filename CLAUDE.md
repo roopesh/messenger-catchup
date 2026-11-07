@@ -25,5 +25,5 @@ The owner's standing rule. No exceptions for "small" changes, docs or tests.
 - The repo is **public**. Never commit real names, nicknames or message text from anyone's chat (code, tests, docs, commit messages, PR bodies). Use the mock cast (Ana, Ben, Cy, Dee, You).
 - Run `npm run fmt` before committing: Prettier for the page, helper and JS tests, and Ruff for Python. It also runs `npm run sync`, which regenerates the page's embedded copies of the helper. `npm test` starts with `fmt:check` and fails on unformatted files. One statement per line keeps merge conflicts down to edits that really overlap.
 - `assets/page.html` holds the page **without** the document skeleton (`<!doctype html>…<body>`): the Artifact tool adds it at publish time. A test enforces this.
-- `SKILL.md` is what Claude executes for users. Treat edits to it as behavior changes.
+- `SKILL.md` and `references/*.md` are what Claude executes for users. Treat edits to them as behavior changes. `SKILL.md` is read on **every** refresh, so keep it to what a refresh needs (a test caps it at 20 KB), and put anything needed only sometimes in a reference file that `SKILL.md` names, saying when to read it.
 - Keep `docs/BACKLOG.md` current: close items in the PR that fixes them, and file anything new you find.

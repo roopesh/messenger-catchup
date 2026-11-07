@@ -22,7 +22,8 @@ Install it from [https://github.com/roopesh/messenger-catchup/releases/latest/do
 ## Layout
 | Path | What it is |
 |---|---|
-| `SKILL.md` | Instructions Claude follows (setup, refresh, outbox, scheduling) |
+| `SKILL.md` | Instructions Claude follows on every run (the refresh) |
+| `references/` | Instructions Claude reads only when needed: setup, outbox, opening a message, database, troubleshooting |
 | `assets/page.html` | The catch-up page template (settings come from the page's database) |
 | `assets/helper.user.js` | Optional userscript; also injectable |
 | `scripts/catchup.py` | Builds threading and summary JSON and checks every rule |

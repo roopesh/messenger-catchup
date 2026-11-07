@@ -2,6 +2,47 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.9.0] - 2026-11-07
+`SKILL.md` now holds only what every refresh needs. The rest moved to reference files Claude reads when needed (BACKLOG C7). MINOR: the procedure files change, but no step does.
+
+### Changed
+- **Size:** `SKILL.md` is now 19.4 KB, down from 31.8 KB. Claude reads it on every run, so an hourly loop reads about 3k fewer tokens per refresh.
+- **New `references/` folder** (ships in the ZIP):
+  - `setup.md`: requirements, first run, installing the helper, scheduling
+  - `outbox.md`
+  - `open-message.md`
+  - `database.md`: the full reference, plus questions and notes
+  - `troubleshooting.md`: also has the "Tested" note
+- **Which part to follow:** a new `SKILL.md` section says when to read each reference file.
+- **What stayed in `SKILL.md`:**
+  - the hard rules
+  - the core database fields
+  - the helper bridge
+  - the refresh steps
+  - spec writing and the `catchup.py` reference
+  - method ideas
+  - the scheduling chain
+- **Outbox:** step 8 now says to read `references/outbox.md` in full before handling any queued or sending row.
+- **Review fixes:** an independent review walked five scenarios through the new layout. It found no lost content; these four gaps are fixed:
+  - step 7 now queries the outbox itself
+  - the scheduled-run section names `schedule`'s fields
+  - two troubleshooting entries are self-contained
+  - setup points at the field names it seeds
+  Also filed G6: outbox row fields and `coverage` were never documented.
+- **Verbatim:** text moved unchanged. A line-by-line check against v1.8.0 shows 133 of 143 lines identical; the other 10 are reworded cross-references and headings.
+
+### Tests
+- Python 105:
+  - `SKILL.md` names every reference file
+  - `SKILL.md` stays under 20 KB
+  - the outbox rules are read before a reply is posted
+  - the ZIP ships `references/`
+  - the database and outbox-state tests read the new files
+  - setup points at the field names it seeds
+  - `SKILL.md`'s database lines match the reference word for word
+
+Components: `PAGE_VERSION` 2.0, helper 1.5 (unchanged).
+
 ## [1.8.0] - 2026-11-07
 The userscript installs from the GitHub release and updates itself (BACKLOG F8). MINOR: the page's setup steps and SKILL.md's helper instructions change. Pages republish (`PAGE_VERSION` 2.0) and the helper is 1.5.
 

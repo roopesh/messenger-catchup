@@ -8,7 +8,8 @@ Related docs: [STATUS.md](STATUS.md) (start here) · [BACKLOG.md](BACKLOG.md) ·
 
 | Part | Runs where | Job |
 |---|---|---|
-| `SKILL.md` | Claude (cloud) | The procedure: setup, refresh, outbox, scheduling. Claude carries out every step; nothing else orchestrates. |
+| `SKILL.md` | Claude (cloud) | The procedure for every run: hard rules, core database fields, the helper bridge, the refresh, spec writing, method ideas, the scheduling chain. Claude carries out every step; nothing else orchestrates. |
+| `references/*.md` | Claude, on demand | `setup.md` (requirements, first run, helper install, scheduling), `outbox.md` (posting queued replies), `open-message.md`, `database.md` (full reference, `qa`/`notes`), `troubleshooting.md`. `SKILL.md` says when to read each (v1.9.0, BACKLOG C7). |
 | `assets/helper.user.js` | The user's Messenger tab (userscript, or injected by Claude) | Scroll back and read messages (scan), confirm them by ID (verify), build the capture JSON (capture), jump links. |
 | `assets/page.html` | claude.ai artifact, in the user's browser | The catch-up page. Also the **importer**: checks a pasted capture and writes it to the database. |
 | `scripts/catchup.py` | Claude's code sandbox | Builds `threading/current` and `summary/current` from Claude's spec and asserts the rules. |
