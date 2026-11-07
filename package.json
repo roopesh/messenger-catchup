@@ -1,6 +1,6 @@
 {
   "name": "messenger-catchup",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "private": true,
   "description": "Dev tooling for the Messenger Catch-up skill (tests only; the skill itself ships via make-zip.sh)",
   "scripts": {
