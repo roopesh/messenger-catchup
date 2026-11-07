@@ -1322,9 +1322,30 @@ async function names() {
     JSON.stringify(P) === JSON.stringify({ 'Ben Brooks': { shown: ['Ben'], firstI: 1, lastI: 1 } }),
     'names: people/index written from the import (' + JSON.stringify(P) + ')',
   );
-  await paste(p, JSON.stringify(cap([mk(5), mk(6, { fn: 'Ben Ortiz' }), mk(7), mk(8, { fn: 'Taylor Moss' })])));
+  await p.evaluate(() => {
+    const d = __rt.get('people/index');
+    d.people['Ana Alvarez'] = { shown: ['Ana'] }; /* as Claude's one-time scan writes it: no positions */
+    d.scannedAt = '2026-11-07T10:00:00Z';
+    __rt.write('people/index', d);
+  });
+  await paste(
+    p,
+    JSON.stringify(
+      cap([mk(5, { fn: 'Ana Alvarez' }), mk(6, { fn: 'Ben Ortiz' }), mk(7), mk(8, { fn: 'Taylor Moss' })]),
+    ),
+  );
   P = (await get(p, 'people/index')).people;
-  ok(P['Ben Brooks'] && P['Ben Ortiz'] && P['Taylor Moss'].shown[0] === 'Cy', 'names: a later import adds people');
+  const pd = await get(p, 'people/index');
+  ok(
+    P['Ben Brooks'] && P['Ben Ortiz'] && P['Taylor Moss'].shown[0] === 'Cy' && pd.scannedAt,
+    'names: a later import adds people and keeps scannedAt',
+  );
+  ok(
+    P['Ana Alvarez'].firstI === 5 && P['Ana Alvarez'].lastI === 5,
+    'names: an entry from the one-time scan (no positions) gets them on import (' +
+      JSON.stringify(P['Ana Alvarez']) +
+      ')',
+  );
   await p.evaluate(() => {
     location.hash = '#messages';
   });

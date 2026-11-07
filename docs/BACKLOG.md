@@ -83,7 +83,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F6 | P3 | feature | Ask Claude over long histories |
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
-| F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1 **done**, v1.10.0); one-time backfill scan and alias question (part 2) |
+| F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
 
 ---
 
@@ -365,7 +365,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Tests:** the link, the update URLs and the release asset are checked.
   - **Still to verify live:** that Tampermonkey follows GitHub's redirect from `latest/download` when it checks for updates.
 
-### F9 · P2 · Full names and nicknames
+### F9 · P2 · Full names and nicknames · done (v1.10.0, v1.11.0)
 - **Why:** Messenger prints a nickname or the first name only, so two members with the same first name were merged, last names never counted as mentions, and nobody's full name was visible.
 - **Owner's choices (Nov 7):**
   - **Display:** the first name; the full name when two or more people share that first name; a nickname as "nickname (first name)", or "nickname (full name)" when the first name is shared.
@@ -378,6 +378,10 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Page 2.1** keeps `fn`, writes `people/index`, and names people by the rule above, everywhere a sender is shown, in Ask Claude's prompt, and in the Messages filter.
   - **SKILL.md** has a naming rule for spec writing. `f`, `r` and the outbox's `to` stay as Messenger shows them.
   - **Tests:** the mock gives senders avatars, including a second "Ben" and a nickname. Sim and page tests cover all of it and fail on helper 1.5 and page 2.0.
-- **Part 2, open:**
-  - a helper `people{count}` command that scrolls back reading avatars only, run once (`people/index.scannedAt`)
-  - asking the user once which aliases to add (`meta/chat.aliasesAskedAt`)
+- **Part 2, done in v1.11.0:**
+  - **Helper 1.7 `people{count}`:** scrolls back reading shown names and avatar names only (no clicks; stops after 8 minutes).
+  - **`references/people.md`:**
+    - runs it once as its own short locked run after a refresh, merging the results into `people/index` and setting `scannedAt`
+    - asks the user once (never during a scheduled run) which aliases count as them, setting `meta/chat.aliasesAskedAt`
+  - **Page 2.2:** accepts people entries without positions.
+- **Still to see live:** the scan on the real chat (about 4,000 messages; it may stop at the 8-minute cap first, and later messages fill in the rest).

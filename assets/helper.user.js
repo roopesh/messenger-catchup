@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.6
+// @version      1.7
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -11,8 +11,8 @@
 // ==/UserScript==
 (function () {
   if (window.__mcHelper || document.documentElement.hasAttribute('data-mc-helper')) return;
-  window.__mcHelper = '1.6';
-  document.documentElement.setAttribute('data-mc-helper', '1.6');
+  window.__mcHelper = '1.7';
+  document.documentElement.setAttribute('data-mc-helper', '1.7');
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener(
     'click',
@@ -73,6 +73,71 @@
     return null;
   }
   window.__mcDate = mcDate;
+  /* The sender's avatar (a ~28 px square image at the message's left edge) carries their full name as alt text; the
+     name Messenger prints is a nickname or the first name. Reaction emoji and "seen" faces are smaller. */
+  function avatar(e) {
+    const er = e.getBoundingClientRect();
+    const im = Array.from(e.querySelectorAll('img[alt]')).find(i => {
+      const r = i.getBoundingClientRect();
+      return r.width >= 24 && r.width <= 40 && Math.abs(r.width - r.height) < 2 && r.left - er.left < 60;
+    });
+    const a = im ? im.alt.trim() : '';
+    return a.length <= 80 && !/^(GIF|Photo|Sticker|Open|Seen)\b/.test(a) ? a : '';
+  }
+  /* people{count,maxMs}: read-only. Scrolls back through up to count messages (or to the top, or for maxMs) and reads
+     each sender's shown name and avatar name. Returns {seen, top, ms, people:[[shown, full, messages]]}. */
+  async function mcPeople(a) {
+    const count = (a && a.count) || 2000;
+    const maxMs = (a && a.maxMs) || 480000;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const t0 = Date.now();
+    let log = null;
+    for (let w = 0; w < 40 && !(log && log.getBoundingClientRect().width >= 300); w++) {
+      log = document.querySelector('[role="log"]');
+      if (!log || log.getBoundingClientRect().width < 300) await sleep(500);
+    }
+    if (!log) return { err: 'chat not loaded' };
+    const sc = () =>
+      Array.from(log.querySelectorAll('div')).find(x => {
+        const st = getComputedStyle(x);
+        return /(auto|scroll)/.test(st.overflowY) && x.scrollHeight > x.clientHeight;
+      });
+    const seen = new Set();
+    const pairs = new Map();
+    const collect = () =>
+      log.querySelectorAll('[data-message-id]').forEach(e => {
+        const id = e.getAttribute('data-message-id');
+        if (seen.has(id)) return;
+        const m = (e.getAttribute('aria-label') || '').match(/^At .+?(?:AM|PM|am|pm), (.+?): /);
+        const full = avatar(e);
+        if (m && m[1] !== 'You' && !full) return; /* avatar not laid out yet: read it on a later pass */
+        seen.add(id);
+        if (!m || m[1] === 'You') return;
+        const k = m[1] + '\u0000' + full;
+        pairs.set(k, (pairs.get(k) || 0) + 1);
+      });
+    for (let b = 0; b < 4; b++) {
+      const s0 = sc();
+      if (s0) s0.scrollTop = s0.scrollHeight;
+      await sleep(600);
+    }
+    collect();
+    let tops = 0;
+    while (seen.size < count && Date.now() - t0 < maxMs && tops <= 8) {
+      const s = sc();
+      if (!s) break;
+      s.scrollTop = Math.max(0, s.scrollTop - Math.round(s.clientHeight * 0.7));
+      await sleep(s.scrollTop < 5 ? 1500 : 600);
+      collect();
+      tops = s.scrollTop < 5 ? tops + 1 : 0;
+    }
+    return {
+      seen: seen.size,
+      top: tops > 8,
+      ms: Date.now() - t0,
+      people: [...pairs].map(([k, n]) => k.split('\u0000').concat(n)),
+    };
+  }
   async function mcScan(STOPS, FIRST) {
     STOPS = STOPS || [];
     sessionStorage.removeItem('__mcsave');
@@ -135,17 +200,6 @@
             srcs: [...new Set(big.map(i => i.currentSrc))],
             gif: !!e.querySelector('img[alt="GIF Image"]') || (imgs.length > 0 && big.length === 0),
           };
-        }
-        /* The sender's avatar (a ~28 px square image at the message's left edge) carries their full name as alt text;
-           the name Messenger prints is a nickname or the first name. Reaction emoji and "seen" faces are smaller. */
-        function avatar(e) {
-          const er = e.getBoundingClientRect();
-          const im = Array.from(e.querySelectorAll('img[alt]')).find(i => {
-            const r = i.getBoundingClientRect();
-            return r.width >= 24 && r.width <= 40 && Math.abs(r.width - r.height) < 2 && r.left - er.left < 60;
-          });
-          const a = im ? im.alt.trim() : '';
-          return a.length <= 80 && !/^(GIF|Photo|Sticker|Open|Seen)\b/.test(a) ? a : '';
         }
         function collect() {
           const ids = [];
@@ -863,6 +917,7 @@
     scan: a => mcScan(a.stops, a.first),
     verify: () => mcVerify(),
     capture: a => mcCapture(a.base),
+    people: a => mcPeople(a),
     full: a => full(a),
     jump: a => {
       history.replaceState(
@@ -873,7 +928,7 @@
       jump();
       return { started: true };
     },
-    ping: () => ({ v: '1.6' }),
+    ping: () => ({ v: '1.7' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
   document.addEventListener('mc-cmd', async function (e) {

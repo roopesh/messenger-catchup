@@ -1315,7 +1315,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.1";
+  const PAGE_VERSION = "2.2";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -3741,8 +3741,8 @@
         for (const m of named) {
           const pp = people[m.fn] || (people[m.fn] = { shown: [], firstI: m.i, lastI: m.i });
           if (!pp.shown.includes(m.f)) pp.shown.push(m.f);
-          pp.firstI = Math.min(pp.firstI, m.i);
-          pp.lastI = Math.max(pp.lastI, m.i);
+          pp.firstI = Math.min(pp.firstI ?? m.i, m.i); /* entries from Claude's one-time scan have no positions */
+          pp.lastI = Math.max(pp.lastI ?? m.i, m.i);
         }
         await S.db.doc("people/index").set(Object.assign({}, pd, { people }));
       }
