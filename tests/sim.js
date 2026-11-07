@@ -183,6 +183,42 @@ function checkCap(cap, base, mockFrom, n, label) {
     });
   }
   ok(jumped, 'A: jump link scrolled back and highlighted #mock80');
+  // selfcheck: every hook the reader relies on is present on the mock; then break them one at a time
+  await p.goto(URL);
+  await p.waitForTimeout(600);
+  let sck = await bridge(p, 'selfcheck', {});
+  ok(
+    sck && sck.ok && !sck.missing.length && !sck.warn.length && sck.counts.messages > 10 && sck.counts.named > 0,
+    'A: selfcheck passes on the mock (' + JSON.stringify(sck && sck.counts) + ')',
+  );
+  const broken = async (label, mutate, want) => {
+    await p.goto(URL);
+    await p.waitForTimeout(600);
+    await p.evaluate(mutate);
+    const r = await bridge(p, 'selfcheck', {});
+    ok(
+      r && !r.ok === !want.warn && (want.warn ? r.warn : r.missing).some(x => x.includes(want.has)),
+      'A: selfcheck names ' + label + ' (' + JSON.stringify(r && (want.warn ? r.warn : r.missing)) + ')',
+    );
+  };
+  await broken(
+    'changed message labels',
+    () => document.querySelectorAll('[data-message-id]').forEach(e => e.setAttribute('aria-label', 'Message')),
+    { has: 'message labels' },
+  );
+  await broken(
+    'missing reply links',
+    () => document.querySelectorAll('[aria-label="Go to replied message"]').forEach(e => e.remove()),
+    { has: 'Go to replied message' },
+  );
+  await broken(
+    'missing avatars (a warning)',
+    () => document.querySelectorAll('[data-message-id] img[alt]').forEach(e => e.remove()),
+    { has: 'sender avatars', warn: true },
+  );
+  await broken('a missing chat log', () => document.querySelector('[role="log"]').setAttribute('role', 'region'), {
+    has: 'chat log',
+  });
   // people: read-only scroll back reading avatars (the one-time name backfill)
   await p.goto(URL);
   await p.waitForTimeout(600);
