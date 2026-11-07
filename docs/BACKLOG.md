@@ -21,7 +21,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G3 | P2 | doc gap | Page offers "say reply 3232 to Claude"; SKILL.md has no procedure for it |
 | R2 | P2 | risk | Capture size is unbounded (photos travel inline as base64) |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
-| R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs |
+| R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **mostly done** (no server-side block: plan) |
 | R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
@@ -47,7 +47,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | C5 | P3 | cleanup | `catchup._ts` shells out to `date` |
 | C6 | P3 | cleanup | `catchup.py` opens files without closing them |
 | T4 | P3 | test | Sim doesn't cover other date-label forms |
-| T5 | P3 | test | No CI |
+| T5 | P3 | test | No CI · **done** |
 | F1 | P3 | feature | More than one chat per page |
 | F2 | P3 | feature | Faster distant photo-reply parents |
 | F5 | P3 | feature | Page shows "update available" when its version is behind |
@@ -153,6 +153,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### R8 · P2 · PR rule not enforced
 - **What:** from v1.1.1 every change must go through a PR with a version bump (CLAUDE.md), but `main` still accepts direct pushes, and nothing runs `npm test` on a PR. The version-consistency tests only catch a missing bump when someone runs them.
 - **Fix:** branch protection on `main` requiring a PR (and, once T5 exists, a passing check). Check whether the plan allows it on a private repo. Then T5: a GitHub Actions job running `npm test` on every PR.
+- **Done in v1.1.2, as far as the plan allows:**
+  - Branch protection and rulesets return 403 ("Upgrade to GitHub Pro or make this repository public").
+  - Instead: CI runs `npm test` and a version-bump check on every PR; a `pr-only` job turns `main` red when a commit arrives without a merged PR (verified that the commit→PR API tells a squash merge from a direct push); a `pre-push` hook blocks direct pushes from local clones.
+- **Still open:** nothing stops a push on the server side. Closing that needs GitHub Pro ($4/month) or a public repo (the owner's call).
 
 ### R7 · P3 · Helper housekeeping
 - **Where:** `helper.user.js:16`, `helper.user.js:162`
@@ -225,8 +229,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### T4 · P3 · More date-label forms in the mock
 - Add short month/weekday labels and a year-boundary case once B6 is fixed.
 
-### T5 · P3 · CI
-- A GitHub Actions job running `npm test` on push (Python 3 and Node with Playwright's Chromium; about 3 minutes).
+### T5 · P3 · CI · done
+- **Done in v1.1.2:** `.github/workflows/test.yml` runs `npm test` on Ubuntu (Python 3.12, Node 22, Playwright Chromium) for every PR and push to `main`, and uploads `tests/out/` when it fails.
 
 ## Features and opportunities
 

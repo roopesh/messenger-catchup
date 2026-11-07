@@ -149,6 +149,8 @@ Nothing here ships in the skill ZIP.
 | Path | What it is |
 |---|---|
 | `package.json` | `npm test` runs `test:py`, `test:sim`, `test:page`; `npm run sync`; Playwright pinned |
+| `.github/workflows/test.yml` | CI: `test` (`npm test`), `version-bump` (PRs must raise `VERSION`), `pr-only` (commits on `main` must come from a merged PR) |
+| `.githooks/pre-push` | Blocks direct pushes to `main` from a local clone (`npm run hooks`) |
 | `tools/sync-helper.py` | Regenerates the page's `#jump-us` and `#jump-bm` copies from `helper.user.js`; `--check` mode |
 | `tests/test_catchup.py` | `catchup.py` unit tests; the `Env` class fakes WORK and ArtifactData `out_dir`s |
 | `tests/test_tools.py` | Sync, version strings, leftover names, SKILL.md file references, ZIP contents |

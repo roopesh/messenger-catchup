@@ -5,6 +5,7 @@
 ## Where things stand
 - **Shipped:** release **v1.1.1** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 1.1, helper 1.1. Each release is a git tag plus a GitHub release with the skill ZIP attached.
 - **Workflow:** every change goes branch → PR → version bump → squash-merge → tag → release. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
+- **Enforcement:** GitHub Actions runs `npm test` and a version-bump check on every PR, and flags any commit on `main` that didn't come from a merged PR. A local `pre-push` hook blocks direct pushes to `main`. GitHub branch protection isn't available on this private repo's plan (BACKLOG R8).
 - **In use:** the original user's page (v44) and hourly loop moved to the generic skill on Nov 6. Live refreshes 244 (injected helper v1.1) and 245 (old helper v2.2 still installed) both finished cleanly (DEVELOPMENT.md › Phase 6).
 - **Renamed (Phase 8):** the build tool is now `scripts/catchup.py` (was `cctool.py`), the helper functions are `mcScan` / `mcVerify` / `mcCapture`, and the page accepts only `mc-capture`. Same commands and behavior. **Re-upload the skill ZIP** so installed copies pick up `catchup.py`; until then the old ZIP keeps working with its own `cctool.py`.
 - **Tests:** `npm test` runs three suites, 165 checks (below). A mutation run confirmed they catch real breakage.
@@ -46,7 +47,7 @@ Known bugs are written as tests of the *fixed* behavior: Python marks them `expe
 From the repo root:
 ```sh
 npm install        # once: Playwright (pinned in package.json)
-npm run setup      # once: Playwright's Chromium
+npm run setup      # once: Playwright's Chromium + the pre-push hook
 npm test           # Python suites, then sim, then page (about 3 minutes)
 ```
 Exit code 0 means everything passed. The page suite reads `tests/out/sim_caps.json`, which the sim writes, so run `test:sim` before `test:page` when you run them separately. `tests/out/` is gitignored.
@@ -73,7 +74,7 @@ python3 scripts/catchup.py build WORK RUNDIR spec.json
 1. Branch from an up-to-date `main`.
 2. Make the change. Bump `VERSION`, `package.json` (`npm install --package-lock-only` updates the lockfile) and add a `CHANGELOG.md` entry. MAJOR / MINOR / PATCH rules are in [CLAUDE.md](../CLAUDE.md). `npm test` fails if these disagree.
 3. `npm test`, then `gh pr create`. Fill in the template's checklist (`.github/pull_request_template.md`).
-4. `gh pr merge --squash --delete-branch`, then `git switch main && git pull`.
+4. `gh pr checks --watch` until CI (`test`, `version-bump`) is green, then `gh pr merge --squash --delete-branch` and `git switch main && git pull`.
 5. `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`.
 6. `./make-zip.sh` (the repo folder must be named `messenger-catchup`; the ZIP is written to the parent folder, BACKLOG B10). The ZIP holds `SKILL.md`, `VERSION`, `assets/` and `scripts/`, which `test_tools.py` checks.
 7. `gh release create vX.Y.Z ../messenger-catchup.zip --title vX.Y.Z --notes "<changelog entry>"`.

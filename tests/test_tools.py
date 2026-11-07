@@ -71,6 +71,20 @@ class TestSkillReferences(unittest.TestCase):
         self.assertTrue(refs)
         for r in refs: self.assertTrue(os.path.exists(os.path.join(ROOT,r)),r)
 
+class TestPrePushHook(unittest.TestCase):
+    """.githooks/pre-push blocks direct pushes to main (installed by npm run setup)."""
+    HOOK=os.path.join(ROOT,'.githooks','pre-push')
+    def push(self,remote_ref):
+        return subprocess.run([self.HOOK,'origin','url'],input='refs/heads/x 1111 %s 2222\n'%remote_ref,capture_output=True,text=True).returncode
+    def test_executable(self): self.assertTrue(os.access(self.HOOK,os.X_OK))
+    def test_blocks_main(self): self.assertEqual(self.push('refs/heads/main'),1)
+    def test_allows_branches_and_tags(self):
+        self.assertEqual(self.push('refs/heads/fix/thing'),0);self.assertEqual(self.push('refs/tags/v9.9.9'),0)
+    def test_ci_workflow_has_the_three_jobs(self):
+        wf=read('.github','workflows','test.yml')
+        for job in ('  test:','  version-bump:','  pr-only:'): self.assertIn('\n'+job+'\n',wf)
+        self.assertIn('npm test',wf)
+
 class TestZip(unittest.TestCase):
     def test_make_zip_contents(self):
         with tempfile.TemporaryDirectory() as t:
