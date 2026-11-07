@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.2
+// @version      1.3
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 (function(){
-  if(window.__mcHelper||document.documentElement.hasAttribute('data-mc-helper'))return;window.__mcHelper='1.2';
-  document.documentElement.setAttribute('data-mc-helper','1.2');
+  if(window.__mcHelper||document.documentElement.hasAttribute('data-mc-helper'))return;window.__mcHelper='1.3';
+  document.documentElement.setAttribute('data-mc-helper','1.3');
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href]');if(a&&window.__rf&&!window.__rf.done)e.preventDefault();},true);
 /* A message's date from its Messenger time label: "9:15 AM" (today), "Yesterday 9:15 AM", "Monday 9:15 AM" or "Mon 9:15 AM"
@@ -90,9 +90,9 @@ const now=new Date();const todayD=mcDate('12:00',now);const guessed=[];let lastD
 const D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const pos=new Map(R.win.map((id,k)=>[id,BASE+1+k]));const firsts=Object.values(R.info).map(x=>x.text.split('\n')[0]);
 const out=R.win.map((id,k)=>{const m=R.info[id];const lab=m.label;const wm=lab.match(/^At (.+?(?:AM|PM|am|pm)), /);const when=wm?wm[1]:'';const after=wm?lab.slice(wm[0].length):'';
- const lines=m.text.split('\n');const first=lines[0]||'';let from='',rTo='';const rm=first.match(/^(.*) replied to (.*)$/);
+ const lines=m.text.split('\n');const first=lines[0]||'';let from='',rTo='';const rm=m.reply?first.match(/^(.*) replied to (.*)$/):null;/* only a real reply (it has a reply link): message text can say "X replied to Y" too */
  if(rm){from=rm[1];rTo=rm[2];}else if(first&&(after===first||after.indexOf(first+': ')===0))from=first;else from=firsts.find(c=>c&&(after===c||after.indexOf(c+': ')===0))||after.split(': ')[0];
- if(/^You\b/.test(after)||/^You (sent|replied)/.test(first))from='You';
+ if(/^You\b/.test(after)||(rm&&rm[1]==='You')||/^You sent (a photo|\d+ photos|an attachment|a GIF|a sticker|a video|a voice message)\.?$/.test(first))from='You';/* own status lines only, never a message that starts "You sent…" */
  const lb=after.indexOf(from+': ')===0?after.slice(from.length+2):'';let j=0;
  if(rm){j=1;if(lines[1]==='Original message:'){if(lb){const key=N(lb).slice(0,20);const rest=lines.slice(2);let f=-1;for(let t=rest.length-1;t>=0;t--){if(N(rest.slice(t).join(' ')).indexOf(key)===0){f=t;break;}}j=f>=0?2+f:3;}else{let t2=2;while(t2<lines.length&&!/…$/.test(lines[t2]))t2++;j=t2<lines.length?t2+1:3;}}}else if(lines[0]===from)j=1;
  const body=lines.slice(j);while(body.length&&(/^\d+$/.test(body[body.length-1].trim())||/^(Sent \d+[smhd] ago|Sent|Seen|Delivered)$/.test(body[body.length-1].trim())))body.pop();
@@ -162,7 +162,7 @@ return 'count '+out.length+' len '+text.length+' sha '+cap.sha.slice(0,8)+' phot
     out.ms=Date.now()-p.t0;sessionStorage.setItem('mc_result',JSON.stringify(out));}
   const CMDS={probe:a=>probe(a.anchor),scan:a=>mcScan(a.stops,a.first),verify:()=>mcVerify(),capture:a=>mcCapture(a.base),full:a=>full(a),
     jump:a=>{history.replaceState(null,'',location.pathname+'#mcjump='+encodeURIComponent(a.mid)+(a.reply===false?'&noreply':''));jump();return {started:true};},
-    ping:()=>({v:'1.2'})};
+    ping:()=>({v:'1.3'})};
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
   document.addEventListener('mc-cmd',async function(e){let d;try{d=JSON.parse(e.detail);}catch(x){return;}if(!CMDS[d.cmd])return;
     sessionStorage.setItem('mc_res_'+d.id,JSON.stringify({running:true}));

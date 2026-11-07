@@ -306,15 +306,15 @@ button.link.rh{font-size:.8rem}
         <textarea id="jump-us" readonly spellcheck="false" rows="6">// ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.2
+// @version      1.3
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 (function(){
-  if(window.__mcHelper||document.documentElement.hasAttribute(&#x27;data-mc-helper&#x27;))return;window.__mcHelper=&#x27;1.2&#x27;;
-  document.documentElement.setAttribute(&#x27;data-mc-helper&#x27;,&#x27;1.2&#x27;);
+  if(window.__mcHelper||document.documentElement.hasAttribute(&#x27;data-mc-helper&#x27;))return;window.__mcHelper=&#x27;1.3&#x27;;
+  document.documentElement.setAttribute(&#x27;data-mc-helper&#x27;,&#x27;1.3&#x27;);
   /* While a scan runs, clicks on links are swallowed so scrolling can&#x27;t navigate away. Registered once per page load. */
   document.addEventListener(&#x27;click&#x27;,e=&gt;{const a=e.target.closest&amp;&amp;e.target.closest(&#x27;a[href]&#x27;);if(a&amp;&amp;window.__rf&amp;&amp;!window.__rf.done)e.preventDefault();},true);
 /* A message&#x27;s date from its Messenger time label: &quot;9:15 AM&quot; (today), &quot;Yesterday 9:15 AM&quot;, &quot;Monday 9:15 AM&quot; or &quot;Mon 9:15 AM&quot;
@@ -395,9 +395,9 @@ const now=new Date();const todayD=mcDate(&#x27;12:00&#x27;,now);const guessed=[]
 const D=[&#x27;Sun&#x27;,&#x27;Mon&#x27;,&#x27;Tue&#x27;,&#x27;Wed&#x27;,&#x27;Thu&#x27;,&#x27;Fri&#x27;,&#x27;Sat&#x27;];
 const pos=new Map(R.win.map((id,k)=&gt;[id,BASE+1+k]));const firsts=Object.values(R.info).map(x=&gt;x.text.split(&#x27;\n&#x27;)[0]);
 const out=R.win.map((id,k)=&gt;{const m=R.info[id];const lab=m.label;const wm=lab.match(/^At (.+?(?:AM|PM|am|pm)), /);const when=wm?wm[1]:&#x27;&#x27;;const after=wm?lab.slice(wm[0].length):&#x27;&#x27;;
- const lines=m.text.split(&#x27;\n&#x27;);const first=lines[0]||&#x27;&#x27;;let from=&#x27;&#x27;,rTo=&#x27;&#x27;;const rm=first.match(/^(.*) replied to (.*)$/);
+ const lines=m.text.split(&#x27;\n&#x27;);const first=lines[0]||&#x27;&#x27;;let from=&#x27;&#x27;,rTo=&#x27;&#x27;;const rm=m.reply?first.match(/^(.*) replied to (.*)$/):null;/* only a real reply (it has a reply link): message text can say &quot;X replied to Y&quot; too */
  if(rm){from=rm[1];rTo=rm[2];}else if(first&amp;&amp;(after===first||after.indexOf(first+&#x27;: &#x27;)===0))from=first;else from=firsts.find(c=&gt;c&amp;&amp;(after===c||after.indexOf(c+&#x27;: &#x27;)===0))||after.split(&#x27;: &#x27;)[0];
- if(/^You\b/.test(after)||/^You (sent|replied)/.test(first))from=&#x27;You&#x27;;
+ if(/^You\b/.test(after)||(rm&amp;&amp;rm[1]===&#x27;You&#x27;)||/^You sent (a photo|\d+ photos|an attachment|a GIF|a sticker|a video|a voice message)\.?$/.test(first))from=&#x27;You&#x27;;/* own status lines only, never a message that starts &quot;You sent…&quot; */
  const lb=after.indexOf(from+&#x27;: &#x27;)===0?after.slice(from.length+2):&#x27;&#x27;;let j=0;
  if(rm){j=1;if(lines[1]===&#x27;Original message:&#x27;){if(lb){const key=N(lb).slice(0,20);const rest=lines.slice(2);let f=-1;for(let t=rest.length-1;t&gt;=0;t--){if(N(rest.slice(t).join(&#x27; &#x27;)).indexOf(key)===0){f=t;break;}}j=f&gt;=0?2+f:3;}else{let t2=2;while(t2&lt;lines.length&amp;&amp;!/…$/.test(lines[t2]))t2++;j=t2&lt;lines.length?t2+1:3;}}}else if(lines[0]===from)j=1;
  const body=lines.slice(j);while(body.length&amp;&amp;(/^\d+$/.test(body[body.length-1].trim())||/^(Sent \d+[smhd] ago|Sent|Seen|Delivered)$/.test(body[body.length-1].trim())))body.pop();
@@ -467,7 +467,7 @@ return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#
     out.ms=Date.now()-p.t0;sessionStorage.setItem(&#x27;mc_result&#x27;,JSON.stringify(out));}
   const CMDS={probe:a=&gt;probe(a.anchor),scan:a=&gt;mcScan(a.stops,a.first),verify:()=&gt;mcVerify(),capture:a=&gt;mcCapture(a.base),full:a=&gt;full(a),
     jump:a=&gt;{history.replaceState(null,&#x27;&#x27;,location.pathname+&#x27;#mcjump=&#x27;+encodeURIComponent(a.mid)+(a.reply===false?&#x27;&amp;noreply&#x27;:&#x27;&#x27;));jump();return {started:true};},
-    ping:()=&gt;({v:&#x27;1.2&#x27;})};
+    ping:()=&gt;({v:&#x27;1.3&#x27;})};
   /* Bridge: Claude&#x27;s browser tool dispatches &#x27;mc-cmd&#x27; with a JSON string; the answer lands in sessionStorage &#x27;mc_res_&lt;id&gt;&#x27;. Works whether the userscript runs in the page or in the extension&#x27;s own world. */
   document.addEventListener(&#x27;mc-cmd&#x27;,async function(e){let d;try{d=JSON.parse(e.detail);}catch(x){return;}if(!CMDS[d.cmd])return;
     sessionStorage.setItem(&#x27;mc_res_&#x27;+d.id,JSON.stringify({running:true}));
@@ -501,7 +501,7 @@ return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#
 <script>
 let THREAD="", CHAT="https://www.facebook.com/messages/";
 /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-const PAGE_VERSION="1.4";
+const PAGE_VERSION="1.5";
 const CFG=()=>S.meta||{};
 const RP=()=>CFG().refreshPhrase||"refresh my catch-up";
 const OWNER=()=>CFG().ownerName||"the page owner";
@@ -991,8 +991,9 @@ async function importCore(raw,opts){const src=(opts&&opts.src)||"button";const R
   let repaired=null,repairUpd=null;
   if(end>lastI){const pool=S.msgs.filter(x=>x.i<top.start).concat(top.msgs);const z=top.msgs[top.msgs.length-1];
     const upd={lastI:end,lastMid:z.m,lastT:z.t,anchorMids:pool.slice(-3).map(x=>x.m)};const own=top.msgs.filter(x=>x.i>lastI&&x.f==="You");if(own.length){upd.ownLastI=own[own.length-1].i;upd.ownLastMid=own[own.length-1].m;}
-    repaired={from:lastI+1,to:end,chunk:top.id};R.repaired=repaired;repairUpd=upd;lastI=end;}/* written below, only once the capture passes every check */
-  const repNote=repaired?(dry?"Would repair":"REPAIRED")+": #"+repaired.from+"–#"+repaired.to+" (chunk "+repaired.chunk+") were saved by an earlier import that didn't finish"+(dry?"":"; meta/chat now counts them")+". ":"";
+    const csz=meta.chunkSize||82,rc=[];for(let st=Math.floor((lastI+1)/csz)*csz;st<=top.start;st+=csz)rc.push("c"+String(st).padStart(4,"0"));/* every chunk the repaired range spans */
+    repaired={from:lastI+1,to:end,chunks:rc};R.repaired=repaired;repairUpd=upd;lastI=end;}/* written below, only once the capture passes every check */
+  const repNote=repaired?(dry?"Would repair":"REPAIRED")+": #"+repaired.from+"–#"+repaired.to+" (chunk"+(repaired.chunks.length>1?"s ":" ")+repaired.chunks.join(", ")+") were saved by an earlier import that didn't finish"+(dry?"":"; meta/chat now counts them")+". ":"";
   const stored=i=>top&&i>=top.start?top.msgs[i-top.start]:S.byI.get(i);
   const ms=cap.msgs.slice().sort((a,b)=>a.i-b.i);
   for(let k=1;k<ms.length;k++)if(ms[k].i!==ms[k-1].i+1)return done("Message numbers aren't consecutive at #"+ms[k].i+". Nothing saved.");
@@ -1017,19 +1018,28 @@ async function importCore(raw,opts){const src=(opts&&opts.src)||"button";const R
     const own=fresh.filter(m=>m.f==="You");if(own.length){const o=own[own.length-1];upd.ownLastI=o.i;upd.ownLastMid=o.m;}
     await S.db.doc("meta/chat").update(upd);
     msgPart=repNote+"IMPORT OK: "+fresh.length+" new messages, #"+fresh[0].i+"–#"+z.i+" (chunks "+writes.map(w=>w.id).join(", ")+"). Checksum and read-back OK.";}
-  R.fresh=fresh.length;R.chunks=writes.map(w=>w.id);
-  if(photos.length){const assets=await claude.use("assets");if(!assets)return done(msgPart+" Photos not stored: this view can't upload.",{ok:!!fresh.length});
-    const up=[];for(const ph of photos){try{const r=await assets.upload(b64ToBlob(ph.b64,ph.type),{type:ph.type});up.push({i:ph.i,k:ph.k,id:r.id,bytes:r.sizeBytes,type:r.contentType});}catch(e){return done(msgPart+" Photo upload failed at #"+ph.i+" ("+(e&&e.code||e)+").",{ok:!!fresh.length,uploaded:up});}}
+  R.fresh=fresh.length;R.chunks=[...new Set((repaired?repaired.chunks:[]).concat(writes.map(w=>w.id)))].sort();
+  /* Photos and GIFs. Uploads that land are indexed even if a later one fails, and a re-paste skips photos already stored,
+     so pasting again after "Photos: upload failed" is safe and finishes the job. GIFs are recorded with or without photos. */
+  const gifsNew=(cap.gifs||[]).filter(i=>inCap.has(i));
+  if(photos.length||(gifsNew.length&&!cap.lab)){
+    const g=await S.db.doc("photos/index").get();const d=g.exists?g.data():{byI:{},gifs:[]};const byI=Object.assign({},d.byI||{});
+    const todo=cap.lab?photos:photos.filter(ph=>!(byI[ph.i]||[])[ph.k]);const up=[];let fail=null;
+    if(todo.length){const assets=await claude.use("assets");if(!assets)fail="this view can't upload";
+      else for(const ph of todo){try{const r=await assets.upload(b64ToBlob(ph.b64,ph.type),{type:ph.type});up.push({i:ph.i,k:ph.k,id:r.id,bytes:r.sizeBytes,type:r.contentType});}catch(e){fail="upload failed at #"+ph.i+" ("+(e&&e.code||e)+")";break;}}}
     R.uploaded=up;
-    if(!cap.lab){const g=await S.db.doc("photos/index").get();const d=g.exists?g.data():{byI:{},gifs:[]};const byI=Object.assign({},d.byI||{});
-      const grp={};up.forEach(u=>{(grp[u.i]=grp[u.i]||[])[u.k]="/_blob/"+u.id;});Object.keys(grp).forEach(i=>{byI[i]=grp[i].filter(Boolean);});
-      const gifs=[...new Set([...(d.gifs||[]),...((cap.gifs||[]).filter(i=>inCap.has(i)))])].sort((a,b)=>a-b);
-      await S.db.doc("photos/index").set(Object.assign({},d,{byI,gifs}));}
-    msgPart+=" "+up.length+" photo"+(up.length>1?"s":"")+" stored"+(cap.lab?" (lab test, not linked)":"")+".";}
+    if(!cap.lab){const grp={};up.forEach(u=>{(grp[u.i]=grp[u.i]||(byI[u.i]||[]).slice())[u.k]="/_blob/"+u.id;});Object.keys(grp).forEach(i=>{byI[i]=grp[i].filter(Boolean);});
+      const gifs=[...new Set([...(d.gifs||[]),...gifsNew])].sort((a,b)=>a-b);
+      if(up.length||gifs.length!==(d.gifs||[]).length)await S.db.doc("photos/index").set(Object.assign({},d,{byI,gifs}));}
+    const skipped=photos.length-todo.length;
+    if(up.length||skipped)msgPart+=" "+up.length+" photo"+(up.length===1?"":"s")+" stored"+(skipped?" ("+skipped+" already stored)":"")+(cap.lab?" (lab test, not linked)":"")+".";
+    if(fail)return done(msgPart+" Photos: "+fail+"; paste again to store the rest.",{ok:!!fresh.length,uploaded:up});}
   return done(msgPart,{ok:true});}
 async function importCapture(raw,opts){const note=$("#imp-note");const btn=$("#imp-go");btn.disabled=true;let R;
   try{R=await importCore(raw,opts);}catch(e){R={ok:false,msg:"Import failed: "+(e&&e.message||e)+".",src:(opts&&opts.src)||"button"};}
-  finally{btn.disabled=false;}
+  finally{btn.disabled=false;
+    /* let the import lease lapse now (renew it for the 1 s minimum) so another tab, or this one after a reload, needn't wait 2 minutes */
+    if(S.db){const ref=S.db.doc("refresh/importLock");if(typeof ref.acquire==="function")try{await ref.acquire({holder:TAB,ttlMs:1000});}catch(e){}}}
   note.textContent=R.msg;if(R.ok&&!R.dry&&(!opts||opts.src==="button"))$("#imp-in").value="";
   if(opts&&opts.src==="paste"){const d=$("#imp");if(d)d.open=true;toast([el("b",null,R.msg)]);}
   await logImport(R);return R;}

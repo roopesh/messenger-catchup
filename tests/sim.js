@@ -70,6 +70,9 @@ function checkCap(cap,base,mockFrom,n,label){
  ok(cap4.msgs[8].d===yr,'A4: year-less "December 28" -> '+yr+' (got '+cap4.msgs[8].d+')');
  ok(cap4.msgs[9].d===cap4.msgs[8].d&&/DATES-GUESSED 9$/.test(res.capture),'A4: unreadable label borrows the previous date and is reported ('+res.capture.split(' you ')[1]+')');
  ok(cap4.msgs[15].d===cap4.msgs[12].d&&/^Thu /.test(cap4.msgs[15].t),'A4: short weekday "Thu" = "Thursday"');
+ const f26=cap4.msgs[26],f29=cap4.msgs[29];
+ ok(f26.f==='Ben'&&f26.b==='Mike replied to my email yesterday'&&!f26.r,'A4: follow-on text "Mike replied to…" stays Ben\'s message, not a fake reply ('+JSON.stringify([f26.f,f26.b,f26.r])+')');
+ ok(f29.f==='Dee'&&f29.b==='You sent the wrong link btw','A4: follow-on text "You sent…" stays Dee\'s message, not yours ('+JSON.stringify([f29.f,f29.b])+')');
  ok(/^Thu \d/.test(m12.t)&&/^\d{4}-\d\d-\d\d$/.test(m12.d),'A4: weekday label -> '+m12.t+' '+m12.d);
  ok(/^\w{3} \d/.test(m22.t)&&m22.d!==m27.d,'A4: "Yesterday" label -> '+m22.t+' '+m22.d+' (today '+m27.d+')');
  fs.writeFileSync(D+'tests/out/sim_cap4.json',JSON.stringify(cap4));
