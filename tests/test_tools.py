@@ -153,9 +153,7 @@ class TestReleaseVersion(unittest.TestCase):
 class TestNoLeftoverNames(unittest.TestCase):
     def test_no_pa_names_in_shipped_files(self):
         for f in SHIPPED:
-            self.assertNotRegex(
-                read(f), r"\bcc(Scan|Verify|Capture)\b|cctool|cc-capture|cc-cmd|cc_result", f
-            )
+            self.assertNotRegex(read(f), r"\bcc(Scan|Verify|Capture)\b|cctool|cc-capture|cc-cmd|cc_result", f)
 
 
 class TestSkillReferences(unittest.TestCase):

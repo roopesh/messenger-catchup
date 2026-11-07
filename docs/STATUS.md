@@ -1,16 +1,21 @@
 # Status and handoff
 
-**Read this first** when picking the project up. Last updated Nov 7, 2026 (early morning, US Pacific), after the overnight defect run (DEVELOPMENT.md › Phase 9).
+**Read this first** when picking the project up. Last updated Nov 7, 2026 (US Pacific), after Phase 10 (DEVELOPMENT.md): the repo went public, cleanup, names, self-check, relink, faster photo replies.
 
 ## Where things stand
-- **Shipped:** release **v1.7.1** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 1.7, helper 1.4. Every release is a git tag plus a GitHub release with the skill ZIP attached.
-- **Defects:** none open. All 37 bugs found so far are fixed, plus the doc gaps (G1–G5) and P1 risks (R1, R8, mostly):
+- **Shipped:** release **v1.14.1** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.2, helper 1.9. Every release is a git tag plus a GitHub release with the skill ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
+- **Defects:** none open. All 38 bugs found so far are fixed:
   - B1–B11 came from the handoff review
   - B12–B37 came from three independent reviews run overnight; each round's fixes were checked by the next
+  - B38, a silent wrong photo-reply link, was exposed by the F2 test
   - every fix has a test that fails on the code before it
+- **Open:** live-only risks (R2, R3, R5, R6, R9), doc gap G6, features F1, F5, F6 and F7. See [BACKLOG.md](BACKLOG.md).
 - **Workflow:** every change goes branch → PR → version bump → CI → squash-merge → `tools/release.sh`. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
 - **Enforcement:** GitHub branch protection on `main` (since Nov 7): changes only through a PR, `test` and `version-bump` must pass, the branch must be up to date, linear history, no force-push or deletion, admins included. CI also flags any commit on `main` that didn't come from a merged PR, and a local `pre-push` hook blocks direct pushes before they reach GitHub.
-- **In use:** the original user's page and hourly loop run the generic skill. **Re-upload the skill ZIP from the latest release.** On the next refresh, Claude republishes the page to `PAGE_VERSION` 1.7 by itself and reports that the userscript has an update (1.4).
+- **In use:** the original user's page and hourly loop run the generic skill.
+  - **As of Nov 7 the live page is still at page 1.1 with helper 1.1**, checked read-only.
+  - **Re-upload the skill ZIP** from the latest release, and **install the userscript once from the link**: the 1.1 copy was pasted, so it can't update itself.
+  - On the next refresh, Claude republishes the page (2.2), and later runs the one-time name scan and asks which aliases to add.
 - **Repo:** public (since Nov 7), `github.com/roopesh/messenger-catchup`, branch `main`. **Never commit real names or text from a user's chat**: tests use the mock cast (Ana, Ben, Cy, Dee, You).
 
 ## Test suites
@@ -18,19 +23,22 @@
 
 | Suite | Command | What it covers | Now |
 |---|---|---|---|
-| Python | `npm run test:py` | `tests/test_catchup.py`: every link rule and assert, restore, bootstrap edge cases (unbuilt messages, chunks ahead of `meta/chat`), review regressions. `tests/test_tools.py`: helper copies in sync, version strings, `PAGE_VERSION` bumped when the page changed since the last tag, SKILL.md documents every db path, `meta/chat` field and outbox state the page uses, ZIP contents, release script, pre-push hook. ResourceWarnings are errors. | 97 pass |
-| Sim | `npm run test:sim` | `tests/sim.js`: the helper on a simulated Messenger (first run, incremental, mid-run arrivals and deletions, photo replies, short chat, 20 pinned-date label cases including New Year, follow-on messages that look like status lines, deleted/unsent messages, jump links, injected vs installed) | 46 pass |
-| Page | `npm run test:page` | `tests/page.test.js`: the page in Chromium with a stand-in claude.ai runtime. Every importer check, leases, fresh reads, repairs (including across chunks), photo slots and retries, the full pipeline (sim captures → import → `catchup.py` → render), markers, date entry, outbox states and Dismiss, safe links, Ask, Views | 112 pass |
+| Python | `npm run test:py` | `tests/test_catchup.py`: every link rule and assert, restore, bootstrap edge cases (unbuilt messages, chunks ahead of `meta/chat`), review regressions. `tests/test_tools.py`: formatting-independent source checks: bookmarklet in sync, userscript installed from the release, version strings (minors one digit), `PAGE_VERSION` bumped when the page changed since the last tag, SKILL.md documents every db path, `meta/chat` field and outbox state the page uses, `SKILL.md` under 20 KB and naming every reference file, every `catchup.py` command documented, ZIP contents (including `references/`), release script, pre-push hook. Also `relink`. ResourceWarnings are errors. | 111 pass |
+| Sim | `npm run test:sim` | `tests/sim.js`: the helper on a simulated Messenger (first run, incremental, mid-run arrivals and deletions, photo replies, short chat, 20 pinned-date label cases including New Year, follow-on messages that look like status lines, deleted/unsent messages, jump links and the page's bookmarklet, full names from avatars and nicknames, the `people` scan, `selfcheck` against broken hooks, far-up photo-reply parents, injected vs installed) | 60 pass |
+| Page | `npm run test:page` | `tests/page.test.js`: the page in Chromium with a stand-in claude.ai runtime. Every importer check, leases, fresh reads, repairs (including across chunks), photo slots and retries, the full pipeline (sim captures → import → `catchup.py` → render), markers, date entry, outbox states and Dismiss, safe links, Ask, Views, range summaries, names (`people/index`, the display rule) | 130 pass |
 
 When a bug is found, write its test as the *fixed* behavior first. Python can mark it `expectedFailure`, and the page test has `known()`, which prints `KNOWN` without failing the run. Remove the marker in the PR that fixes it.
 
 ## Where to start
-1. **Run one live refresh on the real chat with v1.7.x.** The mock can't prove these, and they're the main remaining risk:
-   - Messenger's real labels still parse: no `DATES-GUESSED`, senders right on follow-on messages
-   - outbox name matching works (R9)
-   - the page republishes cleanly
+1. **One live refresh on the real chat**, after re-uploading the ZIP and installing the userscript from the link. The mock can't prove these, and they're the main remaining risk:
+   - `selfcheck` passes; no `DATES-GUESSED`
+   - full names arrive (`fn`), and the one-time name scan fills `people/index`
+   - the page republishes cleanly to 2.2 and shows names by the rule
+   - a queued reply posts: R9, the "Replying to …" bar
+   - Tampermonkey picks up a later helper release by itself (the redirect from `latest/download`)
 2. **R2:** measure a large capture (many photos) to see whether the clipboard and paste hold up.
-3. **F4:** a helper self-check that names exactly which Messenger selector or label vanished, to catch markup changes early.
+3. **G6:** document the `outbox/*` row fields and `coverage`.
+4. **F7:** ship as a plugin, so the skill updates the way the helper now does.
 
 ## Doc map
 | Doc | Use it for |
@@ -39,7 +47,7 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
 | [CLAUDE.md](../CLAUDE.md) | The workflow rules (PR, versioning, release) |
 | [CHANGELOG.md](../CHANGELOG.md) | What changed in each release |
 | [SKILL.md](../SKILL.md) and [references/](../references) | The procedure Claude follows: `SKILL.md` every run, references when needed. **Changing either changes behavior.** |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | How the parts fit; full database reference; helper bridge; capture format; tests; range summaries |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How the parts fit; full database reference; helper functions and bridge; capture format (`fn`); tests; range summaries |
 | [BACKLOG.md](BACKLOG.md) | Everything open, by priority |
 | [DECISIONS.md](DECISIONS.md) | What was chosen, why, and what was rejected |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | History, phase by phase |

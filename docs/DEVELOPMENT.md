@@ -117,12 +117,34 @@ Related docs:
   - the page's helper copies must match `helper.user.js`
 - **Left:** risks that need the real Messenger (R2, R3, R5, R6, R9), cleanup (C1, C4) and features (F1–F6).
 
+## Phase 10: public repo, cleanup, names (Nov 7)
+- **Goal:** the owner's list: F2, F3, F4, C1, C4, R9, last names, and making the repo public for real branch protection. Done in logical chunks, each its own PR and release, asking where the owner had to decide.
+- **Releases:** v1.7.2 → v1.14.1, nine in all:
+  - **Public repo and branch protection (R8):** audited first for chat data.
+  - **C1:** dead code removed. A read-only look at the live data showed range summaries were *live* (summary `fromI` 1654), so they stayed and got tests.
+  - **C4:** Prettier and Ruff, pinned and enforced. It was measured first: the page grew 37%, which F8 won back. The page no longer stores the document skeleton.
+  - **F8:** the userscript installs from the release and updates itself; the page lost its 30 KB embedded copy. `PAGE_VERSION` went 1.9 → 2.0, never 1.10, because the live page sits at 1.1.
+  - **C7:** `SKILL.md` cut from 31.8 KB to 19.7 KB, since Claude reads it on every refresh. Moved text verbatim into `references/`, checked line by line and by an independent five-scenario walk-through, which found four gaps (fixed).
+  - **F9, names:** a live look found Messenger prints nicknames or first names, while the avatar carries the full name.
+    - Part 1: `fn` and `people/index`, shown by the owner's rule.
+    - Part 2: a one-time backfill scan and the alias question.
+  - **F3:** `relink` for links on messages already built.
+  - **F4:** `selfcheck` names the Messenger hook that changed.
+  - **F2:** faster far-up photo-reply parents. Its test exposed B38, a silent wrong link from a late focus, now refused.
+- **Guards added:**
+  - `SKILL.md` under 20 KB, and names every reference file
+  - every `catchup.py` command documented
+  - component minor versions one digit
+  - the page stores no document skeleton
+  - the release attaches the userscript
+- **Left:** live checks (R2, R3, R5, R6, R9), G6, F1, F5, F6, F7.
+
 ## Version map
 | Thing | Versions |
 |---|---|
 | Helper (user-specific) | 2.0 → 2.1 → 2.2 (`cc-cmd`, `cc_result`) |
-| Helper (generic) | 1.0 → 1.1 (`mc-cmd`, `mc_result`) |
-| Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) |
-| Skill | user-specific `group-catchup` → generic `messenger-catchup` v1.1 |
+| Helper (generic) | 1.0 → 1.1 (`mc-cmd`, `mc_result`) → … → 1.5 (self-updating) → 1.9 |
+| Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) → … → 2.2 |
+| Skill | user-specific skill (named after the original chat) → generic `messenger-catchup` v1.1 |
 | Build tool | `cctool.py` → `catchup.py` (Phase 8, same commands and behavior) |
-| Release (`VERSION`) | v1.1.0 (tagged retroactively at `c3186da`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2) → … → v1.7.1 (Phase 9). From here on, see CHANGELOG.md |
+| Release (`VERSION`) | v1.1.0 (tagged retroactively at `c3186da`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2) → … → v1.7.1 (Phase 9) → v1.14.1 (Phase 10). From here on, see CHANGELOG.md |

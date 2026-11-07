@@ -2,6 +2,19 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.14.1] - 2026-11-07
+Docs only.
+
+### Changed
+- **`docs/STATUS.md`** is up to date for v1.14:
+  - shipped versions; the live page still at 1.1; the one-time userscript reinstall
+  - test counts: Python 111, sim 60, page 130
+  - where to start
+- **`docs/DEVELOPMENT.md` › Phase 10** records this round; the version map is extended.
+- **The original chat's name is removed** from the docs and from a test pattern. Real chat names never go in the repo; it's public.
+
+Components: `PAGE_VERSION` 2.2, helper 1.9 (unchanged).
+
 ## [1.14.0] - 2026-11-07
 Faster, safer photo replies whose parents are far up the chat (BACKLOG F2, B38). MINOR: the reader behaves differently, and a new error can reach Claude as a CHECK. Helper 1.9; installed copies update themselves. Page unchanged.
 
