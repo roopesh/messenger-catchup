@@ -72,6 +72,17 @@ A refresh of 183 messages took about 17 min:
 - **Fix:**
   - no rebuild while the field is focused
   - saves 1.5 s after the last keystroke, or on Enter or blur
+- **Verified Nov 6, 8:17 PM (Playwright, headless Chromium).** Typed `11/03/2026 09:15 AM` one key every 60 ms into the "from" field, loaded with real chat data:
+
+| Check | Current page (generic, v1.1) | Old page (v42, control) |
+|---|---|---|
+| Field value after typing | 2026-11-03T09:15 ✓ | 2026-01-02T08:32 ✗ |
+| Field rebuilt mid-typing | No | Yes |
+| Saves while typing | 0 | 1 (a half-typed value) |
+| Saved after 1.5 s pause | 1, correct value | wrong value |
+| Enter (checked at 200 ms) | 1 save, correct | — |
+| Click outside, i.e. blur (at 200 ms) | 1 save, correct | — |
+| Tab | moves to the "to" field, no save yet (by design: the range is still being edited) | — |
 
 ## 7. Generic skill validation (Nov 6)
 | Test | Result |
@@ -81,8 +92,28 @@ A refresh of 183 messages took about 17 min:
 | Live sandbox page, first run, no helper | OK |
 | Live switch: refreshes 244 (injected v1.1) and 245 (old v2.2 helper) | Both done, no errors |
 | Old vs new page, rendered side by side | Title, header, summary and messages identical; only the "Refreshing" text and jump tag differ |
-| Independent cold review of the skill | 12 issues raised; addressed in v1.1 (per-issue log not kept) |
+| Independent cold review of the skill (fresh agent that hadn't seen the work) | 12 issues; 11 fixed, 1 partly (see section 9) |
 
 ## 8. Outbox posting
 - **Method:** insert the text into Messenger's Lexical editor with `execCommand('insertText')`, check that the box text equals the stored text and that "Replying to …" is shown, press Enter, then check for a new "You:" message.
 - **Finding:** `execCommand('delete')` does not clear the editor. Clear it with a click, then select all, then Delete.
+
+## 9. Cold review of the generic skill (Nov 6)
+- **How:** a fresh agent with no context ran a dry first run of `patool` and read SKILL.md, the page and the helper.
+- **Re-checked against the code in this repo on Nov 6 at 8:20 PM:**
+
+| # | Issue found | Status now | Where |
+|---|---|---|---|
+| 1 | No-helper scan can't finish: one call waits 70 s and loses the id | Fixed: start with your own id, poll in calls ≤ 25 s | SKILL.md "Helper" |
+| 2 | Stale `mc_result` can fake a finished capture | Fixed: `full()` clears it; results carry a `run` id | helper `full()` |
+| 3 | Stale `__mcsave` can import duplicates | Fixed: scan clears it; SKILL requires `err:null` | helper `paScan` |
+| 4 | `patool` crashes on dates older than a week | Fixed: `_min` takes the date from `d` and the time by regex | `patool._min` |
+| 5 | Claude may not see a tab the user opened | Fixed: Claude opens the chat tab itself (`tabs_create_mcp`) | SKILL.md setup step 1 |
+| 6 | Posting a reply was underspecified; double-post risk | Fixed: box selector, wait for "reply box is ready", `sending` state checked before re-posting | SKILL.md "Outbox" |
+| 7 | Scheduled-task option had `requires_local_device:false`; prompt incomplete; overnight chain could die | Fixed: `true`; full prompt; next run at start of the hours window | SKILL.md "Scheduling" |
+| 8 | Helper install advice; double-run if injected on top | Fixed: Tampermonkey or Violentmonkey with "Allow User Scripts"; check `data-mc-helper` every run; guard against a second copy | SKILL.md, helper line 11 |
+| 9 | End-to-end encrypted chats (`/messages/e2ee/t/`) not handled | Fixed: full `chatUrl` stored and used; still untested live | SKILL.md, page |
+| 10 | `out_dir` format and write versions unclear | Fixed: files hold the bare doc; take `if_version` from the read | SKILL.md steps 5 and 7 |
+| 11 | Short chat drops its oldest message; GUESS review impractical on a 1,000-message first build | Fixed: `__top__` anchor captures all; first run reviews only the newest ~150 | helper scan, SKILL.md step 6 |
+| 12 | Cosmetic leftovers from the original chat | Partly: "bags" placeholder and "Pacific" comment removed. Still there: `paffle` chip class and "paffles" wording, `paSumFilter` storage key, `patool` time-zone fallback (used only when `meta/chat.tz` is missing). None affect behavior | page, `patool` |
+
