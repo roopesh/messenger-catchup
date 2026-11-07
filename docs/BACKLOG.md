@@ -2,7 +2,7 @@
 
 Everything open: bugs, risks, gaps between docs and code, cleanup, tests and feature ideas. Started Nov 6, 2026 from a full read of the code at `c3186da`, the simulated-Messenger tests, a `cctool.py` (now `catchup.py`) replay and a date-parser probe ([EXPERIMENTS.md §10](EXPERIMENTS.md#10-handoff-review-nov-6-evening)). Updated after the Phase 8 rename and test build-out ([§11](EXPERIMENTS.md#11-rename-and-test-build-out-nov-6-late-evening)).
 
-**Tests for open bugs:** B1, B3–B5 and B11 have `expectedFailure` tests in `tests/test_catchup.py`; B7–B9 have `KNOWN` checks in `tests/page.test.js`. Fix the bug, then remove the marker.
+**Tests for open bugs:** B7–B9 have `KNOWN` checks in `tests/page.test.js`. (B1, B3–B5, B11's tests are now regression tests.) Fix the bug, then remove the marker.
 
 **Priority:** P1 = fix before relying on it more · P2 = next round · P3 = when convenient.
 **Status:** open unless marked. When you close an item, change its status to `done (<commit>)` and keep the row, so the history stays readable.
@@ -15,7 +15,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R1 | P1 | risk | Page imports aren't version-pinned, and a half-finished import has no documented recovery · **done** (v1.2.0) |
 | B6 | P2 | bug | Capture date parser: unknown label forms silently become "today"; year-less dates break at New Year |
 | B8 | P2 | bug | One malformed link in a message crashes the Messages tab render |
-| B4 | P2 | bug | `catchup.py` accepts links to a parent in another conversation; the page then hides the link |
+| B4 | P2 | bug | `catchup.py` accepts links to a parent in another conversation; the page then hides the link · **done** (v1.2.1) |
 | G1 | P2 | doc gap | `meta/chat` fields written by the page are missing from SKILL.md; `pageVersion` never updated on republish · **half done** (pageVersion, v1.2.0) |
 | G2 | P2 | doc gap | Page says Claude reads `views`, ideas and `qa`; SKILL.md never tells it to |
 | G3 | P2 | doc gap | Page offers "say reply 3232 to Claude"; SKILL.md has no procedure for it |
@@ -29,10 +29,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | T3 | P2 | test | No tests for the page (importer, `convTree`, date entry) · **done** |
 | F3 | P2 | feature | No way to correct a link on an already-built message |
 | F4 | P2 | feature | Self-check command to catch Messenger markup changes early |
-| B11 | P3 | bug | `catchup.py` ignores Messenger's reply link when the parent is message #0 |
-| B1 | P3 | bug | Threading `note` is never filled in for new pages |
-| B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal |
-| B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md |
+| B11 | P3 | bug | `catchup.py` ignores Messenger's reply link when the parent is message #0 · **done** (v1.2.1) |
+| B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
+| B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
+| B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
 | B7 | P3 | bug | A mention of message #0 renders without its content |
 | B9 | P3 | bug | "Queued" confirmation says "and confirm" even with auto-posting on |
 | B10 | P3 | bug | `make-zip.sh` only works when the repo folder is named `messenger-catchup` |
@@ -44,8 +44,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) |
 | C3 | P3 | cleanup | Leftover `cc*` names and chat-specific comments · **done** |
 | C4 | P3 | cleanup | Minified one-line style in helper and page |
-| C5 | P3 | cleanup | `catchup._ts` shells out to `date` |
-| C6 | P3 | cleanup | `catchup.py` opens files without closing them |
+| C5 | P3 | cleanup | `catchup._ts` shells out to `date` · **done** (v1.2.1) |
+| C6 | P3 | cleanup | `catchup.py` opens files without closing them · **done** (v1.2.1) |
 | T4 | P3 | test | Sim doesn't cover other date-label forms |
 | T5 | P3 | test | No CI · **done** |
 | F1 | P3 | feature | More than one chat per page |
@@ -57,7 +57,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 ## Bugs
 
-### B1 · P3 · Threading `note` never filled in for new pages
+### B1 · P3 · Threading `note` never filled in for new pages · done (v1.2.1)
 - **Where:** `scripts/catchup.py:105`
 - **What:** the note ("N reply links read straight from Messenger; …") is produced by `re.sub` on the *existing* note. Setup seeds `note:""`, the pattern never matches, and the note stays empty forever. The Messages tab shows it when present (`page.html:896`).
 - **Seen:** replay on Nov 6 printed `note= ''` after a successful build.
@@ -75,19 +75,19 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - Rebuilding an already-built RUN fails with "RUN already built into WORK … run: catchup.py restore WORK".
   - SKILL.md steps 6–7 and Troubleshooting say when to restore. 7 tests in `TestRestore`.
 
-### B3 · P3 · `dealEdit` crashes without a deal
+### B3 · P3 · `dealEdit` crashes without a deal · done (v1.2.1)
 - **Where:** `scripts/catchup.py:116-119`
 - **What:** `[d for d in deals if d['conv']==cid][0]` → `IndexError` when the conversation has no deal; with two deals, only the first can ever be edited.
 - **Seen:** replay on Nov 6 → `IndexError: list index out of range`.
 - **Fix:** assert with a clear message; key edits by deal index or text.
 
-### B4 · P2 · Cross-conversation links accepted silently
+### B4 · P2 · Cross-conversation links accepted silently · done (v1.2.1)
 - **Where:** `scripts/catchup.py:85-102` (no check), `page.html:704` (`set.has(lk[0])`)
 - **What:** a spec `links` entry (or a GUESS/quote default) may point at a message in a different conversation. `catchup.py` only checks that links point backward. The page nests a message only when its parent is in the same conversation, so the link disappears from the card and the Messages tab and the message shows as a root. The link type isn't validated either (`"x"` would be stored).
 - **Seen:** replay on Nov 6: link `3 → 2` across conversations built without a warning.
 - **Fix:** WARN (or assert) when the parent isn't in the same conversation, and on unknown types.
 
-### B5 · P3 · Reply with no parent found gets an auto `i` link
+### B5 · P3 · Reply with no parent found gets an auto `i` link · done (v1.2.1)
 - **Where:** `scripts/catchup.py:94-99`; SKILL.md setup step 6 ("Replies to messages from before the first window print `WARN reply parent not found`: leave those unlinked")
 - **What:** after the WARN, the code falls through to the GUESS step and links the reply to the previous member of its conversation as `i`. On a first run, SKILL.md says to review GUESS lines only for the newest ~150, so older replies keep a wrong "answers" link.
 - **Seen:** replay on Nov 6: `WARN reply parent not found 5` then `GUESS 5 -> 3 i`.
@@ -117,7 +117,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **What:** after "Queue reply", the status always says "Tell Claude “send” in chat (or wait for the next refresh) and confirm", even when `outboxAuto` is on and no confirmation will be asked. The page test also showed that this text only flashes: the outbox snapshot re-renders the row right away and replaces the composer with a "reply queued" chip, so the wrong wording is barely visible.
 - **Fix:** branch on `CFG().outboxAuto` like `applyCfg` does, or drop the text and rely on the chip.
 
-### B11 · P3 · Messenger's reply link to #0 is ignored
+### B11 · P3 · Messenger's reply link to #0 is ignored · done (v1.2.1)
 - **Where:** `scripts/catchup.py:88` (`if m.get('pi')`)
 - **What:** `pi` is the parent's message number. When the parent is message #0, `pi` is `0`, which is falsy, so the Messenger link is skipped and the fallbacks run: quote matching, or for a photo reply "the author's latest photo". That can link to the wrong photo, the exact failure clicking photo replies was meant to prevent (EXPERIMENTS.md §4). Only replies to message #0 are affected.
 - **Seen:** `tests/test_catchup.py::TestKnownBugs.test_B11_messenger_link_to_message_zero`: a photo reply clicked to #0 was linked to #1, Ana's later photo.
@@ -218,10 +218,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### C4 · P3 · Minified style
 - The helper and most of the page script are one long line per statement, which makes diffs and reviews hard. Options: keep a readable source and generate the dense copy, or just run a formatter. Watch the userscript copy size if you change it.
 
-### C5 · P3 · `catchup._ts` shells out to `date`
+### C5 · P3 · `catchup._ts` shells out to `date` · done (v1.2.1)
 - Use `zoneinfo` instead; also removes the dependency on `%-d` support in `date`.
 
-### C6 · P3 · Unclosed files in `catchup.py`
+### C6 · P3 · Unclosed files in `catchup.py` · done (v1.2.1)
 - `_load` and `_dump` use `json.load(open(p))` / `json.dump(o,open(p,'w'))`. CPython closes and flushes the files right away, so nothing is lost today, but every call raises a `ResourceWarning` (the test runner passes `-W ignore::ResourceWarning`). Use `with open(...)`.
 
 ## Tests

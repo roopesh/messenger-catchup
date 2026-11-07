@@ -24,7 +24,6 @@ Known bugs are written as tests of the *fixed* behavior: Python marks them `expe
 ## Where to start
 1. **Re-upload the skill ZIP from the v1.2.0 release.** Existing pages upgrade themselves to `PAGE_VERSION` 1.2 on their next refresh.
 2. **B6 + B8**: silent bad dates and the render crash. B8 already has a page test waiting to flip.
-3. **B11, B1, B3–B5**: small `catchup.py` fixes, each with a test already written.
 4. **G1–G3**: bring SKILL.md in line with what the page does.
 
 ## Doc map
@@ -75,10 +74,8 @@ python3 scripts/catchup.py build WORK RUNDIR spec.json
 2. Make the change. Bump `VERSION`, `package.json` (`npm install --package-lock-only` updates the lockfile) and add a `CHANGELOG.md` entry. MAJOR / MINOR / PATCH rules are in [CLAUDE.md](../CLAUDE.md). `npm test` fails if these disagree.
 3. `npm test`, then `gh pr create`. Fill in the template's checklist (`.github/pull_request_template.md`).
 4. `gh pr checks --watch` until CI (`test`, `version-bump`) is green, then `gh pr merge --squash --delete-branch` and `git switch main && git pull`.
-5. `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`.
-6. `./make-zip.sh` (the repo folder must be named `messenger-catchup`; the ZIP is written to the parent folder, BACKLOG B10). The ZIP holds `SKILL.md`, `VERSION`, `assets/` and `scripts/`, which `test_tools.py` checks.
-7. `gh release create vX.Y.Z ../messenger-catchup.zip --title vX.Y.Z --notes "<changelog entry>"`.
-8. Users install or update from the release ZIP: Customize › Skills › + › Create skill › Upload a skill.
+5. `tools/release.sh`: tags `vX.Y.Z` on the merge commit, builds the ZIP from the tag (`SKILL.md`, `VERSION`, `assets/`, `scripts/`), checks its `VERSION`, and publishes the GitHub release with the changelog entry.
+6. Users install or update from the release ZIP: Customize › Skills › + › Create skill › Upload a skill.
 
 ## Gotchas worth knowing before you touch anything
 - The reader is tied to Messenger's English labels and markup. When a scan suddenly fails, check those first (LEARNINGS.md › Messenger DOM).

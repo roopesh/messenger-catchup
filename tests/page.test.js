@@ -167,7 +167,7 @@ async function robustness(){
 function exportDb(all,dir){fs.rmSync(dir,{recursive:true,force:true});
   for(const [k,v] of Object.entries(all)){if(/^(chunks\/|meta\/chat$|threading\/current$|summary\/current$)/.test(k)){fs.mkdirSync(path.join(dir,path.dirname(k)),{recursive:true});fs.writeFileSync(path.join(dir,k+'.json'),JSON.stringify(v));}}
   fs.mkdirSync(path.join(dir,'chunks'),{recursive:true});}
-const py=(...a)=>execFileSync('python3',['-W','ignore::ResourceWarning',CATCHUP,...a],{encoding:'utf8'});
+const py=(...a)=>execFileSync('python3',[CATCHUP,...a],{encoding:'utf8'});
 function specFor(n,msgs,convOf){
   const conv=m=>{if(m.pi!=null&&convOf[m.pi])return convOf[m.pi];return Math.floor(m.i/10)%2?'packs1':'trail1';};
   const join={};msgs.forEach(m=>{const c=conv(m);convOf[m.i]=c;(join[c]=join[c]||[]).push(m.i);});

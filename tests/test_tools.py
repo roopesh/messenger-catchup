@@ -85,6 +85,15 @@ class TestPrePushHook(unittest.TestCase):
         for job in ('  test:','  version-bump:','  pr-only:'): self.assertIn('\n'+job+'\n',wf)
         self.assertIn('npm test',wf)
 
+class TestReleaseScript(unittest.TestCase):
+    def test_release_script(self):
+        f=os.path.join(ROOT,'tools','release.sh');self.assertTrue(os.access(f,os.X_OK))
+        self.assertEqual(subprocess.run(['sh','-n',f]).returncode,0)
+    def test_notes_extraction_matches_changelog(self):
+        v=read('VERSION').strip()
+        out=subprocess.run(['awk','-v','h=## [%s] '%v,'index($0,h)==1{f=1;next} /^## \\[/{f=0} f',os.path.join(ROOT,'CHANGELOG.md')],capture_output=True,text=True).stdout
+        self.assertTrue(out.strip());self.assertNotIn('\n## [',out)
+
 class TestZip(unittest.TestCase):
     def test_make_zip_contents(self):
         with tempfile.TemporaryDirectory() as t:

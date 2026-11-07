@@ -10,14 +10,16 @@
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
   "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs}],
-  "dealEdit":{"convid":{"text":"...","addRefs":[...]}}, "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
+  "dealEdit":{"convid":{"text":"...","addRefs":[...],"index":n}} (index only when the conv has several deals), "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
   "answered":[{conv,ask,answer,refs}], "mentions":[{"note","refs":[[i],...]}]}
 Link defaults per new message: Messenger reply link (pi / pmid) -> 'r' ('rq' if matched by quote in-browser);
 else quote match against stored history (same author + first 20 chars, latest wins) -> 'rq';
 reply to a photo with no Messenger link -> latest photo by that author, 'rg' + a CHECK warning;
+a reply whose parent can't be found -> no link (WARN);
 else 'c' if same author as the previous member of its conversation, otherwise 'i' to that member (printed as GUESS
-for review; none if that member is over 3 h older -> ROOT). Override any GUESS in "links" and rebuild."""
-import json,sys,re,os,glob,collections,subprocess,shutil
+for review; none if that member is over 3 h older -> ROOT). Override any GUESS in "links" and rebuild.
+A link whose parent sits in another conversation prints a WARN (the page would show it as a new thread)."""
+import json,sys,re,os,glob,collections,shutil,datetime
 
 def _n(s):
     s=re.sub('[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]','',s or '')  # Messenger drops emoji from quotes
@@ -40,17 +42,25 @@ def resolve(m,pool,window=300,n=20):
     return (max(c,key=lambda p:p['i'])['i'],'rq') if c else (None,None)
 
 def _min(m):  # date from d, time by regex from t, so any Messenger label form (old dates) parses
-    import datetime
     d=datetime.date.fromisoformat(m['d']); x=re.search(r'(\d{1,2}):(\d{2})\s*([AP]M)',m.get('t') or '',re.I)
     if not x: return d.toordinal()*1440
     return d.toordinal()*1440+(int(x.group(1))%12+(12 if x.group(3).upper()=='PM' else 0))*60+int(x.group(2))
 def _short(m): return ((m.get('b') or '').replace('\n',' ')[:60]+(' [photo]' if m.get('p') else '')+(' [link]' if m.get('a') else '')) or '[media]'
 
-def _load(p): return json.load(open(p))
+def _load(p):
+    with open(p,encoding='utf-8') as fh: return json.load(fh)
 def _dump(o,p):
-    os.makedirs(os.path.dirname(p),exist_ok=True); json.dump(o,open(p,'w'),ensure_ascii=False)
+    os.makedirs(os.path.dirname(p),exist_ok=True)
+    with open(p,'w',encoding='utf-8') as fh: json.dump(o,fh,ensure_ascii=False)
 TZ='America/Los_Angeles'
-def _ts(): return subprocess.check_output(['date','+%a %b %-d, %-I:%M %p'],env={'TZ':TZ,'PATH':'/usr/bin:/bin'}).decode().strip()
+def _ts():  # "Fri Nov 6, 8:41 PM" in the chat's time zone
+    try:
+        import zoneinfo; d=datetime.datetime.now(zoneinfo.ZoneInfo(TZ))
+    except Exception:  # no tz database here: fall back to the system clock's zone
+        d=datetime.datetime.now().astimezone()
+    return '%s %d, %d:%02d %s'%(d.strftime('%a %b'),d.day,(d.hour%12) or 12,d.minute,'AM' if d.hour<12 else 'PM')
+LINK_TYPES=('r','rq','rg','i','c')
+NOTE_RE=r'^\d+ reply links.*?\(replies to photos\) by best match'
 
 WFILES=('all.json','base/threading.json','base/summary.json','state.json')
 def _snapshot(work):  # the WORK a build started from, so `restore` can undo it
@@ -98,26 +108,30 @@ def build(work,run,specp):
         for i in mem: assert i not in joined,('joined twice',i); joined[i]=cid
     assert sorted(joined)==ids,('unassigned or extra',sorted(set(ids)^set(joined)))
     for i in ids:
-        cv=C[joined[i]]; m=N[i]; prev=[x for x in cv['members'] if x<i]; LS=sp.get('links',{}); L=LS.get(str(i))
+        cv=C[joined[i]]; m=N[i]; prev=[x for x in cv['members'] if x<i]; LS=sp.get('links',{}); L=LS.get(str(i)); unfound=False
+        if L: assert len(L)==2 and L[1] in LINK_TYPES,('link type must be one of %s'%'/'.join(LINK_TYPES),i,L)
         if not L and not (str(i) in LS and L is None):  # "i": null in links = deliberately no link (a new topic)
-            if m.get('pi'): L=[m['pi'],'rq' if m.get('pq') else 'r']
+            if m.get('pi') is not None: L=[m['pi'],'rq' if m.get('pq') else 'r']  # pi can be 0
             elif m.get('pmid') and m['pmid'] in bym: L=[bym[m['pmid']],'rq' if m.get('pq') else 'r']
             elif m.get('r'):
                 pr,k=resolve(m,al+new)
                 if pr is not None:
                     L=[pr,k]; print(('CHECK photo-reply guess' if k=='rg' else 'matched by quote'),i,'->',pr)
-                else: print('WARN reply parent not found',i,'- set "links" by hand')
-            if not L and prev:
+                else: print('WARN reply parent not found',i,'- left unlinked; set "links" by hand if you know it'); unfound=True
+            if not L and prev and not unfound:  # a reply whose parent wasn't found is not guessed as an answer
                 p=max(prev); P=byi.get(p) or N.get(p)
                 if _min(m)-_min(P)<=180:
                     L=[p,'c' if P['f']==m['f'] else 'i']
                     print('GUESS %d -> %d %s | %s: %s  <=  %s: %s'%(i,p,L[1],m['f'][:12],_short(m),P['f'][:12],_short(P)))
                 else: print('ROOT %d (over 3 h since the conversation\'s previous message) | %s'%(i,_short(m)))
         cv['members'].append(i); cv['members'].sort()
-        if L: t['links'][str(i)]=L
+        if L:
+            t['links'][str(i)]=L; pc=joined.get(L[0]) or next((c['id'] for c in t['convs'] if L[0] in c['members']),None)
+            if pc and pc!=joined[i]: print('WARN link %d -> %d crosses conversations (%s -> %s); the page shows %d as a new thread. Join them, or set "links"'%(i,L[0],joined[i],pc,i))
     t['to']=ids[-1]
     Cn=collections.Counter(v[1] for v in t['links'].values())
-    t['note']=re.sub(r'^\d+ reply links.*?\(replies to photos\) by best match',"%d reply links read straight from Messenger; %d matched by their quoted text and %d (replies to photos) by best match"%(Cn['r'],Cn['rq'],Cn['rg']),t.get('note',''))
+    note="%d reply links read straight from Messenger; %d matched by their quoted text and %d (replies to photos) by best match"%(Cn['r'],Cn['rq'],Cn['rg']); old=t.get('note') or ''
+    t['note']=re.sub(NOTE_RE,note,old) if re.match(NOTE_RE,old) else note+('. '+old if old else '')
     seen=collections.Counter(x for cv in t['convs'] for x in cv['members'])
     lo=min(min(cv['members']) for cv in t['convs'] if cv['members'])
     for i in range(lo,ids[-1]+1): assert seen[i]==1,('message in %d conversations'%seen[i],i)
@@ -129,7 +143,9 @@ def build(work,run,specp):
     for cid,k in sp.get('key',{}).items(): SC[cid]['key']=k
     s['deals']+=sp.get('deals',[])
     for cid,e in sp.get('dealEdit',{}).items():
-        d=[d for d in s['deals'] if d['conv']==cid][0]
+        ds=[d for d in s['deals'] if d['conv']==cid]; assert ds,('dealEdit: no deal in conversation',cid)
+        assert len(ds)==1 or 'index' in e,('dealEdit: %d deals in %s; add "index" (0 = the first listed)'%(len(ds),cid))
+        d=ds[e.get('index',0)]
         if 'text' in e: d['text']=e['text']
         d['refs']=sorted(set(d['refs']+e.get('addRefs',[])))
     s['open']=sp.get('open',[])+[o for o in s['open'] if o['ask'] not in sp.get('closeOpen',[])]
