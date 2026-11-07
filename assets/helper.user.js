@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.8
+// @version      1.9
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -11,8 +11,8 @@
 // ==/UserScript==
 (function () {
   if (window.__mcHelper || document.documentElement.hasAttribute('data-mc-helper')) return;
-  window.__mcHelper = '1.8';
-  document.documentElement.setAttribute('data-mc-helper', '1.8');
+  window.__mcHelper = '1.9';
+  document.documentElement.setAttribute('data-mc-helper', '1.9');
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener(
     'click',
@@ -394,8 +394,33 @@
           return !f || /^(Attachment|Photo|GIF|Video|Sticker)$/i.test(f);
         };
         R.photoReplies = reps.filter(isPhotoReply).length;
+        /* A click on "Go to replied message" leaves the view at the parent, possibly far up the chat. Jump back to the
+           bottom before the next reply (replies are in the recent window), instead of stepping down from up there. */
+        let away = false;
+        /* Who the reply is to, from its "X replied to Y" line: the focused parent must be theirs. A parent that loads late
+           can take focus while the next reply is being clicked; this keeps that from becoming a wrong link. */
+        const repliedTo = id => {
+          const rm = ((R.info[id].text || '').split('\n')[0] || '').match(/^(.*) replied to (.*)$/);
+          if (!rm || /^participant$/i.test(rm[2])) return null;
+          if (/^you$/i.test(rm[2])) return 'You';
+          if (/^(themself|themselves|himself|herself|yourself)$/i.test(rm[2])) return rm[1] === 'You' ? 'You' : rm[1];
+          return rm[2];
+        };
+        const fromOf = el => {
+          const l = (el.getAttribute('aria-label') || '').replace(/^At .+?(?:AM|PM|am|pm), /, '');
+          const k = l.indexOf(': ');
+          return k > 0 ? l.slice(0, k) : l;
+        };
         for (const id of reps.slice().reverse()) {
           if (R.parents[id] || !isPhotoReply(id)) continue;
+          if (away) {
+            for (let b = 0; b < 3; b++) {
+              s = sc();
+              s.scrollTop = s.scrollHeight;
+              await sleep(400);
+            }
+            away = false;
+          }
           const e = await bring(id);
           if (!e) {
             R.parents[id] = { err: 'notfound' };
@@ -408,8 +433,10 @@
           }
           if (document.activeElement) document.activeElement.blur();
           b.click();
+          away = true;
           let got = null;
-          for (let t = 0; t < 10; t++) {
+          for (let t = 0; t < 40; t++) {
+            /* up to 10 s: a parent far up takes Messenger a few seconds to load */
             await sleep(250);
             const a = document.activeElement;
             const am = a && a.closest && a.closest('[data-message-id]');
@@ -418,9 +445,16 @@
               break;
             }
           }
-          R.parents[id] = got
-            ? { p: got.getAttribute('data-message-id'), pl: (got.getAttribute('aria-label') || '').slice(0, 120) }
-            : { err: 'nofocus' };
+          const want = repliedTo(id);
+          const from = got ? fromOf(got) : '';
+          const theirs = !want || from === want || from.startsWith(want + ' ') || want.startsWith(from + ' ');
+          if (!got) R.parents[id] = { err: 'nofocus' };
+          else if (!theirs) R.parents[id] = { err: 'wrongfocus' };
+          else
+            R.parents[id] = {
+              p: got.getAttribute('data-message-id'),
+              pl: (got.getAttribute('aria-label') || '').slice(0, 120),
+            };
           R.steps++;
         }
         R.tReplies = Date.now() - R.t0;
@@ -966,7 +1000,7 @@
       jump();
       return { started: true };
     },
-    ping: () => ({ v: '1.8' }),
+    ping: () => ({ v: '1.9' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
   document.addEventListener('mc-cmd', async function (e) {
