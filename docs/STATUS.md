@@ -3,7 +3,7 @@
 **Read this first** when picking the project up. Last updated Nov 6, 2026 (late evening, US Pacific), after the rename and test build-out (Phase 8).
 
 ## Where things stand
-- **Shipped:** release **v1.1.1** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 1.1, helper 1.1. Each release is a git tag plus a GitHub release with the skill ZIP attached.
+- **Shipped:** release **v1.2.0** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 1.2, helper 1.1. Both P1 issues (B2, R1) are fixed. Each release is a git tag plus a GitHub release with the skill ZIP attached.
 - **Workflow:** every change goes branch → PR → version bump → squash-merge → tag → release. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
 - **Enforcement:** GitHub Actions runs `npm test` and a version-bump check on every PR, and flags any commit on `main` that didn't come from a merged PR. A local `pre-push` hook blocks direct pushes to `main`. GitHub branch protection isn't available on this private repo's plan (BACKLOG R8).
 - **In use:** the original user's page (v44) and hourly loop moved to the generic skill on Nov 6. Live refreshes 244 (injected helper v1.1) and 245 (old helper v2.2 still installed) both finished cleanly (DEVELOPMENT.md › Phase 6).
@@ -22,9 +22,9 @@
 Known bugs are written as tests of the *fixed* behavior: Python marks them `expectedFailure` and the page test prints `KNOWN`. When one starts passing you'll see "unexpected success" or `FIXED?`. Remove the marker and close the backlog item.
 
 ## Where to start
-1. **B2** (`catchup.py` has no WORK backup) and **R1** (unpinned page writes, no recovery for a half-finished import): the two places a refresh can get stuck and need hand repair.
+1. **Re-upload the skill ZIP from the v1.2.0 release.** Existing pages upgrade themselves to `PAGE_VERSION` 1.2 on their next refresh.
 2. **B6 + B8**: silent bad dates and the render crash. B8 already has a page test waiting to flip.
-3. **B11 + B1–B5**: small `catchup.py` fixes, each with a test already written.
+3. **B11, B1, B3–B5**: small `catchup.py` fixes, each with a test already written.
 4. **G1–G3**: bring SKILL.md in line with what the page does.
 
 ## Doc map

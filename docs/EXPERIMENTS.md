@@ -178,3 +178,18 @@ print(us == open('assets/helper.user.js').read())
   - **B11 (new):** `catchup.py` ignores Messenger's own reply link when the parent is message #0, because `pi = 0` is falsy.
   - **B9 refined:** the "Queued…" text only flashes; the outbox snapshot re-renders the row into a "reply queued" chip.
   - Two first-run failures were test mistakes, both worth knowing (LEARNINGS.md › Testing): a summary bullet citing the deal's message is hidden by design, and one marker click produces two renders (local, then the database snapshot).
+
+## 12. P1 fixes (v1.2.0, Nov 6)
+- **B2:** 7 new `TestRestore` tests: rebuilding without a restore gives a clear message; restore → rebuild with a new spec works; restore undoes exactly one build; bootstrap clears a stale `prev`; a rejected build leaves `prev` alone; the CLI works.
+- **R1:** 17 new page checks in `robustness()`. The same checks were run against the v1.1.2 page (`PAGE_FILE=… node tests/page.test.js`):
+
+| Scenario | v1.1.2 page | v1.2.0 page |
+|---|---|---|
+| `meta/chat` update fails after the chunk is saved; paste again | Stuck for good: "The newest stored chunk doesn't end at #-1" | `REPAIRED: #0–#9`, counters fixed, next capture imports |
+| Second chunk write fails during a rollover; paste again | Stuck: "Gap: the capture starts at #80 but the store ends at #-1" | Repairs #80–#81, imports #82–#85 into `c0082` |
+| Refused capture while a repair is pending | n/a | Nothing written, repair included |
+| `meta/chat.lastI` ahead of the chunks | Refused, no guidance | Refused, says what to set |
+| Another copy of the page holds the import lease | No protection | Refused, nothing written; works once the lease is free |
+| Page snapshot stale (store moved on silently) | Would refuse or misjudge the overlap | Fresh reads, overlap checked against the store, nothing lost |
+| Runtime without `acquire()` | n/a | Imports without a lease |
+

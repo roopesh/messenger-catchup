@@ -2,7 +2,7 @@
 
 Everything open: bugs, risks, gaps between docs and code, cleanup, tests and feature ideas. Started Nov 6, 2026 from a full read of the code at `c3186da`, the simulated-Messenger tests, a `cctool.py` (now `catchup.py`) replay and a date-parser probe ([EXPERIMENTS.md §10](EXPERIMENTS.md#10-handoff-review-nov-6-evening)). Updated after the Phase 8 rename and test build-out ([§11](EXPERIMENTS.md#11-rename-and-test-build-out-nov-6-late-evening)).
 
-**Tests for open bugs:** B1–B5 and B11 have `expectedFailure` tests in `tests/test_catchup.py`; B7–B9 have `KNOWN` checks in `tests/page.test.js`. Fix the bug, then remove the marker.
+**Tests for open bugs:** B1, B3–B5 and B11 have `expectedFailure` tests in `tests/test_catchup.py`; B7–B9 have `KNOWN` checks in `tests/page.test.js`. Fix the bug, then remove the marker.
 
 **Priority:** P1 = fix before relying on it more · P2 = next round · P3 = when convenient.
 **Status:** open unless marked. When you close an item, change its status to `done (<commit>)` and keep the row, so the history stays readable.
@@ -11,12 +11,12 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 | ID | P | Type | Title |
 |---|---|---|---|
-| B2 | P1 | bug | `catchup.py build` advances WORK with no backup; a failed DB write can't be retried cleanly |
-| R1 | P1 | risk | Page imports aren't version-pinned, and a half-finished import has no documented recovery |
+| B2 | P1 | bug | `catchup.py build` advances WORK with no backup; a failed DB write can't be retried cleanly · **done** (v1.2.0) |
+| R1 | P1 | risk | Page imports aren't version-pinned, and a half-finished import has no documented recovery · **done** (v1.2.0) |
 | B6 | P2 | bug | Capture date parser: unknown label forms silently become "today"; year-less dates break at New Year |
 | B8 | P2 | bug | One malformed link in a message crashes the Messages tab render |
 | B4 | P2 | bug | `catchup.py` accepts links to a parent in another conversation; the page then hides the link |
-| G1 | P2 | doc gap | `meta/chat` fields written by the page are missing from SKILL.md; `pageVersion` never updated on republish |
+| G1 | P2 | doc gap | `meta/chat` fields written by the page are missing from SKILL.md; `pageVersion` never updated on republish · **half done** (pageVersion, v1.2.0) |
 | G2 | P2 | doc gap | Page says Claude reads `views`, ideas and `qa`; SKILL.md never tells it to |
 | G3 | P2 | doc gap | Page offers "say reply 3232 to Claude"; SKILL.md has no procedure for it |
 | R2 | P2 | risk | Capture size is unbounded (photos travel inline as base64) |
@@ -63,11 +63,17 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Seen:** replay on Nov 6 printed `note= ''` after a successful build.
 - **Fix:** if the pattern doesn't match, set the note outright.
 
-### B2 · P1 · `catchup.py build` advances WORK with no backup
+### B2 · P1 · `catchup.py build` advances WORK with no backup · done
 - **Where:** `scripts/catchup.py:134-135`; SKILL.md refresh step 6 ("restore WORK from the previous base files first"); LEARNINGS.md ("Restore the workspace from backup before rebuilding")
 - **What:** `build` overwrites `WORK/all.json`, `WORK/base/*` and `WORK/state.json` as soon as it succeeds. If the batch write that follows fails (an `if_version` conflict, a dropped call) or Claude needs to fix a link and rebuild, a second `build` fails with a bare `AssertionError: []`. Nothing keeps the previous files, so "restore from backup" means re-running `bootstrap` from a fresh DB fetch.
 - **Seen:** replay on Nov 6: the second `build` of the same RUN → `AssertionError: []`.
 - **Fix:** copy WORK to `WORK/prev/` before advancing; add `catchup.py restore WORK`; or split into `build` (writes RUN/out only) and `commit` (advances WORK after the DB write succeeds). Give the assert a message ("RUN already built; restore WORK first").
+- **Done in v1.2.0:** the first option, which keeps the build call and its output unchanged:
+  - `build` snapshots WORK to `WORK/prev/` just before advancing (rejected builds don't touch it).
+  - `restore WORK` undoes one build.
+  - `bootstrap` clears a stale `prev`.
+  - Rebuilding an already-built RUN fails with "RUN already built into WORK … run: catchup.py restore WORK".
+  - SKILL.md steps 6–7 and Troubleshooting say when to restore. 7 tests in `TestRestore`.
 
 ### B3 · P3 · `dealEdit` crashes without a deal
 - **Where:** `scripts/catchup.py:116-119`
@@ -124,12 +130,21 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 ## Risks
 
-### R1 · P1 · Unpinned page writes; half-finished imports
+### R1 · P1 · Unpinned page writes; half-finished imports · done
 - **Where:** `page.html:977-990`
 - **What:**
   - The importer writes chunks, then `meta/chat`, then `photos/index` (read-modify-write) with no version pins. SKILL.md's "pin every write" rule only covers Claude. The `S.pasting` guard only stops a double paste in the same tab. Two page tabs, or the page and Claude writing `meta/chat` at the same moment, can overwrite each other.
   - If the chunk writes succeed but the `meta/chat` update fails, the next import refuses ("The newest stored chunk doesn't end at #…"). Nothing documents how to recover.
 - **Fix:** use version pins if the page database API supports them. Add a Troubleshooting entry: compare the last chunk with `meta/chat.lastI` and either trim the chunk or set `lastI`/`lastMid`/`anchorMids` from it.
+- **Done in v1.2.0:** the runtime contract (0.2.96) has no version pins or transactions, only a cooperative lease (`acquire`), so:
+  - **Lease:** a 2-minute lease on `refresh/importLock` per import.
+  - **Fresh reads:** `meta/chat` and the newest chunk are read from the store (query, falling back to a `get` of the snapshot's newest chunk).
+  - **Auto-repair:** when chunks run ahead of `lastI` (they were read back before `meta/chat` was due, so they're trustworthy).
+  - **Clear refusal:** when `lastI` runs ahead of the chunks.
+  - **No partial writes:** no write of any kind until the capture passes every check.
+  - **Delivery:** `PAGE_VERSION` → 1.2, and SKILL.md now republishes behind-version pages on refresh.
+  - **Tests:** 17 page checks, shown to fail against the v1.1.2 page (EXPERIMENTS.md §12).
+- **Still true:** a page and Claude can both write `meta/chat`. Claude's writes are pinned, and the page only merges its own fields (`update`), so neither side clobbers the other's fields.
 
 ### R2 · P2 · Capture size is unbounded
 - **Where:** `helper.user.js:103-105`
@@ -167,6 +182,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### G1 · P2 · `meta/chat` fields not in SKILL.md
 - **What:** the page writes `lastT`, `ownLastMid`, `caughtUpAt`, `markerSetAt` and `markerTo`, and catchup.py writes `threading.builtAt`; none are in SKILL.md's schema. The full list is in ARCHITECTURE.md › Database reference. Separately, SKILL.md says to republish the page when `meta/chat.pageVersion` is older than `PAGE_VERSION`, but never says to update `pageVersion` afterwards, so it stays old and every run republishes.
 - **Fix:** add the fields; add "then update `meta/chat.pageVersion`" to setup step 2.
+- **Half done in v1.2.0:** setup step 2 and the new refresh-time upgrade both set `pageVersion`. The missing field list is still open.
 
 ### G2 · P2 · Collections Claude is said to read but doesn't
 - **What:** the page says saved questions are kept "so Claude can see what you asked" and that views and method ideas are what "Claude reads … when improving how catch-ups are built". SKILL.md never mentions `qa`, `views` or `notes`.

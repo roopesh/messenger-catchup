@@ -51,6 +51,11 @@ Platform limits, gotchas, and what was changed because of them.
 - **The helper exists three times:** the file, an HTML-escaped copy inside the page (for "Copy userscript"), and its `jump()` as a URL-encoded bookmarklet. An edit to one must be carried to the others by hand (BACKLOG C2; check in EXPERIMENTS.md §10).
 - **The page writes `meta/chat` too** (import counters, marker choice), not only Claude. Read it fresh before every write and pin the write.
 
+## Page database (runtime contract 0.2.96)
+- **No version-checked writes and no transactions:** page writes are last-writer-wins. The only coordination primitive is `doc.acquire({holder, ttlMs})`, a cooperative lease that other callers must also use to respect it.
+- **Snapshots can lag or come from cache** (`metadata.fromCache`). Anything that decides *what to write* should `get()` fresh first; snapshots are for display.
+- **`update` merges nested objects and replaces arrays**, so the page updating its own `meta/chat` fields doesn't clobber Claude's (and Claude's pinned writes notice the page's).
+
 ## Testing
 - **The page can be tested without claude.ai:** give it a stand-in `window.claude.use()` before its script runs (`tests/page.test.js`). The page only needs `db.doc/collection` with `get`, `set`, `update`, `add` and `onSnapshot`, plus `assets.upload` and `sample`.
 - **Every page write renders twice:** once locally, then again when the database snapshot comes back. Wait for the second render before grabbing elements, or the handle goes stale.
