@@ -1,6 +1,6 @@
 # Architecture
 
-How the pieces fit together, as the code stands at `c3186da` (Nov 6, 2026). Line numbers point at that commit.
+How the pieces fit together, as of Nov 6, 2026 (Phase 8: build tool renamed `catchup.py`, helper functions `mc*`). Line numbers are current as of that change.
 
 Related docs: [STATUS.md](STATUS.md) (start here) · [BACKLOG.md](BACKLOG.md) · [DECISIONS.md](DECISIONS.md) · [LEARNINGS.md](LEARNINGS.md)
 
@@ -11,7 +11,7 @@ Related docs: [STATUS.md](STATUS.md) (start here) · [BACKLOG.md](BACKLOG.md) ·
 | `SKILL.md` | Claude (cloud) | The procedure: setup, refresh, outbox, scheduling. Claude carries out every step; nothing else orchestrates. |
 | `assets/helper.user.js` | The user's Messenger tab (userscript, or injected by Claude) | Scroll back and read messages (scan), confirm them by ID (verify), build the capture JSON (capture), jump links. |
 | `assets/page.html` | claude.ai artifact, in the user's browser | The catch-up page. Also the **importer**: checks a pasted capture and writes it to the database. |
-| `scripts/cctool.py` | Claude's code sandbox | Builds `threading/current` and `summary/current` from Claude's spec and asserts the rules. |
+| `scripts/catchup.py` | Claude's code sandbox | Builds `threading/current` and `summary/current` from Claude's spec and asserts the rules. |
 
 There is no server. The artifact database (ArtifactData) is the only store, and both Claude and the page read and write it.
 
@@ -22,11 +22,11 @@ There is no server. The artifact database (ArtifactData) is the only store, and 
  ──────────────                 ─────────────────────────────            ────────────────────────
  get meta/chat ───────────────────────────────────────────────────────────▶ (db)
  set refresh/status running
- mc-cmd full{stops,base,run} ─▶ ccScan: scroll up until a STOP id is seen
+ mc-cmd full{stops,base,run} ─▶ mcScan: scroll up until a STOP id is seen
                                 quote-match text replies, click photo replies
                                 save window to sessionStorage.__mcsave
-                                reload ─▶ resumePipe ─▶ ccVerify (ID-only pass,
-                                          fast then slow) ─▶ ccCapture
+                                reload ─▶ resumePipe ─▶ mcVerify (ID-only pass,
+                                          fast then slow) ─▶ mcCapture
                                 page body replaced by COPY CAPTURE button
  poll mc_result (≤25 s calls) ◀─ {stage:'captured', run}
  click COPY CAPTURE ─────────▶ clipboard ─────────────────────────────────▶ paste anywhere
@@ -36,7 +36,7 @@ There is no server. The artifact database (ArtifactData) is the only store, and 
                                                                            upload photos, photos/index
  read refresh/lastImport ◀──────────────────────────────────────────────── refresh/lastImport
  get touched chunks + meta/chat into RUN/
- write spec.json; cctool build WORK RUN spec.json
+ write spec.json; catchup.py build WORK RUN spec.json
  batch write (if_version): threading, summary, meta/chat, refresh/status
  handle outbox (jump{mid,reply} + insertText + Enter)
 ```
@@ -49,9 +49,9 @@ All code sits inside one IIFE guarded by `window.__mcHelper` / `data-mc-helper` 
 
 | Function | Line | What it does |
 |---|---|---|
-| `ccScan(STOPS, FIRST)` | 13 | Waits for `[role="log"]`, scrolls the inner scroller up 0.6 screen every 500 ms, merges each batch of `[data-message-id]` into `R.order` (a gap counter rises if a batch shares no id with what's known). Stops 3 steps after the anchor is seen: a STOP id, or for a first run the message before the newest `count`, or `__top__` when the chat is shorter. Then matches text replies by quote (`how:'q'`) and clicks "Go to replied message" only for photo/attachment replies. Saves `{win, info, parents, anchor}` to `sessionStorage.__mcsave`. Blocks link clicks while running. |
-| `ccVerify()` | 65 | After a reload: ID-only pass (fast 0.6/500 ms, then slow 0.35/900 ms if needed). OK when `gap==0` and the new window starts with exactly the scanned window (`prefixSame`). `extra` = messages that arrived since the scan; they are *not* captured (next run gets them). |
-| `ccCapture(BASE)` | 73 | Turns each saved DOM record into a message object (fields below), numbering from `BASE+1`. Parses sender, body, quote, reactions, links (strips tracking params), attachment title, date (`dOf`) and time. Fetches photos as base64. Builds the capture, then **replaces the page body** with the COPY CAPTURE button (`#__copy`, status `#__copyst`). |
+| `mcScan(STOPS, FIRST)` | 13 | Waits for `[role="log"]`, scrolls the inner scroller up 0.6 screen every 500 ms, merges each batch of `[data-message-id]` into `R.order` (a gap counter rises if a batch shares no id with what's known). Stops 3 steps after the anchor is seen: a STOP id, or for a first run the message before the newest `count`, or `__top__` when the chat is shorter. Then matches text replies by quote (`how:'q'`) and clicks "Go to replied message" only for photo/attachment replies. Saves `{win, info, parents, anchor}` to `sessionStorage.__mcsave`. Blocks link clicks while running. |
+| `mcVerify()` | 65 | After a reload: ID-only pass (fast 0.6/500 ms, then slow 0.35/900 ms if needed). OK when `gap==0` and the new window starts with exactly the scanned window (`prefixSame`). `extra` = messages that arrived since the scan; they are *not* captured (next run gets them). |
+| `mcCapture(BASE)` | 73 | Turns each saved DOM record into a message object (fields below), numbering from `BASE+1`. Parses sender, body, quote, reactions, links (strips tracking params), attachment title, date (`dOf`) and time. Fetches photos as base64. Builds the capture, then **replaces the page body** with the COPY CAPTURE button (`#__copy`, status `#__copyst`). |
 | `jump()` | 113 | Handles `#mcjump=<mid>[&noreply]`: scrolls to bottom, then up until the message exists, outlines it, hovers it and clicks "Reply to this message". Shows status in `#mcjump-tip`. |
 | `probe(anchor)` | 140 | Quick check: visibility, loaded count, whether the anchor is on screen. |
 | `full(a)` / `resumePipe()` | 145 / 147 | Scan → `mc_pipe` in sessionStorage → reload → (on load) verify → capture → `mc_result`. `full` clears `mc_result` first; results carry `run`. |
@@ -65,10 +65,10 @@ Browser state it uses: `sessionStorage` keys `__mcsave`, `mc_pipe`, `mc_result`,
 sha   = SHA-256 hex of JSON.stringify(msgs)
 phsha = SHA-256 hex of JSON.stringify(photos)
 ```
-The page also accepts the old `cc-capture` kind and two optional flags: `dry` (check everything, write nothing) and `lab` (store photos but don't link them).
+The page accepts only `mc-capture` (the old `cc-capture` kind was dropped on Nov 6) and two optional flags: `dry` (check everything, write nothing) and `lab` (store photos but don't link them).
 
 ### Copies of the helper (keep in sync)
-The helper exists **three times**: the file itself, an HTML-escaped copy in the page's `#jump-us` textarea (`page.html:306`, used by "Copy userscript"), and the `jump()` body as a URL-encoded bookmarklet in `#jump-bm` (`page.html:473`, `%` → `%25`). They were checked identical on Nov 6 (STATUS.md). The version string `1.1` appears four times in the helper (header, `__mcHelper`, `data-mc-helper`, `ping`). See BACKLOG C2.
+The helper exists **three times**: the file itself, an HTML-escaped copy in the page's `#jump-us` textarea (`page.html:306`, used by "Copy userscript"), and the `jump()` body as a URL-encoded bookmarklet in `#jump-bm` (`page.html:473`, `%` → `%25`). `tools/sync-helper.py` regenerates both page copies from the file, and `npm test` fails (`--check`) when they drift. The version string `1.1` appears four times in the helper (header, `__mcHelper`, `data-mc-helper`, `ping`). See BACKLOG C2.
 
 ## Page (`assets/page.html`)
 
@@ -99,12 +99,12 @@ Checks, in order: JSON → `kind` → message checksum → photo checksum → da
 ### Legacy / unreachable code (kept from the user-specific page)
 - In-page Refresh button: `#refresh-btn` is `hidden` and never shown; `REFRESH_TASK="__TRIGGER_ID__"`, `S.mcp=null`, so `startRefresh` / `fire_trigger` (line 1015) never run.
 - Summary v1 renderer (`renderSummary` non-v2 branch, line 612): the generic skill always writes `version:2`.
-- Range summaries (`renderRangeSummary`, line 793): only trigger when `summary.fromI` is set, and `cctool` never sets it.
+- Range summaries (`renderRangeSummary`, line 793): only trigger when `summary.fromI` is set, and `catchup.py` never sets it.
 - `dayMap()` / `meta.dates` (line 544): every message now carries `d`.
 - "Notes from Claude" (`notes` collection): nothing writes it.
 See BACKLOG C1.
 
-## Build tool (`scripts/cctool.py`)
+## Build tool (`scripts/catchup.py`)
 
 - `bootstrap WORK DBDIR`: loads all chunks, asserts numbering has no gaps and `meta.lastI` matches, writes `WORK/all.json`, `WORK/base/{threading,summary}.json`, `WORK/state.json` (`base`, `stops`, `tz`).
 - `build WORK RUN SPEC`: loads new messages from `RUN/chunks` (must be exactly `base+1…`), applies the spec, picks default links, runs the asserts, writes `RUN/out/{threading,summary}.json`, then **advances WORK in place** (no backup, BACKLOG B2).
@@ -124,8 +124,8 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | | Claude per refresh | `lastRefresh`, `coverage` |
 | | (read only, legacy) | `dates` |
 | `chunks/cNNNN` | Page importer | `{start, msgs}` |
-| `threading/current` | Claude (from cctool) | `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
-| `summary/current` | Claude (from cctool) | `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
+| `threading/current` | Claude (from catchup.py) | `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
+| `summary/current` | Claude (from catchup.py) | `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
 | `photos/index` | Page importer | `byI{i:["/_blob/<id>",…]}`, `gifs[i]` |
 | `refresh/status` | Claude | `state` (idle/running/done/error), `startedAt`, `step`, `by`, `finishedAt`, `added`, `message` |
 | `refresh/lastImport` | Page importer | `at`, `src`, `ok`, `msg`, `dry`, `sha`, `count`, `fresh`, `chunks`, `uploaded` |
@@ -142,6 +142,18 @@ SKILL.md lists the core schema; this is the full set the code touches.
 
 ### Link types
 `r` Messenger's own reply link · `rq` reply matched by quote · `rg` photo reply, best match · `i` answers (Claude's judgment) · `c` same person continuing · `null` in a spec = deliberately no link.
+
+## Tests and dev tools
+Nothing here ships in the skill ZIP.
+
+| Path | What it is |
+|---|---|
+| `package.json` | `npm test` runs `test:py`, `test:sim`, `test:page`; `npm run sync`; Playwright pinned |
+| `tools/sync-helper.py` | Regenerates the page's `#jump-us` and `#jump-bm` copies from `helper.user.js`; `--check` mode |
+| `tests/test_catchup.py` | `catchup.py` unit tests; the `Env` class fakes WORK and ArtifactData `out_dir`s |
+| `tests/test_tools.py` | Sync, version strings, leftover names, SKILL.md file references, ZIP contents |
+| `tests/sim.js`, `tests/run.js`, `tests/mock/` | The helper against a simulated Messenger (`mock_total` and `mock_skip` in localStorage control its history); `run.js` serves the mock |
+| `tests/page.test.js` | The page with a stand-in `window.claude` (in-memory `db` with `onSnapshot` and a write log, `assets`, `sample`); reads `tests/out/sim_caps.json` from the sim for the pipeline test |
 
 ## Versions in play
 | Thing | Where | Now |

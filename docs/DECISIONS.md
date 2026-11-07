@@ -33,7 +33,7 @@ Each entry has what was decided, why, and what was rejected.
 | Messenger's own reply link first (`r`) | Ground truth | — |
 | Text replies matched by quote (`rq`): same author + first 20 normalized characters, emoji stripped, latest wins | 348/348 correct; no clicking | Full-text match; clicking every reply |
 | Photo replies are clicked or verified (`rg`) | Quotes are empty, and a "latest photo" guess was wrong once | Guessing from the author's latest photo |
-| Non-replies are linked by Claude's judgment (`i` answers, `c` continues), and `cctool` flags GUESS lines for review | Every scorer tried scored worse than this on hand labels | Shipping the context linker or the continuation rule |
+| Non-replies are linked by Claude's judgment (`i` answers, `c` continues), and `catchup.py` flags GUESS lines for review | Every scorer tried scored worse than this on hand labels | Shipping the context linker or the continuation rule |
 | Fix "loose" messages through display (`convTree`) | The links were mostly right; the page hid them | More link heuristics |
 | Big threads are split into focused sub-conversations | Easier to scan | One card per long thread |
 
@@ -41,7 +41,7 @@ Each entry has what was decided, why, and what was rejected.
 | Decision | Why |
 |---|---|
 | One card per conversation; open, deal and answered call-outs inside the card | The old summary tab repeated the thread |
-| Bullets ≤ 15 words, outcome ≤ 12, enforced by `cctool` | The user hates walls of text |
+| Bullets ≤ 15 words, outcome ≤ 12, enforced by `catchup.py` | The user hates walls of text |
 | Open-question notes add context, never paraphrase the question | Avoids repetition |
 | Every message in exactly one conversation; links point backward (asserted) | Nothing is lost or double-counted |
 
@@ -75,10 +75,10 @@ Recorded during the Nov 6 handoff review. The reasons are inferred from the code
 | The page, not Claude, writes chunks and the import counters in `meta/chat` | The paste lands in the page; the page checks and writes in one place, then Claude reads back | `page.html` `importCore` |
 | A first import must start at `#0`; later imports must overlap or continue exactly at `lastI+1` | Numbering is the integrity check; any gap is refused | `importCore` |
 | Chunks are read back and compared after writing | Proof the write landed before `meta/chat` moves forward | `importCore` |
-| Messages that arrive during a run (`extra`) are left for the next run | Keeps scan and verify windows identical; no extra round | `ccVerify`, SKILL step 3 |
+| Messages that arrive during a run (`extra`) are left for the next run | Keeps scan and verify windows identical; no extra round | `mcVerify`, SKILL step 3 |
 | The page carries its own copy of the helper and a bookmarklet | Install by copy and paste from the page, including on a computer without the repo | `#jump-us`, `#jump-bm` |
 | The generic page has no in-page Refresh button | It needs a scheduled-trigger id and a connector the generic setup doesn't create; refreshes are asked for in chat | `REFRESH_TASK="__TRIGGER_ID__"`, button `hidden` |
-| Dates are stored per message (`d`) instead of deriving them from weekday names | Weekday labels are ambiguous past a week; the old `meta.dates` map is only a fallback | `ccCapture`, `tsOf` |
+| Dates are stored per message (`d`) instead of deriving them from weekday names | Weekday labels are ambiguous past a week; the old `meta.dates` map is only a fallback | `mcCapture`, `tsOf` |
 
 ## Sharing and repo
 | Decision | Why |

@@ -44,7 +44,7 @@ Related docs:
   - v2.1: no reply clicks; faster scroll.
   - v2.2: clicks only photo replies.
 - **Summary v3:** one card per conversation, with open, deal and answered call-outs inside the card.
-- **Build tool:** `cctool.py` builds threading and summary from a small spec and enforces the rules (see DECISIONS.md).
+- **Build tool:** `cctool.py` (renamed `catchup.py` in Phase 8) builds threading and summary from a small spec and enforces the rules (see DECISIONS.md).
 - **Hourly loop:** refreshes became an hourly scheduled loop.
 
 ## Phase 5: threading and date entry (Nov 6)
@@ -86,6 +86,21 @@ Related docs:
 - **Added docs:** STATUS.md (start here), ARCHITECTURE.md (structure, full database reference), BACKLOG.md (10 bugs, 7 risks, 5 doc gaps, plus cleanup, test and feature items).
 - **No code changed.** Fixes are queued in the backlog.
 
+## Phase 8: rename and test build-out (Nov 6, late evening)
+- **Rename:**
+  - `cctool.py` → `catchup.py`
+  - helper `cc*` functions → `mc*`
+  - `cc-capture` dropped
+  - chat-specific comment removed
+  - versions not bumped: no behavior changed
+- **Sync tool:** `tools/sync-helper.py` (`npm run sync`) regenerates the page's helper copies.
+- **Tests:** `npm test` now runs three suites, 165 checks:
+  - Python: `catchup.py` plus repo checks
+  - sim: the helper, now including a message deleted mid-run
+  - page: in Chromium with a stand-in claude.ai runtime, including the full capture → import → build → render pipeline
+- **Mutation check:** 9 deliberate breaks, all caught (one only after adding the missing test).
+- **Found:** B11 (a reply link to #0 is ignored).
+
 ## Version map
 | Thing | Versions |
 |---|---|
@@ -93,3 +108,4 @@ Related docs:
 | Helper (generic) | 1.0 → 1.1 (`mc-cmd`, `mc_result`) |
 | Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) |
 | Skill | user-specific `group-catchup` → generic `messenger-catchup` v1.1 |
+| Build tool | `cctool.py` → `catchup.py` (Phase 8, same commands and behavior) |
