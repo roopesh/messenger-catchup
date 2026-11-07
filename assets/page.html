@@ -213,7 +213,7 @@ button.link.rh{font-size:.8rem}
     <h1 id="h1">Messenger Catch-up</h1>
     <div class="window muted" id="window">Loading the chat…</div>
     <div class="marker" id="marker" role="radiogroup" aria-label="Catch up from"></div>
-    <div class="refresh"><button class="primary" id="refresh-btn" hidden>Refresh</button><span class="st" id="refresh-st" role="status"></span></div>
+    <div class="refresh"><span class="st" id="refresh-st" role="status"></span></div>
     <div class="strip" id="strip"></div>
   </header>
 
@@ -502,7 +502,7 @@ return &#x27;count &#x27;+out.length+&#x27; len &#x27;+text.length+&#x27; sha &#
 <script>
 let THREAD="", CHAT="https://www.facebook.com/messages/";
 /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-const PAGE_VERSION="1.7";
+const PAGE_VERSION="1.8";
 const CFG=()=>S.meta||{};
 const RP=()=>CFG().refreshPhrase||"refresh my catch-up";
 const OWNER=()=>CFG().ownerName||"the page owner";
@@ -557,9 +557,7 @@ function findPanel(m){const ph=findPhrase(m);const code=el("code",null,ph);
   toast([el("b",null,"Find #"+m.i+" ("+m.f+", "+m.t+") in Messenger"),code,el("span",null,"1. Copy phrase. 2. Open chat. 3. In Messenger, click the chat name or ⓘ › Search in conversation › paste › pick the "+m.f+" result."),row],true);}
 /* Catch-up marker: meta.markerMode "caught" (last Mark caught up) or "own" (your last message). Unset = ask; caught is used until you answer. */
 /* "time" mode: markerFrom / markerTo (local "YYYY-MM-DDTHH:MM", owner's time zone) pick a stored stretch to rewind to; markerTo empty = through the newest. */
-const DAYS={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6};
-function dayMap(){const mt=S.meta||{};const out={};String(mt.dates||"").split(";").forEach(p=>{const m=p.match(/(\w{3})\s*=\s*(\w{3})\s+(\d+),\s*(\d{4})/);if(m){const mo=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].indexOf(m[2]);out[m[1]]=m[4]+"-"+String(mo+1).padStart(2,"0")+"-"+String(m[3]).padStart(2,"0");}});return out;}
-function tsOf(m,dm){const t=String(m.t||"").match(/^(\w{3})\s+(\d+):(\d+)\s*([AP]M)$/i);const d=m.d||(t&&dm[t[1]]);if(!t||!d)return null;let h=+t[2]%12;if(/p/i.test(t[4]))h+=12;return d+"T"+String(h).padStart(2,"0")+":"+t[3];}
+function tsOf(m){const t=String(m.t||"").match(/^(\w{3})\s+(\d+):(\d+)\s*([AP]M)$/i);const d=m.d;if(!t||!d)return null;let h=+t[2]%12;if(/p/i.test(t[4]))h+=12;return d+"T"+String(h).padStart(2,"0")+":"+t[3];}
 function winRange(){const mt=S.meta||{};const mode=mt.markerMode;const first=S.msgs[0],last=S.msgs[S.msgs.length-1];
   if(mode==="time"&&mt.markerFrom&&S.msgs.length){let lo=first.i-1,hi=Infinity;for(const m of S.msgs){if(m.ts&&m.ts<mt.markerFrom)lo=m.i;}
     if(mt.markerTo){hi=lo;for(const m of S.msgs){if(m.ts&&m.ts<=mt.markerTo)hi=m.i;}}return {lo,hi};}
@@ -569,7 +567,7 @@ function inWin(i){const r=winRange();return i>r.lo&&i<=r.hi;}
 function fmtTs(v){if(!v)return"";const d=new Date(v);return isNaN(d)?v:d.toLocaleString("en-US",{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});}
 const MK={caught:"Last Mark caught up",own:"Your last message",time:"A date and time"};
 function markerInfo(){const mt=S.meta||{};const cu=mt.caughtUpI!=null?S.byI.get(mt.caughtUpI):null;const own=mt.ownLastI!=null?S.byI.get(mt.ownLastI):null;return {caught:cu,own};}
-async function setMarker(k,extra){if(!S.db)return;S.rsNote=null;const upd=Object.assign({markerMode:k,markerSetAt:new Date().toISOString()},extra||{});S.meta=Object.assign({},S.meta,upd);rerenderAll();try{await S.db.doc("meta/chat").update(upd);}catch(e){setRS("Couldn't save your marker choice.",{err:true});}}
+async function setMarker(k,extra){if(!S.db)return;const upd=Object.assign({markerMode:k,markerSetAt:new Date().toISOString()},extra||{});S.meta=Object.assign({},S.meta,upd);rerenderAll();try{await S.db.doc("meta/chat").update(upd);}catch(e){setRS("Couldn't save your marker choice.",{err:true});}}
 function renderMarker(){const box=$("#marker");const ae=document.activeElement;if(ae&&box.contains(ae)&&ae.type==="datetime-local")return;/* don't rebuild while typing */box.textContent="";if(!S.meta)return;const mode=S.meta.markerMode||null;const inf=markerInfo();
   box.className="marker"+(mode?"":" unset");box.append(el("span","lbl",mode?"Show messages:":"Pick which messages to show:"));
   ["caught","own"].forEach(k=>{const m=inf[k];const lab=el("label",m?null:"off");const r=el("input");r.type="radio";r.name="marker";r.value=k;r.checked=mode===k;r.disabled=!m;
@@ -611,7 +609,7 @@ function renderHeader(){renderMarker();
   const strip=$("#strip");strip.textContent="";
   const people=new Set(win.map(m=>m.f));const sm=S.summary||{};
   const sm2=activeSummary()||sm;const live=it=>(it.refs||[]).some(r=>inWin(r[0]??r));
-  const open=sm2.version===2?(sm2.open||[]).filter(o=>inWin(o.ask)).length:(sm2.questions||[]).filter(q=>q.status==="open"&&live(q)).length;
+  const open=(sm2.open||[]).filter(o=>inWin(o.ask)).length;
   [[win.length,"new messages"],[people.size,"people posting"],[(sm2.mentions||[]).filter(live).length,"mentions of you"],[open,"open questions"]].forEach(([n,l])=>{const s=el("div","stat");s.append(el("span","n",String(n)),el("span","l",l));strip.append(s);});
   $("#cov").textContent="Stored: "+S.msgs.length+" messages, #"+(S.msgs[0]?.i??0)+" to #"+(last?.i??0)+(mt.coverage?". "+mt.coverage:".");
 }
@@ -625,38 +623,8 @@ function block(title,sub){const b=el("div","block");const h=el("div","sec-head")
 function renderSummary(){
   const v=$("#v-summary");v.textContent="";const raw=S.summary;
   if(!raw){v.append(el("div","empty","No summary yet. Ask Claude in chat to "+RP()+"."));return;}
-  if(raw.version===2){const R=winRange();if((S.meta||{}).markerMode==="time"&&R.lo+1<raw.fromI)return renderRangeSummary(v,raw,R);return renderSummaryV2(v,raw);}
-  /* Only what is after the catch-up point: drop any item whose messages are all at or before it. */
-  const ws=windowStart();const live=it=>(it.refs||[]).some(r=>r[0]>ws);
-  const sm=Object.assign({},raw,{mentions:(raw.mentions||[]).filter(live),questions:(raw.questions||[]).filter(live),market:(raw.market||[]).filter(live),threads:(raw.threads||[]).filter(live)});
-  if(S.msgs.length&&ws>=(S.msgs[S.msgs.length-1].i)){v.append(el("div","empty","You're caught up through #"+ws+". Nothing new is stored yet. Ask Claude in chat to "+RP()+"."));return;}
-  const top=el("div","btns");const cu=el("button","secondary","Mark caught up");cu.id="caught";cu.onclick=markCaughtUp;
-  top.append(el("span","note","Summary built "+(sm.generatedAt||"")+" for messages #"+(sm.fromI??"")+"–#"+(sm.toI??"")+"."),cu);v.append(top);
-  if(sm.stale){v.append(el("p","note","New messages have been stored since this summary was written. It will be rebuilt on the next refresh."));}
-  // mentions
-  const bm=block("Mentions of you",sm.mentionsNote||"Every message naming you.");const lm=el("div","list");
-  (sm.mentions||[]).forEach(x=>{const d=el("div","item mention");if(x.note)d.append(el("p",null,x.note));d.append(refList(x.refs));lm.append(d);});
-  if(!(sm.mentions||[]).length)lm.append(el("p","note","None."));bm.append(lm);v.append(bm);
-  // questions
-  const bq=block("Questions people asked","Open = nobody has answered yet. Answered/resolved ones are listed so you don't reply to something already settled.");const lq=el("div","list");
-  const order={open:0,answered:1,resolved:2};(sm.questions||[]).slice().sort((a,b)=>(order[a.status]??3)-(order[b.status]??3)).forEach(q=>{const d=el("div","item");const r=el("div","row");
-    r.append(el("span","chip "+q.status,q.status),el("h3",null,q.title));d.append(r);if(q.body)d.append(el("p",null,q.body));if(q.resolution)d.append(el("p","muted",q.resolution));d.append(refList(q.refs));lq.append(d);});
-  bq.append(lq);v.append(bq);
-  // market
-  const bk=block("For sale, raffles & deals",null);const lk=el("div","list");
-  (sm.market||[]).forEach(a=>{const d=el("div","item");const r=el("div","row");r.append(el("span","chip "+(a.kind||"sale"),a.tag||a.kind),el("h3",null,a.title));if(a.status)r.append(el("span","note",a.status));d.append(r);
-    if(a.body)d.append(el("p",null,a.body));if(a.links){const p=el("p","note");a.links.forEach(([l,h],k)=>{if(k)p.append(" · ");p.append(outLink(l,h));});d.append(p);}
-    d.append(refList(a.refs));lk.append(d);});bk.append(lk);v.append(bk);
-  // threads
-  const bt=block("Conversations","Grouped by topic. Tap one for its key messages.");const lt=el("div","list");
-  (sm.threads||[]).forEach((t,k)=>{const d=el("details","item");if(k<2)d.open=true;const s=el("summary");s.append(el("h3",null,t.title),el("div","note",[t.span,t.who].filter(Boolean).join(" · ")));
-    d.append(s,el("p",null,t.body),refList(t.refs));lt.append(d);});bt.append(lt);v.append(bt);
-  // links (derived from data)
-  const bl=block("Links shared","Outside links in the window, in order.");const tw=el("div","tablewrap");const tb=el("table");tb.innerHTML="<thead><tr><th>When</th><th>From</th><th>Link</th><th></th></tr></thead>";const body=el("tbody");
-  S.msgs.filter(m=>inWindow(m)&&m.l&&m.l.length).forEach(m=>m.l.forEach(u=>{const tr=el("tr");tr.append(el("td","t",m.t),el("td",null,m.f));const td=el("td");td.append(outLink((m.a?m.a.split("\n")[0].slice(0,80)+" · ":"")+hostOf(u),u));
-    const tj=el("td","lnk");const j=el("a",null,"#"+m.i);j.href="#messages";j.onclick=e=>{e.preventDefault();goMsg(m.i);};tj.append(j);tr.append(td,tj);body.append(tr);}));
-  tb.append(body);tw.append(tb);bl.append(tw);v.append(bl);
-}
+  const R=winRange();if((S.meta||{}).markerMode==="time"&&R.lo+1<raw.fromI)return renderRangeSummary(v,raw,R);
+  renderSummaryV2(v,raw);}
 /* Summary v2: built on the conversation threading. Messages are shown as their own words, never as labels. */
 function trunc(s,n){s=(s||"").replace(/\s+/g," ").trim();return s.length>n?s.slice(0,n-1)+"…":s;}
 function snip(i,{quote=false,len=200}={}){const m=S.byI.get(i);const li=el("li","snip");li.tabIndex=0;li.title="Show in the thread";
@@ -957,9 +925,7 @@ function renderViews(){const l=$("#views-list");l.textContent="";if(!S.views.len
     if(v.kind!=="idea"){const box=el("div");d.addEventListener("toggle",()=>{if(d.open&&!box.childNodes.length)renderViewDoc(v,box);});d.append(box);}l.append(d);});}
 
 /* ---------- refresh ---------- */
-const REFRESH_TASK="__TRIGGER_ID__";
 function setRS(txt,{busy=false,err=false}={}){const st=$("#refresh-st");st.textContent="";st.className="st"+(err?" err":"");if(busy)st.append(el("span","spin"));st.append(txt);}
-function ago(iso){const s=(Date.now()-Date.parse(iso))/1000;if(!isFinite(s))return"";if(s<90)return"just now";if(s<5400)return Math.round(s/60)+" min ago";return Math.round(s/3600)+" h ago";}
 async function sha256hex(t){const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(t));return [...new Uint8Array(d)].map(x=>x.toString(16).padStart(2,"0")).join("");}
 /* Import core, shared by the Import button (baseline) and paste-anywhere.
    opts.src: "button" | "paste". cap.dry: run every check, write nothing.
@@ -1058,36 +1024,17 @@ $("#imp-go").onclick=()=>importCapture($("#imp-in").value,{src:"button"});
 document.addEventListener("paste",e=>{const tg=e.target;if(tg&&(tg.tagName==="TEXTAREA"||tg.tagName==="INPUT"||tg.isContentEditable))return;
   const txt=(e.clipboardData&&e.clipboardData.getData("text/plain"))||"";if(!/^\s*\{"kind":"mc-capture"/.test(txt))return;e.preventDefault();
   if(S.pasting)return;S.pasting=true;importCapture(txt,{src:"paste"}).finally(()=>{S.pasting=false;});});
-const NO_TASK=/^__/.test(REFRESH_TASK);
-function renderRefresh(){const b=$("#refresh-btn");const r=S.refresh;const canRun=!!(S.mcp&&S.db)&&!NO_TASK;
-  if(NO_TASK){const rr=S.refresh;if(rr&&rr.state==="running"&&(Date.now()-Date.parse(rr.startedAt||0))/60000<25){setRS("Claude is refreshing: "+(rr.step||"working")+"…",{busy:true});return;}setRS((S.meta&&S.meta.lastRefresh?"Last refreshed "+S.meta.lastRefresh+". ":"")+"To pull new messages, ask Claude in chat to “"+RP()+"”. The choice above only filters what's shown; it doesn't fetch anything.");return;}
-  if(!r){b.disabled=!canRun;if(!canRun)setRS("Refreshing from this page needs Claude's connectors. Ask Claude in chat to "+RP()+".");else setRS("");return;}
-  const age=(Date.now()-Date.parse(r.startedAt||r.requestedAt||0))/60000;
-  if((r.state==="requested"||r.state==="running")&&age<25){b.disabled=true;setRS(r.state==="requested"?"Waiting for Claude to start the refresh…":"Refreshing: "+(r.step||"working")+"…",{busy:true});return;}
-  b.disabled=!canRun;
-  if(r.state==="done")setRS((r.message||"Refreshed.")+" ("+ago(r.finishedAt)+")");
-  else if(r.state==="error")setRS("Refresh failed: "+(r.message||"unknown problem"),{err:true});
-  else setRS("The last refresh didn't finish. Press Refresh to try again.",{err:true});}
-/* Refresh uses the "Catch up from" choice above it; if none is picked yet, it asks for one first. */
-async function startRefresh(){const b=$("#refresh-btn");if(!S.db)return;const k=S.meta&&S.meta.markerMode;
-  if(!k){S.rsNote="Pick where to catch up from (just above), then press Refresh.";renderRefresh();const f=$("#marker input:not(:disabled)");if(f)f.focus();return;}
-  if(NO_TASK||!S.mcp){const ok=await copyText(RP());
-    S.rsNote=(ok?"Copied “"+RP()+"”. Paste it into your chat with Claude and send.":"Send “"+RP()+"” in your chat with Claude.")+" Claude runs the refresh in your Chrome; this page updates when it's done.";renderRefresh();return;}
-  b.disabled=true;setRS("Starting…",{busy:true});
-  const now=new Date().toISOString();
-  try{const cur=await S.db.doc("refresh/status").get();await S.db.doc("refresh/status").set({state:"requested",requestedAt:now,prev:cur.exists?cur.data().state||null:null});}catch(e){}
-  try{await S.mcp.callTool("Claude Code Remote","fire_trigger",{trigger_id:REFRESH_TASK,text:"The owner chose to catch up from: "+MK[k||"caught"]+" (meta.markerMode = "+(k||"caught")+")."});}
-  catch(e){const msg={server_not_connected:"the Claude Code Remote connector isn't available in this view. Ask Claude in chat to "+RP()+".",needs_reauth:"reconnect Claude Code Remote in claude.ai Settings → Connectors, then try again.",approval_required:"it needs your approval. Press Refresh again and allow it.",not_in_manifest:"refreshing is turned off for this page. Turn it back on in the page's Permissions menu.",blocked_by_policy:"your organization's policy blocks it.",tool_error:"the refresh task didn't start ("+(e.message||"no detail")+")."}[e.code]||"couldn't reach Claude ("+(e.code||"unknown")+"). Try again in a minute.";
-    try{await S.db.doc("refresh/status").set({state:"error",message:"Couldn't start: "+msg,finishedAt:new Date().toISOString(),requestedAt:now});}catch(_){setRS("Couldn't start: "+msg,{err:true});b.disabled=false;}}}
-$("#refresh-btn").onclick=startRefresh;
+/* Status line: refreshes are asked for in chat (the page can't reach the Messenger tab); while Claude runs one, say so. */
+function renderRefresh(){const rr=S.refresh;if(rr&&rr.state==="running"&&(Date.now()-Date.parse(rr.startedAt||0))/60000<25){setRS("Claude is refreshing: "+(rr.step||"working")+"…",{busy:true});return;}
+  setRS((S.meta&&S.meta.lastRefresh?"Last refreshed "+S.meta.lastRefresh+". ":"")+"To pull new messages, ask Claude in chat to “"+RP()+"”. The choice above only filters what's shown; it doesn't fetch anything.");}
 setInterval(()=>{if(S.refresh)renderRefresh();},60000);
 
 /* ---------- boot ---------- */
-function rebuild(){const all=[];const dm=dayMap();Object.keys(S.chunks).sort().forEach(k=>(S.chunks[k].msgs||[]).forEach(m=>all.push(Object.assign({},m,{ts:tsOf(m,dm)}))));all.sort((a,b)=>a.i-b.i);S.msgs=all;S.byI=new Map(all.map(m=>[m.i,m]));
+function rebuild(){const all=[];Object.keys(S.chunks).sort().forEach(k=>(S.chunks[k].msgs||[]).forEach(m=>all.push(Object.assign({},m,{ts:tsOf(m)}))));all.sort((a,b)=>a.i-b.i);S.msgs=all;S.byI=new Map(all.map(m=>[m.i,m]));
   renderHeader();renderSummary();renderMessages();}
 renderSummary();renderQA();renderViews();
 (async()=>{
-  const [db,sample]=await Promise.all([claude.use("db"),claude.use("sample")]);const mcp=null;S.db=db;S.sample=sample;S.mcp=mcp;renderRefresh();
+  const [db,sample]=await Promise.all([claude.use("db"),claude.use("sample")]);S.db=db;S.sample=sample;renderRefresh();
   if(!sample){$("#ask-go").disabled=true;$("#view-go").disabled=true;$("#ask-note").textContent="Asking Claude isn't available in this view.";}
   if(!db){$("#window").textContent="The chat data can't load in this view. Open the page on claude.ai while signed in.";return;}
   db.doc("meta/chat").onSnapshot(s=>{S.meta=s.exists?s.data():null;applyCfg();rebuild();renderRefresh();},()=>{});
