@@ -3,7 +3,10 @@
   catchup.py bootstrap WORK DBDIR    DBDIR = ArtifactData out_dir holding chunks/*.json, threading/current.json,
                                      summary/current.json, meta/chat.json. Writes WORK/all.json, WORK/base/*, WORK/state.json.
   catchup.py build WORK RUNDIR SPEC  RUNDIR = out_dir with the touched chunks/*.json + meta/chat.json fetched after import.
-                                     Writes RUNDIR/out/{threading,summary}.json, then advances WORK (all.json, base, state).
+                                     Writes RUNDIR/out/{threading,summary}.json, then advances WORK (all.json, base, state),
+                                     keeping the previous WORK in WORK/prev.
+  catchup.py restore WORK            Undo the last build (WORK back to WORK/prev): after a refused DB write, or to rebuild
+                                     the same RUN with a corrected spec.
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
   "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs}],
@@ -14,7 +17,7 @@ else quote match against stored history (same author + first 20 chars, latest wi
 reply to a photo with no Messenger link -> latest photo by that author, 'rg' + a CHECK warning;
 else 'c' if same author as the previous member of its conversation, otherwise 'i' to that member (printed as GUESS
 for review; none if that member is over 3 h older -> ROOT). Override any GUESS in "links" and rebuild."""
-import json,sys,re,os,glob,collections,subprocess
+import json,sys,re,os,glob,collections,subprocess,shutil
 
 def _n(s):
     s=re.sub('[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]','',s or '')  # Messenger drops emoji from quotes
@@ -49,7 +52,18 @@ def _dump(o,p):
 TZ='America/Los_Angeles'
 def _ts(): return subprocess.check_output(['date','+%a %b %-d, %-I:%M %p'],env={'TZ':TZ,'PATH':'/usr/bin:/bin'}).decode().strip()
 
+WFILES=('all.json','base/threading.json','base/summary.json','state.json')
+def _snapshot(work):  # the WORK a build started from, so `restore` can undo it
+    shutil.rmtree(work+'/prev',ignore_errors=True)
+    for f in WFILES: os.makedirs(os.path.dirname(work+'/prev/'+f),exist_ok=True); shutil.copy2(work+'/'+f,work+'/prev/'+f)
+def restore(work):
+    assert os.path.exists(work+'/prev/state.json'),'nothing to restore: no build since bootstrap, or already restored'
+    for f in WFILES: shutil.copy2(work+'/prev/'+f,work+'/'+f)
+    shutil.rmtree(work+'/prev')
+    print('restore ok: WORK back at #%d'%_load(work+'/state.json')['base'])
+
 def bootstrap(work,db):
+    shutil.rmtree(work+'/prev',ignore_errors=True)  # a fresh WORK has nothing to undo
     ms=[]
     for f in sorted(glob.glob(db+'/chunks/*.json')): ms+=_load(f)['msgs']
     byi={}
@@ -71,7 +85,8 @@ def build(work,run,specp):
     for m in ms:
         if m['i'] in byi: assert byi[m['i']]==m,('stored copy differs',m['i'])
     new=sorted({m['i']:m for m in ms if m['i']>base}.values(),key=lambda m:m['i']); N={m['i']:m for m in new}
-    ids=[m['i'] for m in new]; assert ids and ids==list(range(base+1,base+1+len(ids))),ids
+    assert new or not ms,'RUN already built into WORK (WORK is at #%d, RUN ends at #%d). To build it again, run: catchup.py restore WORK'%(base,max(m['i'] for m in ms))
+    ids=[m['i'] for m in new]; assert ids and ids==list(range(base+1,base+1+len(ids))),('new messages must be #%d onward with no gaps'%(base+1),ids)
     bym={m.get('m'):m['i'] for m in al+new if m.get('m')}
     t=_load(work+'/base/threading.json'); s=_load(work+'/base/summary.json'); C={cv['id']:cv for cv in t['convs']}
     for nc in sp.get('newconvs',[]):
@@ -131,6 +146,7 @@ def build(work,run,specp):
     mt=_load(run+'/meta/chat.json'); a=mt['anchorMids']; assert mt['lastI']==ids[-1] and a[-1]==new[-1]['m'],'meta/chat not updated by import'
     ts=_ts(); t['builtAt']=ts; s['generatedAt']=ts
     _dump(t,run+'/out/threading.json'); _dump(s,run+'/out/summary.json')
+    _snapshot(work)
     _dump(t,work+'/base/threading.json'); _dump(s,work+'/base/summary.json'); _dump(al+new,work+'/all.json')
     st={'base':ids[-1],'stops':a[::-1],'tz':TZ}; _dump(st,work+'/state.json')
     print('build ok: #%d-#%d | %s | next STOPS=%s'%(ids[0],ids[-1],dict(collections.Counter(joined.values())),json.dumps(st['stops'])))
@@ -139,4 +155,5 @@ if __name__=='__main__':
     cmd=sys.argv[1]
     if cmd=='bootstrap': bootstrap(sys.argv[2].rstrip('/'),sys.argv[3].rstrip('/'))
     elif cmd=='build': build(sys.argv[2].rstrip('/'),sys.argv[3].rstrip('/'),sys.argv[4])
+    elif cmd=='restore': restore(sys.argv[2].rstrip('/'))
     else: sys.exit(__doc__)

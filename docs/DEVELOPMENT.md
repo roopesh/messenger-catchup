@@ -109,4 +109,4 @@ Related docs:
 | Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) |
 | Skill | user-specific `packaholics-catchup` → generic `messenger-catchup` v1.1 |
 | Build tool | `patool.py` → `catchup.py` (Phase 8, same commands and behavior) |
-| Release (`VERSION`) | v1.1.0 (tagged retroactively at `c3186da`) → v1.1.1 (Phases 7–8 plus the release process). From here on, see CHANGELOG.md |
+| Release (`VERSION`) | v1.1.0 (tagged retroactively at `c3186da`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2). From here on, see CHANGELOG.md |

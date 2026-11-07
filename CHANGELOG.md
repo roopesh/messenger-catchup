@@ -2,6 +2,32 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.2.0] - 2026-11-06
+Fixes the two P1 issues from the backlog. MINOR because the refresh procedure in SKILL.md changes (page upgrades and `restore`). Claude republishes existing pages automatically on their next refresh.
+
+### Fixed
+- **B2:** `catchup.py build` kept no backup, so a refused DB write or a corrected spec meant re-bootstrapping. Now `build` keeps the WORK it started from in `WORK/prev/`, and `catchup.py restore WORK` undoes the last build. Rebuilding a RUN without restoring says exactly that instead of `AssertionError: []`.
+- **R1:** the page's database has no version-checked writes or transactions, so the importer now:
+  - holds a 2-minute import lease (`refresh/importLock`), so two open copies of the page can't import at once
+  - reads `meta/chat` and the newest chunk fresh from the store instead of trusting snapshots
+  - **repairs a half-finished import** (chunks saved, `meta/chat` not updated) on the next paste (`REPAIRED: …`) instead of refusing every import from then on
+  - refuses, with instructions, when `meta/chat` is ahead of the saved messages
+  - writes nothing, not even a repair, unless the capture passes every check
+- **G1 (part):** after republishing a page, set `meta/chat.pageVersion`, so it isn't republished on every run.
+
+### Changed
+- SKILL.md › Refresh steps:
+  - republish the page when `meta/chat.pageVersion` is behind `PAGE_VERSION`
+  - the new import messages
+  - `catchup.py restore WORK` before a rebuild or after a refused write
+  - two new Troubleshooting entries
+
+### Tests
+- `tests/test_catchup.py`: 7 restore tests replace the B2 known-bug test.
+- `tests/page.test.js`: 17 R1 checks (half-finished import, interrupted chunk rollover, counters ahead, lease held elsewhere, stale snapshot, runtime without `acquire`). Against the v1.1.2 page they fail: it gets stuck at "The newest stored chunk doesn't end at #-1".
+
+Components: **`PAGE_VERSION` 1.2** (was 1.1), helper 1.1 (unchanged).
+
 ## [1.1.2] - 2026-11-06
 No change to the skill itself. Enforcement for the PR workflow.
 
