@@ -1315,7 +1315,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.0";
+  const PAGE_VERSION = "2.1";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -1590,7 +1590,7 @@
     row.append(cp, op, x, st);
     toast(
       [
-        el("b", null, "Find #" + m.i + " (" + m.f + ", " + m.t + ") in Messenger"),
+        el("b", null, "Find #" + m.i + " (" + nameOf(m) + ", " + m.t + ") in Messenger"),
         code,
         el(
           "span",
@@ -1797,8 +1797,50 @@
   function inWindow(m) {
     return inWin(m.i);
   }
+  /* Names. f is the name Messenger shows (a nickname, or the first name); since helper 1.6, fn is the sender's full
+     name, read from their avatar. people/index maps each full name to the names it was shown as. On the page: the first
+     name, or the full name when two people share that first name; a nickname as "nickname (first or full name)". */
+  let PEOPLE = { byShown: new Map(), firsts: new Map() };
+  function indexPeople() {
+    const byFull = new Map();
+    const add = (full, shown) => {
+      if (!full || !shown || shown === "You") return;
+      if (!byFull.has(full)) byFull.set(full, new Set());
+      byFull.get(full).add(shown);
+    };
+    Object.entries((S.people && S.people.people) || {}).forEach(([full, p]) =>
+      (p.shown || []).forEach(x => add(full, x)),
+    );
+    S.msgs.forEach(m => add(m.fn, m.f));
+    const byShown = new Map();
+    const firsts = new Map();
+    byFull.forEach((shown, full) => {
+      shown.forEach(x => {
+        if (!byShown.has(x)) byShown.set(x, new Set());
+        byShown.get(x).add(full);
+      });
+      const first = full.split(/\s+/)[0].toLowerCase();
+      firsts.set(first, (firsts.get(first) || 0) + 1);
+    });
+    PEOPLE = { byShown, firsts };
+  }
+  function fullOf(m) {
+    if (!m || m.f === "You") return null;
+    if (m.fn) return m.fn;
+    const c = PEOPLE.byShown.get(m.f);
+    return c && c.size === 1 ? [...c][0] : null;
+  }
+  function nameOf(m) {
+    if (!m) return "?";
+    const full = fullOf(m);
+    if (!full) return m.f;
+    const first = full.split(/\s+/)[0];
+    const base = (PEOPLE.firsts.get(first.toLowerCase()) || 0) > 1 ? full : first;
+    const nick = !(full === m.f || full.startsWith(m.f + " "));
+    return nick ? m.f + " (" + base + ")" : base;
+  }
   function lineFor(m) {
-    let s = "#" + m.i + " [" + m.t + "] " + m.f;
+    let s = "#" + m.i + " [" + m.t + "] " + nameOf(m);
     if (m.r) s += " (replying to " + m.r + (m.q ? ': "' + m.q.replace(/\s+/g, " ").slice(0, 120) + '"' : "") + ")";
     s +=
       ": " +
@@ -1881,7 +1923,7 @@
       );
     const strip = $("#strip");
     strip.textContent = "";
-    const people = new Set(win.map(m => m.f));
+    const people = new Set(win.map(m => fullOf(m) || m.f));
     const sm = S.summary || {};
     const sm2 = activeSummary() || sm;
     const live = it => (it.refs || []).some(r => inWin(r[0] ?? r));
@@ -1914,7 +1956,7 @@
       const li = el("li", "ref");
       li.append(el("span", "t", m ? m.t : "#" + i));
       const q = el("span", "q");
-      q.append(el("span", "who", (m ? m.f : "?") + ": "), document.createTextNode(gist || (m && m.b) || ""));
+      q.append(el("span", "who", nameOf(m) + ": "), document.createTextNode(gist || (m && m.b) || ""));
       li.append(q);
       const box = el("span", "lnk");
       const jump = el("a", null, "#" + i);
@@ -1974,7 +2016,7 @@
     const tx = el("div", "tx");
     tx.append(el("span", "meta", "#" + i + " · " + m.t + (m.r ? " · replying to " + m.r : "")));
     if (quote && m.q) tx.append(el("div", "quote", trunc(m.q, 120)));
-    const who = el("b", null, m.f + ": ");
+    const who = el("b", null, nameOf(m) + ": ");
     tx.append(
       who,
       document.createTextNode(
@@ -2079,10 +2121,10 @@
   function composer(m, loc) {
     const box = el("div", "compose");
     box.dataset.ci = m.i;
-    box.append(el("div", "note", "Replying to " + m.f + ": “" + trunc(m.b || (m.p ? "[photo]" : ""), 90) + "”"));
+    box.append(el("div", "note", "Replying to " + nameOf(m) + ": “" + trunc(m.b || (m.p ? "[photo]" : ""), 90) + "”"));
     const ta = el("textarea");
     ta.rows = 2;
-    ta.placeholder = "Your reply to " + m.f;
+    ta.placeholder = "Your reply to " + nameOf(m);
     ta.value = S.drafts[m.i] || "";
     ta.oninput = () => {
       S.drafts[m.i] = ta.value;
@@ -2379,7 +2421,7 @@
     const meta = el("span", "meta", "#" + i + " · " + m.t + (m.r ? " · replying to " + m.r : ""));
     const tx = el("div");
     tx.append(
-      el("b", null, m.f + ": "),
+      el("b", null, nameOf(m) + ": "),
       document.createTextNode(m.b ? trunc(m.b, len) : m.p ? "[photo]" : "[attachment]"),
     );
     d.append(meta, tx);
@@ -2397,7 +2439,7 @@
     const mem = convMembers(c.id).filter(ctx.after);
     const a = S.byI.get(mem[0]),
       z = S.byI.get(mem[mem.length - 1]);
-    const who = [...new Set(mem.map(i => S.byI.get(i).f))];
+    const who = [...new Set(mem.map(i => nameOf(S.byI.get(i))))];
     const opens = ctx.open.get(c.id) || [],
       deals = ctx.deal.get(c.id) || [],
       ans = ctx.ans.get(c.id) || [];
@@ -2438,7 +2480,7 @@
     act.append(replyLink(z, "Reply in Messenger ↗"));
     const zOpen = opens.some(o => o.ask === z.i);
     if (S.db && !zOpen) act.append(replyHereBtn(z, h, "card:" + c.id));
-    act.append(el("span", "note", " to the latest message (" + z.f + ", " + z.t + ")"));
+    act.append(el("span", "note", " to the latest message (" + nameOf(z) + ", " + z.t + ")"));
     const pz = zOpen ? null : pendingTag(z);
     if (pz) act.append(pz);
     h.append(act);
@@ -2478,7 +2520,7 @@
       b.append(el("div", "lab", "Unanswered · asked of " + o.to), quoteMsg(o.ask, { onClick: () => show([o.ask]) }));
       if (am) {
         const r = el("div", "cv-act");
-        r.append(replyLink(am, "Reply to " + am.f + " ↗"));
+        r.append(replyLink(am, "Reply to " + nameOf(am) + " ↗"));
         if (S.db) r.append(replyHereBtn(am, b, "open:" + c.id));
         const pt = pendingTag(am);
         if (pt) r.append(pt);
@@ -2662,7 +2704,7 @@
       const body = el("tbody");
       rows.forEach(([m, u]) => {
         const tr = el("tr");
-        tr.append(el("td", "t", m.t), el("td", null, m.f));
+        tr.append(el("td", "t", m.t), el("td", null, nameOf(m)));
         const td = el("td");
         td.append(outLink((m.a ? m.a.split("\n")[0].slice(0, 80) + " · " : "") + hostOf(u), u));
         const tj = el("td", "lnk");
@@ -2901,12 +2943,12 @@
     r.append(el("span", "n", "#" + m.i), el("span", "t", m.t));
     const c = el("div", "c");
     const head = el("div");
-    head.append(el("span", "who", m.f));
+    head.append(el("span", "who", nameOf(m)));
     if (m.r && !lk) head.append(el("span", "muted", " ↪ " + m.r));
     if (lk && lk[0] != null) {
       const k = LK[lk[1]] || LK.i;
       const p = S.byI.get(lk[0]);
-      const a = el("a", "lk " + k[1], k[0] + " #" + lk[0] + (p ? " " + p.f : ""));
+      const a = el("a", "lk " + k[1], k[0] + " #" + lk[0] + (p ? " " + nameOf(p) : ""));
       a.href = "#messages";
       a.title = k[2];
       a.onclick = e => {
@@ -2927,11 +2969,11 @@
         a.title = "View full size";
         a.onclick = e => {
           e.preventDefault();
-          lightbox(pics, k, "#" + m.i + " · " + m.f + " · " + m.t);
+          lightbox(pics, k, "#" + m.i + " · " + nameOf(m) + " · " + m.t);
         };
         const im = el("img");
         im.src = u;
-        im.alt = "Photo " + (k + 1) + " from " + m.f;
+        im.alt = "Photo " + (k + 1) + " from " + nameOf(m);
         im.loading = "lazy";
         a.append(im);
         pw.append(a);
@@ -3043,7 +3085,7 @@
         document.createTextNode(
           " so you can see #" +
             S.autoOlder +
-            (am ? " (" + am.f + ", " + am.t + ")" : "") +
+            (am ? " (" + nameOf(am) + ", " + am.t + ")" : "") +
             ", which is before your catch-up window. ",
         ),
       );
@@ -3053,7 +3095,10 @@
     }
     let list = S.msgs.filter(m => all || inWindow(m));
     const match = m =>
-      !q || (m.f + " " + (m.b || "") + " " + (m.a || "") + " " + (m.r || "")).toLowerCase().includes(q);
+      !q ||
+      (m.f + " " + (fullOf(m) || "") + " " + (m.b || "") + " " + (m.a || "") + " " + (m.r || ""))
+        .toLowerCase()
+        .includes(q);
     if (!S.msgs.length) {
       box.append(el("div", "empty", "No messages stored yet."));
       return;
@@ -3146,7 +3191,7 @@
         d.open = n < 4;
         n++;
         const s = el("summary");
-        const who = [...new Set(mem.map(i => S.byI.get(i).f))];
+        const who = [...new Set(mem.map(i => nameOf(S.byI.get(i))))];
         const a = S.byI.get(mem[0]),
           z = S.byI.get(mem[mem.length - 1]);
         s.append(
@@ -3603,10 +3648,13 @@
       .filter(m => m.i > lastI)
       .map(m => {
         const o = {};
-        ["i", "t", "f", "b", "m", "r", "q", "x", "l", "a", "p", "d", "pi", "pq", "pmid", "pl", "perr"].forEach(k => {
-          if (m[k] != null && m[k] !== "") o[k] = m[k];
-        });
+        ["i", "t", "f", "fn", "b", "m", "r", "q", "x", "l", "a", "p", "d", "pi", "pq", "pmid", "pl", "perr"].forEach(
+          k => {
+            if (m[k] != null && m[k] !== "") o[k] = m[k];
+          },
+        );
         if (o.b == null) o.b = "";
+        if (typeof o.fn !== "string" || o.fn.length > 80 || o.f === "You") delete o.fn;
         return o;
       });
     for (const m of fresh)
@@ -3684,6 +3732,20 @@
         upd.ownLastMid = o.m;
       }
       await S.db.doc("meta/chat").update(upd);
+      /* Full names (helper 1.6+): people/index maps each full name to the names Messenger showed it as. */
+      const named = fresh.filter(m => m.fn);
+      if (named.length) {
+        const pg = await S.db.doc("people/index").get();
+        const pd = pg.exists ? pg.data() : {};
+        const people = JSON.parse(JSON.stringify(pd.people || {}));
+        for (const m of named) {
+          const pp = people[m.fn] || (people[m.fn] = { shown: [], firstI: m.i, lastI: m.i });
+          if (!pp.shown.includes(m.f)) pp.shown.push(m.f);
+          pp.firstI = Math.min(pp.firstI, m.i);
+          pp.lastI = Math.max(pp.lastI, m.i);
+        }
+        await S.db.doc("people/index").set(Object.assign({}, pd, { people }));
+      }
       msgPart =
         repNote +
         "IMPORT OK: " +
@@ -3840,6 +3902,7 @@
     all.sort((a, b) => a.i - b.i);
     S.msgs = all;
     S.byI = new Map(all.map(m => [m.i, m]));
+    indexPeople();
     renderHeader();
     renderSummary();
     renderMessages();
@@ -3927,6 +3990,14 @@
         q.docs.forEach(d => (S.rangeSums[d.id] = d.data()));
         renderHeader();
         renderSummary();
+      },
+      () => {},
+    );
+    db.doc("people/index").onSnapshot(
+      s => {
+        S.people = s.exists ? s.data() : null;
+        indexPeople();
+        rerenderAll();
       },
       () => {},
     );

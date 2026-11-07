@@ -13,11 +13,7 @@ Files that ship with this skill (paths are relative to this SKILL.md; the skill'
 - `assets/page.html`: the page template (version in `PAGE_VERSION`).
 - `assets/helper.user.js`: the optional Messenger helper (userscript), also used as injectable code.
 - `scripts/catchup.py`: builds threading and summary JSON and checks every rule.
-- `references/setup.md`: requirements, first-run setup, installing the helper, scheduling.
-- `references/outbox.md`: posting replies the user queued on the page.
-- `references/open-message.md`: "reply 3232" / "open #3232".
-- `references/database.md`: every document and field, and what the page saves for Claude (questions, notes).
-- `references/troubleshooting.md`: what each error message means and what to do.
+- `references/`: setup, outbox, open-message, database and troubleshooting. Read each only when the section below or a step says so.
 
 ## Which part to follow
 - **No page yet for this chat**, or the user asks to set one up: read `references/setup.md` in full and follow it.
@@ -25,7 +21,7 @@ Files that ship with this skill (paths are relative to this SKILL.md; the skill'
 - **"Reply 3232" / "open #3232":** read `references/open-message.md`.
 - **The user asks about the schedule or the requirements:** `references/setup.md`. **About questions they asked on the page, or for a note or analysis worth keeping:** `references/database.md` › What the page saves for Claude.
 - **An error that the steps below don't cover:** read `references/troubleshooting.md`.
-- Every refresh needs the user's computer online: on, awake and unlocked, Chrome open with Claude in Chrome connected, Facebook signed in (in English), and the Messenger tab Claude opened left open and in front. If not, the run is skipped and the next one catches up (details: `references/setup.md` › Requirements).
+- Every refresh needs the user's computer online, Chrome with Claude in Chrome connected, Facebook signed in (English), and Claude's Messenger tab open and in front (`references/setup.md` › Requirements). If not, the run is skipped and the next one catches up.
 
 Only Claude in Chrome is supported (the user's real, signed-in Chrome). Don't use another browser.
 
@@ -38,9 +34,10 @@ Only Claude in Chrome is supported (the user's real, signed-in Chrome). Don't us
 
 ## Database (ArtifactData on the user's page)
 - `meta/chat` (full list in `references/database.md`): a refresh reads `thread`, `chatUrl`, `lastI`, `anchorMids` (newest 3 ids; reversed = STOPS), `pageVersion`, `ownerAliases`, `outboxAuto`, `tz`, `chunkSize`, `schedule` and `ideasSeenAt`, and writes `lastRefresh`, `coverage`, `pageVersion` and `ideasSeenAt`. The page writes `lastI` and the import fields itself (Claude writes them only for the "lastI is ahead" fix in `references/troubleshooting.md`).
-- `chunks/cNNNN` `{start, msgs:[...]}`: message fields `i` (number from 0), `t` ("Fri 8:41 AM"), `d` (date), `f` (sender; the user = "You"), `b` (text), `m` (Messenger id), `r` (replied-to name), `q` (quoted text), `pi`/`pmid`/`pq`/`perr` (reply parent), `p` (photo), `a` (link preview), `l` (links), `x` (reactions).
+- `chunks/cNNNN` `{start, msgs:[...]}`: message fields `i` (number from 0), `t` ("Fri 8:41 AM"), `d` (date), `f` (sender as Messenger shows them: nickname or first name; the user = "You"), `fn` (full name from their avatar; helper 1.6+), `b` (text), `m` (Messenger id), `r` (replied-to name), `q` (quoted text), `pi`/`pmid`/`pq`/`perr` (reply parent), `p` (photo), `a` (link preview), `l` (links), `x` (reactions).
 - `threading/current`: `convs:[{id,title,members}]`, `links:{i:[parent,type]}` (r = Messenger link, rq = matched by quote, rg = photo reply best match, i = answers, c = same person continuing), `to`, `note`, `builtAt`.
 - `summary/current`: `version:2`, `convs:[{id,tag,synopsis:[{t,refs}],outcome,key}]`, `open`, `answered`, `deals`, `mentions`, `toI`, `generatedAt` (optional `mentionsNote`).
+- `people/index` `{people:{"<full name>":{shown:[...],firstI,lastI}}}`: written by the page from `fn`.
 - `photos/index` `{byI,byK,gifs}`, `refresh/status` (lock and status line), `refresh/lastImport`, `refresh/importLock` (the page's import lease; never write it), `outbox/*` (replies queued on the page).
 - Written by the page for Claude: `qa/*`, `views/*`, `rangeSummaries/*`; written by Claude: `notes/*` (shapes in `references/database.md`).
 
@@ -90,6 +87,7 @@ Before each run: `ArtifactData get` `meta/chat`, `threading/current` and `refres
 - `open`: real unanswered asks only. Close them (`closeOpen` + `answered`) when someone answers.
 - `deals`: things actually offered or announced (sales, group buys, drops, price drops).
 - `mentions`: other people naming the user (`ownerAliases`) or replying to "You". The user's own messages are never mentions.
+- Names as the page shows them: first name; full name when two people share it (`people/index`); a nickname as "nickname (first or full name)". Tell people apart by `fn`, not `f` alone. `f`, `r` and the outbox's `to` stay as Messenger shows them (replies match on them).
 - Neutral wording; no gendered pronouns unless the person used them.
 
 ## catchup.py
