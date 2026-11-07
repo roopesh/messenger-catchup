@@ -254,35 +254,59 @@ class TestBuildRejects(unittest.TestCase):
         self.e.msgs[1]=dict(self.e.msgs[1],b='edited after the fact')          # the RUN chunk disagrees with WORK
         self.new=[msg(3,'Ana','x')];self.reject({'join':{'a':[3]}},'stored copy differs')
 
-class TestKnownBugs(unittest.TestCase):
-    """docs/BACKLOG.md items, written as the fixed behavior. Expected to fail until fixed."""
+class TestBugFixes(unittest.TestCase):
+    """Regression tests for fixed docs/BACKLOG.md bugs (B1, B3, B4, B5, B11 fixed in v1.2.1)."""
     def setUp(self): self.t=tempfile.TemporaryDirectory();self.e=Env(self.t.name);self.e.seed()
     def tearDown(self): self.t.cleanup()
-    @unittest.expectedFailure
     def test_B1_note_filled_for_new_pages(self):
         run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b',r='Ana',q='a',pi=0)])
         self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]}})
         self.assertIn('reply links',r(os.path.join(run,'out','threading.json'))['note'])
-    @unittest.expectedFailure
     def test_B3_dealEdit_without_deal_is_a_clear_error(self):
         run=self.e.run([msg(0,'Ana','a')])
         with self.assertRaises(AssertionError): self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0]},'dealEdit':{'a':{'text':'x'}}})
-    @unittest.expectedFailure
     def test_B4_cross_conversation_link_flagged(self):
         run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b')])
         out=self.e.build(run,{'newconvs':[{'id':'a','title':'A'},{'id':'b','title':'B'}],'join':{'a':[0],'b':[1]},'links':{'1':[0,'i']}})
         self.assertIn('WARN',out)
-    @unittest.expectedFailure
     def test_B5_unfound_reply_left_unlinked(self):
         run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b',r='Zed',q='something from before the window')])
         self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]}})
         self.assertNotIn('1',r(os.path.join(run,'out','threading.json'))['links'])
-    @unittest.expectedFailure
     def test_B11_messenger_link_to_message_zero(self):
         # pi=0 is falsy, so a Messenger reply link to #0 is ignored and the quote/photo fallback runs instead.
         run=self.e.run([msg(0,'Ana','',p='5'),msg(1,'Ana','other photo',p='6'),msg(2,'Ben','love it',r='Ana',q='Photo',pi=0)])
         self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1,2]}})
         self.assertEqual(r(os.path.join(run,'out','threading.json'))['links']['2'],[0,'r'])
+
+    def test_B1_note_keeps_an_old_custom_note(self):
+        e=Env(tempfile.mkdtemp(dir=self.t.name));e.seed(threading={'convs':[],'links':{},'to':-1,'note':'Imported from the old page'})
+        run=e.run([msg(0,'Ana','a')]);e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0]}})
+        self.assertEqual(r(os.path.join(run,'out','threading.json'))['note'],'0 reply links read straight from Messenger; 0 matched by their quoted text and 0 (replies to photos) by best match. Imported from the old page')
+    def test_B1_note_counts_update_on_the_next_build(self):
+        run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b',r='Ana',q='a',pi=0)]);self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]}})
+        run=self.e.run([msg(2,'Cy','c',r='Ben',q='b',pi=1)]);self.e.build(run,{'join':{'a':[2]}})
+        self.assertTrue(r(os.path.join(run,'out','threading.json'))['note'].startswith('2 reply links read straight from Messenger'))
+    def test_B3_dealEdit_needs_index_when_ambiguous(self):
+        run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b')])
+        deals=[{'kind':'sale','tag':'x','conv':'a','text':'one','refs':[0]},{'kind':'sale','tag':'y','conv':'a','text':'two','refs':[1]}]
+        self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]},'deals':deals})
+        run=self.e.run([msg(2,'Cy','c')])
+        with self.assertRaisesRegex(AssertionError,'2 deals in a; add "index"'): self.e.build(run,{'join':{'a':[2]},'dealEdit':{'a':{'text':'z'}}})
+        self.e.build(run,{'join':{'a':[2]},'dealEdit':{'a':{'text':'two, sold','index':1,'addRefs':[2]}}})
+        d=r(os.path.join(run,'out','summary.json'))['deals'];self.assertEqual([x['text'] for x in d],['one','two, sold']);self.assertEqual(d[1]['refs'],[1,2])
+    def test_B4_unknown_link_type_refused(self):
+        run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b')])
+        with self.assertRaisesRegex(AssertionError,'link type must be one of'): self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]},'links':{'1':[0,'x']}})
+    def test_B4_same_conversation_link_has_no_warning(self):
+        run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b')])
+        self.assertNotIn('crosses',self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]},'links':{'1':[0,'i']}}))
+    def test_B5_no_guess_line_for_unfound_reply(self):
+        run=self.e.run([msg(0,'Ana','a'),msg(1,'Ben','b',r='Zed',q='something from before the window')])
+        out=self.e.build(run,{'newconvs':[{'id':'a','title':'A'}],'join':{'a':[0,1]}})
+        self.assertIn('WARN reply parent not found 1 - left unlinked',out);self.assertNotIn('GUESS 1',out)
+    def test_C5_timestamp_format(self):
+        self.assertRegex(catchup._ts(),r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d\d [AP]M$')
 
 class TestCli(unittest.TestCase):
     def test_usage_on_unknown_command(self):
