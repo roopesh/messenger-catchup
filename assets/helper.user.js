@@ -10,7 +10,7 @@
 (function(){
   if(window.__mcHelper||document.documentElement.hasAttribute('data-mc-helper'))return;window.__mcHelper='1.1';
   document.documentElement.setAttribute('data-mc-helper','1.1');
-async function paScan(STOPS,FIRST){STOPS=STOPS||[];sessionStorage.removeItem('__mcsave');
+async function mcScan(STOPS,FIRST){STOPS=STOPS||[];sessionStorage.removeItem('__mcsave');
 for(let w=0;w<40;w++){const l=document.querySelector('[role="log"]');if(l&&l.getBoundingClientRect().width>=300)break;await new Promise(r=>setTimeout(r,500));}
 window.__rf={phase:'collect',order:[],info:{},parents:{},done:false,err:null,steps:0,t0:Date.now()};
 document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href]');if(a&&window.__rf&&!window.__rf.done)e.preventDefault();},true);
@@ -50,7 +50,7 @@ R.quoteMatched=Object.keys(R.parents).length;
 async function bring(id){const want=posOf(id);for(let t=0;t<80;t++){const e=log().querySelector('[data-message-id="'+CSS.escape(id)+'"]');if(e){e.scrollIntoView({block:'center'});await sleep(200);return log().querySelector('[data-message-id="'+CSS.escape(id)+'"]')||e;}
  const els=log().querySelectorAll('[data-message-id]');const fi=els.length?posOf(els[0].getAttribute('data-message-id')):-1;s=sc();const st=Math.round(s.clientHeight*0.8);
  if(fi<0||want<fi)s.scrollTop=Math.max(0,s.scrollTop-st);else s.scrollTop=s.scrollTop+st;await sleep(450);collect();}return null;}
-/* v2.2: click ONLY replies to a photo/attachment (no quoted text to match). Text replies are matched by Claude against the stored history. */
+/* Click ONLY replies to a photo/attachment (no quoted text to match). Text replies are matched by Claude against the stored history. */
 const isPhotoReply=id=>{const t=R.info[id].text||'';const oi=t.indexOf('Original message:\n');if(oi<0)return true;const f=(t.slice(oi+18).split('\n')[0]||'').trim();return !f||/^(Attachment|Photo|GIF|Video|Sticker)$/i.test(f);};
 R.photoReplies=reps.filter(isPhotoReply).length;
 for(const id of reps.slice().reverse()){if(R.parents[id]||!isPhotoReply(id))continue;const e=await bring(id);if(!e){R.parents[id]={err:'notfound'};continue;}
@@ -62,7 +62,7 @@ R.tReplies=Date.now()-R.t0;
 sessionStorage.setItem('__mcsave',JSON.stringify({win:R.win,info:Object.fromEntries(R.win.concat(Object.values(R.parents).map(p=>p.p).filter(Boolean)).map(id=>[id,R.info[id]]).filter(x=>x[1])),parents:R.parents,anchor:R.anchor,replyCount:R.replyCount}));
 R.phase='done';}catch(e){R.err=String(e&&e.stack||e);}R.done=true;})();
 const R=window.__rf;return {err:R.err,anchor:R.anchor||null,win:R.win?R.win.length:0,reps:R.replyCount||0,qm:R.quoteMatched||0,gap:R.gap||0,perr:Object.values(R.parents||{}).filter(p=>p.err).length,photoReplies:R.photoReplies||0,ms:Date.now()-R.t0,labels:(R.win||[]).slice(-40).map(id=>(R.info[id].label||"").slice(0,90))};}
-async function paVerify(){
+async function mcVerify(){
 window.__v={order:[],done:false,err:null,gap:0};await (async()=>{const V=window.__v;try{const sleep=ms=>new Promise(r=>setTimeout(r,ms));const S=JSON.parse(sessionStorage.getItem('__mcsave'));const anchor=S.anchor;let LOG=null,SC=null;const log=()=>{if(!LOG||!LOG.isConnected)LOG=document.querySelector('[role="log"]');return LOG;};const sc=()=>{if(!SC||!SC.isConnected)SC=Array.from(log().querySelectorAll('div')).find(x=>{const s=getComputedStyle(x);return /(auto|scroll)/.test(s.overflowY)&&x.scrollHeight>x.clientHeight;});return SC;};
 function collect(){const ids=[...log().querySelectorAll('[data-message-id]')].map(e=>e.getAttribute('data-message-id'));if(!ids.length)return;if(!V.order.length){V.order=ids;return;}const set=new Set(V.order);const k=ids.findIndex(i=>set.has(i));if(k<0){V.gap++;V.order=ids.concat(V.order);return;}V.order.splice(V.order.indexOf(ids[k]),0,...ids.slice(0,k));let pos=V.order.indexOf(ids[k]);for(let j=k+1;j<ids.length;j++){if(!set.has(ids[j]))V.order.splice(pos+1,0,ids[j]);pos=V.order.indexOf(ids[j]);}}
 async function pass(frac,ms){V.order=[];V.gap=0;const TOP=anchor==='__top__';let tops=0;let s=sc();for(let b=0;b<4;b++){s=sc();s.scrollTop=s.scrollHeight;await sleep(600);}collect();let extra=0;for(let r=0;r<1500;r++){if(TOP?tops>8:V.order.includes(anchor)){if(++extra>2)break;}s=sc();const st=Math.round(s.clientHeight*frac);s.scrollTop=s.scrollTop>st?s.scrollTop-st:0;await sleep(s.scrollTop<5?1500:ms);collect();if(s.scrollTop<5)tops++;else tops=0;}
@@ -70,7 +70,7 @@ async function pass(frac,ms){V.order=[];V.gap=0;const TOP=anchor==='__top__';let
 for(let w=0;w<20&&!(log()&&sc());w++)await sleep(500);
 V.mode='fast';let ok=await pass(0.6,500);if(!ok){V.mode='slow';ok=await pass(0.35,900);}V.ok=ok;if(!ok&&!V.order.includes(anchor))V.err='anchor not found';}catch(e){V.err=String(e);}V.done=true;})();
 const X=window.__v;return {ok:!!X.ok,gap:X.gap,prefixSame:!!X.prefixSame,extra:X.extra,err:X.err,win:X.win?X.win.length:0,mode:X.mode};}
-async function paCapture(BASE){
+async function mcCapture(BASE){
 return await (async()=>{const R=JSON.parse(sessionStorage.getItem('__mcsave'));const N=s=>(s||'').replace(/\s+/g,' ').trim();
 const now=new Date();const DAYS=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];const MON=['january','february','march','april','may','june','july','august','september','october','november','december'];
 const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -142,14 +142,14 @@ return 'count '+out.length+' len '+text.length+' sha '+cap.sha.slice(0,8)+' phot
     await sleep(2500);var ids=[].map.call(document.querySelectorAll('[role="log"] [data-message-id]'),function(e){return e.getAttribute('data-message-id');});
     var k=ids.indexOf(anchor);return {vis:document.visibilityState,n:ids.length,found:k>=0,after:k>=0?ids.length-k-1:null};}
   /* Full refresh pipeline: scan, reload, verify after the reload, then capture. State rides in sessionStorage across the reload. */
-  async function full(a){sessionStorage.removeItem('mc_result');const r=await paScan(a.stops,a.first);if(r.err||!r.win){const o=Object.assign({stage:'scan',run:a.run||null},r);sessionStorage.setItem('mc_result',JSON.stringify(o));return o;}
+  async function full(a){sessionStorage.removeItem('mc_result');const r=await mcScan(a.stops,a.first);if(r.err||!r.win){const o=Object.assign({stage:'scan',run:a.run||null},r);sessionStorage.setItem('mc_result',JSON.stringify(o));return o;}
     sessionStorage.setItem('mc_pipe',JSON.stringify({base:a.base,run:a.run||null,scan:r,t0:Date.now()}));setTimeout(function(){location.reload();},300);return {stage:'reloading',scan:r};}
   async function resumePipe(){const p=JSON.parse(sessionStorage.getItem('mc_pipe')||'null');if(!p)return;sessionStorage.removeItem('mc_pipe');
     let out={stage:'verify',run:p.run||null,scan:p.scan};
-    try{await new Promise(function(r){setTimeout(r,5000);});const v=await paVerify();out.verify=v;
-      if(v.ok){out.stage='captured';out.capture=await paCapture(p.base);}else out.stage='verify-failed';}catch(e){out.err=String(e);}
+    try{await new Promise(function(r){setTimeout(r,5000);});const v=await mcVerify();out.verify=v;
+      if(v.ok){out.stage='captured';out.capture=await mcCapture(p.base);}else out.stage='verify-failed';}catch(e){out.err=String(e);}
     out.ms=Date.now()-p.t0;sessionStorage.setItem('mc_result',JSON.stringify(out));}
-  const CMDS={probe:a=>probe(a.anchor),scan:a=>paScan(a.stops,a.first),verify:()=>paVerify(),capture:a=>paCapture(a.base),full:a=>full(a),
+  const CMDS={probe:a=>probe(a.anchor),scan:a=>mcScan(a.stops,a.first),verify:()=>mcVerify(),capture:a=>mcCapture(a.base),full:a=>full(a),
     jump:a=>{history.replaceState(null,'',location.pathname+'#mcjump='+encodeURIComponent(a.mid)+(a.reply===false?'&noreply':''));jump();return {started:true};},
     ping:()=>({v:'1.1'})};
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */

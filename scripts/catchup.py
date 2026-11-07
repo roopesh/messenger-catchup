@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Messenger Catch-up build tool (generic).
-  patool.py bootstrap WORK DBDIR     DBDIR = ArtifactData out_dir holding chunks/*.json, threading/current.json,
+  catchup.py bootstrap WORK DBDIR    DBDIR = ArtifactData out_dir holding chunks/*.json, threading/current.json,
                                      summary/current.json, meta/chat.json. Writes WORK/all.json, WORK/base/*, WORK/state.json.
-  patool.py build WORK RUNDIR SPEC   RUNDIR = out_dir with the touched chunks/*.json + meta/chat.json fetched after import.
+  catchup.py build WORK RUNDIR SPEC  RUNDIR = out_dir with the touched chunks/*.json + meta/chat.json fetched after import.
                                      Writes RUNDIR/out/{threading,summary}.json, then advances WORK (all.json, base, state).
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
