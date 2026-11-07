@@ -69,7 +69,7 @@ phsha = SHA-256 hex of JSON.stringify(photos)
 The page accepts only `mc-capture` (the old `pa-capture` kind was dropped on Nov 6) and two optional flags: `dry` (check everything, write nothing) and `lab` (store photos but don't link them).
 
 ### Copies of the helper (keep in sync)
-The helper exists **three times**: the file itself, an HTML-escaped copy in the page's `#jump-us` textarea (`page.html:306`, used by "Copy userscript"), and the `jump()` body as a URL-encoded bookmarklet in `#jump-bm` (`page.html:473`, `%` → `%25`). `tools/sync-helper.py` regenerates both page copies from the file, and `npm test` fails (`--check`) when they drift. The version string `1.1` appears four times in the helper (header, `__mcHelper`, `data-mc-helper`, `ping`). See BACKLOG C2.
+The helper exists **twice**: the file itself, and its `jump()` body as a URL-encoded bookmarklet in the page's `#jump-bm` (`%` → `%25`). `tools/sync-helper.py` regenerates the bookmarklet from the file, and `npm test` fails (`--check`) when they drift. Until v1.8.0 the page also embedded an HTML-escaped copy of the whole userscript (`#jump-us`, "Copy userscript"). Now the page links to `releases/latest/download/helper.user.js`, which `tools/release.sh` attaches to every release, and the userscript's `@updateURL`/`@downloadURL` point there so it updates itself (BACKLOG F8). The version string appears four times in the helper (header, `__mcHelper`, `data-mc-helper`, `ping`). See BACKLOG C2.
 
 ## Page (`assets/page.html`)
 
@@ -163,7 +163,7 @@ Nothing here ships in the skill ZIP.
 | `package.json` | `npm test` runs `test:py`, `test:sim`, `test:page`; `npm run sync`; Playwright pinned |
 | `.github/workflows/test.yml` | CI: `test` (`npm test`), `version-bump` (PRs must raise `VERSION`), `pr-only` (commits on `main` must come from a merged PR) |
 | `.githooks/pre-push` | Blocks direct pushes to `main` from a local clone (`npm run hooks`) |
-| `tools/sync-helper.py` | Regenerates the page's `#jump-us` and `#jump-bm` copies from `helper.user.js`; `--check` mode |
+| `tools/sync-helper.py` | Regenerates the page's `#jump-bm` bookmarklet from `helper.user.js`; `--check` mode |
 | `tests/test_catchup.py` | `catchup.py` unit tests; the `Env` class fakes WORK and ArtifactData `out_dir`s |
 | `tests/test_tools.py` | Sync, version strings, leftover names, SKILL.md file references, ZIP contents |
 | `tests/sim.js`, `tests/run.js`, `tests/mock/` | The helper against a simulated Messenger (`mock_total` and `mock_skip` in localStorage control its history); `run.js` serves the mock |

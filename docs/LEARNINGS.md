@@ -48,7 +48,8 @@ Platform limits, gotchas, and what was changed because of them.
 - **Measure before shipping:** hand labels showed that clever linkers scored worse than the existing judgment, and saved a regression.
 
 ## Keeping copies in sync
-- **The helper exists three times:** the file, an HTML-escaped copy inside the page (for "Copy userscript"), and its `jump()` as a URL-encoded bookmarklet. An edit to one must be carried to the others by hand (BACKLOG C2; check in EXPERIMENTS.md §10).
+- **The helper existed three times:** the file, an HTML-escaped copy inside the page (for "Copy userscript"), and its `jump()` as a URL-encoded bookmarklet. Edits had to be carried by hand until `tools/sync-helper.py` (C2). Since v1.8.0 the page links to the release instead of embedding the userscript (F8), so only the bookmarklet is generated.
+- **A userscript pasted into Tampermonkey/Violentmonkey can't update itself:** it has no source URL. Installed from a URL with `@updateURL`/`@downloadURL`, the extension checks for a newer `@version` about once a day. Helpers installed before 1.5 need one manual reinstall from the link.
 - **The page writes `meta/chat` too** (import counters, marker choice), not only Claude. Read it fresh before every write and pin the write.
 
 ## Page database (runtime contract 0.2.96)

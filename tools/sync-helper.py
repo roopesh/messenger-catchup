@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Keep the page's embedded copies of the helper in sync with assets/helper.user.js.
-  tools/sync-helper.py          rewrite the #jump-us userscript textarea and the #jump-bm bookmarklet in assets/page.html
-  tools/sync-helper.py --check  exit 1 if either copy differs from what the helper would generate (used by npm test)
-The userscript copy is the whole file, HTML-escaped. The bookmarklet is the helper's mcJump IIFE (at any indent), lines stripped and
+"""Keep the page's bookmarklet in sync with assets/helper.user.js. (The userscript itself is installed from the GitHub
+release and updates itself; the page only links to it.)
+  tools/sync-helper.py          rewrite the #jump-bm bookmarklet textarea in assets/page.html
+  tools/sync-helper.py --check  exit 1 if it differs from what the helper would generate (used by npm test)
+The bookmarklet is the helper's mcJump IIFE (at any indent), lines stripped and
 joined with spaces (so it must use /* */ comments only), then percent-encoded where a javascript: URL needs it (% ^ # and non-ASCII), then HTML-escaped."""
 
 import html, re, sys, os
@@ -22,7 +23,7 @@ def bookmarklet(src):
 
 def generate(page, src):
     out = page
-    for tid, val in (("jump-us", src), ("jump-bm", bookmarklet(src))):
+    for tid, val in (("jump-bm", bookmarklet(src)),):
         pat = re.compile(r'(<textarea id="%s"[^>]*>)(.*?)(</textarea>)' % tid, re.S)
         assert len(pat.findall(out)) == 1, "expected one #%s textarea" % tid
         out = pat.sub(lambda m: m.group(1) + html.escape(val) + m.group(3), out)
@@ -35,8 +36,8 @@ if __name__ == "__main__":
     new = generate(page, src)
     if "--check" in sys.argv:
         if new != page:
-            sys.exit("page.html copies of the helper are out of date: run tools/sync-helper.py")
-        print("helper copies in sync")
+            sys.exit("page.html bookmarklet is out of date: run tools/sync-helper.py")
+        print("bookmarklet in sync")
     elif new != page:
         open(PAGE, "w", encoding="utf-8").write(new)
         print("page.html updated")

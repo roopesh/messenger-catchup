@@ -17,7 +17,8 @@ The owner's standing rule. No exceptions for "small" changes, docs or tests.
 - **PATCH:** fixes, docs, tests, tooling, behavior-neutral refactors.
 - **Component versions** are separate and bumped only when that part changes:
   - `PAGE_VERSION` in `assets/page.html`: Claude republishes users' pages when it rises.
-  - The helper version (four strings in `assets/helper.user.js`; a test checks they agree): users reinstall the userscript.
+  - The helper version (four strings in `assets/helper.user.js`; a test checks they agree). Installed copies (1.5+) update themselves from the latest release, which `tools/release.sh` attaches the userscript to.
+  - Keep both minor parts one digit (1.9 → 2.0, never 1.10). Read as decimals, 1.1 and 1.10 look equal. A test enforces it.
   - Note either change in the changelog entry.
 
 ## Other rules

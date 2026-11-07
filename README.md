@@ -17,6 +17,8 @@ A Claude skill that keeps a private **catch-up page** for one Facebook Messenger
 ## Optional helper (recommended)
 `assets/helper.user.js` is a userscript for Tampermonkey or Violentmonkey. It makes refreshes faster and cheaper, and makes "Reply in Messenger" links land on the exact message. Without it, Claude injects the same code on each run.
 
+Install it from [https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js](https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js) (the extension opens its install page). It updates itself from this repo's latest release. It runs on facebook.com/messages with your session, so you're trusting this repo's releases. Only the owner can publish them, and `main` is branch-protected.
+
 ## Layout
 | Path | What it is |
 |---|---|
