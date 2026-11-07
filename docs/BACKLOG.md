@@ -65,6 +65,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B10 | P3 | bug | `make-zip.sh` only works when the repo folder is named `messenger-catchup` · **done** (v1.4.1) |
 | G4 | P3 | doc gap | Page text refers to a Refresh button that is hidden · **done** (v1.2.2) |
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
+| G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) |
 | R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
@@ -73,7 +74,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | C4 | P3 | cleanup | Minified one-line style in helper and page · **done** (v1.7.4: Prettier + Ruff, enforced) |
 | C5 | P3 | cleanup | `catchup._ts` shells out to `date` · **done** (v1.2.1) |
 | C6 | P3 | cleanup | `catchup.py` opens files without closing them · **done** (v1.2.1) |
-| C7 | P2 | cleanup | `SKILL.md` (31 KB) is read on every refresh; move setup, troubleshooting, outbox and db reference to on-demand references |
+| C7 | P2 | cleanup | `SKILL.md` (31 KB) is read on every refresh; move setup, troubleshooting, outbox and db reference to on-demand references · **done** (v1.9.0) |
 | T4 | P3 | test | Sim doesn't cover other date-label forms · **done** (v1.3.0) |
 | T5 | P3 | test | No CI · **done** |
 | F1 | P3 | feature | More than one chat per page |
@@ -256,6 +257,10 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Where:** `page.html:304-305` vs SKILL.md › Helper
 - **What:** the page's steps name only Violentmonkey; SKILL.md recommends Tampermonkey (both tested).
 
+### G6 · P3 · `outbox/*` fields and `coverage` undefined
+- **Found:** by the v1.9.0 split review. The fields of an `outbox/*` row as the page writes it (`i`, `mid`, `to`, `snip`, `text`, `state`, `queuedAt`, …) aren't listed anywhere, though `references/open-message.md` tells Claude to queue a reply. `meta/chat.coverage` is written every refresh but never defined.
+- **Fix:** list both in `references/database.md`, and derive the outbox fields from the page source in a test, as is done for `meta/chat`.
+
 ## Cleanup
 
 ### C1 · P3 · Unreachable code in the page · done (v1.7.3)
@@ -291,9 +296,14 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### C6 · P3 · Unclosed files in `catchup.py` · done (v1.2.1)
 - `_load` and `_dump` use `json.load(open(p))` / `json.dump(o,open(p,'w'))`. CPython closes and flushes the files right away, so nothing is lost today, but every call raises a `ResourceWarning` (the test runner passes `-W ignore::ResourceWarning`). Use `with open(...)`.
 
-### C7 · P2 · `SKILL.md` is read on every refresh
+### C7 · P2 · `SKILL.md` is read on every refresh · done (v1.9.0)
 - **What:** Claude reads all of `SKILL.md` (31 KB, about 8k tokens) on every run, hourly with the loop. Most of it (setup, troubleshooting, the full database reference, outbox details, opening a message) isn't needed on a routine refresh.
 - **Fix:** keep the refresh procedure in `SKILL.md`, and move the rest to `references/*.md` that `SKILL.md` names and Claude reads only when needed. Tests check that nothing was lost and that every reference file exists. MINOR (procedure files change). Owner approved Nov 7.
+- **Done in v1.9.0:**
+  - **Size:** `SKILL.md` went from 31.8 KB to 19.4 KB, about 3k fewer tokens per refresh.
+  - **What moved:** five reference files. A new "Which part to follow" section says when to read each.
+  - **Verbatim check:** 133 of the 143 lines from v1.8.0 carried over unchanged; the other 10 are reworded cross-references and headings.
+  - **Tests:** every reference file is named in `SKILL.md`; `SKILL.md` stays under 20 KB; step 8 reads `references/outbox.md` before any reply; the ZIP ships `references/`; the database and outbox tests read the new files.
 
 ## Tests
 
