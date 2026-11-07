@@ -9,7 +9,7 @@ The owner's standing rule. No exceptions for "small" changes, docs or tests.
 3. **`npm test` must pass** before opening the PR. Say in the PR what you ran and what it printed. Run `npm run setup` once per clone: it also installs the `pre-push` hook that blocks direct pushes to `main`.
 4. **Open the PR** with `gh pr create`. The template's checklist must be filled in honestly.
 5. **Wait for CI** (`gh pr checks --watch`): `test` and `version-bump` must pass. Then **merge** with `gh pr merge --squash --delete-branch` and `git switch main && git pull`. After the merge, `pr-only` runs on `main` and should pass too.
-6. **Tag and release** the merge commit: `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`, build the ZIP (`./make-zip.sh`), then `gh release create vX.Y.Z <zip> --title vX.Y.Z --notes "<the changelog entry>"`.
+6. **Tag and release** the merge commit: `tools/release.sh` on an up-to-date `main` (it tags `vX.Y.Z`, builds the ZIP from the tag, checks its `VERSION`, and publishes the GitHub release with the changelog entry).
 
 ## Versioning (semver for the skill as a whole)
 - **MAJOR:** users must redo setup, or the database layout changes incompatibly.
