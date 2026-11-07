@@ -2,7 +2,7 @@
    Covers the importer (every check), the real pipeline (sim captures -> page import -> scripts/catchup.py -> render),
    catch-up markers, date entry, outbox, Ask Claude, Views and known bugs.
    Run from the repo root after tests/sim.js (it writes tests/out/sim_caps.json): node tests/page.test.js
-   KNOWN lines are docs/BACKLOG.md bugs; they don't fail the run. A FIXED? line means one now passes: close it. */
+   known() marks a docs/BACKLOG.md bug as a KNOWN line that doesn't fail the run; FIXED? means one now passes. None open right now. */
 const {chromium}=require('playwright');const fs=require('fs');const os=require('os');const path=require('path');const crypto=require('crypto');const {execFileSync}=require('child_process');
 const ROOT=path.join(__dirname,'..');const PAGE=fs.readFileSync(process.env.PAGE_FILE||path.join(ROOT,'assets/page.html'),'utf8');   /* PAGE_FILE: test another copy, e.g. an older page */const URL='http://localhost:9917/catchup';
 const CATCHUP=path.join(ROOT,'scripts/catchup.py');const CAPS=path.join(__dirname,'out/sim_caps.json');
@@ -262,16 +262,18 @@ async function variants(){
   await p.evaluate(()=>{window.__seen=[];new MutationObserver(ms=>ms.forEach(m=>{const t=m.target.textContent||'';if(/^Queued\./.test(t))__seen.push(t);})).observe(document.body,{subtree:true,childList:true,characterData:true});});
   await p.click('#m4 .compose button.primary');const seen=await until(p,()=>__seen[0]);
   ok(!!seen,'outbox: "Queued…" confirmation shown (briefly, before the row re-renders)');
-  known(seen&&!/and confirm/.test(seen),'B9: "Queued" text says "and confirm" even with auto-posting on');
+  ok(seen&&!/and confirm/.test(seen)&&/Claude posts it on its next run/.test(seen),'B9: with auto-posting on, "Queued" says Claude posts it ('+seen+')');
   await p.context().close();
-  // B8: one malformed link in a message
-  p=await open(SEED());await paste(p,JSON.stringify(cap(range(0,4,i=>mk(i,i===2?{l:['not a url']}:{})))));await p.evaluate(()=>{location.hash='#messages';});await p.waitForTimeout(300);
-  known(await p.$$eval('#msgs .msg',r=>r.length)===5&&p.errors.length===0,'B8: a malformed link crashes the Messages render ('+p.errors.length+' page errors)');
+  // B8: malformed and non-web links in a message
+  p=await open(SEED());await paste(p,JSON.stringify(cap(range(0,4,i=>mk(i,i===2?{l:['not a url','javascript:alert(1)','https://example.com/pack?id=1']}:{})))));await p.evaluate(()=>{location.hash='#messages';});await p.waitForTimeout(300);
+  ok(await p.$$eval('#msgs .msg',r=>r.length)===5&&p.errors.length===0,'B8: a malformed link no longer breaks the Messages render ('+p.errors.length+' page errors)');
+  const ls=await p.$$eval('#m2 .sub a:not(.replylink)',as=>as.filter(a=>!/Open photo/.test(a.textContent)).map(a=>[a.textContent,a.getAttribute('href')]));
+  ok(JSON.stringify(ls)===JSON.stringify([['not a url',null],['javascript:alert(1)',null],['example.com','https://example.com/pack?id=1']]),'links: only http(s) URLs are clickable; others show as text ('+JSON.stringify(ls)+')');
   await p.context().close();
   // B7: a mention of message #0
   p=await open(SEED());await paste(p,JSON.stringify(cap(range(0,4))));
   await p.evaluate(()=>{__rt.write('threading/current',{convs:[{id:'a',title:'A',members:[0,1,2,3,4]}],links:{},to:4,note:''});__rt.write('summary/current',{version:2,convs:[{id:'a',tag:'',synopsis:[],outcome:'',key:[]}],open:[],answered:[],deals:[],mentions:[{note:'Ana named you',refs:[[0]]}],toI:4,generatedAt:'now'});});
-  await p.waitForTimeout(300);known(/message 0/.test(await p.$eval('#v-summary .item.mention',e=>e.textContent).catch(()=>'')),'B7: a mention of #0 renders without its text');
+  await p.waitForTimeout(300);ok(/message 0/.test(await p.$eval('#v-summary .item.mention',e=>e.textContent).catch(()=>'')),'B7: a mention of #0 renders with its text');
   ok(p.errors.length===0,'variants: no page errors '+JSON.stringify(p.errors));
   await p.context().close();}
 

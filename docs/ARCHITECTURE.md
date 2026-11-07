@@ -175,6 +175,6 @@ Nothing here ships in the skill ZIP.
 | Thing | Where | Now |
 |---|---|---|
 | Skill | `SKILL.md` "Tested" section | 1.1 |
-| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.2 |
+| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.3 |
 | Helper | 4 places in `helper.user.js` + the page's embedded copy | 1.1 |
 | Summary schema | `summary/current.version` | 2 (the "v3" cards are a display change, same schema) |

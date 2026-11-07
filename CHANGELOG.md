@@ -2,6 +2,19 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.2.2] - 2026-11-06
+Page fixes. Claude republishes existing pages on their next refresh (`PAGE_VERSION` 1.3).
+
+### Fixed
+- **B8:** one malformed link in a message threw while rendering and blanked the Messages tab and the threads in summary cards. All outside links now go through one helper that never throws.
+- **Links:** only `http`/`https` links are clickable. Anything else (`javascript:`, malformed) shows as plain text. This applies to message links, the links table, deal call-outs and the old summary layout.
+- **B7:** a mention of message #0 rendered without its text (`r[0]||r` treated 0 as missing).
+- **B9:** with auto-posting on, the "Queued" note no longer asks you to confirm in chat.
+- **G4:** the Refreshing notes no longer mention a Refresh button the page doesn't show.
+- **G5:** the helper install steps name Tampermonkey (recommended) or Violentmonkey and the current Chrome "Allow User Scripts" switch, matching SKILL.md.
+
+Components: **`PAGE_VERSION` 1.3** (was 1.2), helper 1.1 (unchanged).
+
 ## [1.2.1] - 2026-11-06
 `catchup.py` fixes. No change to the page or the helper.
 

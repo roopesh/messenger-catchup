@@ -2,7 +2,7 @@
 
 Everything open: bugs, risks, gaps between docs and code, cleanup, tests and feature ideas. Started Nov 6, 2026 from a full read of the code at `c3186da`, the simulated-Messenger tests, a `cctool.py` (now `catchup.py`) replay and a date-parser probe ([EXPERIMENTS.md §10](EXPERIMENTS.md#10-handoff-review-nov-6-evening)). Updated after the Phase 8 rename and test build-out ([§11](EXPERIMENTS.md#11-rename-and-test-build-out-nov-6-late-evening)).
 
-**Tests for open bugs:** B7–B9 have `KNOWN` checks in `tests/page.test.js`. (B1, B3–B5, B11's tests are now regression tests.) Fix the bug, then remove the marker.
+**Tests for open bugs:** none open; the tests written for B1–B5 and B7–B11 are now regression tests. Fix the bug, then remove the marker.
 
 **Priority:** P1 = fix before relying on it more · P2 = next round · P3 = when convenient.
 **Status:** open unless marked. When you close an item, change its status to `done (<commit>)` and keep the row, so the history stays readable.
@@ -14,7 +14,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B2 | P1 | bug | `catchup.py build` advances WORK with no backup; a failed DB write can't be retried cleanly · **done** (v1.2.0) |
 | R1 | P1 | risk | Page imports aren't version-pinned, and a half-finished import has no documented recovery · **done** (v1.2.0) |
 | B6 | P2 | bug | Capture date parser: unknown label forms silently become "today"; year-less dates break at New Year |
-| B8 | P2 | bug | One malformed link in a message crashes the Messages tab render |
+| B8 | P2 | bug | One malformed link in a message crashes the Messages tab render · **done** (v1.2.2) |
 | B4 | P2 | bug | `catchup.py` accepts links to a parent in another conversation; the page then hides the link · **done** (v1.2.1) |
 | G1 | P2 | doc gap | `meta/chat` fields written by the page are missing from SKILL.md; `pageVersion` never updated on republish · **half done** (pageVersion, v1.2.0) |
 | G2 | P2 | doc gap | Page says Claude reads `views`, ideas and `qa`; SKILL.md never tells it to |
@@ -33,11 +33,11 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
-| B7 | P3 | bug | A mention of message #0 renders without its content |
-| B9 | P3 | bug | "Queued" confirmation says "and confirm" even with auto-posting on |
+| B7 | P3 | bug | A mention of message #0 renders without its content · **done** (v1.2.2) |
+| B9 | P3 | bug | "Queued" confirmation says "and confirm" even with auto-posting on · **done** (v1.2.2) |
 | B10 | P3 | bug | `make-zip.sh` only works when the repo folder is named `messenger-catchup` |
-| G4 | P3 | doc gap | Page text refers to a Refresh button that is hidden |
-| G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey |
+| G4 | P3 | doc gap | Page text refers to a Refresh button that is hidden · **done** (v1.2.2) |
+| G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) |
 | R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever |
@@ -102,17 +102,17 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Seen:** probe on Nov 6 (EXPERIMENTS.md §10). Whether real Messenger aria-labels ever use short forms is unknown. The mock only uses full names.
 - **Fix:** accept 3-letter months and weekdays; if the result is in the future, subtract a year; if nothing matched, report it in the capture summary instead of using today.
 
-### B7 · P3 · Mention of message #0 renders empty
+### B7 · P3 · Mention of message #0 renders empty · done (v1.2.2)
 - **Where:** `page.html:765`, `page.html:767` (`r[0]||r`); `page.html:596` uses `r[0]??r` correctly
 - **What:** mention refs are `[[i]]`. For `i = 0`, `r[0]||r` returns the array `[0]`, and the snippet shows only "#0".
 - **Fix:** use `??` as in the header.
 
-### B8 · P2 · One malformed link crashes the render
+### B8 · P2 · One malformed link crashes the render · done (v1.2.2)
 - **Where:** `page.html:837` (`msgRow`), and `page.html:639` (legacy v1 summary)
 - **What:** `new URL(u).hostname` is not guarded. A single bad entry in any message's `l` throws inside `renderMessages`, and the Messages tab (and the threads inside summary cards) render blank. The "Links shared" table already guards this (`page.html:786`).
 - **Fix:** wrap the call in try/catch as at line 786; optionally validate `l` in `importCore`.
 
-### B9 · P3 · Wrong confirmation text with auto-posting
+### B9 · P3 · Wrong confirmation text with auto-posting · done (v1.2.2)
 - **Where:** `page.html:680`
 - **What:** after "Queue reply", the status always says "Tell Claude “send” in chat (or wait for the next refresh) and confirm", even when `outboxAuto` is on and no confirmation will be asked. The page test also showed that this text only flashes: the outbox snapshot re-renders the row right away and replaces the composer with a "reply queued" chip, so the wrong wording is barely visible.
 - **Fix:** branch on `CFG().outboxAuto` like `applyCfg` does, or drop the text and rely on the chip.
@@ -193,11 +193,11 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **What:** the page tells the user to say “reply 3232” or “open #3232” to Claude. SKILL.md has the `jump{mid,reply}` command but no section for this request (look up `m` for that `i`, open the tab, start `jump`, report).
 - **Fix:** add a short "Open a message" section to SKILL.md.
 
-### G4 · P3 · Hidden Refresh button still mentioned
+### G4 · P3 · Hidden Refresh button still mentioned · done (v1.2.2)
 - **Where:** `page.html:295` ("…and again each time you press Refresh")
 - **What:** the button is hidden in the generic page (C1), so the sentence describes something the user can't see.
 
-### G5 · P3 · Helper install wording differs
+### G5 · P3 · Helper install wording differs · done (v1.2.2)
 - **Where:** `page.html:304-305` vs SKILL.md › Helper
 - **What:** the page's steps name only Violentmonkey; SKILL.md recommends Tampermonkey (both tested).
 
