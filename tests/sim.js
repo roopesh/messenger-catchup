@@ -183,6 +183,22 @@ function checkCap(cap, base, mockFrom, n, label) {
     });
   }
   ok(jumped, 'A: jump link scrolled back and highlighted #mock80');
+  // people: read-only scroll back reading avatars (the one-time name backfill)
+  await p.goto(URL);
+  await p.waitForTimeout(600);
+  const pp = await bridge(p, 'people', { count: 1000 });
+  const pairs = new Set(((pp && pp.people) || []).map(([s, f]) => s + '=' + f));
+  ok(
+    pp &&
+      !pp.err &&
+      pp.top &&
+      pp.seen > 100 &&
+      ['Ana=Ana Alvarez', 'Ben=Ben Brooks', 'Ben=Ben Ortiz', 'Cy=Cy Chen', 'Captain Cy=Cy Chen', 'Dee=Dee Diaz'].every(
+        x => pairs.has(x),
+      ) &&
+      ![...pairs].some(x => x.startsWith('You=')),
+    'A: people scans back to the top and maps shown names to full names (' + [...pairs].join(', ') + ')',
+  );
   // stale result guard: a new full() clears the old mc_result and tags the new one with its run id
   await p.goto(URL);
   await p.waitForTimeout(600);

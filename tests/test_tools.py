@@ -14,7 +14,7 @@ def read(*p):
         return fh.read()
 
 
-REFERENCES = ["database.md", "open-message.md", "outbox.md", "setup.md", "troubleshooting.md"]
+REFERENCES = ["database.md", "open-message.md", "outbox.md", "people.md", "setup.md", "troubleshooting.md"]
 SHIPPED = ["SKILL.md", "VERSION", "assets/page.html", "assets/helper.user.js", "scripts/catchup.py"] + [
     "references/" + f for f in REFERENCES
 ]
