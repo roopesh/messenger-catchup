@@ -12,7 +12,7 @@ Each person who runs this skill gets **their own page**, created in their own cl
 Files that ship with this skill (paths are relative to this SKILL.md; the skill's base directory is shown when it loads, otherwise run `find / -name helper.user.js -path '*messenger-catchup*' 2>/dev/null`):
 - `assets/page.html`: the page template (version in `PAGE_VERSION`).
 - `assets/helper.user.js`: the optional Messenger helper (userscript), also used as injectable code.
-- `scripts/cctool.py`: builds threading and summary JSON and checks every rule.
+- `scripts/catchup.py`: builds threading and summary JSON and checks every rule.
 
 ## Requirements: an online computer (tell the user this up front)
 
@@ -56,7 +56,7 @@ Tell the user in one line what's about to happen, then:
    - Refresh schedule (see Scheduling).
 4. **Seed the database** (one batch): `meta/chat` with the config above plus `lastI:-1`, `anchorMids:[]`, `markerMode:null`, `chunkSize:82`; `threading/current` `{convs:[],links:{},to:-1,note:""}`; `summary/current` `{version:2,convs:[],open:[],answered:[],deals:[],mentions:[],toI:-1}`; `photos/index` `{byI:{},gifs:[]}`; `refresh/status` `{state:"idle"}`.
 5. **First capture**: the refresh steps below with `first:{count:N}` instead of stops and base `-1`. The page accepts a first import only when it starts at #0.
-6. **First build**: write the seeded docs as JSON into a folder (`seed/meta/chat.json` with `lastI:-1`, `seed/threading/current.json`, `seed/summary/current.json`), run `python3 cctool.py bootstrap WORK seed`, then build as usual. Replies to messages from before the first window print `WARN reply parent not found`: leave those unlinked. On a first run, review GUESS lines only for the newest ~150 messages; older ones keep the default. After the batch write, set `markerMode:"time"` and `markerFrom` to the first message's local time ("YYYY-MM-DDTHH:MM") so the page shows everything captured.
+6. **First build**: write the seeded docs as JSON into a folder (`seed/meta/chat.json` with `lastI:-1`, `seed/threading/current.json`, `seed/summary/current.json`), run `python3 catchup.py bootstrap WORK seed`, then build as usual. Replies to messages from before the first window print `WARN reply parent not found`: leave those unlinked. On a first run, review GUESS lines only for the newest ~150 messages; older ones keep the default. After the batch write, set `markerMode:"time"` and `markerFrom` to the first message's local time ("YYYY-MM-DDTHH:MM") so the page shows everything captured.
 7. **Set up the schedule** (Scheduling), then report: page created, how many messages, what the summary found, and the requirements in two lines.
 
 ## Helper (optional, recommended)
@@ -74,7 +74,7 @@ let r;for(let k=0;k<50;k++){r=JSON.parse(sessionStorage.getItem('mc_res_ID')||'n
 - **Without the helper**, inject it on each step: Read `assets/helper.user.js` and pass its entire text to `javascript_tool` on the Messenger tab, followed by the bridge *start* call only (end the code with `'started'`; never wait inside the injecting call). The injected code is lost when the page reloads, so run the steps one at a time: inject + start `scan` (poll until done; require `err:null`), reload the tab (navigate to the chat URL), wait about 5 s, inject + start `verify` (poll), then start `capture{base}` in that same page (poll). Never paste only part of the file.
 
 ## Refresh steps
-Before each run: `ArtifactData get meta/chat` (and keep the versions). Work in a scratchpad folder WORK: if it doesn't exist in this session, fetch the database once (`list chunks` limit 1000 + `threading/current` + `summary/current` + `meta/chat` into one `out_dir`) and run `cctool.py bootstrap WORK DB`.
+Before each run: `ArtifactData get meta/chat` (and keep the versions). Work in a scratchpad folder WORK: if it doesn't exist in this session, fetch the database once (`list chunks` limit 1000 + `threading/current` + `summary/current` + `meta/chat` into one `out_dir`) and run `catchup.py bootstrap WORK DB`.
 1. `tabs_context_mcp`. Find the Messenger tab on the chat in Claude's tab group (if it's gone, open it again with `tabs_create_mcp`). If it's open on a different chat, the user is using it: don't take it over; skip and reschedule. Navigate it to `chatUrl`. Check `document.visibilityState==="visible"`; if hidden or unreachable, set `refresh/status` `{state:"error",message:"computer asleep or Messenger tab hidden"}`, say nothing during a scheduled run, and reschedule.
 2. Set `refresh/status` `{state:"running",startedAt,step:"scan",by:"refresh N"}`.
 3. Scan with `STOPS = reversed meta.anchorMids` and `BASE = meta.lastI` (helper: `full` with a fresh `run` id; no helper: the injected steps). Require the scan's `err` to be null and verify `ok:true`, `gap:0`, `prefixSame:true`. Messages that arrive during the run (`extra>0`) wait for the next run. If verify fails twice, stop, set the status to error and tell the user.
@@ -83,15 +83,15 @@ Before each run: `ArtifactData get meta/chat` (and keep the versions). Work in a
    - In the Messenger tab, click COPY CAPTURE (it's drawn at the top left; center about (146,44)) and confirm `#__copyst` reads "COPIED n chars". If it says COPY FAILED, Chrome blocked the clipboard: ask the user to allow clipboard access for facebook.com.
    - In the page tab, click an empty area of the page (not a text box), wait 2 s, click again, then paste (cmd+v on Mac, ctrl+v elsewhere). Wait 8–10 s.
    - A toast reads "IMPORT OK: n new messages, #a–#b (chunks …)". If there are no photos, paste once more: it should say "Nothing new". If there are photos and no toast appears, check `refresh/lastImport` before pasting again (never import twice blindly).
-5. Close the page tab and navigate the Messenger tab back to the chat (the capture blanked it). `get` the chunks named in the toast plus `meta/chat` (and `photos/index` if there are photos) into a RUN folder with `out_dir` (each file holds the bare document, which is what cctool reads). Note each document's `version` from the read results for the writes in step 7. Look at new photos (`Artifact read` with path = the blob id, one id per call, then Read the saved file).
-6. Write the spec (below), then run `python3 cctool.py build WORK RUN spec.json`. It prints `matched by quote …`, `CHECK photo-reply guess …`, `WARN …`, a `GUESS i -> p` line for each non-reply message, or `ROOT i` when the previous message in its conversation is over 3 h older.
+5. Close the page tab and navigate the Messenger tab back to the chat (the capture blanked it). `get` the chunks named in the toast plus `meta/chat` (and `photos/index` if there are photos) into a RUN folder with `out_dir` (each file holds the bare document, which is what catchup.py reads). Note each document's `version` from the read results for the writes in step 7. Look at new photos (`Artifact read` with path = the blob id, one id per call, then Read the saved file).
+6. Write the spec (below), then run `python3 catchup.py build WORK RUN spec.json`. It prints `matched by quote …`, `CHECK photo-reply guess …`, `WARN …`, a `GUESS i -> p` line for each non-reply message, or `ROOT i` when the previous message in its conversation is over 3 h older.
    - Replies to photos the reader couldn't click (`perr`) show up as CHECK. Many are obvious from context ("that bag" right after that person's photo); when not, click to confirm. Example: a reply to someone's screenshot of stats is not a reply to their latest photo.
    - CHECK or WARN on a recent message: confirm by clicking that message's "Go to replied message" in Messenger and reading which message gets focus, then set `links` and rebuild. If the build already advanced WORK, restore WORK from the previous base files first.
    - Review every GUESS by reading it in context. Override in `links` when wrong (use `null` for a message that starts a new topic and answers nothing): an answer to the conversation's opening question, a reply to a point made a few messages back, the same person continuing (`[own,'c']`), a reaction to a photo.
 7. One `batch` write, every entry pinned with the `if_version` you just read: `threading/current` and `summary/current` set from `RUN/out/*.json` (`file_path`); `meta/chat` update `{lastRefresh, coverage}`; `refresh/status` `{state:"done",finishedAt,added}`.
 8. Handle the outbox (below), then report in bullets: how many messages, the new conversations, deals, mentions of the user, open questions, and anything guessed.
 
-## Writing the spec (cctool enforces the structure)
+## Writing the spec (catchup.py enforces the structure)
 - `join`: every new message joins exactly one conversation. Keep conversations focused; split a busy thread into sub-topics. Never make a catch-all bucket.
 - `newconvs`: `{id,title,tag,outcome,key}`. Ids must be new (add a date suffix such as `gear1106`).
 - `bullets`: ≤15 words each, the people's own words where useful, `refs` = the messages covered. `outcome` ≤12 words.
@@ -129,5 +129,5 @@ Version 1.1 was tested on a simulated Messenger thread (first run, incremental r
 - The page says "data isn't loaded yet": wait a few seconds and paste again.
 - Chunk or checksum errors: nothing was saved; capture again.
 
-## cctool.py
-Ships as `scripts/cctool.py`. Usage: `python3 cctool.py bootstrap WORK DBDIR` then `python3 cctool.py build WORK RUNDIR SPEC`. SPEC keys: `join`, `links`, `newconvs`, `bullets`, `outcome`, `key`, `deals`, `dealEdit`, `open`, `closeOpen`, `answered`, `mentions`. It asserts: bullets ≤15 words, outcomes ≤12, each message in exactly one conversation, links point backwards, every reference belongs to its conversation, and the import updated `meta/chat`.
+## catchup.py
+Ships as `scripts/catchup.py`. Usage: `python3 catchup.py bootstrap WORK DBDIR` then `python3 catchup.py build WORK RUNDIR SPEC`. SPEC keys: `join`, `links`, `newconvs`, `bullets`, `outcome`, `key`, `deals`, `dealEdit`, `open`, `closeOpen`, `answered`, `mentions`. It asserts: bullets ≤15 words, outcomes ≤12, each message in exactly one conversation, links point backwards, every reference belongs to its conversation, and the import updated `meta/chat`.
