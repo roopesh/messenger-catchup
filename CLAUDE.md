@@ -21,6 +21,7 @@ The owner's standing rule. No exceptions for "small" changes, docs or tests.
   - Note either change in the changelog entry.
 
 ## Other rules
+- The repo is **public**. Never commit real names, nicknames or message text from anyone's chat (code, tests, docs, commit messages, PR bodies). Use the mock cast (Ana, Ben, Cy, Dee, You).
 - After editing `assets/helper.user.js`, run `npm run sync` (the page embeds copies; a test enforces it).
 - `SKILL.md` is what Claude executes for users. Treat edits to it as behavior changes.
 - Keep `docs/BACKLOG.md` current: close items in the PR that fixes them, and file anything new you find.

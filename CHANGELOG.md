@@ -2,6 +2,15 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.7.2] - 2026-11-07
+Repo and docs only.
+
+### Changed
+- **R8 closed:** the repo is public, and `main` has GitHub branch protection: PR required, `test` and `version-bump` checks required and up to date, linear history, no force-push or deletion, admins included. Audited first: no chat data in files, history, PR bodies, secrets or CI artifacts.
+- CLAUDE.md and STATUS.md: never commit real names or text from a chat; the workflow comment, STATUS and BACKLOG describe the new enforcement.
+
+Components: `PAGE_VERSION` 1.7, helper 1.4 (unchanged).
+
 ## [1.7.1] - 2026-11-07
 Docs only.
 
