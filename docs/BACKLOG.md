@@ -22,6 +22,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R2 | P2 | risk | Capture size is unbounded (photos travel inline as base64) |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
 | R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **mostly done** (no server-side block: plan) |
+| R9 | P3 | risk | Outbox name matching assumes Messenger's "Replying to …" and stored sender names agree; now prefix-tolerant, unverified live |
 | R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
@@ -48,6 +49,14 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B27 | P2 | bug | Step 7 marks the run done (releasing the lock) before step 8 posts replies in the Messenger tab · **done** (v1.6.0) |
 | B28 | P2 | bug | Re-paste after a failed upload could store a photo twice when a capture skipped a photo slot · **done** (v1.5.1) |
 | B29 | P3 | bug | "You replied to yourself" not recognized: such replies never linked · **done** (v1.5.1) |
+| B30 | P2 | bug | Step 7's lock write could replace `refresh/status`, dropping `startedAt`/`by` · **done** (v1.7.0) |
+| B31 | P2 | bug | Nothing-new path released the run lock before posting replies (B27 again) · **done** (v1.7.0) |
+| B32 | P2 | bug | Step 1 navigated the shared Messenger tab before step 2 took the lock · **done** (v1.7.0) |
+| B33 | P3 | bug | A retried step-7 write could overwrite another run's lock with "done" · **done** (v1.7.0) |
+| B34 | P3 | bug | `build` with a RUN holding no chunks gave a bare gap error · **done** (v1.7.0) |
+| B35 | P2 | bug | Unbuilt messages went unnoticed when WORK was reused in a session · **done** (v1.7.0) |
+| B36 | P3 | bug | `unconfirmed`/`failed` replies could never be resolved or dismissed · **done** (v1.7.0) |
+| B37 | P3 | bug | A page that can't upload said "paste again" with no end · **done** (v1.7.0) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -164,6 +173,9 @@ A fresh agent reviewed the code after the night's changes; B22 and B23 were conf
 - **B25:** the `sending` check says "look in Messenger", which only sees what's on screen, and nothing says what to do if the reply isn't found. Fix: check the saved chunks (`f:"You"`, `r` = `to`, `b` = text, after `queuedAt`); if it's not there, mark it `unconfirmed`, tell the user, never repost.
 - **B26:** step 2's pinned write can be refused when two sessions start together, and the "stopped early → set error" rule then overwrites the winner's `running`. Fix: on a refused step-2 write, re-read and skip quietly.
 - **B27:** step 7 writes `refresh/status` done before step 8 drives the Messenger tab, so another run can take the tab mid-post. Fix: keep `running` (step `outbox`) through step 8.
+
+### B30–B37 · third independent review (Nov 7, regressions since v1.4.1) · all done (v1.7.0)
+A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by running it. Most findings were about the run lock's rules interacting across paths. All are fixed in v1.7.0 (details in CHANGELOG.md). It also flagged an unverified risk, that Messenger may show first names where the chat shows full names; reply matching now tolerates that (R9).
 
 ## Risks
 
