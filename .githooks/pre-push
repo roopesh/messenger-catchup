@@ -1,0 +1,10 @@
+#!/bin/sh
+# Blocks pushing straight to main: every change goes through a PR (CLAUDE.md).
+# Installed by `npm run setup` (git config core.hooksPath .githooks). Tags and branches push normally.
+while read local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "pre-push: direct pushes to main are blocked. Push a branch and open a PR (see CLAUDE.md)." >&2
+    exit 1
+  fi
+done
+exit 0
