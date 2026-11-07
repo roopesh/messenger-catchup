@@ -30,6 +30,16 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F3 | P2 | feature | No way to correct a link on an already-built message |
 | F4 | P2 | feature | Self-check command to catch Messenger markup changes early |
 | B11 | P3 | bug | `catchup.py` ignores Messenger's reply link when the parent is message #0 · **done** (v1.2.1) |
+| B12 | P2 | bug | Capture took a follow-on message starting "X replied to…" / "You sent…" as a reply or as yours · **done** (v1.4.2) |
+| B13 | P2 | bug | `catchup.py` quote matching: short quotes match the wrong message silently (substring fallback, no minimum) |
+| B14 | P2 | bug | REPAIRED note names only the newest chunk; Claude's build then fails · **done** (v1.4.2) |
+| B15 | P1 | bug | SKILL.md refresh: pins versions it never reads, reuses a stale WORK, conflict recovery rebuilds from a stale base, never checks the run lock |
+| B16 | P2 | bug | Outbox: can reply to the wrong message ("found it (hover…)" path) or post twice (late confirmation marked failed) |
+| B17 | P2 | bug | Photos: a failed upload leaves landed photos unindexed; GIF-only captures never recorded · **done** (v1.4.2) |
+| B18 | P2 | bug | `catchup.py` doesn't validate deal refs, mention refs, `closeOpen`, duplicate open questions |
+| B19 | P2 | bug | SKILL.md has no "nothing new" path (empty capture → build fails); a scan error leaves the status "running" |
+| B20 | P3 | bug | Page never releases its import lease (other tabs wait 2 min) · **done** (v1.4.2) |
+| B21 | P1 | bug | `bootstrap` assumes every stored message is threaded: an import whose build never ran breaks every later build |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -128,6 +138,18 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Where:** `make-zip.sh:4-6`
 - **What:** it `cd`s to the parent folder and zips `messenger-catchup/…`, so a clone under any other name fails, and the ZIP lands outside the repo (the `*.zip` entry in `.gitignore` never applies).
 - **Fix:** stage into a temp dir named `messenger-catchup/` and write the ZIP into the repo (or `dist/`).
+
+### B12–B21 · found by an independent review of v1.4.1 (Nov 7)
+A fresh agent with no context read the code and the procedure (B12–B20; B12 and B13 confirmed by running them). B21 turned up while tracing B15. Details are in CHANGELOG.md for the fixed ones. Open ones:
+- **B13:** `resolve()` takes a prefix match, else *any substring*, with no minimum length. A quote "ok" matches "it l**ok**s great"; "Yes" matches the latest "Yes…". It's stored as `rq` and printed as "matched by quote", which SKILL.md doesn't ask Claude to review. Fix: prefix only; quotes under 12 characters must equal the message and print as CHECK.
+- **B15:** step 7 pins `threading/current`, `summary/current` and `refresh/status` "with the version you just read", but no step reads them. WORK is reused even when another session moved the database on. `refresh/status` is called a lock, but nothing checks it. Fix: read them in step 5; re-bootstrap when WORK is behind; skip a run while another is recent.
+- **B16:**
+  - the helper can end at "found it (hover it and click Reply)", which the Outbox steps don't handle; a reply box left open from before passes the checks and posts to the wrong message
+  - a confirmation that comes late marks a sent reply `failed`, and the user queues it again
+  - Fix: anything but "reply box is ready" is a failure; check the reply bar quotes `snip`; leave an unconfirmed send in `sending`.
+- **B18:** deal refs (empty or out of the conversation), mention refs (missing, or "You"), `closeOpen` that matches nothing, and an open question listed twice are all accepted. A deal with no refs never shows, and `dealEdit` on it raises `KeyError`.
+- **B19:** step 3 notes `win:0` but doesn't skip the rest; without the helper an empty capture reaches `build`, which fails. A scan error never resets `refresh/status`.
+- **B21:** `bootstrap` sets WORK's base to the last *stored* message. If a run imported and then died before building, those messages are in no conversation, and every later build fails "message in 0 conversations". Fix: base = `threading/current.to`; the next RUN must carry #to+1 onward.
 
 ## Risks
 

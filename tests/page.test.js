@@ -38,7 +38,7 @@ function runtime(seed){
     get:async()=>{let docs=collSnap(c).docs;if(ord)docs=docs.slice().sort((a,b)=>{const x=a.data()[ord.f],y=b.data()[ord.f];return (x<y?-1:x>y?1:0)*(ord.d==='desc'?-1:1);});if(lim)docs=docs.slice(0,lim);return {docs,size:docs.length,empty:!docs.length};},
     onSnapshot:cb=>{sub('c:'+c,cb);setTimeout(()=>cb(collSnap(c)),0);return ()=>{};}});
   const collection=c=>Object.assign(query(c),{doc:id=>doc(c+'/'+id),add:async o=>{const id='a'+(++auto);await doc(c+'/'+id).set(o);return {id};}});
-  const assets={upload:async(blob,o)=>{const id='blob'+(uploads.length+1);uploads.push({id,size:blob.size,type:o.type});return {id,sizeBytes:blob.size,contentType:o.type};}};
+  const assets={upload:async(blob,o)=>{if(window.__failUploadAt===uploads.length){window.__failUploadAt=null;throw Object.assign(new Error('injected upload failure'),{code:'unavailable'});}const id='blob'+(uploads.length+1);uploads.push({id,size:blob.size,type:o.type});return {id,sizeBytes:blob.size,contentType:o.type};}};
   async function sample(msgs,o){samples.push(msgs);const text='Ben offered one [#1]. Ana asked [#0, #2].';if(o&&o.onText)o.onText({text});return {text};}
   sample.json=async prompt=>{samples.push(prompt);return {title:'By person',intro:'Grouped by who posted.',sections:[{heading:'Ben',tag:'open',summary:'Sells things [#1].',refs:[1]}]};};
   Object.entries(seed||{}).forEach(([p,v])=>store.set(p,clone(v)));
@@ -156,7 +156,22 @@ async function robustness(){
   ok(await p.evaluate(()=>!document.querySelector('#cov').textContent.includes('#91')),'stale snapshot set up: the page still shows the old end');
   r=await paste(p,JSON.stringify(cap(range(90,93))));const c82=await get(p,'chunks/c0082');
   ok(r&&r.ok&&r.fresh===2&&(await get(p,'meta/chat')).lastI===93&&c82.msgs.map(x=>x.i).join()===range(82,93).map(x=>x.i).join(),'stale snapshot: fresh reads used, overlap checked against the store, #92–#93 appended with nothing lost');
+  ok(await p.evaluate(()=>{const l=__rt.leases.get('refresh/importLock');return l&&l.exp-Date.now()<=1100;}),'the import lease is let go after an import (1 s left), so another tab needn\'t wait 2 minutes');
   ok(p.errors.length===0,'robustness: no page errors '+JSON.stringify(p.errors));
+  await p.context().close();
+  // B14: a repaired range spanning several chunks names all of them
+  p=await open(SEED());await p.evaluate(()=>__rt.fails.push({p:'meta/chat',op:'update'}));
+  r=await paste(p,JSON.stringify(cap(range(0,199))));ok(r&&!r.ok&&(await get(p,'chunks/c0164'))&&(await get(p,'meta/chat')).lastI===-1,'big first import stopped before meta/chat: c0000, c0082, c0164 saved');
+  r=await paste(p,JSON.stringify(cap(range(0,199))));
+  ok(r&&r.ok&&/^REPAIRED: #0–#199 \(chunks c0000, c0082, c0164\)/.test(r.msg)&&JSON.stringify(r.chunks)==='["c0000","c0082","c0164"]','repair over 3 chunks names every chunk Claude must fetch ('+(r&&r.msg.slice(0,60))+')');
+  // B17: GIFs recorded without photos; a failed upload keeps what landed, and a re-paste finishes without duplicates
+  r=await paste(p,JSON.stringify(cap(range(200,202),{gifs:[201]})));ok(r&&r.ok&&JSON.stringify((await get(p,'photos/index')).gifs)==='[201]','a capture with GIFs and no photos records the GIFs');
+  const P3=[203,204,205].map(i=>({i,k:0,type:'image/png',b64:PNG}));await p.evaluate(()=>{window.__failUploadAt=__rt.uploads.length+1;});
+  r=await paste(p,JSON.stringify(cap(range(203,205),{photos:P3})));let ix=(await get(p,'photos/index')).byI;
+  ok(r&&r.fresh===3&&/1 photo stored\. Photos: upload failed at #204 .*paste again/.test(r.msg)&&ix['203']&&!ix['204'],'upload fails at the 2nd photo: messages saved, the 1st photo indexed, told to paste again ('+(r&&r.msg.slice(-90))+')');
+  const n0=await p.evaluate(()=>__rt.uploads.length);r=await paste(p,JSON.stringify(cap(range(203,205),{photos:P3})));ix=(await get(p,'photos/index')).byI;
+  ok(r&&r.ok&&/2 photos stored \(1 already stored\)/.test(r.msg)&&ix['204']&&ix['205']&&await p.evaluate(()=>__rt.uploads.length)-n0===2,'paste again: only the 2 missing photos upload, all 3 indexed');
+  ok(p.errors.length===0,'photos/repair: no page errors '+JSON.stringify(p.errors));
   await p.context().close();
   // a runtime without acquire() still imports (older contract)
   p=await open(Object.assign(SEED(),{__opts:{noAcquire:true}}));
