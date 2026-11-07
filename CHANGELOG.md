@@ -2,6 +2,23 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.4.2] - 2026-11-07
+Fixes from an independent review of v1.4.1 (BACKLOG B12–B21; the rest follow in 1.5.0). Pages republish on their next refresh (`PAGE_VERSION` 1.5), and Claude reports the helper update (1.3).
+
+### Fixed
+- **B12, capture sender:** a follow-on message (no name line) whose text began "Mike replied to …" was captured as a reply *from Mike* with its text lost. One beginning "You sent …" was captured as *your* message, which broke mentions and "since your last message". "Replied to" is now trusted only on real replies, and "You sent" only as Messenger's own status lines.
+- **B14, repairs:** the REPAIRED note now names every chunk the repaired range spans. A big first import that stopped early named only the last chunk, and the build then failed.
+- **B17, photos:**
+  - when one upload failed, the photos that did upload weren't indexed
+  - a capture with GIFs but no photos never recorded the GIFs
+  - now uploads that land are indexed, a re-paste skips stored photos (no duplicates), and GIFs are always recorded
+- **B20, lease:** the page now lets its import lease go after each import, instead of holding it for 2 minutes.
+
+### Tests
+- The mock gains the two follow-on messages. The page suite gains a 3-chunk repair, a GIF-only capture, an upload failing partway then a re-paste, and the lease release. All of these fail against the v1.4.1 helper and page.
+
+Components: **`PAGE_VERSION` 1.5** (was 1.4), **helper 1.3** (was 1.2).
+
 ## [1.4.1] - 2026-11-07
 Tooling only.
 

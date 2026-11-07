@@ -11,6 +11,8 @@ function txt(i){return 'Message number '+i+' about trail shoes and packs';}
 function spec(i){const f=NAMES[i%5];const tm=new Date(2026,10,6,9,0+i);let h=tm.getHours()%12||12;const t=h+':'+String(tm.getMinutes()).padStart(2,'0')+' '+(tm.getHours()<12?'AM':'PM');
   /* label forms: full date, short month (5-6), year-less date (8), unreadable (9), weekday, short weekday (15-16), Yesterday, time only */
   const tl=i===8?('December 28 '+t):i===9?('Someday '+t):(i===5||i===6)?('Oct 13, 2025 '+t):i<10?('October 12, 2025 '+t):(i===15||i===16)?('Thu '+t):(i<20?('Thursday '+t):(i<25?('Yesterday '+t):t));const o={i,id:'mid.$mock'+i,f,t:tl,b:txt(i)};
+  if(i===26){o.follow=true;o.b='Mike replied to my email yesterday';}   /* follow-on messages (no name line) whose text looks like a status line */
+  if(i===29){o.follow=true;o.b='You sent the wrong link btw';}
   if(i===100){o.photo=true;o.b='';}
   if(i===103){o.reply=100;o.photoReply=true;o.b='nice pack';}
   else if(i%7===0&&i>3){o.reply=i-3;}
@@ -20,7 +22,7 @@ function el(o){const d=document.createElement('div');d.className='m';d.tabIndex=
   d.setAttribute('aria-label','At '+o.t+', '+who+': '+(o.b||''));
   let lines=[];
   if(p){lines.push(who+' replied to '+(p.f==='You'?'you':p.f));lines.push('Original message:');lines.push(o.photoReply?'Photo':(p.b.length>30?p.b.slice(0,30)+'…':p.b));}
-  else if(who!=='You')lines.push(who);
+  else if(who!=='You'&&!o.follow)lines.push(who);
   if(o.b)lines.push(o.b);
   const t=document.createElement('div');t.innerText=lines.join('\n');d.append(t);
   if(o.photo){const a=document.createElement('a');a.href='https://www.facebook.com/messenger_media/?attachment_id=9100'+o.i+'&message_id='+encodeURIComponent(o.id);const im=document.createElement('img');im.src='/mock/fbcdn/p'+o.i+'.jpg';a.append(im);d.append(a);}
