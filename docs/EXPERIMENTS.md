@@ -106,8 +106,8 @@ A refresh of 183 messages took about 17 min:
 |---|---|---|---|
 | 1 | No-helper scan can't finish: one call waits 70 s and loses the id | Fixed: start with your own id, poll in calls ≤ 25 s | SKILL.md "Helper" |
 | 2 | Stale `mc_result` can fake a finished capture | Fixed: `full()` clears it; results carry a `run` id | helper `full()` |
-| 3 | Stale `__mcsave` can import duplicates | Fixed: scan clears it; SKILL requires `err:null` | helper `paScan` |
-| 4 | `patool` crashes on dates older than a week | Fixed: `_min` takes the date from `d` and the time by regex | `patool._min` |
+| 3 | Stale `__mcsave` can import duplicates | Fixed: scan clears it; SKILL requires `err:null` | helper `mcScan` |
+| 4 | `patool` crashes on dates older than a week | Fixed: `_min` takes the date from `d` and the time by regex | `catchup._min` |
 | 5 | Claude may not see a tab the user opened | Fixed: Claude opens the chat tab itself (`tabs_create_mcp`) | SKILL.md setup step 1 |
 | 6 | Posting a reply was underspecified; double-post risk | Fixed: box selector, wait for "reply box is ready", `sending` state checked before re-posting | SKILL.md "Outbox" |
 | 7 | Scheduled-task option had `requires_local_device:false`; prompt incomplete; overnight chain could die | Fixed: `true`; full prompt; next run at start of the hours window | SKILL.md "Scheduling" |
@@ -149,3 +149,32 @@ us = html.unescape(re.search(r'<textarea id="jump-us"[^>]*>(.*?)</textarea>', p,
 print(us == open('assets/helper.user.js').read())
 ```
 
+## 11. Rename and test build-out (Nov 6, late evening)
+- **Rename:** `patool.py` → `catchup.py`, `paScan`/`paVerify`/`paCapture` → `mcScan`/`mcVerify`/`mcCapture`, `pa-capture` no longer accepted, chat-specific palette comment removed. Before the helper was touched, `tools/sync-helper.py --check` confirmed the new sync tool regenerates the existing page copies byte for byte. After the rename, the page copies were regenerated with it.
+- **Suites** (`npm test`, from an empty `tests/out/`):
+
+| Suite | Result |
+|---|---|
+| Python (`test_catchup.py`, `test_tools.py`) | 49 run: 43 pass, 6 expected failures (B1–B5, B11) |
+| Sim (`sim.js`) | 37/37 (35 before, plus the new "message deleted mid-run" case) |
+| Page (`page.test.js`) | 79/79, plus 3 KNOWN (B7, B8, B9) |
+
+- **Each known-bug test fails for its stated reason**, checked one by one with the marker removed: B1 note `''`; B2 bare `AssertionError: []`; B3 `IndexError`; B4 no WARN; B5 reply linked `[0,'i']`; B11 linked to #1 instead of #0; B7 snippet without text; B8 2 page errors and no rows; B9 "and confirm" with auto-posting on.
+- **Mutation check:** deliberately break the code, run the relevant suite, restore.
+
+| Break | Suite | Caught |
+|---|---|---|
+| One helper call left as `paScan`, page copy not resynced | Python | ✓ |
+| Same, resynced | Sim | ✓ |
+| SKILL.md still names `scripts/patool.py` | Python | ✓ |
+| Page accepts `pa-capture` instead of `mc-capture` | Page | ✓ |
+| Bullet limit loosened from 15 to 16 words | Python | ✓ |
+| `c` and `i` link types swapped | Python | ✓ |
+| Importer stops updating `ownLastI` | Page | ✓ |
+| `make-zip.sh` drops `scripts/` | Python | ✓ |
+| Verify ignores a changed window (`prefixSame` dropped) | Sim | ✗ at first → ✓ after adding test A5 |
+
+- **Found while writing the tests:**
+  - **B11 (new):** `catchup.py` ignores Messenger's own reply link when the parent is message #0, because `pi = 0` is falsy.
+  - **B9 refined:** the "Queued…" text only flashes; the outbox snapshot re-renders the row into a "reply queued" chip.
+  - Two first-run failures were test mistakes, both worth knowing (LEARNINGS.md › Testing): a summary bullet citing the deal's message is hidden by design, and one marker click produces two renders (local, then the database snapshot).

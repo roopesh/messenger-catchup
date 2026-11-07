@@ -43,6 +43,12 @@ function checkCap(cap,base,mockFrom,n,label){
  r=await bridge(p,'full',{stops:['mid.$mock126','mid.$mock125','mid.$mock124'],base:56,run:'runZ'});
  ok(stale&&stale.stage==='captured'&&r.stage==='scan'&&r.win===0&&!r.err,'A3: old captured result present; full() with nothing new reports stage scan, win 0 (nothing new), not the old capture');
  const after=await p.evaluate(()=>JSON.parse(sessionStorage.getItem('mc_result')||'null'));ok(after&&after.run==='runZ'&&after.stage==='scan','A3: mc_result now belongs to runZ ('+(after&&after.stage)+')');
+ // window changes between scan and verify (a message deleted mid-run): the two passes disagree, nothing is captured
+ await p.evaluate(()=>window.addMsgs(3));
+ r=await bridge(p,'full',{stops:['mid.$mock126','mid.$mock125','mid.$mock124'],base:56,run:'runD'});ok(r.stage==='reloading'&&r.scan.win===3,'A5: scan found 3 new');
+ await p.evaluate(()=>localStorage.setItem('mock_skip','[128]'));
+ await p.waitForLoadState('load');res=await pollResult(p);
+ ok(res&&res.run==='runD'&&res.stage==='verify-failed'&&!res.capture&&res.verify&&!res.verify.prefixSame&&res.verify.mode==='slow','A5: message gone after the scan: verify-failed after the slow retry, no capture ('+(res&&res.stage)+')');
  // short chat: 30 messages total, first run asks for 50 -> all 30, none dropped; old label forms parse
  await p.goto(URL);await p.evaluate(()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('mock_total','30');});await p.goto('about:blank');await p.goto(URL);await p.waitForTimeout(800);
  r=await bridge(p,'full',{first:{count:50},base:-1,run:'runS'});ok(r.stage==='reloading'&&r.scan.win===30,'A4 short chat: scan took all 30 (anchor = top of chat)');

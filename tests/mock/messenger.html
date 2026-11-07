@@ -6,6 +6,7 @@
    English labels like the real UI ("X replied to Y", "Original message:", aria-label "At 5:52 PM, Name: text"). */
 const NAMES=['Ana','Ben','You','Cy','Dee'];
 const total=()=>+(localStorage.getItem('mock_total')||120);
+const skip=()=>new Set(JSON.parse(localStorage.getItem('mock_skip')||'[]'));/* message numbers treated as deleted */
 function txt(i){return 'Message number '+i+' about trail shoes and packs';}
 function spec(i){const f=NAMES[i%5];const tm=new Date(2026,10,6,9,0+i);let h=tm.getHours()%12||12;const t=h+':'+String(tm.getMinutes()).padStart(2,'0')+' '+(tm.getHours()<12?'AM':'PM');
   const tl=i<10?('October 12, 2025 '+t):(i<20?('Thursday '+t):(i<25?('Yesterday '+t):t));const o={i,id:'mid.$mock'+i,f,t:tl,b:txt(i)};
@@ -25,8 +26,8 @@ function el(o){const d=document.createElement('div');d.className='m';d.tabIndex=
   if(p){const g=document.createElement('div');g.setAttribute('aria-label','Go to replied message');g.textContent='↩';g.onclick=()=>{const e=document.querySelector('[data-message-id="'+CSS.escape(p.id)+'"]');if(e)e.focus();};d.append(g);}
   return d;}
 const sc=document.getElementById('sc');let lo;
-function render(){sc.innerHTML='';const n=total();lo=Math.max(0,n-25);for(let i=lo;i<n;i++)sc.append(el(spec(i)));sc.scrollTop=sc.scrollHeight;}
+function render(){sc.innerHTML='';const n=total(),sk=skip();lo=Math.max(0,n-25);for(let i=lo;i<n;i++)if(!sk.has(i))sc.append(el(spec(i)));sc.scrollTop=sc.scrollHeight;}
 render();
-let loading=false;sc.addEventListener('scroll',()=>{if(sc.scrollTop<40&&lo>0&&!loading){loading=true;setTimeout(()=>{const h0=sc.scrollHeight;const nlo=Math.max(0,lo-20);const frag=document.createDocumentFragment();for(let i=nlo;i<lo;i++)frag.append(el(spec(i)));sc.prepend(frag);lo=nlo;sc.scrollTop+=sc.scrollHeight-h0;loading=false;},250);}});
+let loading=false;sc.addEventListener('scroll',()=>{if(sc.scrollTop<40&&lo>0&&!loading){loading=true;setTimeout(()=>{const h0=sc.scrollHeight;const nlo=Math.max(0,lo-20);const frag=document.createDocumentFragment();const sk=skip();for(let i=nlo;i<lo;i++)if(!sk.has(i))frag.append(el(spec(i)));sc.prepend(frag);lo=nlo;sc.scrollTop+=sc.scrollHeight-h0;loading=false;},250);}});
 window.addMsgs=n=>{const a=total();localStorage.setItem('mock_total',a+n);for(let i=a;i<a+n;i++)sc.append(el(spec(i)));};
 </script></body></html>

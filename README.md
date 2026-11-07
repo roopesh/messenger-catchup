@@ -23,9 +23,10 @@ A Claude skill that keeps a private **catch-up page** for one Facebook Messenger
 | `SKILL.md` | Instructions Claude follows (setup, refresh, outbox, scheduling) |
 | `assets/page.html` | The catch-up page template (settings come from the page's database) |
 | `assets/helper.user.js` | Optional userscript; also injectable |
-| `scripts/patool.py` | Builds threading and summary JSON and checks every rule |
-| `tests/` | Simulated Messenger thread + Playwright tests for the reader (`run.js` serves the mock and runs `sim.js`) |
-| `package.json` | Test tooling only (Playwright); not part of the skill ZIP |
+| `scripts/catchup.py` | Builds threading and summary JSON and checks every rule |
+| `tests/` | Python tests for `catchup.py` and the repo; Playwright tests for the helper (simulated Messenger) and the page |
+| `tools/sync-helper.py` | Copies the helper into the page (`npm run sync`); dev only |
+| `package.json` | Test tooling (Playwright); not part of the skill ZIP |
 
 ## Tests
 ```
@@ -33,7 +34,7 @@ npm install        # once: Playwright
 npm run setup      # once: Playwright's Chromium
 npm test
 ```
-35 checks: first run, incremental runs, messages arriving mid-run, photo replies, a chat shorter than the first-run count, older date labels, stale results, jump links, with and without the helper. `tests/run.js` serves the simulated Messenger on a free local port, so nothing else needs to be running.
+Three suites, about 3 minutes: Python tests for `catchup.py` and the repo (helper copies in sync, ZIP contents, SKILL.md references); the helper on a simulated Messenger; and the page in Chromium with a stand-in claude.ai runtime, including the full capture → import → build → render pipeline. Known bugs from [docs/BACKLOG.md](docs/BACKLOG.md) are tests that are expected to fail until fixed. Details in [docs/STATUS.md](docs/STATUS.md).
 
 ## Development docs
 - [docs/STATUS.md](docs/STATUS.md): **start here**: current state, how to test, change and release

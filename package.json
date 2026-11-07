@@ -4,7 +4,11 @@
   "description": "Dev tooling for the Messenger Catch-up skill (tests only; the skill itself ships via make-zip.sh)",
   "scripts": {
     "setup": "playwright install chromium",
-    "test": "node tests/run.js"
+    "test": "npm run test:py && npm run test:sim && npm run test:page",
+    "test:py": "python3 -W ignore::ResourceWarning -m unittest discover -s tests",
+    "test:sim": "node tests/run.js",
+    "test:page": "node tests/page.test.js",
+    "sync": "python3 tools/sync-helper.py"
   },
   "devDependencies": {
     "playwright": "1.65.0"

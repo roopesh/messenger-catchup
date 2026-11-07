@@ -32,7 +32,7 @@ Platform limits, gotchas, and what was changed because of them.
 - **Guard against double install:** `window.__mcHelper` or `data-mc-helper`.
 - **The old and new helpers can run side by side** because their names differ (`pa-*` vs `mc-*`).
 
-## Build tool (`patool.py`)
+## Build tool (`catchup.py`)
 - **Asserts catch mistakes before any write:** bullet and outcome length, every message in one conversation, backward links, a meta check first.
 - **Conversation ID collisions** came up as topics recurred. Use date suffixes (e.g. `weather1106`).
 - **Running `build` twice** fails the second assert harmlessly (a bare `AssertionError: []`). `build` advances WORK as soon as it succeeds and keeps no backup, so copy WORK yourself before a build you may need to redo, or re-run `bootstrap` from a fresh database fetch (BACKLOG B2).
@@ -50,6 +50,13 @@ Platform limits, gotchas, and what was changed because of them.
 ## Keeping copies in sync
 - **The helper exists three times:** the file, an HTML-escaped copy inside the page (for "Copy userscript"), and its `jump()` as a URL-encoded bookmarklet. An edit to one must be carried to the others by hand (BACKLOG C2; check in EXPERIMENTS.md §10).
 - **The page writes `meta/chat` too** (import counters, marker choice), not only Claude. Read it fresh before every write and pin the write.
+
+## Testing
+- **The page can be tested without claude.ai:** give it a stand-in `window.claude.use()` before its script runs (`tests/page.test.js`). The page only needs `db.doc/collection` with `get`, `set`, `update`, `add` and `onSnapshot`, plus `assets.upload` and `sample`.
+- **Every page write renders twice:** once locally, then again when the database snapshot comes back. Wait for the second render before grabbing elements, or the handle goes stale.
+- **Bullets that repeat a call-out are hidden on purpose:** a summary bullet citing the message an open question, answer or deal already shows doesn't appear in the card.
+- **`0` is a real message number:** checks like `if m.get('pi')` or `r[0]||r` treat #0 as missing (B7, B11). Compare with `None`/`null` instead.
+- **Break things to test the tests:** a mutation pass found a missing test for verify's main guarantee (two passes must agree); see EXPERIMENTS.md §11.
 
 ## Open issues
 All open issues now live in [BACKLOG.md](BACKLOG.md). The long-standing ones:
