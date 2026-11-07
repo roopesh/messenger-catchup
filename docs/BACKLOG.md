@@ -31,15 +31,15 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F4 | P2 | feature | Self-check command to catch Messenger markup changes early |
 | B11 | P3 | bug | `catchup.py` ignores Messenger's reply link when the parent is message #0 · **done** (v1.2.1) |
 | B12 | P2 | bug | Capture took a follow-on message starting "X replied to…" / "You sent…" as a reply or as yours · **done** (v1.4.2) |
-| B13 | P2 | bug | `catchup.py` quote matching: short quotes match the wrong message silently (substring fallback, no minimum) |
+| B13 | P2 | bug | `catchup.py` quote matching: short quotes match the wrong message silently (substring fallback, no minimum) · **done** (v1.5.0) |
 | B14 | P2 | bug | REPAIRED note names only the newest chunk; Claude's build then fails · **done** (v1.4.2) |
-| B15 | P1 | bug | SKILL.md refresh: pins versions it never reads, reuses a stale WORK, conflict recovery rebuilds from a stale base, never checks the run lock |
-| B16 | P2 | bug | Outbox: can reply to the wrong message ("found it (hover…)" path) or post twice (late confirmation marked failed) |
+| B15 | P1 | bug | SKILL.md refresh: pins versions it never reads, reuses a stale WORK, conflict recovery rebuilds from a stale base, never checks the run lock · **done** (v1.5.0) |
+| B16 | P2 | bug | Outbox: can reply to the wrong message ("found it (hover…)" path) or post twice (late confirmation marked failed) · **done** (v1.5.0) |
 | B17 | P2 | bug | Photos: a failed upload leaves landed photos unindexed; GIF-only captures never recorded · **done** (v1.4.2) |
-| B18 | P2 | bug | `catchup.py` doesn't validate deal refs, mention refs, `closeOpen`, duplicate open questions |
-| B19 | P2 | bug | SKILL.md has no "nothing new" path (empty capture → build fails); a scan error leaves the status "running" |
+| B18 | P2 | bug | `catchup.py` doesn't validate deal refs, mention refs, `closeOpen`, duplicate open questions · **done** (v1.5.0) |
+| B19 | P2 | bug | SKILL.md has no "nothing new" path (empty capture → build fails); a scan error leaves the status "running" · **done** (v1.5.0) |
 | B20 | P3 | bug | Page never releases its import lease (other tabs wait 2 min) · **done** (v1.4.2) |
-| B21 | P1 | bug | `bootstrap` assumes every stored message is threaded: an import whose build never ran breaks every later build |
+| B21 | P1 | bug | `bootstrap` assumes every stored message is threaded: an import whose build never ran breaks every later build · **done** (v1.5.0) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -139,8 +139,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **What:** it `cd`s to the parent folder and zips `messenger-catchup/…`, so a clone under any other name fails, and the ZIP lands outside the repo (the `*.zip` entry in `.gitignore` never applies).
 - **Fix:** stage into a temp dir named `messenger-catchup/` and write the ZIP into the repo (or `dist/`).
 
-### B12–B21 · found by an independent review of v1.4.1 (Nov 7)
-A fresh agent with no context read the code and the procedure (B12–B20; B12 and B13 confirmed by running them). B21 turned up while tracing B15. Details are in CHANGELOG.md for the fixed ones. Open ones:
+### B12–B21 · found by an independent review of v1.4.1 (Nov 7) · all done (v1.4.2, v1.5.0)
+A fresh agent with no context read the code and the procedure (B12–B20; B12 and B13 confirmed by running them). B21 turned up while tracing B15. All fixed: B12, B14, B17, B20 in v1.4.2 and the rest in v1.5.0 (details in CHANGELOG.md). What each one was:
 - **B13:** `resolve()` takes a prefix match, else *any substring*, with no minimum length. A quote "ok" matches "it l**ok**s great"; "Yes" matches the latest "Yes…". It's stored as `rq` and printed as "matched by quote", which SKILL.md doesn't ask Claude to review. Fix: prefix only; quotes under 12 characters must equal the message and print as CHECK.
 - **B15:** step 7 pins `threading/current`, `summary/current` and `refresh/status` "with the version you just read", but no step reads them. WORK is reused even when another session moved the database on. `refresh/status` is called a lock, but nothing checks it. Fix: read them in step 5; re-bootstrap when WORK is behind; skip a run while another is recent.
 - **B16:**
