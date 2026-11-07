@@ -101,6 +101,22 @@ Related docs:
 - **Mutation check:** 9 deliberate breaks, all caught (one only after adding the missing test).
 - **Found:** B11 (a reply link to #0 is ignored).
 
+## Phase 9: overnight defect run (Nov 6–7)
+- **Goal:** clear the defect backlog and keep checking, with every change as its own versioned PR and release.
+- **Process:** v1.1.2 added CI and a push guard, and `tools/release.sh` made each release one command.
+- **Releases:** v1.2.0 → v1.7.1, 12 in all. Each one: its own PR, CI green, squash-merged, tagged, released with its ZIP.
+- **Cleared:** the original backlog: B1–B11, G1–G5, R1, R7, C2, C3, C5, C6, T1–T5.
+- **Three independent reviews** (fresh agents, given the code but not the reasoning) found 26 more: B12–B37.
+  - Round 2 caught two bugs created by round 1's fixes.
+  - Round 3 targeted regressions since v1.4.1, mostly how the run-lock rules combined.
+  - All are fixed, each with a test shown to fail on the code before it.
+- **Guards added along the way, so mistakes like these can't recur:**
+  - `PAGE_VERSION` must rise when the page changes
+  - SKILL.md must document every db path, `meta/chat` field and outbox state the page uses
+  - the helper's version strings must agree
+  - the page's helper copies must match `helper.user.js`
+- **Left:** risks that need the real Messenger (R2, R3, R5, R6, R9), cleanup (C1, C4) and features (F1–F6).
+
 ## Version map
 | Thing | Versions |
 |---|---|
@@ -109,4 +125,4 @@ Related docs:
 | Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) |
 | Skill | user-specific `packaholics-catchup` → generic `messenger-catchup` v1.1 |
 | Build tool | `patool.py` → `catchup.py` (Phase 8, same commands and behavior) |
-| Release (`VERSION`) | v1.1.0 (tagged retroactively at `c3186da`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2). From here on, see CHANGELOG.md |
+| Release (`VERSION`) | v1.1.0 (tagged retroactively at `c3186da`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2) → … → v1.7.1 (Phase 9). From here on, see CHANGELOG.md |
