@@ -27,6 +27,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - run: npm run setup:py   # pinned ruff for the format check
       - run: npx playwright install --with-deps chromium
       - run: npm test
       - if: failure()

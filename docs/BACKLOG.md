@@ -70,15 +70,18 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
 | C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) · **done** (v1.7.3; range summaries kept, they're live) |
 | C3 | P3 | cleanup | Leftover `cc*` names and chat-specific comments · **done** |
-| C4 | P3 | cleanup | Minified one-line style in helper and page |
+| C4 | P3 | cleanup | Minified one-line style in helper and page · **done** (v1.7.4: Prettier + Ruff, enforced) |
 | C5 | P3 | cleanup | `catchup._ts` shells out to `date` · **done** (v1.2.1) |
 | C6 | P3 | cleanup | `catchup.py` opens files without closing them · **done** (v1.2.1) |
+| C7 | P2 | cleanup | `SKILL.md` (31 KB) is read on every refresh; move setup, troubleshooting, outbox and db reference to on-demand references |
 | T4 | P3 | test | Sim doesn't cover other date-label forms · **done** (v1.3.0) |
 | T5 | P3 | test | No CI · **done** |
 | F1 | P3 | feature | More than one chat per page |
 | F2 | P3 | feature | Faster distant photo-reply parents |
 | F5 | P3 | feature | Page shows "update available" when its version is behind |
 | F6 | P3 | feature | Ask Claude over long histories |
+| F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically |
+| F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy |
 
 ---
 
@@ -274,14 +277,23 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - Were: `ccScan`, `ccVerify`, `ccCapture`, `cctool.py`, the `cc-capture` kind still accepted by the page, and the palette comment "pack fabrics … EPX200" (`page.html:6`).
 - **Done Nov 6:** helper functions are `mcScan` / `mcVerify` / `mcCapture`; the build tool is `scripts/catchup.py` (SKILL.md updated); the page accepts only `mc-capture`; the comment is neutral. History docs keep the old names where they describe the past. Versions not bumped: no behavior changed, and an already-installed 1.1 helper talks to the skill through the same bridge commands.
 
-### C4 · P3 · Minified style
+### C4 · P3 · Minified style · done (v1.7.4)
 - The helper and most of the page script are one long line per statement, which makes diffs and reviews hard. Options: keep a readable source and generate the dense copy, or just run a formatter. Watch the userscript copy size if you change it.
+- **Done in v1.7.4:**
+  - **Formatting:** Prettier 3.3.3 formats the page, helper, JS tests and mock, and Ruff 0.6.9 formats Python, both at 120 columns. `npm run fmt` applies it; `npm test` and CI check it.
+  - **Measured first:** the formatted page is about 37% bigger. Claude reads the page only at setup and on a `PAGE_VERSION` bump, while it reads `SKILL.md` on every refresh. So the owner chose to accept the growth, win it back by dropping the embedded userscript copy (F8), and shrink `SKILL.md` (C7).
+  - **Skeleton removed:** the page no longer stores the document skeleton. Prettier would have rewritten it, and the Artifact tool only replaces its own exact skeleton.
+  - **Bookmarklet:** a new sim check runs the page's bookmarklet against the mock.
 
 ### C5 · P3 · `catchup._ts` shells out to `date` · done (v1.2.1)
 - Use `zoneinfo` instead; also removes the dependency on `%-d` support in `date`.
 
 ### C6 · P3 · Unclosed files in `catchup.py` · done (v1.2.1)
 - `_load` and `_dump` use `json.load(open(p))` / `json.dump(o,open(p,'w'))`. CPython closes and flushes the files right away, so nothing is lost today, but every call raises a `ResourceWarning` (the test runner passes `-W ignore::ResourceWarning`). Use `with open(...)`.
+
+### C7 · P2 · `SKILL.md` is read on every refresh
+- **What:** Claude reads all of `SKILL.md` (31 KB, about 8k tokens) on every run, hourly with the loop. Most of it (setup, troubleshooting, the full database reference, outbox details, opening a message) isn't needed on a routine refresh.
+- **Fix:** keep the refresh procedure in `SKILL.md`, and move the rest to `references/*.md` that `SKILL.md` names and Claude reads only when needed. Tests check that nothing was lost and that every reference file exists. MINOR (procedure files change). Owner approved Nov 7.
 
 ## Tests
 
@@ -326,3 +338,11 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 
 ### F6 · P3 · Ask Claude over long histories
 - Send summaries for older stretches plus the raw window, or pick messages by keyword first, instead of all stored messages.
+
+### F7 · P3 · Ship as a plugin
+- **What:** claude.ai plugins (Customize › Plugins, or a marketplace added from a git repo) load their skills in chat and update when the source syncs. This would replace "re-upload the ZIP". It needs no new plan: custom skills already require Pro or above. Not confirmed: whether Free accounts can add plugins at all, or whether Claude in Chrome and the artifact database have plan limits of their own.
+- **Fix:** add `.claude-plugin/plugin.json` and a marketplace file, keep the plugin version tied to `VERSION` (tested), and document both install paths.
+
+### F8 · P2 · Userscript installs from a URL and updates itself
+- **What:** the page embeds a 30 KB HTML-escaped copy of the userscript, nearly a quarter of the page, and every helper change means "reinstall the userscript".
+- **Fix:** attach `helper.user.js` to each GitHub release. The page links to `releases/latest/download/helper.user.js`, which Tampermonkey and Violentmonkey open as an install, and `@updateURL`/`@downloadURL` make them update themselves. Keep the bookmarklet. The owner accepted the trust trade-off (Nov 7): whoever controls the repo's releases controls code running on facebook.com, which today is the owner, with branch protection.

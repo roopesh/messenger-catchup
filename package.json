@@ -1,18 +1,22 @@
 {
   "name": "messenger-catchup",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "private": true,
   "description": "Dev tooling for the Messenger Catch-up skill (tests only; the skill itself ships via make-zip.sh)",
   "scripts": {
-    "setup": "playwright install chromium && npm run hooks",
+    "setup": "playwright install chromium && npm run hooks && npm run setup:py",
+    "setup:py": "python3 -m venv .venv && .venv/bin/pip install -q -r requirements-dev.txt",
     "hooks": "git config core.hooksPath .githooks",
-    "test": "npm run test:py && npm run test:sim && npm run test:page",
+    "fmt": "prettier --write 'assets/*.html' 'assets/*.js' 'tests/*.js' 'tests/mock/*.html' && .venv/bin/ruff format scripts tests tools && npm run sync",
+    "fmt:check": "prettier --check 'assets/*.html' 'assets/*.js' 'tests/*.js' 'tests/mock/*.html' && .venv/bin/ruff format --check scripts tests tools",
+    "test": "npm run fmt:check && npm run test:py && npm run test:sim && npm run test:page",
     "test:py": "python3 -W error::ResourceWarning -m unittest discover -s tests",
     "test:sim": "node tests/run.js",
     "test:page": "node tests/page.test.js",
     "sync": "python3 tools/sync-helper.py"
   },
   "devDependencies": {
-    "playwright": "1.65.0"
+    "playwright": "1.65.0",
+    "prettier": "3.3.3"
   }
 }
