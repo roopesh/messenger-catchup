@@ -28,7 +28,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
 | T3 | P2 | test | No tests for the page (importer, `convTree`, date entry) · **done** |
-| F3 | P2 | feature | No way to correct a link on an already-built message |
+| F3 | P2 | feature | No way to correct a link on an already-built message · **done** (v1.12.0) |
 | F4 | P2 | feature | Self-check command to catch Messenger markup changes early |
 | B11 | P3 | bug | `catchup.py` ignores Messenger's reply link when the parent is message #0 · **done** (v1.2.1) |
 | B12 | P2 | bug | Capture took a follow-on message starting "X replied to…" / "You sent…" as a reply or as yours · **done** (v1.4.2) |
@@ -338,8 +338,12 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### F2 · P3 · Faster distant photo-reply parents
 - Bringing a far-up parent into view is slow and can fail with `notfound` (EXPERIMENTS.md §3, refresh 240). LEARNINGS.md suggests opening the reply through its jump link and clicking from there.
 
-### F3 · P2 · Correct an existing link
+### F3 · P2 · Correct an existing link · done (v1.12.0)
 - The spec's `links` only applies to messages in the current build, so a wrong link found later can only be fixed by editing `threading/current` by hand. Add a `relink` key (`{i: [parent,type] | null}` for older messages), checked by the same asserts.
+- **Done in v1.12.0:**
+  - **`relink {i: [parent, type] | null}`** in a build spec, or on its own with `catchup.py relink WORK OUT SPEC` when there's nothing new to build. It writes `OUT/threading.json` and advances WORK's threading, which `restore` can undo.
+  - **Checks:** only already-built messages; parents must be earlier stored messages; a known type; a WARN when the link crosses conversations.
+  - **Routing:** `SKILL.md` sends "a message linked to the wrong one" here.
 
 ### F4 · P2 · Self-check for markup changes
 - A helper `selfcheck` command that confirms each selector and label the reader relies on is present, run at the start of every refresh. A clear "Messenger changed: X missing" beats a confusing scan error.

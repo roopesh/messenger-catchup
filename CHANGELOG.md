@@ -2,6 +2,31 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.12.0] - 2026-11-07
+Correct a link on a message that's already built (BACKLOG F3). MINOR: a new spec key, a new `catchup.py` command and a new procedure. Page and helper unchanged.
+
+### Added
+- **`relink`:** `{"i": [parent, type]}`, or `null` to remove a link. It works inside a build spec, or on its own with `catchup.py relink WORK OUT SPEC` when nothing new needs building. That writes `OUT/threading.json` for `threading/current` (pinned) and advances WORK's threading; `restore WORK` undoes it.
+- **Checks:**
+  - only messages already built (otherwise it says to use `links`)
+  - the parent must be an earlier stored message
+  - the type must be a known one
+  - a WARN when the link crosses conversations
+- **SKILL.md:** routes "a message linked to the wrong one" to `relink`, with the steps in the `catchup.py` section.
+
+### Changed (SKILL.md, to make room within the 20 KB budget)
+Both moves are verbatim:
+- The four rare import toasts (REPAIRED, photo upload failed, can't upload, another import running) move to `references/troubleshooting.md` › Import toasts. Step 4 sends any toast other than IMPORT OK or Nothing new there.
+- The page-update steps move to `references/setup.md` › Updating the page, with a pointer in "Before each run". They only run when `pageVersion` is behind.
+
+### Tests
+- Python 111:
+  - relink in a build, relink on its own (including undo with restore), each refusal leaving WORK untouched, and the cross-conversation WARN. These fail on the v1.11.0 script.
+  - every `catchup.py` command is documented in `SKILL.md`
+  - the rare toasts are reachable from step 4
+
+Components: `PAGE_VERSION` 2.2, helper 1.7 (unchanged).
+
 ## [1.11.0] - 2026-11-07
 Full names and nicknames, part 2: a one-time backfill of older senders and the alias question (BACKLOG F9). MINOR: new procedure, a new helper command, and the page republishes (`PAGE_VERSION` 2.2). Helper 1.7; installed copies update themselves.
 
