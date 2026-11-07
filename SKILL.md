@@ -120,7 +120,7 @@ Explain in a few bullets, then set it up yourself:
 - Store the choice in `meta/chat.schedule` (`{mode, every, hours, tz}`) and confirm it to the user in one line with the next run time.
 
 ## Tested
-Version 1.1 was tested on a simulated Messenger thread (first run, incremental runs, messages arriving mid-run, photo replies, a chat shorter than the first-run count, older date labels, stale results, jump links, with and without the helper) and against a real Messenger group in Chrome (first run without the helper, import, build, page). Facebook changes its page often; if the reader starts failing, the page's labels may have changed.
+The skill's version is in `VERSION` (shipped with it). Every release passes the repo's test suites: the reader on a simulated Messenger thread (first run, incremental runs, messages arriving or deleted mid-run, photo replies, a chat shorter than the first-run count, older date labels, stale results, jump links, with and without the helper), the page's importer and rendering, and `catchup.py`. Version 1.1 was also tested against a real Messenger group in Chrome (first run without the helper, import, build, page). Facebook changes its page often; if the reader starts failing, the page's labels may have changed.
 
 ## Troubleshooting
 - "None of the stored anchor messages was found": the stored newest messages were deleted or the chat changed. Ask before re-running a first capture.
