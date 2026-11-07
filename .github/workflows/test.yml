@@ -1,6 +1,5 @@
-# CI for the PR workflow in CLAUDE.md. Branch protection isn't available on this private repo's plan,
-# so these jobs are the enforcement: tests and a version bump on every PR, and a red build if a commit
-# lands on main without a merged PR.
+# CI for the PR workflow in CLAUDE.md: tests and a version bump on every PR (branch protection requires
+# both), and a red build if a commit ever lands on main without a merged PR.
 name: ci
 on:
   pull_request:

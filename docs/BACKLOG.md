@@ -21,7 +21,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G3 | P2 | doc gap | Page offers "say reply 3232 to Claude"; SKILL.md has no procedure for it · **done** (v1.4.0) |
 | R2 | P2 | risk | Capture size is unbounded (photos travel inline as base64) |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
-| R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **mostly done** (no server-side block: plan) |
+| R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **done** (v1.7.2: repo public, branch protection) |
 | R9 | P3 | risk | Outbox name matching assumes Messenger's "Replying to …" and stored sender names agree; now prefix-tolerant, unverified live |
 | R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
@@ -214,13 +214,13 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Where:** SKILL.md › Scheduling
 - **What:** Options A and B name `send_later`, `create_trigger` and `requires_local_device: true`. These come from the environment the skill was built in. Check that they still exist under those names wherever the skill is installed, and give a fallback if they don't.
 
-### R8 · P2 · PR rule not enforced
+### R8 · P2 · PR rule not enforced · done (v1.7.2)
 - **What:** from v1.1.1 every change must go through a PR with a version bump (CLAUDE.md), but `main` still accepts direct pushes, and nothing runs `npm test` on a PR. The version-consistency tests only catch a missing bump when someone runs them.
 - **Fix:** branch protection on `main` requiring a PR (and, once T5 exists, a passing check). Check whether the plan allows it on a private repo. Then T5: a GitHub Actions job running `npm test` on every PR.
 - **Done in v1.1.2, as far as the plan allows:**
   - Branch protection and rulesets return 403 ("Upgrade to GitHub Pro or make this repository public").
   - Instead: CI runs `npm test` and a version-bump check on every PR; a `pr-only` job turns `main` red when a commit arrives without a merged PR (verified that the commit→PR API tells a squash merge from a direct push); a `pre-push` hook blocks direct pushes from local clones.
-- **Still open:** nothing stops a push on the server side. Closing that needs GitHub Pro ($4/month) or a public repo (the owner's call).
+- **Done in v1.7.2:** the owner made the repo public (Nov 7) after an audit found no chat data in the files, history, PR bodies, secrets or CI artifacts. Branch protection on `main`: PR required (no approvals, single maintainer), `test` and `version-bump` required and up to date, linear history, no force-push or deletion, enforced for admins. Tags aren't protected; `tools/release.sh` pushes them.
 
 ### R7 · P3 · Helper housekeeping · done (v1.3.0)
 - **Where:** `helper.user.js:16`, `helper.user.js:162`

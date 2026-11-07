@@ -9,9 +9,9 @@
   - B12–B37 came from three independent reviews run overnight; each round's fixes were checked by the next
   - every fix has a test that fails on the code before it
 - **Workflow:** every change goes branch → PR → version bump → CI → squash-merge → `tools/release.sh`. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
-- **Enforcement:** GitHub Actions runs `npm test` and a version-bump check on every PR, and flags any commit on `main` that didn't come from a merged PR. A local `pre-push` hook blocks direct pushes to `main`. GitHub branch protection isn't available on this private repo's plan (BACKLOG R8).
+- **Enforcement:** GitHub branch protection on `main` (since Nov 7): changes only through a PR, `test` and `version-bump` must pass, the branch must be up to date, linear history, no force-push or deletion, admins included. CI also flags any commit on `main` that didn't come from a merged PR, and a local `pre-push` hook blocks direct pushes before they reach GitHub.
 - **In use:** the original user's page and hourly loop run the generic skill. **Re-upload the skill ZIP from the latest release.** On the next refresh, Claude republishes the page to `PAGE_VERSION` 1.7 by itself and reports that the userscript has an update (1.4).
-- **Repo:** private, `github.com/roopesh/messenger-catchup`, branch `main`.
+- **Repo:** public (since Nov 7), `github.com/roopesh/messenger-catchup`, branch `main`. **Never commit real names or text from a user's chat**: tests use the mock cast (Ana, Ben, Cy, Dee, You).
 
 ## Test suites
 `npm test` runs all three (about 3 minutes); CI runs the same on every PR.
