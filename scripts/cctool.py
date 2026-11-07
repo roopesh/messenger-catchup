@@ -4,7 +4,7 @@
                                      summary/current.json, meta/chat.json. Writes WORK/all.json, WORK/base/*, WORK/state.json.
   cctool.py build WORK RUNDIR SPEC   RUNDIR = out_dir with the touched chunks/*.json + meta/chat.json fetched after import.
                                      Writes RUNDIR/out/{threading,summary}.json, then advances WORK (all.json, base, state).
-SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"]},
+SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
   "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs}],
   "dealEdit":{"convid":{"text":"...","addRefs":[...]}}, "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
@@ -83,8 +83,8 @@ def build(work,run,specp):
         for i in mem: assert i not in joined,('joined twice',i); joined[i]=cid
     assert sorted(joined)==ids,('unassigned or extra',sorted(set(ids)^set(joined)))
     for i in ids:
-        cv=C[joined[i]]; m=N[i]; prev=[x for x in cv['members'] if x<i]; L=sp.get('links',{}).get(str(i))
-        if not L:
+        cv=C[joined[i]]; m=N[i]; prev=[x for x in cv['members'] if x<i]; LS=sp.get('links',{}); L=LS.get(str(i))
+        if not L and not (str(i) in LS and L is None):  # "i": null in links = deliberately no link (a new topic)
             if m.get('pi'): L=[m['pi'],'rq' if m.get('pq') else 'r']
             elif m.get('pmid') and m['pmid'] in bym: L=[bym[m['pmid']],'rq' if m.get('pq') else 'r']
             elif m.get('r'):
