@@ -48,7 +48,7 @@ section.view{display:grid;gap:26px}
 .chip.open{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn)}
 .chip.answered,.chip.resolved{background:var(--olive-soft);color:var(--olive)}
 .chip.sale,.chip.deal{background:var(--olive-soft);color:var(--olive)}
-.chip.raffle{background:var(--accent-soft);color:var(--accent)}
+.chip.raffle,.chip.group{background:var(--accent-soft);color:var(--accent)}
 .chip.ask{background:var(--warn-soft);color:var(--warn)}
 .refs{display:grid;gap:5px;margin:0;padding:0;list-style:none}
 .ref{display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;align-items:baseline;font-size:.92rem;padding-top:6px;border-top:1px dashed var(--line)}
@@ -695,8 +695,8 @@ function renderOutbox(v){const items=(S.outbox||[]).filter(o=>o.state!=="cancell
     l.append(d);});bo.append(l);v.append(bo);}
 /* Summary v3: one card per conversation. The open question, the deal and the settled answer for a conversation sit inside its card (never repeated in separate lists), and the full thread expands in place. */
 const SUMF={all:"All",open:"Open questions",deal:"Deals & sales",answered:"Answered"};
-function sumFilter(){try{return localStorage.getItem("ccSumFilter")||"all";}catch(e){return "all";}}
-function setSumFilter(f){try{localStorage.setItem("ccSumFilter",f);}catch(e){}renderSummary();}
+function sumFilter(){try{return localStorage.getItem("mcSumFilter")||"all";}catch(e){return "all";}}
+function setSumFilter(f){try{localStorage.setItem("mcSumFilter",f);}catch(e){}renderSummary();}
 if(!S.openThr)S.openThr=new Set();
 /* One tree for both views. Replies (r/rq/rg) and "answers" (i) nest under the message they answer; "continues" (c) sits
    right after the same person's previous message at the same level, so a run of messages doesn't staircase. Max depth 3. */
@@ -728,7 +728,7 @@ function convCard(c,ctx){const mem=convMembers(c.id).filter(ctx.after);const a=S
   const h=el("div","cv-head");const chips=el("div","row");
   if(opens.length)chips.append(el("span","chip open","open question"));
   deals.forEach(x=>chips.append(el("span","chip deal",x.tag||x.kind||"deal")));
-  if(!deals.length&&c.tag&&!/^(Open|Answered)$/.test(c.tag))chips.append(el("span","chip "+({"Heads-up":"ask","Group buy":"raffle","Group buy?":"raffle"}[c.tag]||"sale"),c.tag));
+  if(!deals.length&&c.tag&&!/^(Open|Answered)$/.test(c.tag))chips.append(el("span","chip "+({"Heads-up":"ask","Group buy":"group","Group buy?":"group"}[c.tag]||"sale"),c.tag));
   if(ans.length&&!opens.length)chips.append(el("span","chip answered","answered"));
   if(chips.childNodes.length)h.append(chips);
   h.append(el("h3",null,convTitle(c.id)));
