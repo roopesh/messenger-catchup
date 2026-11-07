@@ -1,19 +1,33 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.1
+// @version      1.2
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 (function(){
-  if(window.__mcHelper||document.documentElement.hasAttribute('data-mc-helper'))return;window.__mcHelper='1.1';
-  document.documentElement.setAttribute('data-mc-helper','1.1');
+  if(window.__mcHelper||document.documentElement.hasAttribute('data-mc-helper'))return;window.__mcHelper='1.2';
+  document.documentElement.setAttribute('data-mc-helper','1.2');
+  /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
+  document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href]');if(a&&window.__rf&&!window.__rf.done)e.preventDefault();},true);
+/* A message's date from its Messenger time label: "9:15 AM" (today), "Yesterday 9:15 AM", "Monday 9:15 AM" or "Mon 9:15 AM"
+   (the last 7 days), "November 3, 2026 9:15 AM" or "Nov 3 9:15 AM" (a year-less date in the future means last year).
+   Returns "YYYY-MM-DD", or null for a label it can't read. */
+function mcDate(when,now){now=now||new Date();const W=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'],M=['january','february','march','april','may','june','july','august','september','october','november','december'];
+  const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');const ago=n=>{const d=new Date(now);d.setDate(d.getDate()-n);return ymd(d);};
+  const pick=(names,w)=>{w=w.toLowerCase();return w.length>=3?names.findIndex(x=>x.indexOf(w)===0):-1;};const s=String(when||'').trim();
+  if(/^\d{1,2}:\d{2}/.test(s)||/^today\b/i.test(s))return ymd(now);
+  if(/^yesterday\b/i.test(s))return ago(1);
+  const md=s.match(/^([A-Za-z]+)\.? (\d{1,2})(?![\d:])(?:,? (\d{4}))?/);
+  if(md){const mi=pick(M,md[1]);if(mi>=0){let d=new Date(md[3]?+md[3]:now.getFullYear(),mi,+md[2]);if(!md[3]&&d-now>864e5)d=new Date(now.getFullYear()-1,mi,+md[2]);return ymd(d);}}
+  const dw=s.match(/^([A-Za-z]+)\.?\s/);if(dw){const wi=pick(W,dw[1]);if(wi>=0)return ago(((now.getDay()-wi)+7)%7||7);}
+  return null;}
+window.__mcDate=mcDate;
 async function mcScan(STOPS,FIRST){STOPS=STOPS||[];sessionStorage.removeItem('__mcsave');
 for(let w=0;w<40;w++){const l=document.querySelector('[role="log"]');if(l&&l.getBoundingClientRect().width>=300)break;await new Promise(r=>setTimeout(r,500));}
 window.__rf={phase:'collect',order:[],info:{},parents:{},done:false,err:null,steps:0,t0:Date.now()};
-document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('a[href]');if(a&&window.__rf&&!window.__rf.done)e.preventDefault();},true);
 await (async()=>{const R=window.__rf;try{
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));const N=s=>(s||'').replace(/\s+/g,' ').trim();
@@ -72,11 +86,8 @@ V.mode='fast';let ok=await pass(0.6,500);if(!ok){V.mode='slow';ok=await pass(0.3
 const X=window.__v;return {ok:!!X.ok,gap:X.gap,prefixSame:!!X.prefixSame,extra:X.extra,err:X.err,win:X.win?X.win.length:0,mode:X.mode};}
 async function mcCapture(BASE){
 return await (async()=>{const R=JSON.parse(sessionStorage.getItem('__mcsave'));const N=s=>(s||'').replace(/\s+/g,' ').trim();
-const now=new Date();const DAYS=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];const MON=['january','february','march','april','may','june','july','august','september','october','november','december'];
-const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-function dOf(when){if(/^yesterday/i.test(when)){const d=new Date(now);d.setDate(d.getDate()-1);return ymd(d);}const dw=when.match(/^(\w+day)\s/i);if(dw){const back=((now.getDay()-DAYS.indexOf(dw[1].toLowerCase()))+7)%7||7;const d=new Date(now);d.setDate(d.getDate()-back);return ymd(d);}
- const md=when.match(/^([A-Za-z]+) (\d{1,2})(?:,? (\d{4}))?/);if(md&&MON.indexOf(md[1].toLowerCase())>=0){const y=md[3]?+md[3]:now.getFullYear();return ymd(new Date(y,MON.indexOf(md[1].toLowerCase()),+md[2]));}return ymd(now);}
-const D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];const today=D[now.getDay()];
+const now=new Date();const todayD=mcDate('12:00',now);const guessed=[];let lastD=null;
+const D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const pos=new Map(R.win.map((id,k)=>[id,BASE+1+k]));const firsts=Object.values(R.info).map(x=>x.text.split('\n')[0]);
 const out=R.win.map((id,k)=>{const m=R.info[id];const lab=m.label;const wm=lab.match(/^At (.+?(?:AM|PM|am|pm)), /);const when=wm?wm[1]:'';const after=wm?lab.slice(wm[0].length):'';
  const lines=m.text.split('\n');const first=lines[0]||'';let from='',rTo='';const rm=first.match(/^(.*) replied to (.*)$/);
@@ -91,7 +102,7 @@ const out=R.win.map((id,k)=>{const m=R.info[id];const lab=m.label;const wm=lab.m
  let q='';const oi=m.text.indexOf('Original message:\n');if(oi>=0){const r2=m.text.slice(oi+18);const bi=b?r2.lastIndexOf(b.slice(0,Math.min(20,b.length))):-1;q=(bi>0?r2.slice(0,bi):r2.split('\n')[0]).trim();}
  const media=m.links.find(l=>/messenger_media/.test(l))||'';const pm=media.match(/attachment_id=(\d+)/);
  const ext=m.links.filter(l=>!/messenger_media|l\.facebook|facebook\.com\/share\//.test(l)).map(l=>l.replace(/[?&](utm_[^&]+|srtk=[^&]+|fs=e|s=m|ref=[^&]+|fbclid=[^&]+)/g,'').replace(/\?&/,'?').replace(/[?&]$/,'').replace(/^([^?#]*)&/,'$1?'));
- const dd=dOf(when);const tmm=when.match(/(\d{1,2}:\d{2})\s*([AP]M)/i);const tm=tmm?tmm[1]+' '+tmm[2].toUpperCase():'12:00 AM';const wd=D[new Date(dd+'T12:00:00').getDay()];
+ let dd=mcDate(when,now);if(!dd){guessed.push(BASE+1+k);dd=lastD||todayD;}lastD=dd;/* unreadable label: borrow the previous message's date */const tmm=when.match(/(\d{1,2}:\d{2})\s*([AP]M)/i);const tm=tmm?tmm[1]+' '+tmm[2].toUpperCase():'12:00 AM';const wd=D[new Date(dd+'T12:00:00').getDay()];
  const o={i:BASE+1+k,t:wd+' '+tm,f:from,b,m:id,d:dd};if(rTo)o.r=rTo;if(q)o.q=q.slice(0,160);
  if(m.rx.length)o.x=m.rx.map(r=>r.replace(/; see who reacted to this\.?/,'').replace(/ reactions? with /,' ')).join('; ');
  if(ext.length)o.l=[...new Set(ext)];if(a)o.a=a.slice(0,220);if(pm)o.p=pm[1];
@@ -108,7 +119,7 @@ document.body.innerHTML='';const bt=document.createElement('button');bt.id='__co
 const st=document.createElement('div');st.id='__copyst';st.style.cssText='position:fixed;left:300px;top:30px;font:16px system-ui;z-index:2147483647';
 bt.onclick=async()=>{try{await navigator.clipboard.writeText(text);st.textContent='COPIED '+text.length+' chars';}catch(e){st.textContent='COPY FAILED: '+e;}};
 const art=document.createElement('article');art.style.marginTop='90px';const pre=document.createElement('pre');pre.style.whiteSpace='pre-wrap';pre.textContent=msgsTxt;art.append(pre);document.body.append(bt,st,art);
-return 'count '+out.length+' len '+text.length+' sha '+cap.sha.slice(0,8)+' photos '+photos.length+(failed.length?' FAILED '+failed:'')+' gifs '+gifs+' you '+out.filter(o=>o.f==='You').map(o=>o.i);})();
+return 'count '+out.length+' len '+text.length+' sha '+cap.sha.slice(0,8)+' photos '+photos.length+(failed.length?' FAILED '+failed:'')+' gifs '+gifs+' you '+out.filter(o=>o.f==='You').map(o=>o.i)+(guessed.length?' DATES-GUESSED '+guessed:'');})();
 }
   function jump(){
 (async function mcJump(){
@@ -151,7 +162,7 @@ return 'count '+out.length+' len '+text.length+' sha '+cap.sha.slice(0,8)+' phot
     out.ms=Date.now()-p.t0;sessionStorage.setItem('mc_result',JSON.stringify(out));}
   const CMDS={probe:a=>probe(a.anchor),scan:a=>mcScan(a.stops,a.first),verify:()=>mcVerify(),capture:a=>mcCapture(a.base),full:a=>full(a),
     jump:a=>{history.replaceState(null,'',location.pathname+'#mcjump='+encodeURIComponent(a.mid)+(a.reply===false?'&noreply':''));jump();return {started:true};},
-    ping:()=>({v:'1.1'})};
+    ping:()=>({v:'1.2'})};
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
   document.addEventListener('mc-cmd',async function(e){let d;try{d=JSON.parse(e.detail);}catch(x){return;}if(!CMDS[d.cmd])return;
     sessionStorage.setItem('mc_res_'+d.id,JSON.stringify({running:true}));

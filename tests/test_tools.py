@@ -44,6 +44,14 @@ class TestVersions(unittest.TestCase):
         self.assertEqual(len(found),1,found)
     def test_page_version_present(self):
         self.assertRegex(read('assets','page.html'),r'const PAGE_VERSION="\d+\.\d+";')
+    def test_page_version_bumped_when_page_changed_since_last_release(self):
+        """assets/page.html differs from the newest release tag -> PAGE_VERSION must differ too (pages only republish on a bump)."""
+        tags=subprocess.run(['git','tag','--list','v*','--sort=-v:refname'],cwd=ROOT,capture_output=True,text=True).stdout.split()
+        if not tags: self.skipTest('no release tags (shallow clone?)')
+        old=subprocess.run(['git','show',tags[0]+':assets/page.html'],cwd=ROOT,capture_output=True,text=True)
+        if old.returncode: self.skipTest('page not in '+tags[0])
+        ver=lambda s:re.search(r'const PAGE_VERSION="([^"]+)"',s).group(1)
+        if old.stdout!=read('assets','page.html'): self.assertNotEqual(ver(old.stdout),ver(read('assets','page.html')),'page.html changed since '+tags[0]+' but PAGE_VERSION did not')
 
 class TestReleaseVersion(unittest.TestCase):
     """VERSION is the release version; package.json, its lockfile and the newest CHANGELOG entry must match it."""
