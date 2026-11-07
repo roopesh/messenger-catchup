@@ -1,6 +1,7 @@
 #!/bin/sh
 # After a release PR is merged: tag the merge commit, build the skill ZIP from that tag, publish the GitHub release
-# with the version's CHANGELOG entry as notes. Run on main: tools/release.sh
+# with the version's CHANGELOG entry as notes, and attach the userscript (installed userscripts update themselves from
+# releases/latest/download/helper.user.js, so every release must carry it). Run on main: tools/release.sh
 set -e
 cd "$(dirname "$0")/.."
 [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || { echo "release: switch to main first" >&2; exit 1; }
@@ -18,5 +19,7 @@ sh "$tmp/messenger-catchup/make-zip.sh" >/dev/null
 zip="$tmp/messenger-catchup/dist/messenger-catchup.zip"
 zv=$(unzip -p "$zip" messenger-catchup/VERSION)
 if [ "$zv" != "$v" ]; then git tag -d "$tag" >/dev/null; echo "release: ZIP says $zv, expected $v" >&2; exit 1; fi
+us="$tmp/messenger-catchup/assets/helper.user.js"
+[ -s "$us" ] || { git tag -d "$tag" >/dev/null; echo "release: no assets/helper.user.js in $tag" >&2; exit 1; }
 git push -q origin "$tag"
-printf '%s\n' "$notes" | gh release create "$tag" "$zip" --title "$tag" --notes-file - --verify-tag
+printf '%s\n' "$notes" | gh release create "$tag" "$zip" "$us" --title "$tag" --notes-file - --verify-tag

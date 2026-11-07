@@ -76,7 +76,7 @@ Recorded during the Nov 6 handoff review. The reasons are inferred from the code
 | A first import must start at `#0`; later imports must overlap or continue exactly at `lastI+1` | Numbering is the integrity check; any gap is refused | `importCore` |
 | Chunks are read back and compared after writing | Proof the write landed before `meta/chat` moves forward | `importCore` |
 | Messages that arrive during a run (`extra`) are left for the next run | Keeps scan and verify windows identical; no extra round | `mcVerify`, SKILL step 3 |
-| The page carries its own copy of the helper and a bookmarklet | Install by copy and paste from the page, including on a computer without the repo | `#jump-us`, `#jump-bm` |
+| The page carries its own copy of the helper and a bookmarklet | Install by copy and paste from the page, including on a computer without the repo | `#jump-us`, `#jump-bm`. **Superseded in v1.8.0:** the userscript installs from the GitHub release and updates itself; only the bookmarklet stays on the page |
 | The generic page has no in-page Refresh button | It needs a scheduled-trigger id and a connector the generic setup doesn't create; refreshes are asked for in chat | `REFRESH_TASK="__TRIGGER_ID__"`, button `hidden` |
 | Dates are stored per message (`d`) instead of deriving them from weekday names | Weekday labels are ambiguous past a week; the old `meta.dates` map is only a fallback | `mcCapture`, `tsOf` |
 
@@ -88,3 +88,5 @@ Recorded during the Nov 6 handoff review. The reasons are inferred from the code
 | Private GitHub repo `messenger-catchup` | Source of record; `make-zip.sh` builds the upload |
 | Every change via PR, versioned, squash-merged, tagged and released (from v1.1.1) | The owner's rule: a reviewable record of every change and a downloadable ZIP per version |
 | One release version (`VERSION`, semver) for the whole skill; `PAGE_VERSION` and the helper version stay separate | Component versions trigger republish or reinstall for users, so they move only when that part changes |
+| The userscript installs from `releases/latest/download/helper.user.js` and updates itself (v1.8.0) | No more "reinstall the userscript" on every helper change; the page loses a 30 KB embedded copy | Owner accepted the trust trade-off: whoever controls the repo's releases controls code on facebook.com. Releases come from `tools/release.sh` on protected `main` |
+| Component minor versions stay one digit (1.9 → 2.0) | Read as decimals, `1.1` = `1.10`. The live page was at 1.1, so `PAGE_VERSION` 1.10 could have skipped its republish | Test-enforced |

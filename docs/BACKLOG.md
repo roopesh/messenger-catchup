@@ -81,7 +81,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F5 | P3 | feature | Page shows "update available" when its version is behind |
 | F6 | P3 | feature | Ask Claude over long histories |
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically |
-| F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy |
+| F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 
 ---
 
@@ -343,6 +343,13 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **What:** claude.ai plugins (Customize › Plugins, or a marketplace added from a git repo) load their skills in chat and update when the source syncs. This would replace "re-upload the ZIP". It needs no new plan: custom skills already require Pro or above. Not confirmed: whether Free accounts can add plugins at all, or whether Claude in Chrome and the artifact database have plan limits of their own.
 - **Fix:** add `.claude-plugin/plugin.json` and a marketplace file, keep the plugin version tied to `VERSION` (tested), and document both install paths.
 
-### F8 · P2 · Userscript installs from a URL and updates itself
+### F8 · P2 · Userscript installs from a URL and updates itself · done (v1.8.0)
 - **What:** the page embeds a 30 KB HTML-escaped copy of the userscript, nearly a quarter of the page, and every helper change means "reinstall the userscript".
 - **Fix:** attach `helper.user.js` to each GitHub release. The page links to `releases/latest/download/helper.user.js`, which Tampermonkey and Violentmonkey open as an install, and `@updateURL`/`@downloadURL` make them update themselves. Keep the bookmarklet. The owner accepted the trust trade-off (Nov 7): whoever controls the repo's releases controls code running on facebook.com, which today is the owner, with branch protection.
+- **Done in v1.8.0:**
+  - **Helper 1.5:** `@updateURL`/`@downloadURL` point at the latest release.
+  - **Releases:** `tools/release.sh` attaches the userscript to every release.
+  - **Page:** links to it instead of embedding it. The page is 130 KB, back to its pre-format size.
+  - **SKILL.md:** a helper older than 1.5 gets one "install from the link" notice; later helpers update themselves.
+  - **Tests:** the link, the update URLs and the release asset are checked.
+  - **Still to verify live:** that Tampermonkey follows GitHub's redirect from `latest/download` when it checks for updates.
