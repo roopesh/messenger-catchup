@@ -21,7 +21,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
 | R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual |
-| T1 | P2 | test | No `package.json`; Playwright must be installed by hand |
+| T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `patool.py`; the "pipeline replay" isn't in the repo |
 | T3 | P2 | test | No tests for the page (importer, `convTree`, date entry) |
 | F3 | P2 | feature | No way to correct a link on an already-built message |
@@ -187,8 +187,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 ## Tests
 
-### T1 · P2 · No `package.json`
-- `tests/sim.js` does `require('playwright')` with nothing declaring it. On Nov 6 it ran with Playwright installed in a scratch folder and `NODE_PATH` (see STATUS.md). Add `tests/package.json` with `playwright` and an `npm test` script that starts the static server.
+### T1 · P2 · No `package.json` · done
+- `tests/sim.js` did `require('playwright')` with nothing declaring it.
+- **Done Nov 6:** a root `package.json` pins `playwright` 1.65.0 (`npm run setup` installs Chromium). `npm test` runs `tests/run.js`, which serves `tests/` on a free port and runs `sim.js` (35/35 pass).
 
 ### T2 · P2 · No `patool` tests
 - EXPERIMENTS.md §7 reports a pipeline replay ("3 imports, 3 builds"), but that harness isn't committed. Add a Python test that runs bootstrap → build → build on fixtures (`tests/out/sim_caps.json` from the sim works as input) and covers B1–B5.

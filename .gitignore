@@ -1,4 +1,5 @@
 tests/out/
+node_modules/
 *.zip
 .DS_Store
 __pycache__/

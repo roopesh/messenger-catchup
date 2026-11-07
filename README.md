@@ -24,14 +24,16 @@ A Claude skill that keeps a private **catch-up page** for one Facebook Messenger
 | `assets/page.html` | The catch-up page template (settings come from the page's database) |
 | `assets/helper.user.js` | Optional userscript; also injectable |
 | `scripts/patool.py` | Builds threading and summary JSON and checks every rule |
-| `tests/` | Simulated Messenger thread + Playwright tests for the reader |
+| `tests/` | Simulated Messenger thread + Playwright tests for the reader (`run.js` serves the mock and runs `sim.js`) |
+| `package.json` | Test tooling only (Playwright); not part of the skill ZIP |
 
 ## Tests
 ```
-cd tests && python3 -m http.server 8765 &
-node sim.js        # needs Playwright with Chromium
+npm install        # once: Playwright
+npm run setup      # once: Playwright's Chromium
+npm test
 ```
-35 checks: first run, incremental runs, messages arriving mid-run, photo replies, a chat shorter than the first-run count, older date labels, stale results, jump links, with and without the helper. There's no `package.json` yet; [docs/STATUS.md](docs/STATUS.md) shows how to run it with Playwright installed outside the repo.
+35 checks: first run, incremental runs, messages arriving mid-run, photo replies, a chat shorter than the first-run count, older date labels, stale results, jump links, with and without the helper. `tests/run.js` serves the simulated Messenger on a free local port, so nothing else needs to be running.
 
 ## Development docs
 - [docs/STATUS.md](docs/STATUS.md): **start here**: current state, how to test, change and release

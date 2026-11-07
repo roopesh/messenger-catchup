@@ -1,0 +1,12 @@
+{
+  "name": "messenger-catchup",
+  "private": true,
+  "description": "Dev tooling for the Messenger Catch-up skill (tests only; the skill itself ships via make-zip.sh)",
+  "scripts": {
+    "setup": "playwright install chromium",
+    "test": "node tests/run.js"
+  },
+  "devDependencies": {
+    "playwright": "1.65.0"
+  }
+}

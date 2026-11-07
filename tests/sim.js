@@ -1,5 +1,6 @@
 /* Simulated-Messenger tests for the helper (installed and injected paths).
-   Run: cd tests && python3 -m http.server 8765 &  then  node sim.js   (needs Playwright with Chromium). */
+   Run from the repo root: npm test (tests/run.js serves the mock and sets MOCK_URL).
+   Or by hand: cd tests && python3 -m http.server 8765 &  then  node sim.js */
 const {chromium}=require('playwright');const fs=require('fs');const path=require('path');const D=path.join(__dirname,'..')+'/';fs.mkdirSync(D+'tests/out',{recursive:true});const URL=process.env.MOCK_URL||'http://localhost:8765/mock/messenger.html';
 const HELPER=fs.readFileSync(D+'assets/helper.user.js','utf8');
 
