@@ -21,7 +21,7 @@ Details: [EXPERIMENTS.md §10](EXPERIMENTS.md#10-handoff-review-nov-6-evening).
 
 ## Where to start
 1. **B2** (`cctool` has no WORK backup) and **R1** (unpinned page writes, no recovery for a half-finished import): these are the two places a refresh can get stuck and need hand repair.
-2. **T1–T3**: put the tests on a footing where a change can be checked in one command, before larger edits.
+2. **T2–T3** (T1 is done: `npm test`): put the tests on a footing where a change can be checked in one command, before larger edits.
 3. **B6 + B8**: silent bad dates and the render crash.
 4. **G1–G3**: bring SKILL.md in line with what the page does.
 
@@ -40,15 +40,13 @@ Details: [EXPERIMENTS.md §10](EXPERIMENTS.md#10-handoff-review-nov-6-evening).
 ## Working on it
 
 ### Run the simulated-Messenger tests
-The repo has no `package.json` yet (BACKLOG T1). Install Playwright anywhere outside the repo and point `NODE_PATH` at it:
+From the repo root:
 ```sh
-mkdir -p ~/pw && cd ~/pw && npm init -y && npm i playwright@1 && npx playwright install chromium
-cd <repo>/tests
-python3 -m http.server 8765 &        # serves mock/messenger.html
-NODE_PATH=~/pw/node_modules node sim.js
-kill %1
+npm install        # once: Playwright (pinned in package.json)
+npm run setup      # once: Playwright's Chromium
+npm test           # tests/run.js serves tests/ on a free port and runs tests/sim.js
 ```
-Expect 35 `PASS` lines and exit code 0. Captures are written to `tests/out/` (gitignored). `sim_caps.json` is a handy input for `cctool` or page-import experiments.
+Expect 35 `PASS` lines and exit code 0 (any `FAIL` makes the exit code 1). Captures are written to `tests/out/` (gitignored). `sim_caps.json` is a handy input for `cctool` or page-import experiments.
 
 ### Try `cctool` locally
 ```sh
