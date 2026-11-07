@@ -14,11 +14,12 @@ Helper 1.2: dates read reliably. MINOR because the helper version changes and SK
 
 ### Added
 - `mcDate(label, now)` in the helper (also `window.__mcDate`), so tests can pin "now". `tests/sim.js` checks 20 fixed-date cases, including the New Year rollback, plus new mock labels end to end (short month, year-less date, unreadable label, short weekday). The sim reads the helper version from the file instead of hard-coding it.
+- `tests/test_tools.py` fails when `assets/page.html` changed since the last release tag but `PAGE_VERSION` didn't (it would have caught this release's own first draft). CI now fetches tags for it.
 - SKILL.md:
   - mention a userscript update when the installed helper is older than the shipped one
   - list `DATES-GUESSED` messages in the report
 
-Components: `PAGE_VERSION` 1.3 (embedded helper copy regenerated), **helper 1.2** (was 1.1).
+Components: **`PAGE_VERSION` 1.4** (was 1.3: the page embeds the helper for "Copy userscript", so pages must be republished to offer 1.2), **helper 1.2** (was 1.1).
 
 ## [1.2.2] - 2026-11-06
 Page fixes. Claude republishes existing pages on their next refresh (`PAGE_VERSION` 1.3).
