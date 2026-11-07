@@ -29,7 +29,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
 | T3 | P2 | test | No tests for the page (importer, `convTree`, date entry) · **done** |
 | F3 | P2 | feature | No way to correct a link on an already-built message · **done** (v1.12.0) |
-| F4 | P2 | feature | Self-check command to catch Messenger markup changes early |
+| F4 | P2 | feature | Self-check command to catch Messenger markup changes early · **done** (v1.13.0) |
 | B11 | P3 | bug | `catchup.py` ignores Messenger's reply link when the parent is message #0 · **done** (v1.2.1) |
 | B12 | P2 | bug | Capture took a follow-on message starting "X replied to…" / "You sent…" as a reply or as yours · **done** (v1.4.2) |
 | B13 | P2 | bug | `catchup.py` quote matching: short quotes match the wrong message silently (substring fallback, no minimum) · **done** (v1.5.0) |
@@ -345,8 +345,12 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Checks:** only already-built messages; parents must be earlier stored messages; a known type; a WARN when the link crosses conversations.
   - **Routing:** `SKILL.md` sends "a message linked to the wrong one" here.
 
-### F4 · P2 · Self-check for markup changes
+### F4 · P2 · Self-check for markup changes · done (v1.13.0)
 - A helper `selfcheck` command that confirms each selector and label the reader relies on is present, run at the start of every refresh. A clear "Messenger changed: X missing" beats a confusing scan error.
+- **Done in v1.13.0:** helper 1.8's `selfcheck` runs at refresh step 2 (installed or injected).
+  - **Stops the run:** a missing chat log, message ids, scroller, `At <time>, <name>: ` labels, reply links (when reply lines exist), or "Original message:" quotes (when reply links exist). The status reads "Messenger changed: …", and the user is told even during a scheduled run.
+  - **Warns only:** missing avatars (no full names), or mostly unreadable date labels.
+  - **Tests:** the sim breaks each hook on the mock and checks that it's named. This covers R3's "fail clearly" half; R3 itself (English labels, markup) remains.
 
 ### F5 · P3 · "Update available" on the page
 - The page could compare its `PAGE_VERSION` with `meta/chat.pageVersion` and the helper's `data-mc-helper` version, and say when either is behind.
