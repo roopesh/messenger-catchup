@@ -67,6 +67,8 @@ Browser state it uses: `sessionStorage` keys `__mcsave`, `mc_pipe`, `mc_result`,
 sha   = SHA-256 hex of JSON.stringify(msgs)
 phsha = SHA-256 hex of JSON.stringify(photos)
 ```
+Each message may carry `fn` (helper 1.6+): the sender's full name, read from the alt text of their avatar (the ~28 px square image at the message's left edge). `f` stays the name Messenger prints (a nickname or the first name), which is what reply lines and the outbox match on. The page keeps `fn` (a string of 80 characters or fewer, never on "You") and folds it into `people/index`.
+
 The page accepts only `mc-capture` (the old `cc-capture` kind was dropped on Nov 6) and two optional flags: `dry` (check everything, write nothing) and `lab` (store photos but don't link them).
 
 ### Copies of the helper (keep in sync)
@@ -138,6 +140,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `chunks/cNNNN` | Page importer | `{start, msgs}` |
 | `threading/current` | Claude (from catchup.py) | `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
 | `summary/current` | Claude (from catchup.py) | `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
+| `people/index` | Page importer | `people{"<full name>":{shown:[names Messenger showed],firstI,lastI}}`. The page names people from it: the first name, the full name when two share a first name, and a nickname as "nickname (first or full name)". Real names live only in each user's page database, never in the repo |
 | `photos/index` | Page importer | `byI{i:["/_blob/<id>",…]}` (what the page shows), `byK{i:{k:"/_blob/<id>"}}` (which capture slot each came from, so a re-paste skips the right ones), `gifs[i]` |
 | `refresh/status` | Claude | `state` (idle/running/done/error), `startedAt`, `step`, `by`, `finishedAt`, `added`, `message` |
 | `refresh/lastImport` | Page importer | `at`, `src`, `ok`, `msg`, `dry`, `sha`, `count`, `fresh`, `chunks`, `uploaded`, `lock`, `repaired` |

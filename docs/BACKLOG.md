@@ -22,7 +22,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R2 | P2 | risk | Capture size is unbounded (photos travel inline as base64) |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
 | R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **done** (v1.7.2: repo public, branch protection) |
-| R9 | P3 | risk | Outbox name matching assumes Messenger's "Replying to …" and stored sender names agree; now prefix-tolerant, unverified live |
+| R9 | P3 | risk | Outbox name matching assumes Messenger's "Replying to …" and stored sender names agree. Live (Nov 7): labels are the nickname or the first name, and `to` uses the same; the reply bar itself is still unverified |
 | R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
@@ -83,6 +83,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F6 | P3 | feature | Ask Claude over long histories |
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
+| F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1 **done**, v1.10.0); one-time backfill scan and alias question (part 2) |
 
 ---
 
@@ -363,3 +364,20 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **SKILL.md:** a helper older than 1.5 gets one "install from the link" notice; later helpers update themselves.
   - **Tests:** the link, the update URLs and the release asset are checked.
   - **Still to verify live:** that Tampermonkey follows GitHub's redirect from `latest/download` when it checks for updates.
+
+### F9 · P2 · Full names and nicknames
+- **Why:** Messenger prints a nickname or the first name only, so two members with the same first name were merged, last names never counted as mentions, and nobody's full name was visible.
+- **Owner's choices (Nov 7):**
+  - **Display:** the first name; the full name when two or more people share that first name; a nickname as "nickname (first name)", or "nickname (full name)" when the first name is shared.
+  - **Storage:** a name map plus the full name on each message.
+  - **Backfill:** a one-time scan of older senders, then forward.
+  - **Mentions:** Claude asks which aliases to add.
+  - **Privacy:** real names live only in each user's page database, never in the repo.
+- **Part 1, done in v1.10.0:**
+  - **Helper 1.6** reads each sender's avatar alt text into `fn`.
+  - **Page 2.1** keeps `fn`, writes `people/index`, and names people by the rule above, everywhere a sender is shown, in Ask Claude's prompt, and in the Messages filter.
+  - **SKILL.md** has a naming rule for spec writing. `f`, `r` and the outbox's `to` stay as Messenger shows them.
+  - **Tests:** the mock gives senders avatars, including a second "Ben" and a nickname. Sim and page tests cover all of it and fail on helper 1.5 and page 2.0.
+- **Part 2, open:**
+  - a helper `people{count}` command that scrolls back reading avatars only, run once (`people/index.scannedAt`)
+  - asking the user once which aliases to add (`meta/chat.aliasesAskedAt`)

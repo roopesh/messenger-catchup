@@ -203,10 +203,9 @@ class TestSkillReferences(unittest.TestCase):
         """The few database lines SKILL.md repeats must stay word for word the same as references/database.md."""
         ref = read("references", "database.md").split("\n")
         core = re.search(r"^## Database.*?(?=^## )", read("SKILL.md"), re.M | re.S).group(0)
-        shared = [
-            l for l in core.split("\n") if l.startswith(("- `chunks/", "- `threading/", "- `summary/", "- `photos/"))
-        ]
-        self.assertEqual(len(shared), 4)
+        prefixes = ("- `chunks/", "- `threading/", "- `summary/", "- `people/", "- `photos/")
+        shared = [l for l in core.split("\n") if l.startswith(prefixes)]
+        self.assertEqual(len(shared), 5)
         for l in shared:
             self.assertIn(l, ref)
 

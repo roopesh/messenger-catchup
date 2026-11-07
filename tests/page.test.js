@@ -856,6 +856,26 @@ async function pipeline() {
     [77, 84, 91, 98, 105, 112, 119].map(x => x - 70).every(i => th.links[i] && th.links[i][1] === 'rq'),
     'pipeline: 7 quote-matched text replies kept as rq',
   );
+  // names: helper 1.6 reads each sender's full name from their avatar; the page keeps people/index and names people
+  // by the owner's rule (first name; full name when two share it; "nickname (name)")
+  const pi = (await get(p, 'people/index')) || { people: {} };
+  const P = pi.people;
+  ok(
+    P['Ben Brooks'] &&
+      P['Ben Ortiz'] &&
+      P['Cy Chen'] &&
+      P['Cy Chen'].shown.includes('Captain Cy') &&
+      P['Cy Chen'].shown.includes('Cy') &&
+      !Object.values(P).some(x => x.shown.includes('You')),
+    'names: people/index maps full names to the names shown, a nickname included (' + Object.keys(P).join(', ') + ')',
+  );
+  const who = await p.evaluate(() =>
+    [0, 1, 2, 31, 38].map(i => (document.querySelector('#m' + i + ' .who') || {}).textContent),
+  );
+  ok(
+    JSON.stringify(who) === JSON.stringify(['Ana', 'Ben Brooks', 'You', 'Ben Ortiz', 'Captain Cy (Cy)']),
+    'names: first name; full name for the two Bens; "Captain Cy (Cy)" for a nickname (' + who.join(' | ') + ')',
+  );
   // summary tab
   const strip = await p.$$eval('#strip .stat', s => s.map(x => x.textContent));
   ok(strip[0] === '57new messages', 'header: 57 new messages (' + strip[0] + ')');
@@ -1283,6 +1303,46 @@ async function ranges() {
   await p.context().close();
 }
 
+/* ---------- 5. names from the importer's side ---------- */
+async function names() {
+  const p = await open(SEED());
+  await paste(
+    p,
+    JSON.stringify(
+      cap([mk(0), mk(1, { fn: 'Ben Brooks' }), mk(2, { fn: 'Me Myself' }), mk(3, { fn: 'x'.repeat(90) }), mk(4)]),
+    ),
+  );
+  const c = await get(p, 'chunks/c0000');
+  ok(
+    c.msgs[1].fn === 'Ben Brooks' && !('fn' in c.msgs[2]) && !('fn' in c.msgs[3]),
+    'names: fn stored; dropped on your own messages and when over 80 characters',
+  );
+  let P = (await get(p, 'people/index')).people;
+  ok(
+    JSON.stringify(P) === JSON.stringify({ 'Ben Brooks': { shown: ['Ben'], firstI: 1, lastI: 1 } }),
+    'names: people/index written from the import (' + JSON.stringify(P) + ')',
+  );
+  await paste(p, JSON.stringify(cap([mk(5), mk(6, { fn: 'Ben Ortiz' }), mk(7), mk(8, { fn: 'Taylor Moss' })])));
+  P = (await get(p, 'people/index')).people;
+  ok(P['Ben Brooks'] && P['Ben Ortiz'] && P['Taylor Moss'].shown[0] === 'Cy', 'names: a later import adds people');
+  await p.evaluate(() => {
+    location.hash = '#messages';
+  });
+  await p.waitForTimeout(300);
+  const who = await p.evaluate(() =>
+    [0, 1, 6, 8, 11].map(i => (document.querySelector('#m' + i + ' .who') || {}).textContent),
+  );
+  ok(
+    JSON.stringify(who.slice(0, 4)) === JSON.stringify(['Ana', 'Ben Brooks', 'Ben Ortiz', 'Cy (Taylor)']),
+    'names: two Bens get full names, a nickname gets "(first name)" (' + who.join(' | ') + ')',
+  );
+  await p.fill('#msg-q', 'ortiz');
+  await p.waitForTimeout(300);
+  ok((await p.$$eval('#msgs .msg', r => r.length)) === 1, 'names: the filter finds people by full name');
+  ok(p.errors.length === 0, 'names: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
+
 (async () => {
   browser = await chromium.launch();
   try {
@@ -1291,6 +1351,7 @@ async function ranges() {
     await pipeline();
     await variants();
     await ranges();
+    await names();
   } catch (e) {
     ok(false, 'crashed: ' + ((e && e.stack) || e));
   }
