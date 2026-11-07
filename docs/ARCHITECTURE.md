@@ -49,13 +49,14 @@ All code sits inside one IIFE guarded by `window.__mcHelper` / `data-mc-helper` 
 
 | Function | Line | What it does |
 |---|---|---|
-| `mcScan(STOPS, FIRST)` | 13 | Waits for `[role="log"]`, scrolls the inner scroller up 0.6 screen every 500 ms, merges each batch of `[data-message-id]` into `R.order` (a gap counter rises if a batch shares no id with what's known). Stops 3 steps after the anchor is seen: a STOP id, or for a first run the message before the newest `count`, or `__top__` when the chat is shorter. Then matches text replies by quote (`how:'q'`) and clicks "Go to replied message" only for photo/attachment replies. Saves `{win, info, parents, anchor}` to `sessionStorage.__mcsave`. Blocks link clicks while running. |
-| `mcVerify()` | 65 | After a reload: ID-only pass (fast 0.6/500 ms, then slow 0.35/900 ms if needed). OK when `gap==0` and the new window starts with exactly the scanned window (`prefixSame`). `extra` = messages that arrived since the scan; they are *not* captured (next run gets them). |
-| `mcCapture(BASE)` | 73 | Turns each saved DOM record into a message object (fields below), numbering from `BASE+1`. Parses sender, body, quote, reactions, links (strips tracking params), attachment title, date (`dOf`) and time. Fetches photos as base64. Builds the capture, then **replaces the page body** with the COPY CAPTURE button (`#__copy`, status `#__copyst`). |
-| `jump()` | 113 | Handles `#mcjump=<mid>[&noreply]`: scrolls to bottom, then up until the message exists, outlines it, hovers it and clicks "Reply to this message". Shows status in `#mcjump-tip`. |
-| `probe(anchor)` | 140 | Quick check: visibility, loaded count, whether the anchor is on screen. |
-| `full(a)` / `resumePipe()` | 145 / 147 | Scan → `mc_pipe` in sessionStorage → reload → (on load) verify → capture → `mc_result`. `full` clears `mc_result` first; results carry `run`. |
-| Bridge | 156 | `document` event `mc-cmd` with `{id, cmd, args}`; result in `sessionStorage['mc_res_'+id]` (`{running:true}` until done). |
+| `mcDate(label, now)` | 18 | A message's date from its time label (time only, Yesterday, weekday or 3+ letter prefix, month name or prefix with optional year; a year-less future date means last year). `null` when unreadable; the capture then borrows the previous message's date and lists it as `DATES-GUESSED`. Exposed as `window.__mcDate` for tests. |
+| `mcScan(STOPS, FIRST)` | 28 | Waits for `[role="log"]`, scrolls the inner scroller up 0.6 screen every 500 ms, merges each batch of `[data-message-id]` into `R.order` (a gap counter rises if a batch shares no id with what's known). Stops 3 steps after the anchor is seen: a STOP id, or for a first run the message before the newest `count`, or `__top__` when the chat is shorter. Then matches text replies by quote (`how:'q'`) and clicks "Go to replied message" only for photo/attachment replies. Saves `{win, info, parents, anchor}` to `sessionStorage.__mcsave`. Link clicks are blocked while a scan runs (one listener, registered at load). |
+| `mcVerify()` | 79 | After a reload: ID-only pass (fast 0.6/500 ms, then slow 0.35/900 ms if needed). OK when `gap==0` and the new window starts with exactly the scanned window (`prefixSame`). `extra` = messages that arrived since the scan; they are *not* captured (next run gets them). |
+| `mcCapture(BASE)` | 87 | Turns each saved DOM record into a message object (fields below), numbering from `BASE+1`. Parses sender, body, quote, reactions, links (strips tracking params), attachment title, date (`dOf`) and time. Fetches photos as base64. Builds the capture, then **replaces the page body** with the COPY CAPTURE button (`#__copy`, status `#__copyst`). |
+| `jump()` | 124 | Handles `#mcjump=<mid>[&noreply]`: scrolls to bottom, then up until the message exists, outlines it, hovers it and clicks "Reply to this message". Shows status in `#mcjump-tip`. |
+| `probe(anchor)` | 151 | Quick check: visibility, loaded count, whether the anchor is on screen. |
+| `full(a)` / `resumePipe()` | 156 / 158 | Scan → `mc_pipe` in sessionStorage → reload → (on load) verify → capture → `mc_result`. `full` clears `mc_result` first; results carry `run`. |
+| Bridge | 167 | `document` event `mc-cmd` with `{id, cmd, args}`; result in `sessionStorage['mc_res_'+id]` (`{running:true}` until done). |
 
 Browser state it uses: `sessionStorage` keys `__mcsave`, `mc_pipe`, `mc_result`, `mc_res_<id>`; globals `__rf`, `__v`, `__capText`, `__mcHelper`, `__mcJumping`.
 
@@ -175,6 +176,6 @@ Nothing here ships in the skill ZIP.
 | Thing | Where | Now |
 |---|---|---|
 | Skill | `SKILL.md` "Tested" section | 1.1 |
-| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.3 |
-| Helper | 4 places in `helper.user.js` + the page's embedded copy | 1.1 |
+| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.4 |
+| Helper | 4 places in `helper.user.js` + the page's embedded copy | 1.2 |
 | Summary schema | `summary/current.version` | 2 (the "v3" cards are a display change, same schema) |

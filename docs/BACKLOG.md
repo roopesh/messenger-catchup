@@ -13,7 +13,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 |---|---|---|---|
 | B2 | P1 | bug | `catchup.py build` advances WORK with no backup; a failed DB write can't be retried cleanly · **done** (v1.2.0) |
 | R1 | P1 | risk | Page imports aren't version-pinned, and a half-finished import has no documented recovery · **done** (v1.2.0) |
-| B6 | P2 | bug | Capture date parser: unknown label forms silently become "today"; year-less dates break at New Year |
+| B6 | P2 | bug | Capture date parser: unknown label forms silently become "today"; year-less dates break at New Year · **done** (v1.3.0) |
 | B8 | P2 | bug | One malformed link in a message crashes the Messages tab render · **done** (v1.2.2) |
 | B4 | P2 | bug | `catchup.py` accepts links to a parent in another conversation; the page then hides the link · **done** (v1.2.1) |
 | G1 | P2 | doc gap | `meta/chat` fields written by the page are missing from SKILL.md; `pageVersion` never updated on republish · **half done** (pageVersion, v1.2.0) |
@@ -40,13 +40,13 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) |
 | R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt |
-| R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever |
+| R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
 | C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) |
 | C3 | P3 | cleanup | Leftover `pa*` names and chat-specific comments · **done** |
 | C4 | P3 | cleanup | Minified one-line style in helper and page |
 | C5 | P3 | cleanup | `catchup._ts` shells out to `date` · **done** (v1.2.1) |
 | C6 | P3 | cleanup | `catchup.py` opens files without closing them · **done** (v1.2.1) |
-| T4 | P3 | test | Sim doesn't cover other date-label forms |
+| T4 | P3 | test | Sim doesn't cover other date-label forms · **done** (v1.3.0) |
 | T5 | P3 | test | No CI · **done** |
 | F1 | P3 | feature | More than one chat per page |
 | F2 | P3 | feature | Faster distant photo-reply parents |
@@ -93,7 +93,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Seen:** replay on Nov 6: `WARN reply parent not found 5` then `GUESS 5 -> 3 i`.
 - **Fix:** skip the GUESS for messages with `r` set and no parent found (leave unlinked), or make SKILL.md match the code.
 
-### B6 · P2 · Capture date parser fails silently on some labels
+### B6 · P2 · Capture date parser fails silently on some labels · done (v1.3.0)
 - **Where:** `helper.user.js:77-78` (`dOf`)
 - **What:**
   - Only full month names ("November 3") and full weekday names ("Monday") are recognized. "Nov 3, 2026" or "Mon 9:15 AM" fall through to **today's date**, with no warning.
@@ -101,6 +101,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - `d` drives the time-mode catch-up window and `catchup.py`'s 3-hour GUESS/ROOT rule, so a wrong date skews both.
 - **Seen:** probe on Nov 6 (EXPERIMENTS.md §10). Whether real Messenger aria-labels ever use short forms is unknown. The mock only uses full names.
 - **Fix:** accept 3-letter months and weekdays; if the result is in the future, subtract a year; if nothing matched, report it in the capture summary instead of using today.
+- **Done in v1.3.0:** exactly that, via `mcDate(label, now)`. Any prefix of 3 or more letters of a month or weekday name is accepted. An unreadable label takes the previous message's date (closer than today) and is listed as `DATES-GUESSED #…`. 20 fixed-date cases in `tests/sim.js`.
 
 ### B7 · P3 · Mention of message #0 renders empty · done (v1.2.2)
 - **Where:** `page.html:765`, `page.html:767` (`r[0]||r`); `page.html:596` uses `r[0]??r` correctly
@@ -173,9 +174,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - Instead: CI runs `npm test` and a version-bump check on every PR; a `pr-only` job turns `main` red when a commit arrives without a merged PR (verified that the commit→PR API tells a squash merge from a direct push); a `pre-push` hook blocks direct pushes from local clones.
 - **Still open:** nothing stops a push on the server side. Closing that needs GitHub Pro ($4/month) or a public repo (the owner's call).
 
-### R7 · P3 · Helper housekeeping
+### R7 · P3 · Helper housekeeping · done (v1.3.0)
 - **Where:** `helper.user.js:16`, `helper.user.js:162`
 - **What:** each `mcScan` adds a capture-phase click listener that is never removed. It goes inert after a scan, but turns on again during the next one. A `setInterval` polls `location.href` every 800 ms for as long as the tab is open. Both are harmless today.
+- **Done in v1.3.0:** the listener is registered once per page load. The 800 ms URL poll stays on purpose: Messenger navigates with `pushState`, which fires no `hashchange`, and the poll is what notices a `#mcjump=` URL arriving that way. It costs one string compare.
 
 ## Doc and instruction gaps (SKILL.md / page text vs code)
 
@@ -242,7 +244,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - KNOWN checks for B7–B9
 - **Still not covered:** range summaries and the legacy v1 renderer (C1), the lightbox, and the "Find in Messenger" panel.
 
-### T4 · P3 · More date-label forms in the mock
+### T4 · P3 · More date-label forms in the mock · done (v1.3.0)
 - Add short month/weekday labels and a year-boundary case once B6 is fixed.
 
 ### T5 · P3 · CI · done
