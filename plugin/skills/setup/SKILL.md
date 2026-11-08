@@ -1,6 +1,22 @@
-# Setup (first run)
+---
+name: setup
+description: Set up a private catch-up page for a Facebook Messenger group chat (summary, threads, deals, mentions, replies), read from the user's own Chrome through Claude in Chrome. Use for "set up messenger catch-up", a first catch-up page for a chat, changing the refresh schedule, or what refreshes need to work.
+---
 
-Read this when the user has no catch-up page for the chat yet, asks to change the schedule, or asks what a refresh needs. The refresh itself is in SKILL.md. Setup writes most `meta/chat` fields, so also read `references/database.md`.
+# Messenger Catch-up: setup
+
+Creates the user's private **catch-up page** (a claude.ai artifact) for one Facebook Messenger group chat, loads a first stretch of history and sets up the refresh schedule. Each user gets their own page in their own claude.ai account; nothing is shared between users. Refreshes, queued replies and everything after setup belong to the `messenger-catchup:refresh` skill.
+
+Use this skill when the user has no catch-up page for the chat yet, asks to change the schedule, or asks what a refresh needs. Setup writes most `meta/chat` fields, so also read `references/database.md`.
+
+Files that ship with this skill, relative to its folder `${CLAUDE_SKILL_DIR}` (in chat: the folder this SKILL.md is in):
+- `assets/page.html`: the page template (version in `PAGE_VERSION`).
+- `references/database.md`: every database document and field.
+
+## Which part to follow
+- **No page yet for this chat**, or "set up messenger catch-up": the First run below.
+- **Change the schedule:** find the page (step 2's lookup only; never reseed it), then Scheduling. Replace the existing chain or task, so there's only ever one.
+- **What a refresh needs:** Requirements.
 
 ## Requirements: an online computer (tell the user this up front)
 
@@ -19,23 +35,19 @@ Tell the user in one line what's about to happen, then:
 
 1. **Check the requirements** above (Requirements) and say them plainly. Ask for the chat link (they can copy it from the address bar in Messenger). Run `tabs_context_mcp`, then open the chat with `tabs_create_mcp` + `navigate` (that tab is in Claude's group, so later runs can find it). Ask the user to keep that tab open and in front. Use the URL exactly as Messenger shows it: normal chats are `/messages/t/<id>`, end-to-end encrypted ones `/messages/e2ee/t/<id>`; store it as `chatUrl`.
 2. **Find or create the page.**
-   - `Artifact list` (scope mine). For any artifact titled "… Catch-up", `ArtifactData get meta/chat`. If `kind=="messenger-catchup"` and `thread` matches this chat, that's their page: reuse it. If its `pageVersion` is older than the template's `PAGE_VERSION` (compare number by number, never as decimals: 2.0 is newer than 1.9, and 1.10 would be newer than 1.9), read it (`Artifact read`) and republish `assets/page.html` to its url (the database survives republishing), then set `meta/chat.pageVersion` to that `PAGE_VERSION`.
+   - `Artifact list` (scope mine). For any artifact titled "… Catch-up", `ArtifactData get meta/chat`. If `kind=="messenger-catchup"` and `thread` matches this chat, that's their page: reuse it. If its `pageVersion` is older than the template's `PAGE_VERSION` (compare number by number, never as decimals: 2.0 is newer than 1.9, and 1.10 would be newer than 1.9), read it (`Artifact read`) and republish `assets/page.html` to its url (the database survives republishing), then set `meta/chat.pageVersion` to that `PAGE_VERSION`. If its `meta/chat.lastI` is 0 or more, it already holds messages: **never reseed it**. Ask only what's missing, update those `meta/chat` fields (pinned), and go to step 6; refreshes carry on with `messenger-catchup:refresh`.
    - Otherwise create one. Read `assets/page.html` in full first, copy it to the scratchpad as `<chat>-catchup.html`, and publish it with `capabilities: {"db":{}, "assets":{}, "sample":{}}` and icon `chat`. Each user's page is private to them.
 3. **Ask the setup questions** (one AskUserQuestion, or plain questions):
    - The chat: read the thread id and full URL from the tab and the chat name from the page; confirm with the user.
    - The user's names in the chat (first name, nicknames) for mentions.
    - How far back the first catch-up goes: last 100, 300 (recommended) or 1,000 messages. (If the whole chat is shorter, everything is captured.)
    - Queued replies: post automatically on the next run, or confirm each one in chat first (default: confirm first).
-   - The helper: install now (recommended) or skip (see Installing the helper, and SKILL.md › Helper).
+   - The helper: install now (recommended) or skip (see Installing the helper).
    - Refresh schedule (see Scheduling).
-4. **Seed the database** (one batch): `meta/chat` with the config above (field names: `references/database.md` › `meta/chat`; read it before this step) plus `lastI:-1`, `anchorMids:[]`, `markerMode:null`, `chunkSize:82`; `threading/current` `{convs:[],links:{},to:-1,note:""}`; `summary/current` `{version:2,convs:[],open:[],answered:[],deals:[],mentions:[],toI:-1}`; `photos/index` `{byI:{},gifs:[]}`; `refresh/status` `{state:"idle"}`.
-5. **First capture**: the refresh steps in SKILL.md with `first:{count:N}` instead of stops and base `-1`. The page accepts a first import only when it starts at #0.
-6. **First build**: write the seeded docs as JSON into a folder (`seed/meta/chat.json` with `lastI:-1`, `seed/threading/current.json`, `seed/summary/current.json`), run `python3 catchup.py bootstrap WORK seed`, then build as usual. Replies to messages from before the first window print `WARN reply parent not found … left unlinked`: that's expected. On a first run, review GUESS lines only for the newest ~150 messages; older ones keep the default. After the batch write, set `markerMode:"time"` and `markerFrom` to the first message's local time ("YYYY-MM-DDTHH:MM") so the page shows everything captured.
-7. **Set up the schedule** (Scheduling), then report: page created, how many messages, what the summary found, and the requirements in two lines.
+4. **Seed the database** (one batch): `meta/chat` with the config above (field names: `references/database.md` › `meta/chat`; read it before this step) plus `kind:"messenger-catchup"`, `pageVersion` (the template's `PAGE_VERSION`), `tz` (the user's time zone), `firstCount` (the history size they chose), `lastI:-1`, `anchorMids:[]`, `markerMode:null`, `chunkSize:82`; `threading/current` `{convs:[],links:{},to:-1,note:""}`; `summary/current` `{version:2,convs:[],open:[],answered:[],deals:[],mentions:[],toI:-1}`; `photos/index` `{byI:{},gifs:[]}`; `refresh/status` `{state:"idle"}`.
+5. **First capture and build:** follow the `messenger-catchup:refresh` skill's refresh steps now. It sees `meta/chat.lastI:-1` and reads its own first-run notes (a first window of `firstCount` messages, a seeded bootstrap, then a time marker so the page shows everything captured). It leaves the report to step 6.
+6. **Set up the schedule** (Scheduling), then report: page created, how many messages, what the summary found, and the requirements in two lines.
 
-
-## Updating the page (on a refresh, when `meta/chat.pageVersion` is behind)
-If `meta/chat.pageVersion` is older than `PAGE_VERSION` in `assets/page.html`, update the page before anything else: `Artifact read` its url, publish `assets/page.html` to that url (leave out `capabilities` so the stored ones carry over; the database survives), then update `meta/chat` `{pageVersion}` pinned with `if_version`, and say so in the report.
 
 ## Installing the helper
 - Install: with Tampermonkey or Violentmonkey in Chrome, open the install link (https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js, also on the page under Refreshing › "Jump to a message: set up") and press **Install** on the extension's install page. From helper 1.5 on it **updates itself** from the latest GitHub release (the extension checks about once a day). In current Chrome the extension needs user scripts allowed: chrome://extensions › the extension › Details › "Allow User Scripts" (on older Chrome versions, turn on Developer mode at the top right of chrome://extensions instead). Reload the Messenger tab. Check that `document.documentElement.dataset.mcHelper` is set, then set `meta/chat.helper:"installed"`.

@@ -2,6 +2,38 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.16.0] - 2026-11-07
+**Setup is its own skill** (BACKLOG F7, part 2). MINOR: "set up" now loads `messenger-catchup:setup`, and refresh no longer carries the setup instructions. Page, helper and database unchanged.
+
+### Changed
+- **Two skills:**
+  - `messenger-catchup:setup` covers the requirements, finding or creating the page, the setup questions, seeding the database, the helper install and the schedule.
+  - `messenger-catchup:refresh` covers everything after that.
+  - Each has its own description, so "set up messenger catch-up" and "refresh my catch-up" load the right one.
+- **The first capture still runs through refresh:** setup hands over after seeding, and refresh reads its new `references/first-run.md` when `meta/chat.lastI` is -1.
+- **Updating the page** (when `PAGE_VERSION` rises) moved to refresh's `references/updating-the-page.md`.
+- **Setup carries copies** of the page and `references/database.md`, because a skill can only count on its own folder. `npm run sync` (now `tools/sync.py`, formerly `sync-helper.py`) writes them; `npm test` fails on a stale copy. Edit the refresh skill's files, never the copies.
+- **Fixed while splitting** (found by an independent walk-through of the new skills; most were there before):
+  - **The first capture's size is saved:** new `meta/chat.firstCount`, seeded by setup. Before, it lived only in the setup conversation, so a first capture retried later had no size.
+  - **Setup never reseeds a page that already has messages.** Finding an existing page for the chat used to lead straight into seeding, which would have emptied its threading and summary.
+  - **Setup seeds `kind`, `pageVersion` and `tz` explicitly.** Without them, setup couldn't find the page again, and the first refresh would republish it.
+  - **A scheduled refresh never starts setup:** with no page, it stops.
+  - **The first run reports once:** setup's last step reports, not refresh's step 8. The people check waits for the next refresh.
+  - **Setup has a "Which part to follow"** for changing the schedule (find the page, never reseed, replace the existing chain or task).
+  - **Setup's copy of the database reference** names the refresh skill's files as the refresh skill's.
+- **Refresh `SKILL.md`:** a shorter intro, and the per-user note moved to setup: 19,833 bytes.
+- **Tests:**
+  - the copies match the refresh skill
+  - setup names only files it has
+  - the two skills name each other by their real names
+  - setup hands the first capture to refresh, and `first-run.md` carries the first-run rules
+  - setup stays under 20 KB
+  - setup seeds `kind`, `pageVersion`, `tz` and `firstCount`, and never reseeds a page that has messages
+  - the ZIP and `plugin/` hold both skills
+- **Docs:** README, CLAUDE.md, STATUS, ARCHITECTURE, BACKLOG (F7 done).
+
+Components: `PAGE_VERSION` 2.2, helper 1.9 (unchanged).
+
 ## [1.15.0] - 2026-11-07
 **Messenger Catch-up is now a plugin** (BACKLOG F7, part 1). MINOR: the install changes and the skill is now invoked as `messenger-catchup:refresh`; the page, the helper and the database are unchanged, so nothing needs setting up again.
 
