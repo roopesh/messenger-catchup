@@ -5,7 +5,7 @@ A Claude plugin that keeps a private **catch-up page** for one Facebook Messenge
 ## Install
 This repo is a plugin marketplace. Add it once and the plugin updates with each release.
 - **claude.ai or Claude Desktop:** Customize › Plugins › Add › Add marketplace › `roopesh/messenger-catchup`, then install **Messenger Catch-up**. Plugins added there follow your account, Claude Code included.
-- **Claude Code:** `/plugin install messenger-catchup --marketplace roopesh/messenger-catchup` (or `/plugin marketplace add roopesh/messenger-catchup`, then `/plugin install messenger-catchup@roopesh`). For updates without asking, turn on auto-update for the marketplace in `/plugin` › Marketplaces.
+- **Claude Code:** `/plugin install messenger-catchup --marketplace roopesh/messenger-catchup` (or `/plugin marketplace add roopesh/messenger-catchup`, then `/plugin install messenger-catchup@rando-tools`). For updates without asking, turn on auto-update for the marketplace in `/plugin` › Marketplaces.
 - **Without a marketplace:** download `messenger-catchup-plugin.zip` from the latest [GitHub release](https://github.com/roopesh/messenger-catchup/releases) (or build it with `./make-zip.sh`) and use Customize › Plugins › Add › Upload plugin. An uploaded copy doesn't update itself.
 
 Code execution must be on (claude.ai: Settings › Capabilities › **Code execution and file creation**). Then open your group chat in Chrome and tell Claude: **"set up messenger catch-up"**. Claude creates your page, asks a few questions, loads a first stretch of history and sets up a refresh schedule. Setup runs as `/messenger-catchup:setup` and refreshes as `/messenger-catchup:refresh`; asking in plain words works too.

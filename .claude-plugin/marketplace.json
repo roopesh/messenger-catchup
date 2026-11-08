@@ -1,6 +1,6 @@
 {
-  "name": "roopesh",
-  "owner": { "name": "roopesh", "url": "https://github.com/roopesh" },
+  "name": "rando-tools",
+  "owner": { "name": "Messenger Catch-up", "url": "https://github.com/roopesh/messenger-catchup" },
   "description": "Messenger Catch-up: a private catch-up page for a Facebook Messenger group chat.",
   "plugins": [
     {

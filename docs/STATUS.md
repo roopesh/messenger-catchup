@@ -3,7 +3,7 @@
 **Read this first** when picking the project up. Last updated Nov 7, 2026 (US Pacific), after Phase 10 (DEVELOPMENT.md): the repo went public, cleanup, names, self-check, relink, faster photo replies, and it became a plugin (v1.15.0) with separate setup and refresh skills (v1.16.0).
 
 ## Where things stand
-- **Shipped:** release **v1.16.0** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.2, helper 1.9. **It's a plugin** (`messenger-catchup`, skills `setup` and `refresh`), installed from this repo as a marketplace (`roopesh`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
+- **Shipped:** release **v1.16.1** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.2, helper 1.9. **It's a plugin** (`messenger-catchup`, skills `setup` and `refresh`), installed from this repo as a marketplace (`rando-tools`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
 - **Defects:** none open. All 38 bugs found so far are fixed:
   - B1–B11 came from the handoff review
   - B12–B37 came from three independent reviews run overnight; each round's fixes were checked by the next
