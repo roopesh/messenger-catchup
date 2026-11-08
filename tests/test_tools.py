@@ -1,4 +1,4 @@
-"""Repo-level checks: helper copies in sync, the sync tool itself, the skill ZIP, and SKILL.md's file references.
+"""Repo-level checks: helper copies in sync, the sync tool itself, the plugin and its ZIP, and SKILL.md's file references.
 Run: python3 -m unittest discover -s tests"""
 
 import html, importlib.util, os, re, shutil, subprocess, tempfile, unittest, urllib.parse, zipfile
@@ -9,21 +9,28 @@ sync = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sync)
 
 
+SKILL = os.path.join("plugin", "skills", "refresh")
+
+
 def read(*p):
     with open(os.path.join(ROOT, *p), encoding="utf-8") as fh:
         return fh.read()
 
 
+def in_skill(*p):
+    return read(SKILL, *p)
+
+
 REFERENCES = ["database.md", "open-message.md", "outbox.md", "people.md", "setup.md", "troubleshooting.md"]
-SHIPPED = ["SKILL.md", "VERSION", "assets/page.html", "assets/helper.user.js", "scripts/catchup.py"] + [
+SHIPPED = ["SKILL.md", "assets/page.html", "assets/helper.user.js", "scripts/catchup.py"] + [
     "references/" + f for f in REFERENCES
 ]
 
 
 class TestHelperCopies(unittest.TestCase):
     def setUp(self):
-        self.src = read("assets", "helper.user.js")
-        self.page = read("assets", "page.html")
+        self.src = in_skill("assets", "helper.user.js")
+        self.page = in_skill("assets", "page.html")
 
     def textarea(self, page, tid):
         return html.unescape(re.search(r'<textarea id="%s"[^>]*>(.*?)</textarea>' % tid, page, re.S).group(1))
@@ -75,7 +82,7 @@ class TestHelperCopies(unittest.TestCase):
 
 class TestVersions(unittest.TestCase):
     def test_helper_version_strings_agree(self):
-        src = read("assets", "helper.user.js")
+        src = in_skill("assets", "helper.user.js")
         found = {
             re.search(r"@version\s+(\S+)", src).group(1),
             re.search(r"__mcHelper\s*=\s*'([^']+)'", src).group(1),
@@ -86,14 +93,14 @@ class TestVersions(unittest.TestCase):
 
     def test_page_has_no_document_skeleton(self):
         """The Artifact tool adds the skeleton at publish time and only recognizes its own exact one, so the page stores none."""
-        page = read("assets", "page.html")
+        page = in_skill("assets", "page.html")
         self.assertTrue(page.startswith("<title>"), page[:60])
         self.assertNotRegex(page, r"(?i)<!doctype|<html[\s>]|<body[\s>]")
 
     def test_component_versions_read_the_same_as_decimals(self):
         """Minor parts stay one digit (1.9 -> 2.0, never 1.10): read as decimals, 1.1 and 1.10 look equal and a
         republish or update notice could be skipped."""
-        page, src = read("assets", "page.html"), read("assets", "helper.user.js")
+        page, src = in_skill("assets", "page.html"), in_skill("assets", "helper.user.js")
         for name, v in (
             ("PAGE_VERSION", re.search(r'const PAGE_VERSION\s*=\s*"([^"]+)"', page).group(1)),
             ("helper @version", re.search(r"@version\s+(\S+)", src).group(1)),
@@ -101,7 +108,7 @@ class TestVersions(unittest.TestCase):
             self.assertRegex(v, r"^\d+\.\d$", name + " " + v)
 
     def test_page_version_present(self):
-        self.assertRegex(read("assets", "page.html"), r'const PAGE_VERSION\s*=\s*"\d+\.\d+";')
+        self.assertRegex(in_skill("assets", "page.html"), r'const PAGE_VERSION\s*=\s*"\d+\.\d+";')
 
     def test_page_version_bumped_when_page_changed_since_last_release(self):
         """assets/page.html differs from the newest release tag -> PAGE_VERSION must differ too (pages only republish on a bump)."""
@@ -110,14 +117,17 @@ class TestVersions(unittest.TestCase):
         ).stdout.split()
         if not tags:
             self.skipTest("no release tags (shallow clone?)")
-        old = subprocess.run(["git", "show", tags[0] + ":assets/page.html"], cwd=ROOT, capture_output=True, text=True)
+        for path in (SKILL + "/assets/page.html", "assets/page.html"):  # before v1.15.0 the skill sat at the repo root
+            old = subprocess.run(["git", "show", tags[0] + ":" + path], cwd=ROOT, capture_output=True, text=True)
+            if not old.returncode:
+                break
         if old.returncode:
             self.skipTest("page not in " + tags[0])
         ver = lambda s: re.search(r'const PAGE_VERSION\s*=\s*"([^"]+)"', s).group(1)
-        if old.stdout != read("assets", "page.html"):
+        if old.stdout != in_skill("assets", "page.html"):
             self.assertNotEqual(
                 ver(old.stdout),
-                ver(read("assets", "page.html")),
+                ver(in_skill("assets", "page.html")),
                 "page.html changed since " + tags[0] + " but PAGE_VERSION did not",
             )
 
@@ -153,12 +163,12 @@ class TestReleaseVersion(unittest.TestCase):
 class TestNoLeftoverNames(unittest.TestCase):
     def test_no_pa_names_in_shipped_files(self):
         for f in SHIPPED:
-            self.assertNotRegex(read(f), r"\bcc(Scan|Verify|Capture)\b|cctool|cc-capture|cc-cmd|cc_result", f)
+            self.assertNotRegex(in_skill(f), r"\bcc(Scan|Verify|Capture)\b|cctool|cc-capture|cc-cmd|cc_result", f)
 
 
 class TestSkillReferences(unittest.TestCase):
     def test_every_db_path_the_page_uses_is_documented(self):
-        page, skill = read("assets", "page.html"), read("SKILL.md") + read("references", "database.md")
+        page, skill = in_skill("assets", "page.html"), in_skill("SKILL.md") + in_skill("references", "database.md")
         paths = set(re.findall(r'db\s*\.(?:collection|doc)\(\s*"([^"]+)"\s*\)', page))
         self.assertGreater(len(paths), 10)
         for p in paths:
@@ -166,7 +176,7 @@ class TestSkillReferences(unittest.TestCase):
             self.assertTrue(("`%s`" % p in skill) or ("`%s/" % top in skill), "SKILL.md never mentions " + p)
 
     def test_every_meta_chat_field_the_page_writes_is_documented(self):
-        page, skill = read("assets", "page.html"), read("references", "database.md")
+        page, skill = in_skill("assets", "page.html"), in_skill("references", "database.md")
         lits = (
             re.findall(r"const upd\s*=\s*\{([^{}]*)\}", page)
             + re.findall(r'doc\("meta/chat"\)\s*\.update\(\{([^{}]*)\}', page)
@@ -180,27 +190,27 @@ class TestSkillReferences(unittest.TestCase):
             self.assertIn("`%s`" % f, meta, "meta/chat field not documented in SKILL.md: " + f)
 
     def test_every_referenced_file_exists(self):
-        text = read("SKILL.md") + "".join(read("references", f) for f in REFERENCES)
+        text = in_skill("SKILL.md") + "".join(in_skill("references", f) for f in REFERENCES)
         refs = set(re.findall(r"`((?:assets|scripts|references)/[\w.\-]+)`", text))
         self.assertTrue(refs)
         for r in refs:
-            self.assertTrue(os.path.exists(os.path.join(ROOT, r)), r)
+            self.assertTrue(os.path.exists(os.path.join(ROOT, SKILL, r)), r)
 
     def test_skill_names_every_reference_file(self):
         """Claude only opens a reference file SKILL.md tells it about; an unnamed file would never be read."""
-        skill = read("SKILL.md")
-        self.assertEqual(sorted(os.listdir(os.path.join(ROOT, "references"))), REFERENCES)
+        skill = in_skill("SKILL.md")
+        self.assertEqual(sorted(os.listdir(os.path.join(ROOT, SKILL, "references"))), REFERENCES)
         for f in REFERENCES:
             self.assertIn("`references/%s`" % f, skill, f)
 
     def test_skill_stays_small(self):
         """SKILL.md is read on every refresh (hourly); keep on-demand material in references/ (BACKLOG C7)."""
-        self.assertLess(len(read("SKILL.md").encode()), 20000)
+        self.assertLess(len(in_skill("SKILL.md").encode()), 20000)
 
     def test_skill_database_lines_match_the_reference(self):
         """The few database lines SKILL.md repeats must stay word for word the same as references/database.md."""
-        ref = read("references", "database.md").split("\n")
-        core = re.search(r"^## Database.*?(?=^## )", read("SKILL.md"), re.M | re.S).group(0)
+        ref = in_skill("references", "database.md").split("\n")
+        core = re.search(r"^## Database.*?(?=^## )", in_skill("SKILL.md"), re.M | re.S).group(0)
         prefixes = ("- `chunks/", "- `threading/", "- `summary/", "- `people/", "- `photos/")
         shared = [l for l in core.split("\n") if l.startswith(prefixes)]
         self.assertEqual(len(shared), 5)
@@ -208,27 +218,27 @@ class TestSkillReferences(unittest.TestCase):
             self.assertIn(l, ref)
 
     def test_every_catchup_command_is_documented(self):
-        cmds = re.findall(r'cmd == "(\w+)"', read("scripts", "catchup.py"))
+        cmds = re.findall(r'cmd == "(\w+)"', in_skill("scripts", "catchup.py"))
         self.assertEqual(sorted(cmds), ["bootstrap", "build", "relink", "restore"])
         for c in cmds:
-            self.assertIn("catchup.py " + c, read("SKILL.md"), c)
+            self.assertIn("catchup.py " + c, in_skill("SKILL.md"), c)
 
     def test_rare_import_toasts_are_reachable_from_step_4(self):
-        step4 = re.search(r"^4\. Import by paste:.*?(?=^5\. )", read("SKILL.md"), re.M | re.S).group(0)
+        step4 = re.search(r"^4\. Import by paste:.*?(?=^5\. )", in_skill("SKILL.md"), re.M | re.S).group(0)
         self.assertIn("`references/troubleshooting.md` › Import toasts", step4)
         toasts = re.search(
-            r"^## Import toasts.*?(?=^## )", read("references", "troubleshooting.md"), re.M | re.S
+            r"^## Import toasts.*?(?=^## )", in_skill("references", "troubleshooting.md"), re.M | re.S
         ).group(0)
         for t in ("REPAIRED", "Photos: upload failed", "Photos not stored", "Another import is running"):
             self.assertIn(t, toasts)
 
     def test_setup_points_at_the_field_names_it_seeds(self):
         """Setup seeds meta/chat from the user's answers; the field names live in references/database.md."""
-        seed = re.search(r"^4\. \*\*Seed the database\*\*.*$", read("references", "setup.md"), re.M).group(0)
+        seed = re.search(r"^4\. \*\*Seed the database\*\*.*$", in_skill("references", "setup.md"), re.M).group(0)
         self.assertIn("`references/database.md`", seed)
 
     def test_outbox_is_read_before_any_reply_is_posted(self):
-        skill = read("SKILL.md")
+        skill = in_skill("SKILL.md")
         step8 = re.search(r"^8\. Handle the outbox.*$", skill, re.M).group(0)
         self.assertIn("read `references/outbox.md` in full first", step8)
         self.assertIn("Never send a message", skill, "the hard rule stays in SKILL.md")
@@ -266,7 +276,7 @@ class TestPrePushHook(unittest.TestCase):
 
 class TestOutboxStates(unittest.TestCase):
     def test_page_labels_every_outbox_state_skill_uses(self):
-        out, page = read("references", "outbox.md"), read("assets", "page.html")
+        out, page = in_skill("references", "outbox.md"), in_skill("assets", "page.html")
         states = {st for st in ("queued", "sending", "sent", "failed", "unconfirmed") if re.search(r"\b%s\b" % st, out)}
         self.assertTrue({"queued", "sending", "sent", "failed", "unconfirmed"} <= states, states)
         labels = re.search(r'\{\s*queued:\s*"queued",[^}]*\}', page).group(0)
@@ -301,21 +311,75 @@ class TestZip(unittest.TestCase):
     def test_make_zip_contents(self):
         with tempfile.TemporaryDirectory() as t:
             dst = os.path.join(t, "some-other-clone-name")  # any folder name works (B10)
-            for f in SHIPPED + ["make-zip.sh"]:
-                os.makedirs(os.path.dirname(os.path.join(dst, f)), exist_ok=True)
-                shutil.copy2(os.path.join(ROOT, f), os.path.join(dst, f))
-            open(os.path.join(dst, "assets", ".DS_Store"), "w").write("junk")
-            os.makedirs(os.path.join(dst, "scripts", "__pycache__"))
-            open(os.path.join(dst, "scripts", "__pycache__", "x.pyc"), "w").write("junk")
+            files = [".claude-plugin/plugin.json"] + ["skills/refresh/" + f for f in SHIPPED]
+            for f in files:
+                os.makedirs(os.path.dirname(os.path.join(dst, "plugin", f)), exist_ok=True)
+                shutil.copy2(os.path.join(ROOT, "plugin", f), os.path.join(dst, "plugin", f))
+            shutil.copy2(os.path.join(ROOT, "make-zip.sh"), dst)
+            sk = os.path.join(dst, "plugin", "skills", "refresh")
+            open(os.path.join(sk, "assets", ".DS_Store"), "w").write("junk")
+            os.makedirs(os.path.join(sk, "scripts", "__pycache__"))
+            open(os.path.join(sk, "scripts", "__pycache__", "x.pyc"), "w").write("junk")
             subprocess.run(["sh", os.path.join(dst, "make-zip.sh")], check=True, capture_output=True)
             names = sorted(
                 n
-                for n in zipfile.ZipFile(os.path.join(dst, "dist", "messenger-catchup.zip")).namelist()
+                for n in zipfile.ZipFile(os.path.join(dst, "dist", "messenger-catchup-plugin.zip")).namelist()
                 if not n.endswith("/")
             )
             self.assertEqual(
-                names, sorted("messenger-catchup/" + f for f in SHIPPED), "ZIP holds exactly the shipped files, no junk"
+                names, sorted("messenger-catchup/" + f for f in files), "ZIP holds exactly the plugin's files, no junk"
             )
+
+    def test_plugin_holds_only_shipped_files(self):
+        """Everything under plugin/ reaches users; dev files stay outside it."""
+        tracked = subprocess.run(
+            ["git", "ls-files", "plugin"], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout.split()
+        self.assertEqual(
+            sorted(tracked), sorted(["plugin/.claude-plugin/plugin.json"] + [SKILL + "/" + f for f in SHIPPED])
+        )
+
+
+class TestPlugin(unittest.TestCase):
+    """The repo is a marketplace (.claude-plugin/marketplace.json) serving the plugin in plugin/."""
+
+    def setUp(self):
+        import json
+
+        self.plugin = json.loads(read("plugin", ".claude-plugin", "plugin.json"))
+        self.market = json.loads(read(".claude-plugin", "marketplace.json"))
+
+    def test_plugin_version_is_the_release_version(self):
+        """Installed plugins update when this version changes, so it moves with every release."""
+        self.assertEqual(self.plugin["version"], read("VERSION").strip())
+
+    def test_names(self):
+        self.assertEqual(self.plugin["name"], "messenger-catchup")
+        self.assertEqual(self.market["name"], "roopesh")
+        (entry,) = self.market["plugins"]
+        self.assertEqual(entry["name"], self.plugin["name"])
+        self.assertEqual(entry["source"], "./plugin")
+        self.assertNotIn("version", entry, "plugin.json carries the version")
+
+    def test_skill_names_match_their_folders(self):
+        root = os.path.join(ROOT, "plugin", "skills")
+        for d in sorted(os.listdir(root)):
+            name = re.search(r"^name: (\S+)$", read("plugin", "skills", d, "SKILL.md"), re.M).group(1)
+            self.assertEqual(name, d)
+
+    def test_nothing_that_stops_claude_ai_installing_it(self):
+        """claude.ai and Cowork refuse a plugin with a top-level bin/."""
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "plugin", "bin")))
+
+    def test_claude_plugin_validate(self):
+        exe = shutil.which("claude")
+        if not exe:
+            self.skipTest("claude CLI not installed")
+        for target in ("plugin", "."):
+            p = subprocess.run(
+                [exe, "plugin", "validate", "--strict", target], cwd=ROOT, capture_output=True, text=True
+            )
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
 
 if __name__ == "__main__":

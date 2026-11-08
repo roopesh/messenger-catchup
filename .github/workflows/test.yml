@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # tags: tests compare assets/page.html with the last release
+          fetch-depth: 0   # tags: tests compare the page with the last release
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -29,6 +29,7 @@ jobs:
       - run: npm ci
       - run: npm run setup:py   # pinned ruff for the format check
       - run: npx playwright install --with-deps chromium
+      - run: npm install -g @anthropic-ai/claude-code@2.1.311   # claude plugin validate, used by tests/test_tools.py
       - run: npm test
       - if: failure()
         uses: actions/upload-artifact@v4

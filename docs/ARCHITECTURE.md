@@ -6,6 +6,8 @@ Related docs: [STATUS.md](STATUS.md) (start here) · [BACKLOG.md](BACKLOG.md) ·
 
 ## The four parts
 
+They ship as a plugin (v1.15.0): the repo is a marketplace (`.claude-plugin/marketplace.json`, name `roopesh`) listing the plugin in `plugin/` (`plugin/.claude-plugin/plugin.json`, name `messenger-catchup`, version = `VERSION`). The paths below are inside its one skill, `plugin/skills/refresh/`, invoked as `messenger-catchup:refresh`. Skill files refer to each other relative to that folder (`${CLAUDE_SKILL_DIR}`).
+
 | Part | Runs where | Job |
 |---|---|---|
 | `SKILL.md` | Claude (cloud) | The procedure for every run: hard rules, core database fields, the helper bridge, the refresh, spec writing, method ideas, the scheduling chain. Claude carries out every step; nothing else orchestrates. |
@@ -164,7 +166,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 `r` Messenger's own reply link · `rq` reply matched by quote · `rg` photo reply, best match · `i` answers (Claude's judgment) · `c` same person continuing · `null` in a spec = deliberately no link.
 
 ## Tests and dev tools
-Nothing here ships in the skill ZIP.
+Nothing here ships: only `plugin/` reaches users, and a test keeps it to the shipped files.
 
 | Path | What it is |
 |---|---|
@@ -173,14 +175,14 @@ Nothing here ships in the skill ZIP.
 | `.githooks/pre-push` | Blocks direct pushes to `main` from a local clone (`npm run hooks`) |
 | `tools/sync-helper.py` | Regenerates the page's `#jump-bm` bookmarklet from `helper.user.js`; `--check` mode |
 | `tests/test_catchup.py` | `catchup.py` unit tests; the `Env` class fakes WORK and ArtifactData `out_dir`s |
-| `tests/test_tools.py` | Sync, version strings, leftover names, SKILL.md file references, ZIP contents |
+| `tests/test_tools.py` | Sync, version strings, leftover names, SKILL.md file references, the plugin and marketplace manifests, ZIP contents |
 | `tests/sim.js`, `tests/run.js`, `tests/mock/` | The helper against a simulated Messenger (`mock_total` and `mock_skip` in localStorage control its history); `run.js` serves the mock |
 | `tests/page.test.js` | The page with a stand-in `window.claude` (in-memory `db` with `onSnapshot` and a write log, `assets`, `sample`); reads `tests/out/sim_caps.json` from the sim for the pipeline test |
 
 ## Versions in play
 | Thing | Where | Now |
 |---|---|---|
-| Skill | `SKILL.md` "Tested" section | 1.1 |
+| Plugin | `plugin/.claude-plugin/plugin.json` `version`, always the release version; installs update when it changes | 1.15.0 |
 | Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.7 |
 | Helper | 4 places in `helper.user.js` + the page's embedded copy | 1.4 |
 | Summary schema | `summary/current.version` | 2 (the "v3" cards are a display change, same schema) |

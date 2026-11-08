@@ -1,5 +1,5 @@
 ---
-name: messenger-catchup
+name: refresh
 description: Set up and refresh a personal catch-up page for a Facebook Messenger group chat (summary, threads, deals, mentions, replies), read from the user's own Chrome. Use for "set up messenger catch-up", "refresh my catch-up", or scheduled catch-up runs.
 ---
 
@@ -9,7 +9,7 @@ Builds and keeps current a private **catch-up page** (a claude.ai artifact) for 
 
 Each person who runs this skill gets **their own page**, created in their own claude.ai account. Nothing is shared between users.
 
-Files that ship with this skill (paths are relative to this SKILL.md; the skill's base directory is shown when it loads, otherwise run `find / -name helper.user.js -path '*messenger-catchup*' 2>/dev/null`):
+Files that ship with this skill, relative to its folder `${CLAUDE_SKILL_DIR}` (in chat: the folder this SKILL.md is in):
 - `assets/page.html`: the page template (version in `PAGE_VERSION`).
 - `assets/helper.user.js`: the optional Messenger helper (userscript), also used as injectable code.
 - `scripts/catchup.py`: builds threading and summary JSON and checks every rule.
@@ -89,7 +89,7 @@ Before each run: `ArtifactData get` `meta/chat`, `threading/current` and `refres
 - Neutral wording; no gendered pronouns unless the person used them.
 
 ## catchup.py
-Ships as `scripts/catchup.py`. Usage: `python3 catchup.py bootstrap WORK DBDIR` then `python3 catchup.py build WORK RUNDIR SPEC`; `python3 catchup.py restore WORK` undoes the last build or relink (WORK keeps one step in `WORK/prev`). SPEC keys: `join`, `links` (types `r`, `rq`, `rg`, `i`, `c`, or `null`), `relink` (same, for messages already built), `newconvs`, `bullets`, `outcome`, `key`, `deals`, `dealEdit` (add `index` when a conversation has more than one deal), `open`, `closeOpen`, `answered`, `mentions`. It asserts: bullets ≤15 words, outcomes ≤12, each message in exactly one conversation, links point backwards with a known type, every reference belongs to its conversation (bullets, keys, open, answered, deal refs and `dealEdit` additions), mentions point at stored messages by someone else, `closeOpen` matches an open question, no question is opened twice, and the import updated `meta/chat`.
+Run it as `python3 ${CLAUDE_SKILL_DIR}/scripts/catchup.py` (written `catchup.py` below). Usage: `python3 catchup.py bootstrap WORK DBDIR` then `python3 catchup.py build WORK RUNDIR SPEC`; `python3 catchup.py restore WORK` undoes the last build or relink (WORK keeps one step in `WORK/prev`). SPEC keys: `join`, `links` (types `r`, `rq`, `rg`, `i`, `c`, or `null`), `relink` (same, for messages already built), `newconvs`, `bullets`, `outcome`, `key`, `deals`, `dealEdit` (add `index` when a conversation has more than one deal), `open`, `closeOpen`, `answered`, `mentions`. It asserts: bullets ≤15 words, outcomes ≤12, each message in exactly one conversation, links point backwards with a known type, every reference belongs to its conversation (bullets, keys, open, answered, deal refs and `dealEdit` additions), mentions point at stored messages by someone else, `closeOpen` matches an open question, no question is opened twice, and the import updated `meta/chat`.
 - **Fixing a link with nothing new to build:** write `{"relink":{"i":[parent,type]}}` (or `null` to unlink), run `python3 catchup.py relink WORK OUT spec.json`, then write `OUT/threading.json` to `threading/current` pinned. If the write is refused, `restore WORK` and bootstrap again. Tell the user what changed.
 
 ## Method ideas

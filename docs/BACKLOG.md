@@ -82,7 +82,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F2 | P3 | feature | Faster distant photo-reply parents · **done** (v1.14.0) |
 | F5 | P3 | feature | Page shows "update available" when its version is behind |
 | F6 | P3 | feature | Ask Claude over long histories |
-| F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically |
+| F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · part 1 done (v1.15.0); part 2: separate `setup` skill |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
 
@@ -369,9 +369,15 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### F6 · P3 · Ask Claude over long histories
 - Send summaries for older stretches plus the raw window, or pick messages by keyword first, instead of all stored messages.
 
-### F7 · P3 · Ship as a plugin
-- **What:** claude.ai plugins (Customize › Plugins, or a marketplace added from a git repo) load their skills in chat and update when the source syncs. This would replace "re-upload the ZIP". It needs no new plan: custom skills already require Pro or above. Not confirmed: whether Free accounts can add plugins at all, or whether Claude in Chrome and the artifact database have plan limits of their own.
-- **Fix:** add `.claude-plugin/plugin.json` and a marketplace file, keep the plugin version tied to `VERSION` (tested), and document both install paths.
+### F7 · P3 · Ship as a plugin · part 1 done (v1.15.0)
+- **What:** plugins (Customize › Plugins, or a marketplace added from a git repo) load their skills in web and Desktop chat, Cowork and Claude Code, and follow the user's account. This replaces "re-upload the ZIP". Plugins need a paid plan, as Claude in Chrome already does.
+- **Done in v1.15.0:**
+  - the repo is a marketplace (`roopesh`) listing the plugin in `plugin/`
+  - plugin `messenger-catchup` with one skill, `refresh` (`/messenger-catchup:refresh`), whose files refer to each other through `${CLAUDE_SKILL_DIR}`
+  - the plugin's version is the release version (tested); `claude plugin validate --strict` runs in CI
+  - the release carries a plugin ZIP for Upload plugin
+- **Part 2 (owner's call, Nov 7):** split setup into its own skill, `setup`, so "set up" and "refresh" each have a focused description. Shared files (the page, the database reference) are copied into it by `npm run sync`, and a test keeps the copies identical.
+- **Not confirmed:** whether a plugin from a custom marketplace updates by itself in web and Desktop chat, and how fast. Check live after the next release.
 
 ### F8 · P2 · Userscript installs from a URL and updates itself · done (v1.8.0)
 - **What:** the page embeds a 30 KB HTML-escaped copy of the userscript, nearly a quarter of the page, and every helper change means "reinstall the userscript".

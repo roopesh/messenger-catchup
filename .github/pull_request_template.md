@@ -2,10 +2,10 @@
 
 
 ## Version
-- [ ] `VERSION`, `package.json` and a new `CHANGELOG.md` entry all say the same version
+- [ ] `VERSION`, `package.json`, `plugin/.claude-plugin/plugin.json` and a new `CHANGELOG.md` entry all say the same version
 - [ ] Bump type matches the change (MAJOR / MINOR / PATCH, see CLAUDE.md)
-- [ ] `PAGE_VERSION` bumped if `assets/page.html` changed in a way users' pages should get
-- [ ] Helper version bumped (all four strings) if `assets/helper.user.js` behavior changed; `npm run sync` run
+- [ ] `PAGE_VERSION` bumped if the page (`assets/page.html`) changed in a way users' pages should get
+- [ ] Helper version bumped (all four strings) if the helper (`assets/helper.user.js`) changed; `npm run sync` run
 
 ## Checks
 - [ ] `npm test` passes (paste the summary: Python / sim / page counts)
@@ -13,5 +13,4 @@
 - [ ] SKILL.md changed? Described above as a behavior change
 
 ## After merge
-- [ ] Tag `vX.Y.Z` on the merge commit and push it
-- [ ] `gh release create vX.Y.Z` with the skill ZIP and the changelog entry
+- [ ] `tools/release.sh`: tags `vX.Y.Z` on the merge commit and publishes the release (it carries the plugin ZIP, the userscript and the changelog entry)

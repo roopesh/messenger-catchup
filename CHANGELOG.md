@@ -2,6 +2,22 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.15.0] - 2026-11-07
+**Messenger Catch-up is now a plugin** (BACKLOG F7, part 1). MINOR: the install changes and the skill is now invoked as `messenger-catchup:refresh`; the page, the helper and the database are unchanged, so nothing needs setting up again.
+
+### Changed
+- **Install from the marketplace:** this repo is a plugin marketplace named `roopesh`.
+  - claude.ai or Claude Desktop: Customize › Plugins › Add › Add marketplace › `roopesh/messenger-catchup`
+  - Claude Code: `/plugin install messenger-catchup --marketplace roopesh/messenger-catchup`
+  - Installs update when the plugin's version changes, which is every release. Plugins added on claude.ai follow your account into Claude Code.
+- **Moving from the uploaded skill:** install the plugin, remove the old skill (Customize › Skills), and point a scheduled loop at `messenger-catchup:refresh`. Your page and data stay as they are.
+- **Layout:** the skill's files moved to `plugin/skills/refresh/` (the plugin is `plugin/`, its manifest `plugin/.claude-plugin/plugin.json`). `SKILL.md` finds its files through `${CLAUDE_SKILL_DIR}` (in chat, next to `SKILL.md`), replacing the old `find /` fallback.
+- **Release asset:** `messenger-catchup-plugin.zip` (for Customize › Plugins › Upload plugin) replaces the skill ZIP; `helper.user.js` is still attached, so installed helpers keep updating themselves.
+- **Tests:** the plugin's version equals `VERSION`; the marketplace entry, skill names and folders agree; `plugin/` holds only shipped files and no `bin/`; `claude plugin validate --strict` passes for the plugin and the marketplace (CI installs the Claude Code CLI for it).
+- **Docs:** README install, CLAUDE.md versioning (three files now carry the version), STATUS, ARCHITECTURE, BACKLOG F7.
+
+Components: `PAGE_VERSION` 2.2, helper 1.9 (unchanged).
+
 ## [1.14.2] - 2026-11-07
 Docs only. Follows the owner-approved rewrite of the git history.
 

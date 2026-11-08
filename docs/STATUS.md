@@ -1,20 +1,20 @@
 # Status and handoff
 
-**Read this first** when picking the project up. Last updated Nov 7, 2026 (US Pacific), after Phase 10 (DEVELOPMENT.md): the repo went public, cleanup, names, self-check, relink, faster photo replies.
+**Read this first** when picking the project up. Last updated Nov 7, 2026 (US Pacific), after Phase 10 (DEVELOPMENT.md): the repo went public, cleanup, names, self-check, relink, faster photo replies, and it became a plugin (v1.15.0).
 
 ## Where things stand
-- **Shipped:** release **v1.14.1** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.2, helper 1.9. Every release is a git tag plus a GitHub release with the skill ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
+- **Shipped:** release **v1.15.0** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.2, helper 1.9. **It's a plugin** (`messenger-catchup`, skill `refresh`), installed from this repo as a marketplace (`roopesh`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
 - **Defects:** none open. All 38 bugs found so far are fixed:
   - B1–B11 came from the handoff review
   - B12–B37 came from three independent reviews run overnight; each round's fixes were checked by the next
   - B38, a silent wrong photo-reply link, was exposed by the F2 test
   - every fix has a test that fails on the code before it
-- **Open:** live-only risks (R2, R3, R5, R6, R9), doc gap G6, features F1, F5, F6 and F7. See [BACKLOG.md](BACKLOG.md).
+- **Open:** live-only risks (R2, R3, R5, R6, R9), doc gap G6, features F1, F5, F6, and F7's second half (the separate `setup` skill). See [BACKLOG.md](BACKLOG.md).
 - **Workflow:** every change goes branch → PR → version bump → CI → squash-merge → `tools/release.sh`. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
 - **Enforcement:** GitHub branch protection on `main` (since Nov 7): changes only through a PR, `test` and `version-bump` must pass, the branch must be up to date, linear history, no force-push or deletion, admins included. CI also flags any commit on `main` that didn't come from a merged PR, and a local `pre-push` hook blocks direct pushes before they reach GitHub.
 - **In use:** the original user's page and hourly loop run the generic skill.
   - **As of Nov 7 the live page is still at page 1.1 with helper 1.1**, checked read-only.
-  - **Re-upload the skill ZIP** from the latest release, and **install the userscript once from the link**: the 1.1 copy was pasted, so it can't update itself.
+  - **Install the plugin** from the marketplace (README › Install), **remove the uploaded skill**, re-point the hourly loop at `messenger-catchup:refresh`, and **install the userscript once from the link**: the 1.1 copy was pasted, so it can't update itself.
   - On the next refresh, Claude republishes the page (2.2), and later runs the one-time name scan and asks which aliases to add.
 - **Repo:** public (since Nov 7), `github.com/roopesh/messenger-catchup`, branch `main`. **Never commit real names or text from a user's chat**: tests use the mock cast (Ana, Ben, Cy, Dee, You).
 
@@ -23,22 +23,23 @@
 
 | Suite | Command | What it covers | Now |
 |---|---|---|---|
-| Python | `npm run test:py` | `tests/test_catchup.py`: every link rule and assert, restore, bootstrap edge cases (unbuilt messages, chunks ahead of `meta/chat`), review regressions. `tests/test_tools.py`: formatting-independent source checks: bookmarklet in sync, userscript installed from the release, version strings (minors one digit), `PAGE_VERSION` bumped when the page changed since the last tag, SKILL.md documents every db path, `meta/chat` field and outbox state the page uses, `SKILL.md` under 20 KB and naming every reference file, every `catchup.py` command documented, ZIP contents (including `references/`), release script, pre-push hook. Also `relink`. ResourceWarnings are errors. | 111 pass |
+| Python | `npm run test:py` | `tests/test_catchup.py`: every link rule and assert, restore, bootstrap edge cases (unbuilt messages, chunks ahead of `meta/chat`), review regressions. `tests/test_tools.py`: formatting-independent source checks: bookmarklet in sync, userscript installed from the release, version strings (minors one digit), `PAGE_VERSION` bumped when the page changed since the last tag, SKILL.md documents every db path, `meta/chat` field and outbox state the page uses, `SKILL.md` under 20 KB and naming every reference file, every `catchup.py` command documented, the plugin (version equals `VERSION`, marketplace entry, skill names match folders, no `bin/`, `plugin/` holds only shipped files, `claude plugin validate --strict` when the CLI is installed), ZIP contents, release script, pre-push hook. Also `relink`. ResourceWarnings are errors. | 117 pass |
 | Sim | `npm run test:sim` | `tests/sim.js`: the helper on a simulated Messenger (first run, incremental, mid-run arrivals and deletions, photo replies, short chat, 20 pinned-date label cases including New Year, follow-on messages that look like status lines, deleted/unsent messages, jump links and the page's bookmarklet, full names from avatars and nicknames, the `people` scan, `selfcheck` against broken hooks, far-up photo-reply parents, injected vs installed) | 60 pass |
 | Page | `npm run test:page` | `tests/page.test.js`: the page in Chromium with a stand-in claude.ai runtime. Every importer check, leases, fresh reads, repairs (including across chunks), photo slots and retries, the full pipeline (sim captures → import → `catchup.py` → render), markers, date entry, outbox states and Dismiss, safe links, Ask, Views, range summaries, names (`people/index`, the display rule) | 130 pass |
 
 When a bug is found, write its test as the *fixed* behavior first. Python can mark it `expectedFailure`, and the page test has `known()`, which prints `KNOWN` without failing the run. Remove the marker in the PR that fixes it.
 
 ## Where to start
-1. **One live refresh on the real chat**, after re-uploading the ZIP and installing the userscript from the link. The mock can't prove these, and they're the main remaining risk:
+1. **One live refresh on the real chat**, after installing the plugin and the userscript from the link. The mock can't prove these, and they're the main remaining risk:
    - `selfcheck` passes; no `DATES-GUESSED`
    - full names arrive (`fn`), and the one-time name scan fills `people/index`
    - the page republishes cleanly to 2.2 and shows names by the rule
    - a queued reply posts: R9, the "Replying to …" bar
    - Tampermonkey picks up a later helper release by itself (the redirect from `latest/download`)
+   - the plugin's skill loads in chat and Desktop, and a later release reaches it by itself
 2. **R2:** measure a large capture (many photos) to see whether the clipboard and paste hold up.
 3. **G6:** document the `outbox/*` row fields and `coverage`.
-4. **F7:** ship as a plugin, so the skill updates the way the helper now does.
+4. **F7, part 2:** split setup into its own `setup` skill.
 
 ## Doc map
 | Doc | Use it for |
@@ -46,7 +47,7 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
 | [README.md](../README.md) | What it is, install, requirements |
 | [CLAUDE.md](../CLAUDE.md) | The workflow rules (PR, versioning, release) |
 | [CHANGELOG.md](../CHANGELOG.md) | What changed in each release |
-| [SKILL.md](../SKILL.md) and [references/](../references) | The procedure Claude follows: `SKILL.md` every run, references when needed. **Changing either changes behavior.** |
+| [plugin/skills/refresh/](../plugin/skills/refresh) | The procedure Claude follows: `SKILL.md` every run, `references/` when needed. **Changing either changes behavior.** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the parts fit; full database reference; helper functions and bridge; capture format (`fn`); tests; range summaries |
 | [BACKLOG.md](BACKLOG.md) | Everything open, by priority |
 | [DECISIONS.md](DECISIONS.md) | What was chosen, why, and what was rejected |
@@ -68,29 +69,29 @@ Exit code 0 means everything passed. The page suite reads `tests/out/sim_caps.js
 
 ### Try `catchup.py` locally
 ```sh
-python3 scripts/catchup.py bootstrap WORK DBDIR      # DBDIR: chunks/*.json, threading/current.json, summary/current.json, meta/chat.json
-python3 scripts/catchup.py build WORK RUNDIR spec.json
+python3 plugin/skills/refresh/scripts/catchup.py bootstrap WORK DBDIR      # DBDIR: chunks/*.json, threading/current.json, summary/current.json, meta/chat.json
+python3 plugin/skills/refresh/scripts/catchup.py build WORK RUNDIR spec.json
 ```
 `build` advances WORK in place. Copy WORK first if you want to rerun (BACKLOG B2). `tests/test_catchup.py` has an `Env` class that builds these folders, so it's the quickest way to try a spec.
 
 ### Change the helper
-1. Edit `assets/helper.user.js`.
+1. Edit `plugin/skills/refresh/assets/helper.user.js`.
 2. `npm run fmt` formats and then runs `npm run sync`, which regenerates the page's bookmarklet. `npm test` fails if you forget.
 3. To release a new helper version, bump all four version strings (header `@version`, `window.__mcHelper`, `data-mc-helper`, `ping`; a test checks they agree; minor stays one digit, 1.9 → 2.0). Installed copies update themselves from the release, which `tools/release.sh` attaches the userscript to.
 4. `npm test`.
 
 ### Change the page
-1. Edit `assets/page.html`. It has no `<!doctype>…<body>` skeleton, because the Artifact tool adds that at publish time (the page test adds the same one). Bump `PAGE_VERSION` whenever the page changes; a test enforces it.
-2. Claude republishes a user's page when `meta/chat.pageVersion` is older (SKILL.md setup step 2). The database survives a republish.
+1. Edit `plugin/skills/refresh/assets/page.html`. It has no `<!doctype>…<body>` skeleton, because the Artifact tool adds that at publish time (the page test adds the same one). Bump `PAGE_VERSION` whenever the page changes; a test enforces it.
+2. Claude republishes a user's page when `meta/chat.pageVersion` is older (SKILL.md, before each run). The database survives a republish.
 3. `npm test`. The page suite loads the real file.
 
 ### Every change: PR, version, merge, release
 1. Branch from an up-to-date `main`.
-2. Make the change. Bump `VERSION`, `package.json` (`npm install --package-lock-only` updates the lockfile) and add a `CHANGELOG.md` entry. MAJOR / MINOR / PATCH rules are in [CLAUDE.md](../CLAUDE.md). `npm test` fails if these disagree.
+2. Make the change. Bump `VERSION`, `package.json` (`npm version X.Y.Z --no-git-tag-version` updates the lockfile too) and `plugin/.claude-plugin/plugin.json`, and add a `CHANGELOG.md` entry. MAJOR / MINOR / PATCH rules are in [CLAUDE.md](../CLAUDE.md). `npm test` fails if these disagree.
 3. `npm test`, then `gh pr create`. Fill in the template's checklist (`.github/pull_request_template.md`).
 4. `gh pr checks --watch` until CI (`test`, `version-bump`) is green, then `gh pr merge --squash --delete-branch` and `git switch main && git pull`.
-5. `tools/release.sh`: tags `vX.Y.Z` on the merge commit, builds the ZIP from the tag (`SKILL.md`, `VERSION`, `assets/`, `scripts/`, `references/`), checks its `VERSION`, and publishes the GitHub release with the changelog entry.
-6. Users install or update from the release ZIP: Customize › Skills › + › Create skill › Upload a skill.
+5. `tools/release.sh`: tags `vX.Y.Z` on the merge commit, builds the plugin ZIP from the tag (the `plugin/` folder), checks its version, and publishes the GitHub release with the changelog entry and the userscript.
+6. Marketplace installs update from `main` once the plugin's version changes (step 2). ZIP uploads (Customize › Plugins › Upload plugin) don't update themselves.
 
 ## Gotchas worth knowing before you touch anything
 - The reader is tied to Messenger's English labels and markup. When a scan suddenly fails, check those first (LEARNINGS.md › Messenger DOM).
