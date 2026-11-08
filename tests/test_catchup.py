@@ -5,7 +5,9 @@ Known bugs from docs/BACKLOG.md are marked expectedFailure; when one starts pass
 import contextlib, importlib.util, io, json, os, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_spec = importlib.util.spec_from_file_location("catchup", os.path.join(ROOT, "scripts", "catchup.py"))
+_spec = importlib.util.spec_from_file_location(
+    "catchup", os.path.join(ROOT, "plugin", "skills", "refresh", "scripts", "catchup.py")
+)
 catchup = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(catchup)
 
@@ -373,7 +375,12 @@ class TestRestore(unittest.TestCase):
 
         self.e.build(self.run, self.spec)
         p = subprocess.run(
-            [sys.executable, os.path.join(ROOT, "scripts", "catchup.py"), "restore", self.e.work],
+            [
+                sys.executable,
+                os.path.join(ROOT, "plugin", "skills", "refresh", "scripts", "catchup.py"),
+                "restore",
+                self.e.work,
+            ],
             capture_output=True,
             text=True,
         )
@@ -923,7 +930,9 @@ class TestCli(unittest.TestCase):
         import subprocess
 
         p = subprocess.run(
-            [sys.executable, os.path.join(ROOT, "scripts", "catchup.py"), "nope"], capture_output=True, text=True
+            [sys.executable, os.path.join(ROOT, "plugin", "skills", "refresh", "scripts", "catchup.py"), "nope"],
+            capture_output=True,
+            text=True,
         )
         self.assertEqual(p.returncode, 1)
         self.assertIn("catchup.py bootstrap WORK DBDIR", p.stderr)

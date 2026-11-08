@@ -7,7 +7,7 @@ const path = require('path');
 const D = path.join(__dirname, '..') + '/';
 fs.mkdirSync(D + 'tests/out', { recursive: true });
 const URL = process.env.MOCK_URL || 'http://localhost:8765/mock/messenger.html';
-const HELPER = fs.readFileSync(D + 'assets/helper.user.js', 'utf8');
+const HELPER = fs.readFileSync(D + 'plugin/skills/refresh/assets/helper.user.js', 'utf8');
 const HV = HELPER.match(/@version\s+(\S+)/)[1];
 
 const ok = (c, msg) => {
@@ -411,7 +411,7 @@ function checkCap(cap, base, mockFrom, n, label) {
   );
   await dp.evaluate(() => localStorage.removeItem('mock_parent_delay'));
   // ---------- C: the page's jump bookmarklet, run as a browser runs a javascript: URL (no helper) ----------
-  const PAGE = fs.readFileSync(D + 'assets/page.html', 'utf8');
+  const PAGE = fs.readFileSync(D + 'plugin/skills/refresh/assets/page.html', 'utf8');
   const bm = PAGE.match(/<textarea id="jump-bm"[^>]*>([^<]*)<\/textarea>/)[1]
     .replace(/&quot;/g, '"')
     .replace(/&#x27;/g, "'")

@@ -12,12 +12,12 @@ const { execFileSync } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 /* PAGE_FILE: test another copy, e.g. an older page. The page is stored without the document skeleton; the Artifact tool
    adds this exact one when it publishes, so the test adds it too (older copies that already carry it are served as is). */
-const SRC = fs.readFileSync(process.env.PAGE_FILE || path.join(ROOT, 'assets/page.html'), 'utf8');
+const SRC = fs.readFileSync(process.env.PAGE_FILE || path.join(ROOT, 'plugin/skills/refresh/assets/page.html'), 'utf8');
 const SKELETON =
   '<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>';
 const PAGE = /^<!doctype/i.test(SRC) ? SRC : SKELETON + SRC + '</body></html>';
 const URL = 'http://localhost:9917/catchup';
-const CATCHUP = path.join(ROOT, 'scripts/catchup.py');
+const CATCHUP = path.join(ROOT, 'plugin/skills/refresh/scripts/catchup.py');
 const CAPS = path.join(__dirname, 'out/sim_caps.json');
 const ok = (c, msg) => {
   console.log((c ? 'PASS ' : 'FAIL ') + msg);

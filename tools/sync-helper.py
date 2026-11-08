@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep the page's bookmarklet in sync with assets/helper.user.js. (The userscript itself is installed from the GitHub
+"""Keep the page's bookmarklet in sync with the refresh skill's assets/helper.user.js. (The userscript itself is installed from the GitHub
 release and updates itself; the page only links to it.)
   tools/sync-helper.py          rewrite the #jump-bm bookmarklet textarea in assets/page.html
   tools/sync-helper.py --check  exit 1 if it differs from what the helper would generate (used by npm test)
@@ -9,8 +9,9 @@ joined with spaces (so it must use /* */ comments only), then percent-encoded wh
 import html, re, sys, os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HELPER = os.path.join(ROOT, "assets", "helper.user.js")
-PAGE = os.path.join(ROOT, "assets", "page.html")
+SKILL = os.path.join(ROOT, "plugin", "skills", "refresh")
+HELPER = os.path.join(SKILL, "assets", "helper.user.js")
+PAGE = os.path.join(SKILL, "assets", "page.html")
 
 
 def bookmarklet(src):
