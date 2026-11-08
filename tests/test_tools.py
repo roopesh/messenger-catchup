@@ -434,7 +434,7 @@ class TestPlugin(unittest.TestCase):
 
     def test_names(self):
         self.assertEqual(self.plugin["name"], "messenger-catchup")
-        self.assertEqual(self.market["name"], "roopesh")
+        self.assertEqual(self.market["name"], "rando-tools")
         (entry,) = self.market["plugins"]
         self.assertEqual(entry["name"], self.plugin["name"])
         self.assertEqual(entry["source"], "./plugin")

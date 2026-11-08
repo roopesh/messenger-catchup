@@ -372,7 +372,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### F7 · P3 · Ship as a plugin · done (v1.15.0, v1.16.0)
 - **What:** plugins (Customize › Plugins, or a marketplace added from a git repo) load their skills in web and Desktop chat, Cowork and Claude Code, and follow the user's account. This replaces "re-upload the ZIP". Plugins need a paid plan, as Claude in Chrome already does.
 - **Done in v1.15.0:**
-  - the repo is a marketplace (`roopesh`) listing the plugin in `plugin/`
+  - the repo is a marketplace (named `roopesh`, renamed `rando-tools` in v1.16.1) listing the plugin in `plugin/`
   - plugin `messenger-catchup` with one skill, `refresh` (`/messenger-catchup:refresh`), whose files refer to each other through `${CLAUDE_SKILL_DIR}`
   - the plugin's version is the release version (tested); `claude plugin validate --strict` runs in CI
   - the release carries a plugin ZIP for Upload plugin

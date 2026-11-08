@@ -2,6 +2,13 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.16.1] - 2026-11-08
+**The marketplace is renamed `rando-tools`** (was `roopesh`). PATCH: skills, page, helper and database unchanged.
+
+### Changed
+- In Claude Code the plugin is now `messenger-catchup@rando-tools`. The repo to add is still `roopesh/messenger-catchup`. If you added the marketplace before this release, remove it and add it again so the new name takes effect.
+- The marketplace owner and the plugin author are now "Messenger Catch-up", linking the repo instead of a personal profile.
+
 ## [1.16.0] - 2026-11-07
 **Setup is its own skill** (BACKLOG F7, part 2). MINOR: "set up" now loads `messenger-catchup:setup`, and refresh no longer carries the setup instructions. Page, helper and database unchanged.
 
