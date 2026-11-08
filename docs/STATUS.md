@@ -1,15 +1,15 @@
 # Status and handoff
 
-**Read this first** when picking the project up. Last updated Nov 7, 2026 (US Pacific), after Phase 10 (DEVELOPMENT.md): the repo went public, cleanup, names, self-check, relink, faster photo replies, and it became a plugin (v1.15.0).
+**Read this first** when picking the project up. Last updated Nov 7, 2026 (US Pacific), after Phase 10 (DEVELOPMENT.md): the repo went public, cleanup, names, self-check, relink, faster photo replies, and it became a plugin (v1.15.0) with separate setup and refresh skills (v1.16.0).
 
 ## Where things stand
-- **Shipped:** release **v1.15.0** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.2, helper 1.9. **It's a plugin** (`messenger-catchup`, skill `refresh`), installed from this repo as a marketplace (`roopesh`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
+- **Shipped:** release **v1.16.0** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.2, helper 1.9. **It's a plugin** (`messenger-catchup`, skills `setup` and `refresh`), installed from this repo as a marketplace (`roopesh`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
 - **Defects:** none open. All 38 bugs found so far are fixed:
   - B1–B11 came from the handoff review
   - B12–B37 came from three independent reviews run overnight; each round's fixes were checked by the next
   - B38, a silent wrong photo-reply link, was exposed by the F2 test
   - every fix has a test that fails on the code before it
-- **Open:** live-only risks (R2, R3, R5, R6, R9), doc gap G6, features F1, F5, F6, and F7's second half (the separate `setup` skill). See [BACKLOG.md](BACKLOG.md).
+- **Open:** live-only risks (R2, R3, R5, R6, R9), doc gap G6, features F1, F5, F6. F7 is done; its one open question (whether marketplace installs update by themselves in web and Desktop chat) needs a live check. See [BACKLOG.md](BACKLOG.md).
 - **Workflow:** every change goes branch → PR → version bump → CI → squash-merge → `tools/release.sh`. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
 - **Enforcement:** GitHub branch protection on `main` (since Nov 7): changes only through a PR, `test` and `version-bump` must pass, the branch must be up to date, linear history, no force-push or deletion, admins included. CI also flags any commit on `main` that didn't come from a merged PR, and a local `pre-push` hook blocks direct pushes before they reach GitHub.
 - **In use:** the original user's page and hourly loop run the generic skill.
@@ -23,7 +23,7 @@
 
 | Suite | Command | What it covers | Now |
 |---|---|---|---|
-| Python | `npm run test:py` | `tests/test_catchup.py`: every link rule and assert, restore, bootstrap edge cases (unbuilt messages, chunks ahead of `meta/chat`), review regressions. `tests/test_tools.py`: formatting-independent source checks: bookmarklet in sync, userscript installed from the release, version strings (minors one digit), `PAGE_VERSION` bumped when the page changed since the last tag, SKILL.md documents every db path, `meta/chat` field and outbox state the page uses, `SKILL.md` under 20 KB and naming every reference file, every `catchup.py` command documented, the plugin (version equals `VERSION`, marketplace entry, skill names match folders, no `bin/`, `plugin/` holds only shipped files, `claude plugin validate --strict` when the CLI is installed), ZIP contents, release script, pre-push hook. Also `relink`. ResourceWarnings are errors. | 117 pass |
+| Python | `npm run test:py` | `tests/test_catchup.py`: every link rule and assert, restore, bootstrap edge cases (unbuilt messages, chunks ahead of `meta/chat`), review regressions. `tests/test_tools.py`: formatting-independent source checks: bookmarklet in sync, userscript installed from the release, version strings (minors one digit), `PAGE_VERSION` bumped when the page changed since the last tag, SKILL.md documents every db path, `meta/chat` field and outbox state the page uses, `SKILL.md` under 20 KB and naming every reference file, every `catchup.py` command documented, the plugin (version equals `VERSION`, marketplace entry, skill names match folders, no `bin/`, `plugin/` holds only shipped files, `claude plugin validate --strict` when the CLI is installed), the setup skill (its copies match, the skills name each other correctly, setup hands the first capture to refresh), ZIP contents, release script, pre-push hook. Also `relink`. ResourceWarnings are errors. | 124 pass |
 | Sim | `npm run test:sim` | `tests/sim.js`: the helper on a simulated Messenger (first run, incremental, mid-run arrivals and deletions, photo replies, short chat, 20 pinned-date label cases including New Year, follow-on messages that look like status lines, deleted/unsent messages, jump links and the page's bookmarklet, full names from avatars and nicknames, the `people` scan, `selfcheck` against broken hooks, far-up photo-reply parents, injected vs installed) | 60 pass |
 | Page | `npm run test:page` | `tests/page.test.js`: the page in Chromium with a stand-in claude.ai runtime. Every importer check, leases, fresh reads, repairs (including across chunks), photo slots and retries, the full pipeline (sim captures → import → `catchup.py` → render), markers, date entry, outbox states and Dismiss, safe links, Ask, Views, range summaries, names (`people/index`, the display rule) | 130 pass |
 
@@ -39,7 +39,7 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
    - the plugin's skill loads in chat and Desktop, and a later release reaches it by itself
 2. **R2:** measure a large capture (many photos) to see whether the clipboard and paste hold up.
 3. **G6:** document the `outbox/*` row fields and `coverage`.
-4. **F7, part 2:** split setup into its own `setup` skill.
+4. **Plugin updates:** confirm that a release reaches a marketplace install in Desktop by itself, and how fast.
 
 ## Doc map
 | Doc | Use it for |
@@ -47,7 +47,7 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
 | [README.md](../README.md) | What it is, install, requirements |
 | [CLAUDE.md](../CLAUDE.md) | The workflow rules (PR, versioning, release) |
 | [CHANGELOG.md](../CHANGELOG.md) | What changed in each release |
-| [plugin/skills/refresh/](../plugin/skills/refresh) | The procedure Claude follows: `SKILL.md` every run, `references/` when needed. **Changing either changes behavior.** |
+| [plugin/skills/refresh/](../plugin/skills/refresh) and [plugin/skills/setup/](../plugin/skills/setup) | The procedures Claude follows: refresh's `SKILL.md` every run and its `references/` when needed; setup's `SKILL.md` once per chat. **Changing them changes behavior.** Setup's `assets/` and `references/` are generated copies. |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the parts fit; full database reference; helper functions and bridge; capture format (`fn`); tests; range summaries |
 | [BACKLOG.md](BACKLOG.md) | Everything open, by priority |
 | [DECISIONS.md](DECISIONS.md) | What was chosen, why, and what was rejected |
@@ -76,7 +76,7 @@ python3 plugin/skills/refresh/scripts/catchup.py build WORK RUNDIR spec.json
 
 ### Change the helper
 1. Edit `plugin/skills/refresh/assets/helper.user.js`.
-2. `npm run fmt` formats and then runs `npm run sync`, which regenerates the page's bookmarklet. `npm test` fails if you forget.
+2. `npm run fmt` formats and then runs `npm run sync`, which regenerates the page's bookmarklet and the setup skill's copy of the page. `npm test` fails if you forget.
 3. To release a new helper version, bump all four version strings (header `@version`, `window.__mcHelper`, `data-mc-helper`, `ping`; a test checks they agree; minor stays one digit, 1.9 → 2.0). Installed copies update themselves from the release, which `tools/release.sh` attaches the userscript to.
 4. `npm test`.
 
