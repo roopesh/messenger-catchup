@@ -42,6 +42,29 @@ An independent review with experiments against the mock found these before mergi
 - That Messenger accepts the helper's synthetic Enter and shift+Enter (Lexical itself does in Chromium; Messenger's own handlers are unknown). If not, `post` reports `enter-not-accepted` or `linebreak-not-accepted` and sends nothing.
 - That photo-only messages' menu is `[aria-label="More actions"]` › "Reply" as reported, a run's avatar sits on one of its messages, and the loading spinner is a `[role="progressbar"]`.
 
+## [1.19.0] - 2026-11-12
+**The Messages view: a person's bubbles as one block, your place kept, and the message a conversation answers** (BACKLOG B39, B40, B42). MINOR: page `PAGE_VERSION` 2.4, so Claude republishes the page on the next refresh. Helper, skills, `catchup.py` and the database layout unchanged.
+
+### Changed
+- **A person's bubbles read as one block, as in Messenger (B42).** Messenger stores each bubble as its own message, so a text and the photo sent a minute later showed as two full rows, the second labelled "… continues". Now a run of bubbles from the same sender, each at most 5 minutes after the last and linked as "continues" by threading, is one block: one header (name, time), each bubble's text or photos beneath it, its number kept but quiet.
+  - **Every message's actions show only when you want them, as in Messenger.** Each message, and each bubble in a block, keeps its own "Reply in Messenger", "Open photo" and "Reply here". With a mouse they appear in a small bar when you hover it; with a keyboard, when Tab reaches them (with a visible focus ring); on a phone, when you tap it. Link previews, reactions, the "reply queued" chip and an open "Reply here" composer stay visible.
+  - Replies to any bubble nest under the block. Search, jumps and `#n` links still find each bubble. It works in the timeline, the threaded layout and the Summary's "Show the thread".
+  - The Messages filter takes `#123` to find message 123.
+
+### Fixed
+- **Queuing a reply no longer closes the conversation and jumps the page (B39).** Every outbox change used to rebuild the Summary and Messages tabs, and the rebuild reopened only the first four conversations. Now:
+  - an outbox change only refills the "reply queued" chips and the "Your replies" list, and closes the composer whose reply was queued
+  - the Messages tab remembers which conversations you opened or closed
+  - every other rebuild from new data (a refresh's chunks, threading, the summary, photos, names) keeps the message you were replying to, or the row at the top of the screen, where it was. Chromium anchors scrolling itself; Safari doesn't, so this matters most there.
+- **A conversation that starts with a reply shows what it replies to (B40).** When threading put a reply in a new conversation, the message it answered was only a "reply to #n" chip. The conversation now opens with that message itself, quoted and set apart (indented, a left rule, a muted background): which conversation it's in and "Show #n →" (a jump), then its sender, time, full text and photos. If it was sent as a run of bubbles, such as a text and the photo after it, the whole run shows as one block. Also when a conversation started before the catch-up window. A parent that isn't stored shows what the reply quotes and says it isn't stored. In the Messages tab and on Summary cards; it works on pages already built, with no change to the refresh.
+- A jump made while a typed filter was still waiting to apply could be redrawn over.
+- The Summary redraws when photos arrive, so its snippets and context blocks show them.
+
+### Tests
+- Page: `messagesView` (30 checks): the block, its single header and quiet numbers; a reply nesting under it; an 8-minute gap and a different sender kept apart; hover and keyboard focus showing only that bubble's actions; "Reply here" on the second bubble queuing a reply to it; the `#n` link and the filter finding each bubble, threaded and in the timeline; the Summary thread; a phone (tap shows the actions, no sideways scroll); every row hiding its actions until hover, Tab or tap (with a visible focus ring), and an open composer staying visible; the context block with the parent's full text, time and photo run, its jump, a parent that isn't stored, and its Summary card; the reader's place through a queued reply, a new chunk and a threading update, with Chromium's own scroll anchoring off. Each fails on v1.17's page, except the ones that guard against regressions: rows kept apart, no context line where none belongs, "Reply here" on the right message, no sideways scroll and no page errors.
+- The layout test compares the old layout with the last release's page by what it shows (the header, the Summary cards and every message's number, text and photos) rather than exact text, since rows are now grouped.
+- `ONLY=section,...` runs some page-test sections.
+
 ## [1.18.1] - 2026-11-12
 **Restore what pre-1.17 refreshes dropped from the summary** (BACKLOG F10, GitHub issue #32 §4). PATCH: a tool and a reference file; a normal refresh is unchanged. Page and helper unchanged.
 

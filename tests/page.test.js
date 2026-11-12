@@ -294,12 +294,17 @@ const SEED = () => ({
 });
 
 let browser;
-async function open(seed, page = PAGE) {
-  const ctx = await browser.newContext({
-    viewport: { width: 1000, height: 900 },
-    locale: 'en-US',
-    timezoneId: 'America/Los_Angeles',
-  });
+async function open(seed, page = PAGE, ctxOpts) {
+  const ctx = await browser.newContext(
+    Object.assign(
+      {
+        viewport: { width: 1000, height: 900 },
+        locale: 'en-US',
+        timezoneId: 'America/Los_Angeles',
+      },
+      ctxOpts,
+    ),
+  );
   await ctx.route('https://fonts.googleapis.com/**', r => r.abort());
   await ctx.route(URL, r => r.fulfill({ body: page, contentType: 'text/html; charset=utf-8' }));
   await ctx.addInitScript(runtime, seed);
@@ -1140,6 +1145,7 @@ async function pipeline() {
   await p.click('#lay-flat');
   await p.waitForTimeout(200);
   const ri = 56;
+  await p.hover('#m' + ri + ' .who'); /* a message's actions show on hover (v1.19) */
   await p.click('#m' + ri + ' button.rh');
   await p.fill('#m' + ri + ' .compose textarea', 'on my way');
   await p.click('#m' + ri + ' .compose button.primary');
@@ -1236,6 +1242,7 @@ async function variants() {
     location.hash = '#messages';
   });
   await p.waitForTimeout(200);
+  await p.hover('#m4 .who');
   await p.click('#m4 button.rh');
   await p.fill('#m4 .compose textarea', 'hi');
   await p.evaluate(() => {
@@ -1423,8 +1430,19 @@ async function ranges() {
    One synthetic history (tests/synth.py, mock cast) stored both ways: the old single documents and the block layout
    catchup.py writes (blocks of 10 messages here, so it has archived conversations and many blocks). */
 const SYNTH = path.join(__dirname, 'synth.py');
+/* Every message row as [number, text, photos]: a page that lays rows out differently (v1.19 groups a person's bubbles
+   into one block and adds context lines) still shows the same messages. */
+const rowsOf = (p, sel) =>
+  p.$$eval(sel + ' .msg', rs =>
+    rs.map(r => [
+      (r.querySelector('.n') || {}).textContent,
+      (r.querySelector('.body') || {}).textContent || '',
+      r.querySelectorAll('.pics img').length,
+    ]),
+  );
 async function texts(p) {
   const t = {};
+  const sig = {};
   await p.evaluate(() => {
     location.hash = '#summary';
   });
@@ -1434,6 +1452,14 @@ async function texts(p) {
   await openAll('#v-summary');
   await p.waitForTimeout(300);
   t.summary = await p.$eval('#v-summary', e => e.innerText);
+  sig.summaryCards = await p.$eval('#v-summary', e => {
+    const hid = [...e.querySelectorAll('.msgs, .ctx')];
+    hid.forEach(x => (x.style.display = 'none'));
+    const s = e.innerText;
+    hid.forEach(x => (x.style.display = ''));
+    return s;
+  });
+  sig.summaryRows = await rowsOf(p, '#v-summary');
   await p.evaluate(() => {
     location.hash = '#messages';
   });
@@ -1441,11 +1467,15 @@ async function texts(p) {
   await openAll('#msgs');
   await p.waitForTimeout(100);
   t.thread = await p.$eval('#msgs', e => e.innerText);
+  sig.threadRows = await rowsOf(p, '#msgs');
   await p.click('#lay-flat');
   await p.waitForTimeout(100);
   t.flat = await p.$eval('#msgs', e => e.innerText);
+  sig.flatRows = await rowsOf(p, '#msgs');
   await p.click('#lay-thread');
   await p.waitForTimeout(100);
+  sig.strip = t.strip;
+  Object.defineProperty(t, 'sig', { value: sig }); /* not enumerable: same(t, t') still compares the full texts */
   return t;
 }
 async function layouts() {
@@ -1499,10 +1529,11 @@ async function layouts() {
     const pRel = await open(oldSeed, relPage);
     const tRel = await texts(pRel);
     ok(
-      same(tRel, tOld),
-      'layout: on the old layout this page renders exactly what ' +
+      same(tRel.sig, tOld.sig) && tOld.sig.threadRows.length > 100,
+      'layout: on the old layout this page shows what ' +
         tag +
-        "'s page renders (header, summary, threads, timeline)",
+        "'s page shows (header, summary cards, and every message's number, text and photos in the summary threads, " +
+        'threaded and timeline)',
     );
     await pRel.context().close();
   } else console.log('SKIP layout: no release tag to compare the old layout against');
@@ -1732,16 +1763,533 @@ async function names() {
   await p.context().close();
 }
 
+/* ---------- 6. the Messages view (v1.19: B39, B40, B42) ----------
+   60 messages in 11 conversations. "packs" holds Ana's text and the photo she sent a minute later (#30, #31, a
+   continues link), Ben's reply to the photo and Ana's two-bubble answer; "gap" has Ana again 8 minutes later; "diff"
+   has a continues link between two senders; "lend" starts with Dee's reply to #30, which is in "packs"; "gone" starts
+   with Ben's reply to a message that isn't stored (from before the history, so no link). */
+const SWATCH =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    "<svg xmlns='http://www.w3.org/2000/svg' width='200' height='150'><rect width='200' height='150' fill='#8a9a5b'/><circle cx='70' cy='60' r='26' fill='#d8dcc8'/></svg>",
+  );
+const PACK_TEXT =
+  'Selling my old pack, $40. Barely used, all buckles work. It has a rain cover, two side pockets and a hip belt that fits most sizes. I can bring it to the trailhead on Saturday morning, or you can pick it up near the park.';
+function viewSeed() {
+  const ov = {
+    30: { f: 'Ana', b: PACK_TEXT },
+    31: { f: 'Ana', b: '', p: 'att31' },
+    32: { f: 'Ben', b: 'Is it still available?', r: 'Ana' },
+    33: { f: 'Ana', b: 'Yes, still here', r: 'Ben', q: 'Is it still available?' },
+    34: { f: 'Ana', b: 'Can meet Saturday at the trailhead' },
+    35: { f: 'Cy', b: 'Nice pack' },
+    36: { f: 'Ana', b: 'Anyone hiking Sunday?' },
+    37: { f: 'Ben', b: 'Who has a stove I can borrow?' },
+    38: { f: 'Cy', b: 'Mine is broken, sorry' },
+    44: { f: 'Ana', b: 'Leaving at 8 if so' },
+    50: { f: 'Dee', b: 'I can lend you mine instead', r: 'Ana', q: 'Selling my old pack, $40. Barely used' },
+    51: { f: 'Ana', b: 'Thanks Dee, that works', r: 'Dee', q: 'I can lend you mine instead' },
+    58: {
+      f: 'Ben',
+      b: 'I still have mine, want it?',
+      r: 'Dee',
+      q: 'Anyone selling a tent? Mine tore',
+      pmid: 'mid.old7',
+    },
+  };
+  const msgs = range(0, 59, i => mk(i, ov[i]));
+  const conv = (id, title, members) => ({ id, title, members });
+  const th = {
+    convs: [
+      conv(
+        't0',
+        'Trail conditions',
+        range(0, 5, i => i),
+      ),
+      conv(
+        't1',
+        'Water filters',
+        range(6, 11, i => i),
+      ),
+      conv(
+        't2',
+        'Boots',
+        range(12, 17, i => i),
+      ),
+      conv(
+        't3',
+        'Permits',
+        range(18, 23, i => i),
+      ),
+      conv(
+        't4',
+        'Car pool',
+        range(24, 29, i => i),
+      ),
+      conv(
+        'packs',
+        'Pack for sale',
+        range(30, 35, i => i),
+      ),
+      conv('gap', 'Sunday hike', [36, 44]),
+      conv('diff', 'Stove', [37, 38]),
+      conv(
+        't5',
+        'Maps',
+        range(39, 49, i => i).filter(i => i !== 44),
+      ),
+      conv('lend', 'Borrowing a pack', [50, 51]),
+      conv(
+        't6',
+        'Snacks',
+        range(52, 57, i => i),
+      ),
+      conv('gone', 'Tent', [58, 59]),
+    ],
+    links: {
+      31: [30, 'c'],
+      32: [31, 'rg'],
+      33: [32, 'r'],
+      34: [33, 'c'],
+      38: [37, 'c'],
+      44: [36, 'c'],
+      50: [30, 'rq'],
+      51: [50, 'r'],
+    },
+    to: 59,
+    note: '',
+  };
+  const sm = {
+    version: 2,
+    convs: th.convs.map(c => ({ id: c.id, tag: '', synopsis: [], outcome: '', key: [] })),
+    open: [],
+    answered: [],
+    deals: [],
+    mentions: [],
+    toI: 59,
+    generatedAt: 'now',
+  };
+  return { msgs, th, sm };
+}
+async function viewPage(o = {}) {
+  const V = viewSeed();
+  const p = await open(SEED(), PAGE, o.ctx);
+  await paste(p, JSON.stringify(cap(V.msgs)));
+  await p.evaluate(
+    ([th, sm, u]) => {
+      __rt.write('threading/current', th);
+      __rt.write('summary/current', sm);
+      __rt.write('photos/index', { byI: { 31: [u] }, gifs: [] });
+      location.hash = '#messages';
+    },
+    [V.th, V.sm, SWATCH],
+  );
+  await until(p, () => document.querySelector('#m31 .pics img') && document.querySelector('#msgs details.conv'));
+  await p.waitForTimeout(150);
+  return p;
+}
+const topOf = (p, sel) =>
+  p.evaluate(s => {
+    const n = document.querySelector(s);
+    const r = n && n.getBoundingClientRect();
+    return r && r.height ? Math.round(r.top) : null;
+  }, sel);
+const opacity = (p, sel) => p.$eval(sel, e => getComputedStyle(e).opacity).catch(() => null);
+const txt = (p, sel) => p.$eval(sel, e => e.textContent).catch(() => '');
+const tryClick = (p, sel) =>
+  p.click(sel, { timeout: 3000 }).then(
+    () => true,
+    () => false,
+  );
+async function messagesView() {
+  // B42: a person's bubbles sent close together are one block
+  let p = await viewPage();
+  const blk = await p.evaluate(() => {
+    const a = document.querySelector('#m30'),
+      b = document.querySelector('#m31'),
+      g = a && a.parentElement;
+    return {
+      same: !!g && g === b.parentElement && g.classList.contains('grp'),
+      who: g ? [...g.querySelectorAll('.who')].map(x => x.textContent) : [],
+      nums: g ? [...g.querySelectorAll('.n')].map(x => x.textContent) : [],
+      photo: !!(b && b.querySelector('.pics img')),
+      label: b ? /continues/.test(b.textContent) : true,
+    };
+  });
+  ok(
+    blk.same && blk.who.join() === 'Ana' && blk.nums.join() === '#30,#31' && blk.photo && !blk.label,
+    'B42: text and the photo a minute later render as one block with one header, both numbers kept (' +
+      JSON.stringify(blk) +
+      ')',
+  );
+  ok(
+    await p.evaluate(() => {
+      const r = document.querySelector('#m32');
+      return (
+        !!r.closest('.kids') &&
+        r.closest('.kids').previousElementSibling === document.querySelector('#m30').parentElement
+      );
+    }),
+    'B42: a reply to the second bubble nests under the block',
+  );
+  const apart = await p.evaluate(() =>
+    ['#m36', '#m44', '#m37', '#m38'].map(s => {
+      const r = document.querySelector(s);
+      return !r.closest('.grp') && !!r.querySelector('.who');
+    }),
+  );
+  ok(
+    apart.every(Boolean),
+    'B42: a gap of 8 minutes, or a different sender, still gives separate rows with their own header (' + apart + ')',
+  );
+  await p.click('#msgs details.conv[data-conv="packs"] > summary');
+  await p.mouse.move(5, 5);
+  await p.waitForTimeout(250);
+  const hid = [await opacity(p, '#m30 .acts'), await opacity(p, '#m31 .acts')];
+  await p.hover('#m31 .pics');
+  await p.waitForTimeout(250);
+  const shown = [await opacity(p, '#m30 .acts'), await opacity(p, '#m31 .acts')];
+  ok(
+    hid.join() === '0,0' && shown.join() === '0,1',
+    "B42: a bubble's actions are hidden until you hover that bubble (before " + hid + ', hovering #31 ' + shown + ')',
+  );
+  await p.mouse.move(5, 5);
+  await p.evaluate(() => {
+    const a = document.querySelector('#m30 .acts a.replylink');
+    if (a) a.focus();
+  });
+  await p.waitForTimeout(250);
+  ok(
+    (await opacity(p, '#m30 .acts')) === '1' && (await opacity(p, '#m31 .acts')) === '0',
+    "B42: keyboard focus on a bubble's action shows that bubble's actions",
+  );
+  ok(
+    /Open photo/.test(await txt(p, '#m31 .acts')) &&
+      /Reply in Messenger/.test(await txt(p, '#m31 .acts')) &&
+      !/Open photo/.test(await txt(p, '#m30 .acts')),
+    'B42: each bubble keeps its own actions (the photo bubble has Open photo)',
+  );
+  await p.evaluate(() => document.activeElement.blur());
+  await p.waitForTimeout(250);
+  const rowsHid = await p.evaluate(() => {
+    const rows = [...document.querySelectorAll('#msgs details.conv[open] .msg')];
+    return {
+      n: rows.length,
+      hidden: rows.filter(r => {
+        const a = r.querySelector(':scope > .c > .acts');
+        return a && getComputedStyle(a).opacity === '0' && /Reply in Messenger/.test(a.textContent);
+      }).length,
+      chips: !!document.querySelector('#m35 .acts .chip'),
+    };
+  });
+  await p.hover('#m35 .body');
+  await p.waitForTimeout(250);
+  const single = await opacity(p, '#m35 .acts');
+  ok(
+    rowsHid.n > 20 && rowsHid.hidden === rowsHid.n && single === '1',
+    'every message row hides its actions until you hover it (' +
+      rowsHid.hidden +
+      ' of ' +
+      rowsHid.n +
+      ' hidden; hovering the single message #35: ' +
+      single +
+      ')',
+  );
+  await p.mouse.move(5, 5);
+  await p.evaluate(() => {
+    const b = document.querySelector('#m34 .acts button.rh');
+    if (b) b.focus();
+  });
+  await p.keyboard.press('Tab');
+  await p.waitForTimeout(250);
+  const kb = await p.evaluate(() => {
+    const a = document.activeElement;
+    const acts = document.querySelector('#m35 > .c > .acts');
+    return {
+      inRow: !!(acts && acts.contains(a)),
+      shown: acts ? getComputedStyle(acts).opacity : null,
+      ring: a ? getComputedStyle(a).outlineStyle : null,
+    };
+  });
+  ok(
+    kb.inRow && kb.shown === '1' && kb.ring !== 'none',
+    "Tab reaches the next message's actions, shows them, and the focus ring is visible (" + JSON.stringify(kb) + ')',
+  );
+  await p.hover('#m31 .pics');
+  await p.click('#m31 button.rh');
+  await p.fill('#m31 .compose textarea', 'Still have it?');
+  await p.mouse.move(5, 5);
+  await p.waitForTimeout(250);
+  ok(
+    await p.$eval('#m31 .compose', c => {
+      const r = c.getBoundingClientRect();
+      return r.width > 200 && r.height > 40 && getComputedStyle(c).opacity === '1';
+    }),
+    '"Reply here"\'s composer stays open and visible when the pointer leaves the message',
+  );
+  await p.click('#m31 .compose button.primary');
+  const ob = await until(p, () => {
+    const k = [...__rt.store.keys()].find(k => k.startsWith('outbox/'));
+    return k ? __rt.get(k) : null;
+  });
+  ok(
+    ob && ob.i === 31 && ob.mid === 'mid.31' && ob.to === 'Ana',
+    'B42: Reply here on the second bubble queues a reply to #31 (' +
+      JSON.stringify(ob && { i: ob.i, mid: ob.mid }) +
+      ')',
+  );
+  await tryClick(p, '#m32 a.lk');
+  ok(
+    await until(p, () => {
+      const n = document.querySelector('#m31.flash');
+      const r = n && n.getBoundingClientRect();
+      return r && r.top >= 0 && r.bottom <= innerHeight;
+    }),
+    'B42: the #31 link on the reply jumps to the second bubble',
+  );
+  await p.fill('#msg-q', '#31');
+  await p.waitForTimeout(300);
+  const s31 = await p.evaluate(() => ({
+    convs: [...document.querySelectorAll('#msgs details.conv')].map(d => d.dataset.conv),
+    has: !!document.querySelector('#m31'),
+  }));
+  await p.fill('#msg-q', 'old pack');
+  await p.waitForTimeout(300);
+  const s30 = await p.evaluate(() => !!document.querySelector('#m30'));
+  ok(
+    s31.has && s31.convs.join() === 'packs' && s30,
+    'B42: search finds each bubble (#31 by number, #30 by text) (' + JSON.stringify(s31) + ')',
+  );
+  await p.click('#lay-flat');
+  await p.fill('#msg-q', '');
+  await p.waitForTimeout(300);
+  const flat = await p.evaluate(() => {
+    const g = n => (document.querySelector('#m' + n) || {}).parentElement;
+    return {
+      pair: g(30) === g(31) && g(30).classList.contains('grp'),
+      answer: g(33) === g(34) && g(33).classList.contains('grp'),
+      apart: [36, 44, 37, 38, 35, 50].every(n => !document.querySelector('#m' + n).closest('.grp')),
+      rows: document.querySelectorAll('#msgs .msg').length,
+    };
+  });
+  ok(
+    flat.pair && flat.answer && flat.apart && flat.rows === 60,
+    'B42: the timeline groups the same bubbles and keeps all 60 rows (' + JSON.stringify(flat) + ')',
+  );
+  await p.fill('#msg-q', '#31');
+  await p.waitForTimeout(300);
+  ok(
+    (await p.$$eval('#msgs .msg', r => r.map(x => x.id))).join() === 'm31',
+    'B42: in the timeline, search by number finds the second bubble alone',
+  );
+  await p.fill('#msg-q', '');
+  await p.click('#lay-thread');
+  // B40: the conversation that starts with a reply to #30 (in "packs") shows #30 first
+  const ctxOf = sel =>
+    p.evaluate(s => {
+      const c = document.querySelector(s);
+      return (
+        c && {
+          text: c.textContent,
+          first: c.previousElementSibling && c.previousElementSibling.tagName,
+          who: [...c.querySelectorAll('.who')].map(x => x.textContent),
+          body: [...c.querySelectorAll('.body')].map(x => x.textContent),
+          imgs: [...c.querySelectorAll('.pics img')].map(x => x.getAttribute('src')),
+          time: (c.querySelector('.msg .t') || {}).textContent,
+          ids: [...c.querySelectorAll('[id]')].length,
+        }
+      );
+    }, sel);
+  const cx = await ctxOf('#msgs details.conv[data-conv="lend"] > .ctx');
+  ok(
+    cx && cx.first === 'SUMMARY' && /Show #30/.test(cx.text) && /Pack for sale/.test(cx.text),
+    'B40: a conversation that starts with a reply to another conversation shows that message first (' +
+      JSON.stringify(cx && { first: cx.first, text: cx.text.slice(0, 80) }) +
+      ')',
+  );
+  ok(
+    cx &&
+      cx.who.join() === 'Ana' &&
+      cx.body.join() === PACK_TEXT &&
+      cx.time === 'Fri 9:30 AM' &&
+      cx.imgs.join() === SWATCH &&
+      cx.ids === 0,
+    "B40: the context block shows the message itself: Ana's full text, the time, and the photo she sent with it as " +
+      'one block (' +
+      JSON.stringify(cx && { who: cx.who, len: cx.body.map(b => b.length), imgs: cx.imgs.length, ids: cx.ids }) +
+      ')',
+  );
+  const gone = await ctxOf('#msgs details.conv[data-conv="gone"] > .ctx');
+  ok(
+    gone &&
+      /isn.t stored/.test(gone.text) &&
+      /Dee/.test(gone.text) &&
+      /Anyone selling a tent\? Mine tore/.test(gone.text) &&
+      (await p.$eval('#msgs details.conv[data-conv="gone"] > .ctx a', a => a.href).catch(() => '')).includes(
+        'mcjump=mid.old7',
+      ),
+    "B40: a parent that isn't stored shows what the reply says about it and says it isn't stored (" +
+      JSON.stringify(gone && gone.text) +
+      ')',
+  );
+  ok(
+    !(await p.$('#msgs details.conv[data-conv="packs"] > .ctx')) &&
+      !(await p.$('#msgs details.conv[data-conv="t1"] > .ctx')),
+    'B40: conversations that start on their own get no context line',
+  );
+  await p.evaluate(() => {
+    document.querySelector('#msgs details.conv[data-conv="packs"]').open = false;
+    document.querySelector('#msgs details.conv[data-conv="lend"]').open = true;
+  });
+  await tryClick(p, '#msgs details.conv[data-conv="lend"] > .ctx button.link');
+  ok(
+    await until(p, () => {
+      const n = document.querySelector('#m30.flash');
+      const r = n && n.getBoundingClientRect();
+      return r && r.height && r.top >= 0 && r.bottom <= innerHeight && n.closest('details').open;
+    }),
+    "B40: the context line's Show #30 jumps to #30 in its own conversation",
+  );
+  await p.evaluate(() => {
+    location.hash = '#summary';
+  });
+  await p.waitForTimeout(200);
+  ok(
+    (await p.$$eval('#v-summary article.cv[data-conv="lend"] .ctx .body', b => b.map(x => x.textContent))).join() ===
+      PACK_TEXT && !!(await p.$('#v-summary article.cv[data-conv="lend"] .ctx .pics img')),
+    "B40: the summary's card shows the context block too, text and photo",
+  );
+  await p.click('#v-summary article.cv[data-conv="packs"] details.thr > summary');
+  await p.waitForTimeout(200);
+  const thr = await p.evaluate(() => {
+    const t = document.querySelector('#v-summary article.cv[data-conv="packs"] details.thr');
+    const a = t.querySelector('.msg[data-i="30"]'),
+      b = t.querySelector('.msg[data-i="31"]');
+    return (
+      !!a &&
+      a.parentElement === b.parentElement &&
+      a.parentElement.classList.contains('grp') &&
+      a.parentElement.querySelectorAll('.who').length === 1
+    );
+  });
+  ok(thr, 'B42: the summary\'s "Show the thread" shows the same block');
+  ok(p.errors.length === 0, 'messages view: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // B42 on a phone: no hover, so tapping a bubble shows its actions; nothing scrolls sideways
+  p = await viewPage({ ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
+  await p.evaluate(() => {
+    document.querySelector('#msgs details.conv[data-conv="packs"]').open = true;
+  });
+  await p.waitForTimeout(150);
+  const width = s => p.$eval(s, e => Math.round(e.getBoundingClientRect().width)).catch(() => null);
+  const w0 = await width('#m31 .acts');
+  await p.tap('#m31 .pics', { position: { x: 5, y: 5 } }).catch(() => p.tap('#m31 .n'));
+  await p.waitForTimeout(150);
+  const lb = await p.$('#lb');
+  if (lb) await p.click('#lb .bar button');
+  await p.tap('#m31 .n');
+  await p.waitForTimeout(150);
+  const w1 = await width('#m31 .acts');
+  ok(
+    w0 != null && w0 <= 1 && w1 > 100,
+    "B42: on a phone a bubble's actions are hidden until you tap it (width " + w0 + ' → ' + w1 + ')',
+  );
+  const s0 = await width('#m35 .acts');
+  await p.tap('#m35 .body');
+  await p.waitForTimeout(150);
+  const s1 = await width('#m35 .acts');
+  ok(
+    s0 != null && s0 <= 1 && s1 > 100 && (await width('#m31 .acts')) <= 1,
+    "on a phone a single message's actions are hidden until you tap it, and tapping it hides the last one's (width " +
+      s0 +
+      ' → ' +
+      s1 +
+      ')',
+  );
+  ok(
+    await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    'B42: at phone width the Messages view has no sideways scroll',
+  );
+  ok(p.errors.length === 0, 'messages view (phone): no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // B39: queuing a reply keeps the reader's conversation open and its message where it was
+  p = await viewPage({ ctx: { viewport: { width: 1000, height: 700 } } });
+  /* Safari has no scroll anchoring of its own (CSS overflow-anchor), so the page must keep the place itself */
+  await p.addStyleTag({ content: '* { overflow-anchor: none !important; }' });
+  await p.click('#msgs details.conv[data-conv="t4"] > summary'); /* the fifth: closed by default */
+  await p.click('#msgs details.conv[data-conv="t1"] > summary'); /* one of the first four: the reader closes it */
+  await p.evaluate(() => {
+    const r = document.querySelector('#m26').getBoundingClientRect();
+    scrollBy(0, r.top - 260);
+  });
+  await p.hover('#m26 .who');
+  await p.click('#m26 button.rh');
+  await p.fill('#m26 .compose textarea', 'I can drive');
+  const y0 = await topOf(p, '#m26');
+  await p.click('#m26 .compose button.primary');
+  await until(p, () => /reply queued/.test(document.querySelector('#m26').textContent));
+  await p.waitForTimeout(200);
+  const st1 = await p.evaluate(() => ({
+    t4: document.querySelector('details.conv[data-conv="t4"]').open,
+    t1: document.querySelector('details.conv[data-conv="t1"]').open,
+    compose: !!document.querySelector('#m26 .compose'),
+  }));
+  const y1 = await topOf(p, '#m26');
+  ok(
+    st1.t4 && !st1.t1 && !st1.compose && y0 != null && Math.abs(y1 - y0) <= 2,
+    'B39: after Queue reply the conversation stays open (and the one closed stays closed), and #26 stays put (y ' +
+      y0 +
+      ' → ' +
+      y1 +
+      ', ' +
+      JSON.stringify(st1) +
+      ')',
+  );
+  // ...a refresh's chunk arriving
+  await paste(p, JSON.stringify(cap(range(60, 64))));
+  await until(p, () => document.querySelector('#m64'));
+  await p.waitForTimeout(200);
+  const y2 = await topOf(p, '#m26');
+  const st2 = await p.evaluate(() => [
+    document.querySelector('details.conv[data-conv="t4"]').open,
+    document.querySelector('details.conv[data-conv="t1"]').open,
+  ]);
+  ok(
+    st2.join() === 'true,false' && y2 != null && Math.abs(y2 - y0) <= 2,
+    'B39: after a new chunk arrives the conversations stay as the reader left them and #26 stays put (y ' +
+      y0 +
+      ' → ' +
+      y2 +
+      ')',
+  );
+  // ...and the threading build that follows, which also makes the text above the list longer
+  await p.evaluate(() => {
+    const t = __rt.get('threading/current');
+    t.convs.find(c => c.id === 't6').members.push(60, 61, 62, 63, 64);
+    t.to = 64;
+    t.note = 'Reply links read straight from Messenger. '.repeat(12);
+    __rt.write('threading/current', t);
+  });
+  await until(p, () => /straight from Messenger/.test(document.getElementById('msg-note').textContent));
+  await p.waitForTimeout(200);
+  const y3 = await topOf(p, '#m26');
+  ok(
+    (await p.$eval('details.conv[data-conv="t4"]', d => d.open)) && y3 != null && Math.abs(y3 - y0) <= 2,
+    'B39: after a threading update that adds lines above, #26 stays put (y ' + y0 + ' → ' + y3 + ')',
+  );
+  ok(p.errors.length === 0, 'B39: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
+
+const SECTIONS = { importer, robustness, pipeline, variants, ranges, layouts, names, messagesView };
 (async () => {
   browser = await chromium.launch();
   try {
-    await importer();
-    await robustness();
-    await pipeline();
-    await variants();
-    await ranges();
-    await layouts();
-    await names();
+    /* ONLY=messagesView,names runs just those sections (e.g. to check new tests against an older page) */
+    for (const [k, f] of Object.entries(SECTIONS))
+      if (!process.env.ONLY || process.env.ONLY.split(',').includes(k)) await f();
   } catch (e) {
     ok(false, 'crashed: ' + ((e && e.stack) || e));
   }
