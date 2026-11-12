@@ -1248,7 +1248,7 @@
      (meta/chat.helperPost, which Claude passes as helperPost:true). Only this bridge command reaches it: no link, URL hash
      or page can. It opens Reply on the message (jump, with the More actions fallback), checks that the "Replying to" bar
      names `to` and shows `snip`, checks that the box is empty, types the text (shift+Enter between lines), presses Enter,
-     and waits up to 15 s for the message to appear. Returns {sent:true, mid} or {sent:false, err, stage, entered,
+     and waits up to 15 s for the message to appear. Returns {sent:true, mid, at} or {sent:false, err, stage, entered,
      detail}; entered:false means nothing can have been sent. */
   async function mcPost(a) {
     a = a || {};
@@ -1365,7 +1365,14 @@
           );
         });
       if (empty && el)
-        return { sent: true, mid: el.getAttribute('data-message-id'), entered: true, via: j.via, ms: Date.now() - t0 };
+        return {
+          sent: true,
+          mid: el.getAttribute('data-message-id'),
+          at: new Date().toISOString(),
+          entered: true,
+          via: j.via,
+          ms: Date.now() - t0,
+        };
     }
     if (box() && N(box().innerText))
       return out({

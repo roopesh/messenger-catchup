@@ -3,14 +3,14 @@
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
 ## [1.19.0] - 2026-11-12
-**Helper 2.0: Reply on photo-only messages, warnings instead of silent misreads, full names on every message, and an opt-in `post`** (GitHub issue #32 §1, §2 and §5; BACKLOG R3, B41, B45, B46, F11, F12). MINOR: new helper behavior and skill procedure changes. Helper **2.0** (from 1.9), page **`PAGE_VERSION` 2.4** (its jump bookmarklet is generated from the helper). No re-setup; installed helpers (1.5+) update themselves from this release.
+**Helper 2.0: Reply on photo-only messages, warnings instead of silent misreads, full names on every message, and an opt-in `post`** (GitHub issue #32 §1, §2 and §5; BACKLOG R3, B41, B47, B48, F12, F13). MINOR: new helper behavior and skill procedure changes. Helper **2.0** (from 1.9), page **`PAGE_VERSION` 2.4** (its jump bookmarklet is generated from the helper). No re-setup; installed helpers (1.5+) update themselves from this release.
 
 ### Added
-- **Reply on a photo-only message (B45, #32 §2).** Such a message has no "Reply to this message" button on its hover toolbar. `jump{reply:true}` now opens its **More actions** menu and clicks "Reply", so queued replies to photos post, and the page's Reply links open the box on them too. SKILL.md's allowed clicks name More actions › Reply when posting an approved reply.
-- **Opt-in `post` (F12, #32 §1, option B).** `post{mid,to,snip,text,helperPost:true}` posts one queued reply in one bridge call: it opens Reply, checks the "Replying to …" bar against `to` and `snip` and that the box is empty, types the text with shift+Enter between lines (Messenger's editor drops newlines from `insertText`), presses Enter, and waits up to 15 s for the message. It returns `{sent:true, mid}` or a precise error with `entered` (false: nothing can have been sent). **Off by default:** it refuses without `helperPost:true`, which Claude passes only when `meta/chat.helperPost` is true, and the user turns that on by asking Claude. No link, URL hash or page can reach it. New `references/posting-with-helper.md` maps every result to the outbox states (`sending` before; `sent`, `failed`, or left `sending` for the next run's check).
+- **Reply on a photo-only message (B47, #32 §2).** Such a message has no "Reply to this message" button on its hover toolbar. `jump{reply:true}` now opens its **More actions** menu and clicks "Reply", so queued replies to photos post, and the page's Reply links open the box on them too. SKILL.md's allowed clicks name More actions › Reply when posting an approved reply.
+- **Opt-in `post` (F13, #32 §1, option B).** `post{mid,to,snip,text,helperPost:true}` posts one queued reply in one bridge call: it opens Reply, checks the "Replying to …" bar against `to` and `snip` and that the box is empty, types the text with shift+Enter between lines (Messenger's editor drops newlines from `insertText`), presses Enter, and waits up to 15 s for the message. It returns `{sent:true, mid}` or a precise error with `entered` (false: nothing can have been sent). **Off by default:** it refuses without `helperPost:true`, which Claude passes only when `meta/chat.helperPost` is true, and the user turns that on by asking Claude. No link, URL hash or page can reach it. New `references/posting-with-helper.md` maps every result to the outbox states (`sending` before; `sent`, `failed`, or left `sending` for the next run's check).
 - **Warnings (R3, option B).** `selfcheck` and the scan's result (`warn`, also in `mc_result.warn`) now warn instead of misreading silently: reply links without an "X replied to Y" line; "Original message:" quotes without reply links; photo links with no Facebook image; times going backwards or into the future across the window (catches time-only labels that aren't today; one hour back is allowed for clock changes); one shown name with full names that don't share a first name (two Bens are fine); no full names at all; a page language that isn't English (named; reading continues); a 24-hour clock.
 - **Scan results report `top`** (reached the start of the chat) and **`scroller`** (how the list was found).
-- **Two connected Chromes (F11, #32 §5).** Step 2 picks by `references/helper.md` › Which Chrome: the one this session uses, otherwise ask the user, recommending the newest helper (Claude in Chrome forbids picking for them); every report names the browser and helper version.
+- **Two connected Chromes (F12, #32 §5).** Step 2 picks by `references/helper.md` › Which Chrome: the one this session uses, otherwise ask the user, recommending the newest helper (Claude in Chrome forbids picking for them); every report names the browser and helper version.
 - New `references/helper.md`: which Chrome, helper versions, what each warning means, stalls and `top`, and injecting without the helper (moved out of SKILL.md).
 
 ### Changed
@@ -18,7 +18,7 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 - **A reply whose "X replied to Y" line can't be read is never linked** (`perr:"noreplyline"`); helper 1.9 accepted whatever message took focus.
 - **24-hour times are read** ("17:52", "3 Nov 2026 17:52") and stored as 12-hour `t`, with a warning.
 - **The scroller is the nearest scrollable ancestor of a message**, not the first scrollable element in the chat log.
-- **Stalls (B46, #32 §5).** A scan or verify with nothing new for 30 s returns `err:"stalled"` (retry once: `references/helper.md`) instead of hanging; the top of the chat needs 8 tries and 12 s with nothing loaded and no loading spinner, so a slow load no longer truncates a first run; a scan with stops that reaches the top says so. SKILL.md notes that the first poll after `full` often fails with "Inspected target navigated", which is expected.
+- **Stalls (B48, #32 §5).** A scan or verify with nothing new for 30 s returns `err:"stalled"` (retry once: `references/helper.md`) instead of hanging; the top of the chat needs 8 tries and 12 s with nothing loaded and no loading spinner, so a slow load no longer truncates a first run; a scan with stops that reaches the top says so. SKILL.md notes that the first poll after `full` often fails with "Inspected target navigated", which is expected.
 - `SKILL.md` stays under its cap (19,642 bytes, down from 19,865): the helper version notices and the injection steps moved to `references/helper.md`.
 - `references/database.md` (and setup's copy): `meta/chat.helperPost`.
 
@@ -30,6 +30,26 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 ### Needs a live check
 - That Messenger accepts the helper's synthetic Enter and shift+Enter (Lexical itself does in Chromium; Messenger's own handlers are unknown). If not, `post` reports `enter-not-accepted` or `linebreak-not-accepted` and sends nothing.
 - That photo-only messages' menu is `[aria-label="More actions"]` › "Reply" as reported, a run's avatar sits on one of its messages, and the loading spinner is a `[role="progressbar"]`.
+
+## [1.18.0] - 2026-11-12
+**Queued replies post in about 3 calls instead of 6, multi-line replies post, and `sentAt` is the real time** (issue #32 §1, §3 and §5; BACKLOG F11, B45, B46, and G6). MINOR: Claude follows a new posting procedure. Skill text and tests only: no page or helper change (`PAGE_VERSION` 2.3, helper 1.9).
+
+### Changed
+- **`references/outbox.md` › Posting** (F11, issue #32 §1, option A): about 3 calls per reply, every safety check kept.
+  1. One JS call starts `jump`, waits for the tip, checks the "Replying to …" bar, the snip and the empty box, then types the first line.
+  2. One DB batch writes the earlier rows' outcomes and this row's `sending`, all pinned with `if_version`.
+  3. One browser batch types any later lines, runs the check, presses Return and runs the confirm.
+  - A row's `sent` lands with the next row's `sending`, and a confirm that can't see the message stops posting for the run, so a crash leaves at most one row in `sending`; the existing settle check handles it.
+  - The check throws and takes the focus off the box when the box doesn't match the reply, so Return never sends it. The confirm only accepts a message that wasn't on screen before Return.
+  - On the owner's page, replies took about 45–66 s each.
+- **Multi-line replies** (B45, issue #32 §3, option A): each later line is typed after shift+Return, since Messenger's editor drops line breaks inside inserted text, and the box is compared with the reply with whitespace collapsed. The page keeps what the user wrote.
+- **`sentAt`** (B46, issue #32 §5): the clock time at confirm, or the saved message's time when a row is settled on a later refresh. Every `sent` write sets both `sentAt` and `sentMid`, including when the user says it went out.
+- **New rules:** a row with a null `mid` is marked `failed` ("no Messenger id"); a refused `sending` write means the user cancelled it on the page, and their Cancel wins; failed rows aren't retried, so the user queues a new reply.
+- **`references/database.md`** (G6; setup's copy too): an `outbox/r<ms>` line with every field, who writes it, and the state transitions; `meta/chat.coverage` defined. `references/open-message.md` says how to queue a reply with the page's fields.
+
+### Tests
+- `tests/composer.sim.js` (run by `npm run test:sim` after `sim.js`) runs `outbox.md`'s three code blocks word for word on `tests/mock/composer.html`, a stand-in for Messenger's composer that drops line breaks the way Lexical does, with the real helper's `jump`. It covers a multi-line reply sent with its paragraphs, a box that doesn't match (Return sends nothing), a bar for another message, and a message that can't be found.
+- `tests/test_tools.py`: `TestOutboxPosting` (the 3-call order, multi-line steps, `sentAt` and `sentMid`, null `mid`, the pinned `sending` write, no retries); the page's three outbox writes against database.md's outbox line; open-message.md queues with the page's fields; `coverage` is defined; the `meta/chat` fields test starts from each `doc("meta/chat")` write.
 
 ## [1.17.1] - 2026-11-12
 **Fixes from the first live refresh on 1.17.0** (BACKLOG B44, GitHub issue #33). PATCH: page, helper and database layout unchanged.
