@@ -60,14 +60,15 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B38 | P2 | bug | A photo-reply parent that loaded late could be recorded as the next reply's parent: a silent wrong link · **done** (v1.14.0) |
 | B39 | P2 | bug | Queuing a reply closes the conversation you're in and jumps the page |
 | B40 | P2 | bug | A conversation that starts with a reply to an older message doesn't show that message, so you can't tell what it's about |
-| B41 | P2 | bug | Full names are missing on a live page, so people who share a first name aren't told apart · **done** (v1.19.0) |
+| B41 | P2 | bug | Full names are missing on a live page, so people who share a first name aren't told apart · **done** (v1.20.0) |
 | B42 | P3 | bug | A person's text and the photo they sent right after show as two separate messages instead of one |
 | B43 | P1 | bug | Threading and summary outgrow the database's 256 KiB per-document cap; sessions started dropping summaries · **done** (v1.17.0) |
 | B44 | P1 | bug | 1.17.0's first refresh: conversation ids used twice stop the conversion; chunk names worked out by arithmetic; the refresh skill's description cut at `#` · **done** (v1.17.1) |
 | B45 | P2 | bug | Multi-line replies can't post: `insertText` drops line breaks and the exact-match check fails (issue #32 §3) · **done** (v1.18.0) |
 | B46 | P3 | bug | An outbox row's `sentAt` was an estimate, not the real time at confirm (issue #32 §5) · **done** (v1.18.0) |
-| B47 | P2 | bug | Reply on a photo-only message: `jump` finds no Reply button, so the reply is marked failed (#32 §2) · **done** (v1.19.0) |
-| B48 | P3 | bug | A scan that stops growing hangs (stops) or reads as the top of the chat (first run) (#32 §5) · **done** (v1.19.0) |
+| B47 | P2 | bug | A build that gives bullets to a conversation with an old string synopsis crashes (`str` has no `append`) · **done** (v1.18.1) |
+| B48 | P2 | bug | Reply on a photo-only message: `jump` finds no Reply button, so the reply is marked failed (#32 §2) · **done** (v1.20.0) |
+| B49 | P3 | bug | A scan that stops growing hangs (stops) or reads as the top of the chat (first run) (#32 §5) · **done** (v1.20.0) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -77,7 +78,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G4 | P3 | doc gap | Page text refers to a Refresh button that is hidden · **done** (v1.2.2) |
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
 | G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads · **done** (v1.18.0) |
-| R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) · **done** (v1.19.0, option B: silent failures warn; English labels remain) |
+| R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) · **done** (v1.20.0, option B: silent failures warn; English labels remain) |
 | R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
 | C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) · **done** (v1.7.3; range summaries kept, they're live) |
@@ -95,10 +96,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
-| F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection |
+| F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection · **done** (v1.18.1; run on the live page still to do) |
 | F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.0) |
-| F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.19.0) |
-| F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.19.0) |
+| F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.20.0) |
+| F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
 
 ---
 
@@ -214,7 +215,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Fix options:** (a) the page shows a cross-conversation parent as a quoted context line at the top of the conversation, with a jump to it; (b) the refresh skill joins such replies to the parent's conversation, or starts the new conversation with the parent; (c) both. (a) also fixes pages that were already built.
 - **Test:** page test with a conversation whose first message replies to a message in another conversation: the parent's sender and text appear as context, and the jump goes to it.
 
-### B41 · P2 · Full names are missing on a live page, so people who share a first name aren't told apart · done (v1.19.0)
+### B41 · P2 · Full names are missing on a live page, so people who share a first name aren't told apart · done (v1.20.0)
 - **Found:** by the owner, Nov 11: two Bens still both show as "Ben".
 - **Measured on the owner's page (counts only):** 7 of 6,933 stored messages carry `fn`, all from #6921 on (captured Nov 11). `people/index` lists 4 people. F9 shipped in v1.10.0 and v1.11.0, but this page captured no full names until tonight, and the one-time backfill scan (`references/people.md`) hasn't filled the index.
 - **Likely causes, to confirm:**
@@ -226,7 +227,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - Run the backfill once the helper is current.
   - Give a sender's consecutive messages the `fn` read from the one avatar.
 - **Test:** a sim with grouped messages and one avatar per run, where every message in the run gets `fn`; and a skill-text test that a pending backfill is retried and reported.
-- **Done in v1.19.0 (helper 2.0):**
+- **Done in v1.20.0 (helper 2.0):**
   - **Runs:** the scan gives every message in a run from one shown sender the full name from that run's avatar, but only when the run's avatars all name one person, so two people who share a shown name never borrow each other's.
   - **Reporting:** `references/people.md` makes each refresh say "Full names: not captured" (with the helper version and why) and "Full names: one-time scan pending" until `scannedAt` is set. SKILL.md step 8 also sends Claude there when this run's messages from others carry no `fn`. The scan runs on every refresh until it succeeds, so it starts by itself once the helper is 1.7+. The scan and `selfcheck` warn when no avatar can be read.
   - **Tests:** sim `E: grouped runs with one avatar each` (fails on helper 1.9); `TestHelper2.test_names_are_reported_until_captured_and_the_backfill_retried`.
@@ -271,14 +272,19 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Found:** in issue #32 §5: several rows had `sentAt` rounded to the minute and later than the row's own last write. The page shows `sentAt`.
 - **Fix:** the confirm returns the clock time (`at`), which becomes `sentAt`; a row settled on a later refresh takes the saved message's time (`d` and `t`, in `meta/chat.tz`). Every `sent` write sets both `sentAt` and `sentMid`, including when the user says it went out (`sentMid:null` only if it isn't in the saved messages).
 - **Tests:** `TestOutboxPosting.test_sent_always_has_a_real_sent_at_and_sent_mid`; the sim checks the confirm's `at` against the clock.
+### B47 · P2 · A build can't add bullets to a conversation with an old string synopsis · done (v1.18.1)
+- **Where:** `catchup.py build`, the `bullets` loop: `SC[cid]["synopsis"].append(...)`.
+- **What:** pages from before the bullet format still hold some conversations whose `synopsis` is one string (62 of the 91 the trim dropped on the owner's page, issue #32 §4; some kept ones too). A spec giving such a conversation a bullet crashed the build with `AttributeError`. Found while writing F10's restore, which brings those conversations back.
+- **Fix:** the build first splits the string into bullets the way the page shows it (`synItems`: one per sentence, no refs). Older bullets with no refs no longer fail the build's ref check; a new bullet still needs refs.
+- **Test:** `TestRestoreSummary.test_a_build_adds_bullets_to_an_old_string_synopsis` (fails on 1.17.1); `test_old_string_synopses_split_as_the_page_splits_them` runs the page's `synItems` in node and compares.
 
-### B47 · P2 · Reply on a photo-only message fails · done (v1.19.0)
+### B48 · P2 · Reply on a photo-only message fails · done (v1.20.0)
 - **Found:** live field report, GitHub issue #32 §2, on helpers 1.1 and 1.9. A message that is only a photo has no "Reply to this message" button on its hover toolbar, so `jump` ended with "found it (hover it and click Reply)" and outbox.md marked the reply failed.
 - **Fix (helper 2.0):** when the toolbar has no Reply button, `jump` clicks `[aria-label="More actions"]`, then the `role="menuitem"` whose text is "Reply" (Escape if the menu has none). The page's Reply links (installed helper and bookmarklet) and `post` get it too. SKILL.md's allowed clicks name More actions › Reply when posting an approved reply; `references/posting-with-helper.md` has the rule.
 - **Tests:** sim `F: jump{reply} on a photo-only message opens Reply through More actions` and `F: post replies to a photo-only message through More actions` (both fail on 1.9).
 - **Older helpers:** with a helper before 2.0, outbox.md's call 1 still sees "found it (hover it and click Reply)" and marks the row failed; the helper updates itself within a day.
 
-### B48 · P3 · A stalled scan hangs, or truncates a first run · done (v1.19.0)
+### B49 · P3 · A stalled scan hangs, or truncates a first run · done (v1.20.0)
 - **Found:** GitHub issue #32 §5: once, `full`'s scan barely grew for minutes until the tab was reloaded. From the code (R3 review): a scan with stops only ended after 1,500 steps (about 37 minutes at the top of the chat), and a first run called it the top of the chat after 8 tries there, so a slow load truncated the first capture and verify agreed.
 - **Fix (helper 2.0):** nothing new for 30 s (`stallMs`) ends the scan (and verify) with `err:"stalled"`; `references/helper.md` › Scan results says to reload and retry once. The top of the chat now needs 8 tries and 12 s with nothing loaded and no loading spinner at the top; a scan with stops that reaches the top ends with "… (reached the top of the chat)"; results carry `top`. SKILL.md: the first poll after `full` may fail with "Inspected target navigated", which is expected.
 - **Tests:** sim `E: history stops loading …: err "stalled"`, `E: a first run that stalls is "stalled", not a truncated "top of the chat"`, `E: anchors that are gone …` (the first two fail on 1.9).
@@ -307,11 +313,11 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **What:** every photo in the window travels base64-encoded inside the clipboard text. A first run of 1,000 messages, or a long gap, can mean many MB on the clipboard and in one paste event. The real limits of clipboard, paste and upload haven't been measured.
 - **Fix:** measure; cap photos per capture (send the rest on the next run, or split into several pastes).
 
-### R3 · P3 · Messenger markup dependency (known) · done (v1.19.0, option B)
+### R3 · P3 · Messenger markup dependency (known) · done (v1.20.0, option B)
 - English UI labels, `[role="log"]`, `data-message-id`, "Go to replied message", "Reply to this message", the `At <time>, <name>: ` aria-label shape. See F4.
 - **Silent failures found in a review of helper 1.9:** a reply whose "X replied to Y" line can't be read accepted any focused message as a photo-reply parent; both reply markers reworded at once read as no replies; time-only labels became "today" whatever the day; photo selectors (`messenger_media`, `fbcdn`, the GIF size rule); the avatar picking the wrong image; the scroller being the first scrollable div; the top of the chat declared after 8 tries; English label lists.
 - **Owner's call (Nov 12):** option B, turn silent failures into warnings; for a non-English page, warn and continue.
-- **Done in v1.19.0 (helper 2.0):** `selfcheck` and the scan's result (`warn`, also `mc_result.warn`) warn about reply links without a reply line, quotes without reply links, photo links with no Facebook image, times going backwards or into the future (an hour back is allowed for clock changes; the last stored message is included), one shown name with full names that don't share a first name, no full names at all, a page language that isn't English (named), and a 24-hour clock (now read and converted, with day-first dates). A reply whose reply line can't be read gets `perr:"noreplyline"`, never a link. The scroller is the nearest scrollable ancestor of a message, reported as `scroller`; results report `top`; stalls are B48. `references/helper.md` says what each warning means for the report.
+- **Done in v1.20.0 (helper 2.0):** `selfcheck` and the scan's result (`warn`, also `mc_result.warn`) warn about reply links without a reply line, quotes without reply links, photo links with no Facebook image, times going backwards or into the future (an hour back is allowed for clock changes; the last stored message is included), one shown name with full names that don't share a first name, no full names at all, a page language that isn't English (named), and a 24-hour clock (now read and converted, with day-first dates). A reply whose reply line can't be read gets `perr:"noreplyline"`, never a link. The scroller is the nearest scrollable ancestor of a message, reported as `scroller`; results report `top`; stalls are B49. `references/helper.md` says what each warning means for the report.
 - **Tests:** sim section E: each warning in its mock mode, all quiet on the normal mock and in A1's full run; the `perr` guard; the inner scroller. The key ones fail on 1.9.
 - **What remains:** the reader still depends on English labels and this markup. A changed label now shows up as a warning or a `selfcheck` failure instead of wrong data, except when every marker of a feature changes at once (for example all three reply markers). `catchup.py` prints a reply with `perr:"noreplyline"` and no `r` as a GUESS, not a CHECK; making it a CHECK needs a `catchup.py` change.
 
@@ -516,9 +522,16 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Still to see live:** the scan on the real chat (about 4,000 messages; it may stop at the 8-minute cap first, and later messages fill in the rest).
 
 
-### F10 · P2 · Restore the summary items pre-1.17 refreshes dropped
+### F10 · P2 · Restore the summary items pre-1.17 refreshes dropped · done (v1.18.1)
 - **Why:** before v1.17.0, a refresh on the owner's page hit the 256 KiB cap and dropped 91 conversations, 14 open questions, 34 answered, 31 deals, 9 mentions and 132 bullets (GitHub issue #32 §4). That session saved the full summary from before the drop in the page's `backups` collection (two parts; read back and checked).
 - **Owner's call (Nov 12):** restore everything into the block layout, with a dry-run count first; the 14 open questions are checked against later messages before they show as open again.
+- **Done in v1.18.1:** `catchup.py restore-summary WORK RUN BACKUPDIR [DECISIONS] [--dry-run]` and the procedure in the refresh skill's `references/restoring-a-summary.md` (named from `troubleshooting.md`; SKILL.md has no room).
+  - **Identity:** conversations by id; bullets, answers and mentions by their whole content; open questions by conversation and ask (one in `answered` since is left alone); deals by content, or the same conversation with all the old refs (a `dealEdit` since). Each stored item stands for one backup item, so nothing comes back twice.
+  - **Placement:** a missing item goes right after the backup item before it, so lists keep the order they'd have had without the trim; restored bullets of a conversation continued since go in front of its new ones.
+  - **Open questions:** without DECISIONS, the command writes `restore-open.json` (each question and its conversation's later messages) and nothing else; Claude decides `open` or answered (refs, one line) per question.
+  - **fromI** goes back to the backup's (1654 on the owner's page), or is removed when the summary then covers everything.
+  - **Tests:** `TestRestoreSummary`: a trimmed page and an untrimmed twin given the same later builds; restored, the trimmed one equals the twin (plus the decisions), with exact dry-run counts, every document at most half the cap, a second run restoring nothing, refusals, pins and undo.
+- **Still to do:** run it on the owner's page with their go-ahead. Keep the backup until they decide.
 
 ### F11 · P2 · perf · Outbox: fewer round trips per reply · done (v1.18.0)
 - **Found:** in issue #32 §1: about 1 minute per reply (gaps of 42–109 s between `sent` writes over 10 replies), because `outbox.md` took about 6 tool calls per reply and each is a full model round trip. The browser work itself takes a few seconds.
@@ -529,15 +542,15 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - A row's `sent` lands with the next row's `sending`, and a confirm that can't see the message stops posting for the run, so at most one row is ever in `sending`; the existing settle check handles it on the next run. The confirm only accepts a message that wasn't on screen before Return.
 - **Tests:** `TestOutboxPosting.test_three_calls_per_reply` (the order of the steps in each call), `test_row_without_mid_fails`, `test_sending_write_is_pinned_and_cancel_wins`, `test_failed_rows_are_never_retried`; `tests/composer.sim.js` runs the three calls end to end.
 
-### F12 · P3 · Two connected Chromes · done (v1.19.0)
+### F12 · P3 · Two connected Chromes · done (v1.20.0)
 - **Found:** GitHub issue #32 §5: two Chromes were connected (helper 1.1 in one, 1.9 in the other), and runs landed on whichever was active, so `selfcheck` and full names came and went.
-- **Done in v1.19.0:** SKILL.md step 2 sends Claude to `references/helper.md` › Which Chrome when more than one is connected. Claude in Chrome's own rule is never to pick a browser for the user, so: use the one this session already uses; otherwise ask, recommending the Chrome with the newest helper (Claude may check each one's `data-mc-helper` only when the user asks it to pick); a scheduled run with no one to ask stops with a clear status. Every report names the browser and its helper version.
+- **Done in v1.20.0:** SKILL.md step 2 sends Claude to `references/helper.md` › Which Chrome when more than one is connected. Claude in Chrome's own rule is never to pick a browser for the user, so: use the one this session already uses; otherwise ask, recommending the Chrome with the newest helper (Claude may check each one's `data-mc-helper` only when the user asks it to pick); a scheduled run with no one to ask stops with a clear status. Every report names the browser and its helper version.
 - **Decision for the owner:** a fully automatic "newest helper wins" would mean Claude selecting browsers itself, which the Chrome tools forbid.
 
-### F13 · P2 · Opt-in helper `post` command · done (v1.19.0)
+### F13 · P2 · Opt-in helper `post` command · done (v1.20.0)
 - **Why:** GitHub issue #32 §1: posting a queued reply took about 6 tool calls and a minute. Option B there: the helper posts.
 - **Owner's call (Nov 12):** an opt-in `post`, off by default.
-- **Done in v1.19.0 (helper 2.0):** `post{mid,to,snip,text,helperPost:true}` runs `jump` (with B47's fallback), checks the "Replying to …" bar against `to` and `snip` and that the box is empty, types the text (shift+Enter between lines, since Messenger's Lexical editor drops newlines from `insertText`), presses Enter, and waits up to 15 s for the message. It returns `{sent:true, mid}` or a precise error with `entered` (false: nothing can have been sent). It refuses without `helperPost:true`, which Claude passes only when `meta/chat.helperPost` is true; the user turns that on by asking Claude. No link, URL hash or page can reach it. `references/posting-with-helper.md` maps every result to the outbox states.
+- **Done in v1.20.0 (helper 2.0):** `post{mid,to,snip,text,helperPost:true}` runs `jump` (with B48's fallback), checks the "Replying to …" bar against `to` and `snip` and that the box is empty, types the text (shift+Enter between lines, since Messenger's Lexical editor drops newlines from `insertText`), presses Enter, and waits up to 15 s for the message. It returns `{sent:true, mid}` or a precise error with `entered` (false: nothing can have been sent). It refuses without `helperPost:true`, which Claude passes only when `meta/chat.helperPost` is true; the user turns that on by asking Claude. No link, URL hash or page can reach it. `references/posting-with-helper.md` maps every result to the outbox states.
 - **Tests:** sim section F against a mock composer running Lexical core (`lexical` 0.52.0, a devDependency) with the commands `@lexical/plain-text` registers and Messenger's Enter-sends rule: refused without the opt-in; refused on a wrong "Replying to" or quote, and on a box with text; a multi-line reply posted exactly once with its line breaks; a photo-only message through More actions; a composer that ignores synthetic keys (`enter-not-accepted` leaves the text for a real Enter, which then posts; `linebreak-not-accepted` clears the box); a URL hash can't post.
 - **Still to see live:** that Messenger accepts the helper's synthetic Enter and shift+Enter. Lexical itself does in Chromium (the mock runs its real keydown handling), but Messenger's own handlers are unknown. If it doesn't, `post` says `enter-not-accepted` or `linebreak-not-accepted`, sends nothing, and the skill falls back to a real Enter or outbox.md's steps.
 - **Still to do:** `references/outbox.md` › Posting should say to use `references/posting-with-helper.md` when `meta/chat.helperPost` is true (outbox.md wasn't part of this change; SKILL.md names the file next to `post`).

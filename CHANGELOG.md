@@ -2,11 +2,11 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
-## [1.19.0] - 2026-11-12
-**Helper 2.0: Reply on photo-only messages, warnings instead of silent misreads, full names on every message, and an opt-in `post`** (GitHub issue #32 §1, §2 and §5; BACKLOG R3, B41, B47, B48, F12, F13). MINOR: new helper behavior and skill procedure changes. Helper **2.0** (from 1.9), page **`PAGE_VERSION` 2.4** (its jump bookmarklet is generated from the helper). No re-setup; installed helpers (1.5+) update themselves from this release.
+## [1.20.0] - 2026-11-12
+**Helper 2.0: Reply on photo-only messages, warnings instead of silent misreads, full names on every message, and an opt-in `post`** (GitHub issue #32 §1, §2 and §5; BACKLOG R3, B41, B48, B49, F12, F13). MINOR: new helper behavior and skill procedure changes. Helper **2.0** (from 1.9), page **`PAGE_VERSION` 2.5** (its jump bookmarklet is generated from the helper). No re-setup; installed helpers (1.5+) update themselves from this release.
 
 ### Added
-- **Reply on a photo-only message (B47, #32 §2).** Such a message has no "Reply to this message" button on its hover toolbar. `jump{reply:true}` now opens its **More actions** menu and clicks "Reply", so queued replies to photos post, and the page's Reply links open the box on them too. SKILL.md's allowed clicks name More actions › Reply when posting an approved reply.
+- **Reply on a photo-only message (B48, #32 §2).** Such a message has no "Reply to this message" button on its hover toolbar. `jump{reply:true}` now opens its **More actions** menu and clicks "Reply", so queued replies to photos post, and the page's Reply links open the box on them too. SKILL.md's allowed clicks name More actions › Reply when posting an approved reply.
 - **Opt-in `post` (F13, #32 §1, option B).** `post{mid,to,snip,text,helperPost:true}` posts one queued reply in one bridge call: it opens Reply, checks the "Replying to …" bar against `to` and `snip` and that the box is empty, types the text with shift+Enter between lines (Messenger's editor drops newlines from `insertText`), presses Enter, and waits up to 15 s for the message. It returns `{sent:true, mid}` or a precise error with `entered` (false: nothing can have been sent). **Off by default:** it refuses without `helperPost:true`, which Claude passes only when `meta/chat.helperPost` is true, and the user turns that on by asking Claude. No link, URL hash or page can reach it. New `references/posting-with-helper.md` maps every result to the outbox states (`sending` before; `sent`, `failed`, or left `sending` for the next run's check).
 - **Warnings (R3, option B).** `selfcheck` and the scan's result (`warn`, also in `mc_result.warn`) now warn instead of misreading silently: reply links without an "X replied to Y" line; "Original message:" quotes without reply links; photo links with no Facebook image; times going backwards or into the future across the window (catches time-only labels that aren't today; one hour back is allowed for clock changes); one shown name with full names that don't share a first name (two Bens are fine); no full names at all; a page language that isn't English (named; reading continues); a 24-hour clock.
 - **Scan results report `top`** (reached the start of the chat) and **`scroller`** (how the list was found).
@@ -18,7 +18,7 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 - **A reply whose "X replied to Y" line can't be read is never linked** (`perr:"noreplyline"`); helper 1.9 accepted whatever message took focus.
 - **24-hour times are read** ("17:52", "3 Nov 2026 17:52") and stored as 12-hour `t`, with a warning.
 - **The scroller is the nearest scrollable ancestor of a message**, not the first scrollable element in the chat log.
-- **Stalls (B48, #32 §5).** A scan or verify with nothing new for 30 s returns `err:"stalled"` (retry once: `references/helper.md`) instead of hanging; the top of the chat needs 8 tries and 12 s with nothing loaded and no loading spinner, so a slow load no longer truncates a first run; a scan with stops that reaches the top says so. SKILL.md notes that the first poll after `full` often fails with "Inspected target navigated", which is expected.
+- **Stalls (B49, #32 §5).** A scan or verify with nothing new for 30 s returns `err:"stalled"` (retry once: `references/helper.md`) instead of hanging; the top of the chat needs 8 tries and 12 s with nothing loaded and no loading spinner, so a slow load no longer truncates a first run; a scan with stops that reaches the top says so. SKILL.md notes that the first poll after `full` often fails with "Inspected target navigated", which is expected.
 - `SKILL.md` stays under its cap (19,642 bytes, down from 19,865): the helper version notices and the injection steps moved to `references/helper.md`.
 - `references/database.md` (and setup's copy): `meta/chat.helperPost`.
 
@@ -30,6 +30,23 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 ### Needs a live check
 - That Messenger accepts the helper's synthetic Enter and shift+Enter (Lexical itself does in Chromium; Messenger's own handlers are unknown). If not, `post` reports `enter-not-accepted` or `linebreak-not-accepted` and sends nothing.
 - That photo-only messages' menu is `[aria-label="More actions"]` › "Reply" as reported, a run's avatar sits on one of its messages, and the loading spinner is a `[role="progressbar"]`.
+
+## [1.18.1] - 2026-11-12
+**Restore what pre-1.17 refreshes dropped from the summary** (BACKLOG F10, GitHub issue #32 §4). PATCH: a tool and a reference file; a normal refresh is unchanged. Page and helper unchanged.
+
+### Added
+- **`catchup.py restore-summary WORK RUN BACKUPDIR [DECISIONS] [--dry-run]`** joins the summary copy a session saved in the page's `backups` collection (refusing missing or mismatched parts) and adds back what the stored summary lacks:
+  - missing conversations; old string synopses become one bullet per sentence, as the page shows them
+  - a conversation that's still there, or was started again because it continued, gets the backup's bullets in front of its own (no duplicates) and its empty tag, outcome or key filled in
+  - missing answers, deals and mentions, each back where it was in its list (a deal edited since counts as present)
+  - `summary.fromI` moved back to the backup's, or removed when the summary then covers everything
+  - `--dry-run` prints only counts. The backup's open questions come back only as DECISIONS says: without it, they're written to `RUN/out/restore-open.json` with the later messages in their conversations, and nothing else is written.
+  - it writes through the block layout like a build: manifest, pins, cleanup, size check, WORK advanced and `restore WORK` to undo it. A second run restores nothing.
+- **`references/restoring-a-summary.md`** (named from `troubleshooting.md`): the run lock, the fetch, the dry run the user confirms, the open-question decisions, the pinned write, the check afterwards, what to tell the user, and the backup kept until the user decides.
+- `references/database.md` documents `backups/*` and what `fromI` means.
+
+### Fixed
+- **A build that gave bullets to a conversation with an old string synopsis crashed** (BACKLOG B47): the string is now split into bullets as the page shows it first. Older bullets with no refs (from such strings) no longer fail a build's checks; a new bullet still needs refs.
 
 ## [1.18.0] - 2026-11-12
 **Queued replies post in about 3 calls instead of 6, multi-line replies post, and `sentAt` is the real time** (issue #32 §1, §3 and §5; BACKLOG F11, B45, B46, and G6). MINOR: Claude follows a new posting procedure. Skill text and tests only: no page or helper change (`PAGE_VERSION` 2.3, helper 1.9).
