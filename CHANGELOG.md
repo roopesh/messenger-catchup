@@ -2,6 +2,68 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.17.0] - 2026-11-11
+**Threading and summary fit the database at any size, and nothing is dropped** (BACKLOG B43, P1). MINOR: both are now stored as collections of block documents. No re-setup: a page converts on its next refresh, and the page still reads the old layout.
+
+### Why
+- An artifact database document holds at most 256 KiB (262,144 bytes). On the owner's page on Nov 11, `threading/current` was 185.6 KB and growing about 20 KB a day, so it would be full in about 3 days, after which every refresh's step-7 write would fail. `summary/current` had reached 249 KB, and refresh sessions had improvised a rolling window: they dropped older conversations and wrote an undocumented `fromI` (2797). Those summaries are lost. `catchup.py` never split or pruned anything.
+
+### Changed
+- **Layout:** `threading` and `summary` are collections. Each `current` document names its block documents (`blocks`), one per 1,000 messages:
+  - threading links and members go to the block of their message, and a conversation's title to the block of its first message
+  - the summary keeps recent items in `current` (`activeFrom`); older conversations, open questions, answers, mentions and deals go to the block of their messages, and a conversation's older bullets to the blocks they cite
+  - merged, they are exactly the old single documents, order included. Details: `references/database.md`.
+- **Safe to interrupt:** a block's id carries a hash of its content, so a changed block is a new document that `current` switches to in the same batch, and the old one is deleted afterwards. A run that stops partway changes nothing the page reads, and a retry finds the blocks it already wrote. Only documents shaped like blocks are ever deleted.
+- **`catchup.py`:**
+  - `bootstrap` reads either layout (it now takes the whole `threading` and `summary` collections)
+  - `build` writes only the documents that changed, plus `RUN/out/manifest.json`: the batches to send (at most 48 documents and 900 KiB each, inside the tool's 50 writes and 1 MiB), which writes to pin, and which old blocks to delete afterwards. `RUN/out/merged/` holds the merged state for checking.
+  - it fails before writing anything if a document would be over 240 KiB, naming the largest conversations and saying never to drop or shorten anything; checks that the documents merge back into the built state; and refuses to build when the database's `current` documents moved on since WORK was bootstrapped
+  - `relink` writes a manifest too
+  - `fromI` is defined: the first message the stored summary covers (pages from before v1.17). It is kept as is, and the page still offers summaries of spans before it.
+  - fixed: continuing a conversation whose summary an earlier session had dropped crashed the build; its summary now starts again
+- **Page 2.3:** listens to the `threading` and `summary` collections instead of their single documents and merges them into the same objects every view reads, so it renders exactly as before. Old single documents are used as they are.
+- **Refresh skill:**
+  - bootstrap and step 5 list both collections
+  - step 7 writes what the manifest lists (pins where it says, `meta/chat` and `refresh/status` in the last batch), then deletes what `cleanup` lists
+  - new hard rule: never drop, shorten or prune conversations, bullets or other summary items to save space
+  - new `references/writing-the-build.md` (the manifest, the cleanup, refused writes, the first build on v1.17, `fromI`)
+  - `references/database.md` documents the layout (setup's copy too); `first-run.md` and `troubleshooting.md` updated. `SKILL.md`: 19,859 bytes.
+- **Migration:** the first refresh on 1.17.0 republishes the page (2.3), and its build converts both collections, usually in one batch: it creates the blocks, then replaces both `current` documents. If it stops partway, the old documents still stand and the next refresh finishes it. The stray `fromI` (2797 on the owner's page) is kept, so the page keeps offering to summarize spans before it.
+- **Measured** on synthetic chats calibrated to the owner's page (`tests/synth.py`, mock cast): from 6,400 to 50,000 messages the largest document is at most 84 KB, or 85 KB with a 1.6× denser summary, at least 3× under the cap. A build writes about 4 documents in one batch (docs/EXPERIMENTS.md §13).
+- **Tests:**
+  - a fake database in both suites that refuses what the real one refuses: documents over 262,144 bytes, batches over 50 writes or 1 MiB, and unpinned writes to existing documents
+  - `catchup.py`:
+    - migration from the old layout with `fromI`
+    - builds at 6.4k, 25k and 50k messages with every document under half the cap
+    - a link correction landing in its block
+    - interrupted migrations (mid-batch, between batches, before the cleanup) and their retries
+    - the size check
+    - bootstrap from either layout giving the same state
+    - split and merge keeping every item in order
+    - an ordinary build rewriting only the newest block
+    - the cleanup never touching unknown documents
+  - page:
+    - on the old layout it renders exactly what v1.16.2's page renders
+    - the same history in both layouts renders the same text (summary, threads, timeline, all threads open)
+    - archived conversations show and are searchable
+    - a live change to one block re-renders
+    - the pipeline writes catchup.py's manifest as Claude does, and the page's merge equals catchup.py's state
+  - skill text: step 5 and step 7 name the collections and the manifest, the never-drop rule exists, the page and `catchup.py` merge with the same keys, and setup's seed bootstraps and converts
+- **Fixed after an independent review of the PR** (each reproduced first, each with a test that failed before the fix):
+  - the cleanup deleted every block document the new `current` didn't name, so a `current` an older version of the skill wrote back could lead to deleting the newer build's blocks. It now deletes only blocks the replaced `current` named; blocks no `current` names are left alone, and bootstrap reports them, with a warning when they hold messages past threading's last one. A 1.16 build's `RUN/out/threading.json` and `summary.json` are removed when a build reuses that RUN folder.
+  - a relink after a cleanup could write a `current` naming a block that cleanup had deleted. `relink` now reads a fresh `list threading` (`relink WORK RUN SPEC`, writing `RUN/out/`) and has a cleanup like a build's; WORK records only the blocks its `current` names.
+  - a build accepted a RUN holding only the two `current` documents and wrote `current` documents naming blocks it never listed. Build and relink now require the whole collections and say so.
+  - the page silently left out a block that `current` names but that isn't there. It now shows a notice when one stays missing for 5 seconds; bootstrap's message for a missing block says not to write anything and to tell the user.
+  - `writing-the-build.md` no longer says a refused batch always writes nothing whatever happens: a batch applied one write at a time can stop partway. Bootstrap now stops when threading and summary disagree on the last message built, and `catchup.py bootstrap WORK DBDIR --rollback` recovers by rebuilding threading's extra messages.
+- **Backlog:**
+  - B43 filed and closed
+  - B41 (full names missing on a live page) and B42 (a text and the photo sent right after show as two rows instead of one block; the owner chose to show them like Messenger) filed, not fixed
+  - R4 and F6 note that the per-document cap is handled for summary and threading
+  - CLAUDE.md: backlog-only edits wait on a branch and ship with the next real change
+- **Docs:** STATUS, ARCHITECTURE, BACKLOG, DECISIONS, LEARNINGS, EXPERIMENTS §13, DEVELOPMENT (Phase 11).
+
+Components: `PAGE_VERSION` 2.3 (was 2.2), helper 1.9 (unchanged).
+
 ## [1.16.2] - 2026-11-11
 **Backlog: B39 and B40 filed.** B39: queuing a reply closes the conversation you're in and jumps the page. B40: a conversation that starts with a reply to an older message doesn't show that message. PATCH: docs only.
 

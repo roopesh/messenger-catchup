@@ -1104,6 +1104,7 @@
     <div class="window muted" id="window">Loading the chat…</div>
     <div class="marker" id="marker" role="radiogroup" aria-label="Catch up from"></div>
     <div class="refresh"><span class="st" id="refresh-st" role="status"></span></div>
+    <p class="note" id="layout-st" role="status" hidden></p>
     <div class="strip" id="strip"></div>
   </header>
 
@@ -1315,7 +1316,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.2";
+  const PAGE_VERSION = "2.3";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -3893,6 +3894,108 @@
     if (S.refresh) renderRefresh();
   }, 60000);
 
+  /* ---------- threading and summary documents (v1.17) ----------
+     A database document holds at most 256 KiB, so each is a collection: `current` names its block documents (`blocks`),
+     each covering 1,000 messages. Merged here into the single objects the page always used, so everything that reads
+     S.threading or S.summary works as before (catchup.py's merge_threading and merge_summary do the same). A `current`
+     without layout 2 is the old single document and is used as it is. */
+  const LAYOUT_KEYS = ["layout", "block", "blocks", "activeFrom"];
+  /* A block `current` names can arrive a moment after it (snapshot order); one still missing after MISSING_MS is
+     reported, since the merge then lacks part of the conversations. */
+  const MISSING_MS = 5000;
+  const missing = { threading: 0, summary: 0 };
+  let missingTimer = null;
+  function noteMissing(kind, n) {
+    missing[kind] = n;
+    const box = $("#layout-st");
+    if (!missing.threading && !missing.summary) {
+      clearTimeout(missingTimer);
+      missingTimer = null;
+      box.hidden = true;
+      return;
+    }
+    if (missingTimer) return;
+    missingTimer = setTimeout(() => {
+      missingTimer = null;
+      const k = missing.threading + missing.summary;
+      if (!k) return;
+      box.textContent =
+        "Part of the saved conversations didn't load (" +
+        k +
+        " document" +
+        (k > 1 ? "s" : "") +
+        " missing), so some threads or summaries may be incomplete. Reload the page; if this stays, ask Claude in chat to check the catch-up data.";
+      box.hidden = false;
+    }, MISSING_MS);
+  }
+  function layoutParts(docs, kind) {
+    const cur = docs.current;
+    if (!cur || cur.layout !== 2) {
+      noteMissing(kind, 0);
+      return null;
+    }
+    noteMissing(kind, (cur.blocks || []).filter(id => !docs[id]).length);
+    const out = {};
+    Object.keys(cur).forEach(k => {
+      if (!LAYOUT_KEYS.includes(k)) out[k] = cur[k];
+    });
+    const bs = (cur.blocks || [])
+      .map(id => docs[id])
+      .filter(Boolean)
+      .sort((a, b) => a.start - b.start);
+    return { cur, out, bs };
+  }
+  function mergeThreading(docs) {
+    const L = layoutParts(docs, "threading");
+    if (!L) return docs.current || null;
+    const convs = [],
+      by = new Map(),
+      links = {};
+    const add = c => {
+      by.set(c.id, c);
+      convs.push(c);
+    };
+    L.bs.forEach(b => {
+      (b.convs || []).forEach(c => add(Object.assign({}, c, { members: [] })));
+      Object.entries(b.members || {}).forEach(([id, mem]) => {
+        if (!by.has(id)) add({ id, title: id, members: [] });
+        by.get(id).members.push(...mem);
+      });
+      Object.assign(links, b.links || {});
+    });
+    (L.cur.convs || []).forEach(c => {
+      if (!by.has(c.id)) add(Object.assign({}, c, { members: (c.members || []).slice() }));
+    });
+    return Object.assign(L.out, { convs, links });
+  }
+  function mergeSummary(docs) {
+    const L = layoutParts(docs, "summary");
+    if (!L) return docs.current || null;
+    const s = L.out,
+      newestFirst = L.bs.slice().reverse();
+    ["convs", "open", "answered", "mentions"].forEach(k => {
+      s[k] = (L.cur[k] || []).concat(...newestFirst.map(b => b[k] || []));
+    });
+    s.deals = [].concat(...L.bs.map(b => b.deals || []), L.cur.deals || []);
+    const syn = new Map(); /* a conversation's older bullets, by block, oldest first */
+    L.bs.forEach(b =>
+      Object.entries(b.syn || {}).forEach(([id, items]) => syn.set(id, (syn.get(id) || []).concat(items))),
+    );
+    const have = new Set(s.convs.map(c => c.id));
+    s.convs = s.convs.map(c =>
+      syn.has(c.id) ? Object.assign({}, c, { synopsis: syn.get(c.id).concat(c.synopsis) }) : c,
+    );
+    syn.forEach((items, id) => {
+      if (!have.has(id)) s.convs.push({ id, tag: "", synopsis: items, outcome: "", key: [] });
+    });
+    return s;
+  }
+  const collDocs = q => {
+    const d = {};
+    q.docs.forEach(x => (d[x.id] = x.data()));
+    return d;
+  };
+
   /* ---------- boot ---------- */
   function rebuild() {
     const all = [];
@@ -3933,9 +4036,9 @@
       },
       () => {},
     );
-    db.doc("summary/current").onSnapshot(
-      s => {
-        S.summary = s.exists ? s.data() : null;
+    db.collection("summary").onSnapshot(
+      q => {
+        S.summary = mergeSummary(collDocs(q));
         renderHeader();
         renderSummary();
       },
@@ -4010,9 +4113,9 @@
       },
       () => {},
     );
-    db.doc("threading/current").onSnapshot(
-      s => {
-        S.threading = s.exists ? s.data() : null;
+    db.collection("threading").onSnapshot(
+      q => {
+        S.threading = mergeThreading(collDocs(q));
         if (S.threading && !S._layoutSet) {
           S._layoutSet = true;
           layout = "thread";

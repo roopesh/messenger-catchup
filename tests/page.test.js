@@ -74,8 +74,21 @@ function runtime(seed) {
     uploads = [],
     samples = [],
     leases = new Map(),
-    fails = [];
+    fails = [],
+    vers = new Map();
   const clone = o => (o == null ? o : JSON.parse(JSON.stringify(o)));
+  /* The real limits (runtime contract 0.2.92 and the ArtifactData tool): a document holds at most 262,144 bytes of
+     JSON; a batch (Claude's writes) takes 1-50 writes, each document once, at most 1 MiB, every existing document pinned
+     with the version last read, all or nothing. */
+  const DOC_MAX = 262144,
+    BATCH_MAX = 50,
+    BODY_MAX = 1 << 20;
+  const bytes = o => new TextEncoder().encode(JSON.stringify(o)).length;
+  const tooBig = (p, o) => {
+    if (bytes(o) > DOC_MAX)
+      throw Object.assign(new Error(p + ' is ' + bytes(o) + ' bytes, over 256 KiB'), { code: 'invalid_argument' });
+  };
+  const bump = p => vers.set(p, (vers.get(p) || 0) + 1);
   const sub = (k, cb) => {
     if (!subs.has(k)) subs.set(k, []);
     subs.get(k).push(cb);
@@ -108,14 +121,18 @@ function runtime(seed) {
       get: async () => docSnap(p),
       set: async o => {
         failIf(p, 'set');
+        tooBig(p, o);
         store.set(p, clone(o));
+        bump(p);
         writes.push({ p, op: 'set', v: clone(o) });
         notify(p);
       },
       update: async o => {
         failIf(p, 'update');
         if (!store.has(p)) throw Object.assign(new Error('missing ' + p), { code: 'invalid_argument' });
+        tooBig(p, Object.assign(clone(store.get(p)), clone(o)));
         store.set(p, Object.assign(clone(store.get(p)), clone(o)));
+        bump(p);
         writes.push({ p, op: 'update', v: clone(o) });
         notify(p);
       },
@@ -192,7 +209,35 @@ function runtime(seed) {
       sections: [{ heading: 'Ben', tag: 'open', summary: 'Sells things [#1].', refs: [1] }],
     };
   };
-  Object.entries(seed || {}).forEach(([p, v]) => store.set(p, clone(v)));
+  Object.entries(seed || {}).forEach(([p, v]) => {
+    tooBig(p, v);
+    store.set(p, clone(v));
+    bump(p);
+  });
+  /* Claude's ArtifactData batch: [{op:'set'|'update'|'delete', p, v, if_version}] -> throws, writing nothing, if refused */
+  function batch(ws) {
+    const no = m => {
+      throw Object.assign(new Error('batch refused: ' + m), { code: 'refused' });
+    };
+    if (ws.length < 1 || ws.length > BATCH_MAX) no(ws.length + ' writes (1-50)');
+    if (new Set(ws.map(w => w.p)).size !== ws.length) no('a document twice');
+    if (bytes(ws) > BODY_MAX) no(bytes(ws) + ' bytes, over 1 MiB');
+    const next = ws.map(w => {
+      if (store.has(w.p) && w.if_version == null) no(w.p + ' exists: needs if_version');
+      if (w.if_version != null && (!store.has(w.p) || vers.get(w.p) !== w.if_version)) no(w.p + ' changed');
+      if (w.op === 'delete') return null;
+      const v = w.op === 'update' ? Object.assign(clone(store.get(w.p)), clone(w.v)) : clone(w.v);
+      if (bytes(v) > DOC_MAX) no(w.p + ' is ' + bytes(v) + ' bytes, over 256 KiB');
+      return v;
+    });
+    ws.forEach((w, k) => {
+      if (next[k] === null) store.delete(w.p);
+      else store.set(w.p, next[k]);
+      bump(w.p);
+      writes.push({ p: w.p, op: w.op, v: clone(w.v) });
+      notify(w.p);
+    });
+  }
   window.__rt = {
     store,
     writes,
@@ -200,8 +245,20 @@ function runtime(seed) {
     samples,
     leases,
     fails,
-    silent: (p, v) => store.set(p, clone(v)),
+    batch,
+    version: p => vers.get(p),
+    versions: () => Object.fromEntries(vers),
+    silent: (p, v) => {
+      tooBig(p, v);
+      store.set(p, clone(v));
+      bump(p);
+    },
     write: (p, v) => doc(p).set(v),
+    del: p => {
+      store.delete(p);
+      bump(p);
+      notify(p);
+    },
     get: p => clone(store.get(p)),
     all: () => Object.fromEntries([...store].map(([k, v]) => [k, clone(v)])),
   };
@@ -237,14 +294,14 @@ const SEED = () => ({
 });
 
 let browser;
-async function open(seed) {
+async function open(seed, page = PAGE) {
   const ctx = await browser.newContext({
     viewport: { width: 1000, height: 900 },
     locale: 'en-US',
     timezoneId: 'America/Los_Angeles',
   });
   await ctx.route('https://fonts.googleapis.com/**', r => r.abort());
-  await ctx.route(URL, r => r.fulfill({ body: PAGE, contentType: 'text/html; charset=utf-8' }));
+  await ctx.route(URL, r => r.fulfill({ body: page, contentType: 'text/html; charset=utf-8' }));
   await ctx.addInitScript(runtime, seed);
   const p = await ctx.newPage();
   p.errors = [];
@@ -750,17 +807,61 @@ async function robustness() {
 }
 
 /* ---------- 2. real pipeline: sim captures -> page import -> catchup.py -> render ---------- */
+/* What Claude's ArtifactData reads put in an out_dir: chunks, meta/chat and the whole threading and summary collections */
 function exportDb(all, dir) {
   fs.rmSync(dir, { recursive: true, force: true });
   for (const [k, v] of Object.entries(all)) {
-    if (/^(chunks\/|meta\/chat$|threading\/current$|summary\/current$)/.test(k)) {
+    if (/^(chunks\/|meta\/chat$|threading\/|summary\/)/.test(k)) {
       fs.mkdirSync(path.join(dir, path.dirname(k)), { recursive: true });
       fs.writeFileSync(path.join(dir, k + '.json'), JSON.stringify(v));
     }
   }
   fs.mkdirSync(path.join(dir, 'chunks'), { recursive: true });
 }
-const py = (...a) => execFileSync('python3', [CATCHUP, ...a], { encoding: 'utf8' });
+/* catchup.py with a small block size, so a short test history spans several block documents */
+const PYDRV =
+  'import importlib.util,sys\n' +
+  's=importlib.util.spec_from_file_location("catchup",sys.argv[1]);c=importlib.util.module_from_spec(s)\n' +
+  's.loader.exec_module(c);c.BLOCK=int(sys.argv[2]);getattr(c,sys.argv[3])(*sys.argv[4:])';
+const PIPE_BLOCK = 20;
+const py = (...a) => execFileSync('python3', ['-c', PYDRV, CATCHUP, String(PIPE_BLOCK), ...a], { encoding: 'utf8' });
+/* Step 7 as SKILL.md has Claude do it: the manifest's batches in order (pins from step 5's read, meta/chat and
+   refresh/status added to the last), then the cleanup. The runtime refuses what ArtifactData would. */
+async function writeManifest(p, out, seen) {
+  const man = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
+  for (const [k, bt] of man.batches.entries()) {
+    const ws = bt.map(e => {
+      const w = { op: e.op, p: e.collection + '/' + e.doc_id, v: JSON.parse(fs.readFileSync(e.file_path, 'utf8')) };
+      if (e.pin) w.if_version = seen[w.p];
+      return w;
+    });
+    if (k === man.batches.length - 1)
+      ws.push(
+        { op: 'update', p: 'meta/chat', v: { lastRefresh: 'Wed Nov 11, 9:00 PM' }, if_version: seen['meta/chat'] },
+        { op: 'update', p: 'refresh/status', v: { state: 'done' }, if_version: seen['refresh/status'] },
+      );
+    await p.evaluate(ws => __rt.batch(ws), ws);
+  }
+  for (const g of man.cleanup) {
+    const ws = g
+      .map(e => ({ op: 'delete', p: e.collection + '/' + e.doc_id }))
+      .filter(w => seen[w.p] != null)
+      .map(w => Object.assign(w, { if_version: seen[w.p] }));
+    if (ws.length) await p.evaluate(ws => __rt.batch(ws), ws);
+  }
+  return man;
+}
+const sortKeys = o =>
+  Array.isArray(o)
+    ? o.map(sortKeys)
+    : o && typeof o === 'object'
+      ? Object.fromEntries(
+          Object.keys(o)
+            .sort()
+            .map(k => [k, sortKeys(o[k])]),
+        )
+      : o;
+const same = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b));
 function specFor(n, msgs, convOf) {
   const conv = m => {
     if (m.pi != null && convOf[m.pi]) return convOf[m.pi];
@@ -815,12 +916,14 @@ async function pipeline() {
   );
   const convOf = {};
   let n = 0;
+  let lastRun;
   for (const c of caps) {
     n++;
     const r = await paste(p, JSON.stringify(c));
     ok(r && r.ok && r.fresh === c.count, 'pipeline import ' + n + ': ' + (r && r.msg));
     const run = path.join(tmp, 'run' + n);
     exportDb(await p.evaluate(() => __rt.all()), run);
+    const seen = await p.evaluate(() => __rt.versions());
     const spec = path.join(tmp, 'spec' + n + '.json');
     fs.writeFileSync(spec, JSON.stringify(specFor(n, c.msgs, convOf)));
     let out;
@@ -833,20 +936,33 @@ async function pipeline() {
       /build ok: #\d+-#\d+/.test(out),
       'pipeline build ' + n + ': ' + (out.match(/build ok[^\n]*/) || [out.trim().split('\n').pop()])[0],
     );
-    const th = JSON.parse(fs.readFileSync(path.join(run, 'out/threading.json'), 'utf8'));
-    const sm = JSON.parse(fs.readFileSync(path.join(run, 'out/summary.json'), 'utf8'));
-    await p.evaluate(
-      ([t, s]) => {
-        __rt.write('threading/current', t);
-        __rt.write('summary/current', s);
-      },
-      [th, sm],
-    );
+    let man = null;
+    try {
+      man = await writeManifest(p, path.join(run, 'out'), seen);
+    } catch (e) {
+      ok(false, 'pipeline write ' + n + ': ' + e.message);
+    }
+    if (man) ok(true, 'pipeline write ' + n + ': ' + man.batches.flat().length + ' documents, as the manifest lists');
+    lastRun = run;
   }
   await p.waitForTimeout(400);
   const total = caps.reduce((a, c) => a + c.count, 0);
-  const th = await get(p, 'threading/current');
-  const sm = await get(p, 'summary/current');
+  const th = await p.evaluate(() => S.threading);
+  const sm = await p.evaluate(() => S.summary);
+  const stored = await p.evaluate(() => __rt.all());
+  ok(
+    stored['threading/current'].layout === 2 &&
+      stored['threading/current'].blocks.length === 3 &&
+      stored['threading/current'].blocks.every(b => stored['threading/' + b]) &&
+      Object.keys(stored).filter(k => /^(threading|summary)\/b/.test(k)).length ===
+        stored['threading/current'].blocks.length + stored['summary/current'].blocks.length,
+    'pipeline: the block layout is stored (3 threading blocks of ' + PIPE_BLOCK + ' messages), no unused blocks left',
+  );
+  ok(
+    same(th, JSON.parse(fs.readFileSync(path.join(lastRun, 'out/merged/threading.json'), 'utf8'))) &&
+      same(sm, JSON.parse(fs.readFileSync(path.join(lastRun, 'out/merged/summary.json'), 'utf8'))),
+    "pipeline: the page's merge of the stored documents equals catchup.py's built state",
+  );
   ok(total === 57 && (await get(p, 'meta/chat')).lastI === 56, 'pipeline: 3 imports, 57 messages stored (#0–#56)');
   ok(
     th.links['33'] && th.links['33'][0] === 30 && th.links['33'][1] === 'r',
@@ -1303,6 +1419,258 @@ async function ranges() {
   await p.context().close();
 }
 
+/* ---------- 4b. the block layout (v1.17, BACKLOG B43) ----------
+   One synthetic history (tests/synth.py, mock cast) stored both ways: the old single documents and the block layout
+   catchup.py writes (blocks of 10 messages here, so it has archived conversations and many blocks). */
+const SYNTH = path.join(__dirname, 'synth.py');
+async function texts(p) {
+  const t = {};
+  await p.evaluate(() => {
+    location.hash = '#summary';
+  });
+  await p.waitForTimeout(150);
+  t.strip = await p.textContent('#strip');
+  const openAll = sel => p.$$eval(sel + ' details', ds => ds.forEach(d => (d.open = true))); /* threads build on open */
+  await openAll('#v-summary');
+  await p.waitForTimeout(300);
+  t.summary = await p.$eval('#v-summary', e => e.innerText);
+  await p.evaluate(() => {
+    location.hash = '#messages';
+  });
+  await p.waitForTimeout(150);
+  await openAll('#msgs');
+  await p.waitForTimeout(100);
+  t.thread = await p.$eval('#msgs', e => e.innerText);
+  await p.click('#lay-flat');
+  await p.waitForTimeout(100);
+  t.flat = await p.$eval('#msgs', e => e.innerText);
+  await p.click('#lay-thread');
+  await p.waitForTimeout(100);
+  return t;
+}
+async function layouts() {
+  const S0 = JSON.parse(
+    execFileSync('python3', [SYNTH, 'page', '120', '10'], { encoding: 'utf8', maxBuffer: 1 << 26 }),
+  );
+  const msgs = Object.values(S0.chunks).flatMap(c => c.msgs);
+  const meta = Object.assign({}, META, {
+    lastI: S0.last,
+    lastMid: msgs[msgs.length - 1].m,
+    anchorMids: msgs.slice(-3).map(m => m.m),
+    markerMode: 'time',
+    markerFrom: msgs[0].d + 'T00:00',
+    lastRefresh: 'Wed Nov 11, 9:00 PM',
+  });
+  const base = Object.assign(SEED(), { 'meta/chat': meta });
+  Object.entries(S0.chunks).forEach(([k, v]) => (base['chunks/' + k] = v));
+  delete base['threading/current'];
+  delete base['summary/current'];
+  const oldSeed = Object.assign({}, base, S0.old);
+  const newSeed = Object.assign({}, base, S0.new);
+  const nBlocks = Object.keys(S0.new).filter(k => /\/b/.test(k)).length;
+  const sumBlocks = Object.keys(S0.new).filter(k => /^summary\/b/.test(k));
+  ok(
+    nBlocks > 15 && sumBlocks.length > 3 && S0.new['summary/current'].activeFrom === 100,
+    'layout: the synthetic history spans ' +
+      nBlocks +
+      ' block documents, ' +
+      sumBlocks.length +
+      ' of them summary archives',
+  );
+  // the old layout renders exactly as the last release's page renders it
+  const pOld = await open(oldSeed);
+  const tOld = await texts(pOld);
+  ok(
+    /\S/.test(tOld.summary) && tOld.summary.includes('Newest activity first') && tOld.thread.length > 1000,
+    'layout: the old single documents render (summary cards and threads)',
+  );
+  let tag = null;
+  try {
+    tag = execFileSync('git', ['tag', '--list', 'v*', '--sort=-v:refname'], { cwd: ROOT, encoding: 'utf8' }).split(
+      '\n',
+    )[0];
+  } catch (e) {}
+  if (tag) {
+    const rel = execFileSync('git', ['show', tag + ':plugin/skills/refresh/assets/page.html'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    });
+    const relPage = /^<!doctype/i.test(rel) ? rel : SKELETON + rel + '</body></html>';
+    const pRel = await open(oldSeed, relPage);
+    const tRel = await texts(pRel);
+    ok(
+      same(tRel, tOld),
+      'layout: on the old layout this page renders exactly what ' +
+        tag +
+        "'s page renders (header, summary, threads, timeline)",
+    );
+    await pRel.context().close();
+  } else console.log('SKIP layout: no release tag to compare the old layout against');
+  // the block layout renders the same content as the same history in the old layout
+  const pNew = await open(newSeed);
+  const tNew = await texts(pNew);
+  for (const k of ['strip', 'summary', 'thread', 'flat'])
+    ok(
+      tNew[k] === tOld[k],
+      'layout: block layout and old layout render the same ' + k + ' text (' + tNew[k].length + ' chars)',
+    );
+  ok(
+    same(
+      await pNew.evaluate(() => [S.threading, S.summary]),
+      await pOld
+        .evaluate(() => [S.threading, S.summary])
+        .then(([t, s]) => [
+          Object.assign({}, t, {
+            convs: t.convs.slice().sort((a, b) => Math.floor(a.members[0] / 10) - Math.floor(b.members[0] / 10)),
+          }),
+          s,
+        ]),
+    ),
+    "layout: the page's merge of the blocks equals the old single documents",
+  );
+  // archived conversations are visible and searchable
+  const sb = sumBlocks.find(k => (S0.new[k].convs || []).length);
+  const arch = S0.new[sb].convs[0];
+  const th = S0.old['threading/current'];
+  const mem = th.convs.find(c => c.id === arch.id).members;
+  await pNew.evaluate(() => {
+    location.hash = '#summary';
+  });
+  await pNew.waitForTimeout(150);
+  ok(
+    !!(await pNew.$('#v-summary article.cv[data-conv="' + arch.id + '"]')),
+    'layout: an archived conversation (' + arch.id + ', from ' + sb.split('/')[1] + ') has its card',
+  );
+  await pNew.evaluate(() => {
+    location.hash = '#messages';
+  });
+  await pNew.waitForTimeout(150);
+  ok(
+    !!(await pNew.$('#msgs details.conv[data-conv="' + arch.id + '"] #m' + mem[0])),
+    'layout: the archived conversation shows in the Messages tab with its messages',
+  );
+  const words = msgs[mem[0]].b;
+  await pNew.fill('#msg-q', words);
+  await pNew.waitForTimeout(300);
+  ok(!!(await pNew.$('#msgs #m' + mem[0])), 'layout: searching finds a message in an archived conversation');
+  await pNew.fill('#msg-q', '');
+  await pNew.waitForTimeout(250);
+  // a live change to one block document re-renders (a link fixed in place)
+  const tb = Object.keys(S0.new).find(k => {
+    const d = S0.new[k];
+    return /^threading\/b/.test(k) && Object.values(d.members || {}).some(m => m.length >= 3);
+  });
+  const doc = JSON.parse(JSON.stringify(S0.new[tb]));
+  const [cid, ms] = Object.entries(doc.members).find(([, m]) => m.length >= 3);
+  const child = ms[ms.length - 1],
+    parent = ms[0];
+  doc.links[child] = [parent, 'r'];
+  await pNew.evaluate(([k, d]) => __rt.write(k, d), [tb, doc]);
+  ok(
+    await until(
+      pNew,
+      ([c, p]) => {
+        const r = document.querySelector('#m' + c);
+        return r && new RegExp('reply to #' + p + '\\b').test(r.textContent);
+      },
+      [child, parent],
+    ),
+    'layout: editing one threading block live shows the new link (#' +
+      child +
+      ' replies to #' +
+      parent +
+      ', ' +
+      cid +
+      ')',
+  );
+  // ...and the way catchup.py changes a block: a new document, then `current` names it, then the old one goes
+  const sdoc = JSON.parse(JSON.stringify(S0.new[sb]));
+  sdoc.convs[0] = Object.assign({}, sdoc.convs[0], { outcome: 'Settled: Ben sold it to Dee' });
+  const nid = sb.split('/')[1].replace(/-.*/, '-0000beef');
+  const cur = JSON.parse(JSON.stringify(S0.new['summary/current']));
+  cur.blocks = cur.blocks.map(b => (b === sb.split('/')[1] ? nid : b));
+  await pNew.evaluate(
+    ([sb, nid, sdoc, cur]) => {
+      __rt.write('summary/' + nid, sdoc);
+      __rt.write('summary/current', cur);
+      __rt.del(sb);
+    },
+    [sb, nid, sdoc, cur],
+  );
+  await pNew.evaluate(() => {
+    location.hash = '#summary';
+  });
+  ok(
+    await until(
+      pNew,
+      id => {
+        const a = document.querySelector('#v-summary article.cv[data-conv="' + id + '"]');
+        return a && /Settled: Ben sold it to Dee/.test(a.textContent);
+      },
+      arch.id,
+    ),
+    'layout: a replaced summary block (new document, current switched, old one deleted) re-renders the archived card',
+  );
+  // an over-size write is refused, as the database refuses it
+  const err = await pNew.evaluate(() =>
+    __rt
+      .write('threading/huge', { x: 'y'.repeat(262144) })
+      .then(() => null)
+      .catch(e => e.code),
+  );
+  ok(err === 'invalid_argument', 'runtime: a document over 256 KiB is refused (' + err + ')');
+  const refused = await pNew.evaluate(() => {
+    const out = [];
+    for (const ws of [
+      Array.from({ length: 51 }, (_, k) => ({ op: 'set', p: 'x/n' + k, v: {} })),
+      Array.from({ length: 6 }, (_, k) => ({ op: 'set', p: 'x/m' + k, v: { b: 'z'.repeat(200000) } })),
+      [{ op: 'set', p: 'summary/current', v: {} }],
+    ])
+      try {
+        __rt.batch(ws);
+        out.push('accepted');
+      } catch (e) {
+        out.push(e.message.replace(/:.*/, ''));
+      }
+    return out;
+  });
+  ok(
+    refused.join() === 'batch refused,batch refused,batch refused' && !(await get(pNew, 'x/n0')),
+    'runtime: batches over 50 writes or 1 MiB, and unpinned writes to existing documents, are refused',
+  );
+  ok(pNew.errors.length === 0 && pOld.errors.length === 0, 'layout: no page errors ' + JSON.stringify(pNew.errors));
+  await pNew.context().close();
+  await pOld.context().close();
+  // a block `current` names that never arrives is reported; one a moment late isn't (review of #31, finding 4)
+  const lateId = sumBlocks.find(k => k !== sb);
+  const lateSeed = Object.assign({}, newSeed);
+  delete lateSeed[lateId];
+  const pLate = await open(lateSeed);
+  await pLate.waitForTimeout(1000);
+  await pLate.evaluate(([k, v]) => __rt.write(k, v), [lateId, S0.new[lateId]]);
+  await pLate.waitForTimeout(6500);
+  const note = await pLate.$('#layout-st');
+  ok(
+    !!note && (await note.evaluate(e => e.hidden)),
+    'layout: a block that arrives a moment after current shows no notice',
+  );
+  await pLate.evaluate(k => __rt.del(k), lateId);
+  ok(
+    await until(
+      pLate,
+      () => {
+        const e = document.getElementById('layout-st');
+        return e && !e.hidden && /didn't load \(1 document missing\)/.test(e.textContent);
+      },
+      null,
+      9000,
+    ),
+    'layout: a block current names that stays missing is reported on the page, not silently dropped',
+  );
+  ok(pLate.errors.length === 0, 'layout: no page errors with a block missing ' + JSON.stringify(pLate.errors));
+  await pLate.context().close();
+}
+
 /* ---------- 5. names from the importer's side ---------- */
 async function names() {
   const p = await open(SEED());
@@ -1372,6 +1740,7 @@ async function names() {
     await pipeline();
     await variants();
     await ranges();
+    await layouts();
     await names();
   } catch (e) {
     ok(false, 'crashed: ' + ((e && e.stack) || e));

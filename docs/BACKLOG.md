@@ -60,6 +60,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B38 | P2 | bug | A photo-reply parent that loaded late could be recorded as the next reply's parent: a silent wrong link · **done** (v1.14.0) |
 | B39 | P2 | bug | Queuing a reply closes the conversation you're in and jumps the page |
 | B40 | P2 | bug | A conversation that starts with a reply to an older message doesn't show that message, so you can't tell what it's about |
+| B41 | P2 | bug | Full names are missing on a live page, so people who share a first name aren't told apart |
+| B42 | P3 | bug | A person's text and the photo they sent right after show as two separate messages instead of one |
+| B43 | P1 | bug | Threading and summary outgrow the database's 256 KiB per-document cap; sessions started dropping summaries · **done** (v1.17.0) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -202,6 +205,42 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Fix options:** (a) the page shows a cross-conversation parent as a quoted context line at the top of the conversation, with a jump to it; (b) the refresh skill joins such replies to the parent's conversation, or starts the new conversation with the parent; (c) both. (a) also fixes pages that were already built.
 - **Test:** page test with a conversation whose first message replies to a message in another conversation: the parent's sender and text appear as context, and the jump goes to it.
 
+### B41 · P2 · Full names are missing on a live page, so people who share a first name aren't told apart
+- **Found:** by the owner, Nov 11: two Bens still both show as "Ben".
+- **Measured on the owner's page (counts only):** 7 of 6,933 stored messages carry `fn`, all from #6921 on (captured Nov 11). `people/index` lists 4 people. F9 shipped in v1.10.0 and v1.11.0, but this page captured no full names until tonight, and the one-time backfill scan (`references/people.md`) hasn't filled the index.
+- **Likely causes, to confirm:**
+  - The installed helper predated `fn` capture and only updated itself on Nov 11; self-update checks about daily.
+  - The backfill scan defers when the helper is older than 1.7 ("try on a later refresh"), and nothing retries it or reports that it's still pending.
+  - Even now only 7 of the 12 newest messages have `fn`: Messenger shows the avatar once per run of messages from the same sender.
+- **Fix:**
+  - Each refresh reports when full names aren't being captured, and when the backfill is still pending.
+  - Run the backfill once the helper is current.
+  - Give a sender's consecutive messages the `fn` read from the one avatar.
+- **Test:** a sim with grouped messages and one avatar per run, where every message in the run gets `fn`; and a skill-text test that a pending backfill is retried and reported.
+
+### B42 · P3 · A person's text and the photo they sent right after show as two separate messages
+- **Found:** by the owner, Nov 11. Ana's text (#6739) and the photo she sent the same minute (#6740) show as two full rows. The second has its own number, time, name, actions and a "… continues #6739 Ana" line. Messenger shows them as one block.
+- **Cause:** Messenger stores each bubble as its own message (`data-message-id`), so the capture is right. Threading links the second with a `c` link ("same person continuing", `catchup.py:348`), and `convTree` already places it right after the first (`page.html` › `convTree`). But the row renderer gives a `c` row the full header and its own actions, labelled "… continues".
+- **Fix (owner's call, Nov 11: like Messenger):** render a run of `c` messages from the same sender within a few minutes as one block. One header (name, time), each bubble's text or photo stacked beneath it, and the message numbers kept but quiet. As in Messenger, each bubble keeps its own actions ("Reply in Messenger", "Reply here"), shown when you hover or tap that bubble instead of under every one. Replies to any bubble still nest under the block. Search, jumps and #n links must still find each bubble. The owner expects this to help the Messages view a lot.
+- **Test:** a page test where text plus a photo from the same sender within a minute renders as one block with one header, and both #numbers are reachable by jump and search; a gap of more than the window, or a different sender, still makes separate rows.
+
+### B43 · P1 · Threading and summary outgrow the 256 KiB per-document cap · done (v1.17.0)
+- **Found:** measured on the owner's live page, Nov 11 (sizes and counts only). An artifact database document holds at most 256 KiB (262,144 bytes; runtime contract 0.2.92, which also caps a database at 25,000 documents; the ArtifactData tool takes 50 writes and 1 MiB per batch).
+  - `threading/current` was 185.6 KB compact: 504 conversations (75 KB) and 6,068 links (110 KB). It grows about 20 KB a day, so it would be full in about 3 days, and every refresh's step-7 write would fail after that.
+  - `summary/current` was 249 KB that morning and 215 KB with 315 conversations by evening. Refresh sessions had improvised a rolling window: they dropped older conversations and wrote an undocumented `fromI` (now 2797). Those summaries are lost.
+  - Both only ever grew: `catchup.py` never split or pruned, and the chat adds about 460 messages a day. The design target is 50,000+ messages.
+- **Owner's decisions:** archive and keep everything (older conversations move to documents the page still reads and shows; nothing is dropped); no re-setup (pages convert on their next refresh, and the page reads the old layout too); a MINOR release with `PAGE_VERSION` 2.3.
+- **Fix (v1.17.0):**
+  - **Layout:** `threading` and `summary` are collections. Each `current` names its block documents (`blocks`), one per 1,000 messages. Threading links and members go to the block of their message, and a conversation's title to the block of its first message. Summary items newer than `activeFrom` (the block before the newest) stay in `current`; older conversations, open questions, answers, mentions and deals go to the block of their messages, and a conversation's older bullets to the block they cite (`syn`). Merging gives back the exact old documents, order included.
+  - **Safe writes:** a block's id carries a hash of its content, so a changed block is a new document, written before `current` names it. An interrupted run changes nothing the page reads, and a retry finds the blocks it already wrote. Old blocks are deleted after the write succeeds; unknown documents are never touched.
+  - **`catchup.py`:** bootstrap reads either layout. Build writes only the changed documents and `RUN/out/manifest.json` (batches within the tool's limits, pins, cleanup). It fails before writing anything if a document would be over 240 KiB, checks that the documents merge back into the built state, and refuses a WORK that the database has moved past. `fromI` is defined (the first message the stored summary covers) and kept as is.
+  - **Page 2.3:** subscribes to both collections and merges them. Every view reads the merged objects, so it renders as before.
+  - **Refresh skill:** bootstrap and step 5 list both collections; step 7 writes the manifest; a hard rule never to drop or shorten anything to save space; `references/writing-the-build.md`.
+  - **Measured** on synthetic chats calibrated to the owner's page (`tests/synth.py`): from 6,400 to 50,000 messages the largest document is at most 84 KB (85 KB with a 1.6× denser summary), at least 3× under the cap; threading blocks stay under 31 KB. A build writes about 4 documents in one batch (EXPERIMENTS.md §13).
+  - **Also fixed:** a build that continued a conversation whose summary an earlier session had dropped crashed (`KeyError`); its summary now starts again.
+  - **Review of the PR** found five more, all fixed before merging, each with a test that failed first: the cleanup could delete blocks no `current` named (after an older skill wrote back its single documents); a relink after a cleanup could name a deleted block; a build accepted a listing without the blocks; the page silently skipped a missing block; and a batch that stopped partway wasn't covered (bootstrap now stops on it, and `--rollback` recovers).
+  - **Tests:** a fake database that refuses what the real one refuses (documents over 262,144 bytes; batches over 50 writes or 1 MiB; unpinned writes to existing documents); migration with `fromI`; builds at 6.4k, 25k and 50k messages; a link correction in its block; interrupted migrations and retries; the size check; bootstrap from either layout; the page rendering both layouts the same, and the old layout as v1.16.2 rendered it.
+
 ## Risks
 
 ### R1 · P1 · Unpinned page writes; half-finished imports · done
@@ -231,6 +270,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### R4 · P3 · Whole history in memory and in one prompt
 - **What:** the page rebuilds the full list on every chunk change; Ask Claude with "include older messages" sends every stored message (~3,900 and growing). `prompt_too_large` is handled but makes the option useless.
 - **Fix:** see F6.
+- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0): each is a collection of block documents, so no document grows with the history. The page still holds every chunk and block in memory, and Ask Claude's prompt still grows.
 
 ### R5 · P2 · E2EE and messenger.com
 - **What:** `/messages/e2ee/t/` URLs are stored and used but untested against a live E2EE chat. The userscript `@match` covers only `www.facebook.com/messages/*`, so `messenger.com` isn't supported.
@@ -382,6 +422,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 
 ### F6 · P3 · Ask Claude over long histories
 - Send summaries for older stretches plus the raw window, or pick messages by keyword first, instead of all stored messages.
+- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0), so older summaries are kept and could feed this. The prompt size itself is still open.
 
 ### F7 · P3 · Ship as a plugin · done (v1.15.0, v1.16.0)
 - **What:** plugins (Customize › Plugins, or a marketplace added from a git repo) load their skills in web and Desktop chat, Cowork and Claude Code, and follow the user's account. This replaces "re-upload the ZIP". Plugins need a paid plan, as Claude in Chrome already does.
