@@ -443,6 +443,168 @@
   .msg.own {
     background: var(--accent-soft);
   }
+  .pt:empty {
+    display: none;
+  }
+  #ob-slot {
+    display: contents;
+  }
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* B42: a person's bubbles sent close together, as one block (one header; each bubble's number quiet, its actions on
+     hover, tap or focus) */
+  .grp {
+    display: grid;
+    border-radius: 4px;
+    min-width: 0;
+  }
+  .grp:hover {
+    background: var(--surface);
+  }
+  .grp.own {
+    background: var(--accent-soft);
+  }
+  .grp > .msg {
+    background: transparent;
+    align-items: start;
+  }
+  .grp > .msg > .n,
+  .grp > .msg > .t {
+    line-height: 24px;
+  }
+  .grp > .msg:hover {
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+  }
+  .grp > .msg.flash {
+    background: var(--hl);
+  }
+  .grp > .msg.first {
+    padding-bottom: 3px;
+  }
+  .grp > .msg.more {
+    padding-block: 3px;
+  }
+  .grp > .msg:last-child {
+    padding-bottom: 7px;
+  }
+  .msg.more .n {
+    opacity: 0.6;
+  }
+  .msg.more .t {
+    visibility: hidden;
+  }
+  .msg.more:hover .t,
+  .msg.more:focus-within .t {
+    visibility: visible;
+  }
+  .msg > .c > .sub:not(.acts):has(> .pt:empty:only-child) {
+    display: none;
+  }
+  /* every message's actions (Reply in Messenger, Open photo, Reply here) show on hover, keyboard focus or a tap */
+  .msg {
+    position: relative;
+  }
+  .msg > .c > .acts {
+    align-items: baseline;
+  }
+  @media (hover: hover) {
+    .msg > .c > .acts {
+      position: absolute;
+      top: 2px;
+      right: 6px;
+      z-index: 2;
+      padding: 2px 10px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.12s;
+    }
+    .msg:hover > .c > .acts,
+    .msg:focus-within > .c > .acts,
+    .msg.tap > .c > .acts {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+  @media (hover: none) {
+    .msg > .c > .acts:not(:focus-within) {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .msg.tap > .c > .acts {
+      position: static;
+      width: auto;
+      height: auto;
+      overflow: visible;
+      clip-path: none;
+      white-space: normal;
+    }
+    .msg {
+      cursor: pointer;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .msg > .c > .acts {
+      transition: none;
+    }
+  }
+  /* B40: the message a conversation answers, when it's outside the conversation: quoted, set apart */
+  .ctx {
+    display: grid;
+    gap: 4px;
+    margin-left: 1.4em;
+    padding: 6px 4px 4px 10px;
+    border-left: 3px solid var(--olive);
+    border-radius: 0 5px 5px 0;
+    background: var(--bg);
+    min-width: 0;
+  }
+  .ctx .lab {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    align-items: baseline;
+    padding-right: 6px;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .ctx .lab button.link,
+  .ctx .lab a {
+    font: 600 0.82rem var(--body);
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .ctx .lab button.link {
+    margin-left: auto;
+  }
+  .ctx > .msgs .msg,
+  .ctx > .msgs .grp {
+    background: transparent;
+  }
+  .ctx > .msgs .msg {
+    padding-inline: 0 4px;
+  }
+  .ctx .q {
+    overflow-wrap: anywhere;
+    white-space: pre-line;
+    padding-right: 6px;
+  }
   .divider {
     font-family: var(--mono);
     font-size: 0.72rem;
@@ -870,6 +1032,21 @@
     .msg .c {
       grid-column: 1/-1;
     }
+    /* a bubble's quiet number moves to its right edge, so the block's text lines up */
+    .msg.more {
+      grid-template-columns: 1fr auto;
+    }
+    .msg.more .t {
+      display: none;
+    }
+    .msg.more .n {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .msg.more .c {
+      grid-column: 1;
+      grid-row: 1;
+    }
   }
   /* summary v3 cards */
   .cv {
@@ -1154,7 +1331,7 @@
           <button id="lay-flat" aria-pressed="true">Timeline</button>
           <button id="lay-thread" aria-pressed="false">Threaded</button>
         </div>
-        <input type="search" id="msg-q" placeholder="Filter by text or name" />
+        <input type="search" id="msg-q" placeholder="Filter by text, name or #number" />
         <label class="note"><input type="checkbox" id="msg-all" /> Show older messages</label>
       </div>
       <p class="rangebox" id="msg-older" role="status" hidden></p>
@@ -1316,7 +1493,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.3";
+  const PAGE_VERSION = "2.4";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -1852,6 +2029,84 @@
       (m.x ? " {reactions: " + m.x + "}" : "");
     return s;
   }
+  /* B39: the reader's place survives a rebuild. New data (a refresh's chunks, threading, the summary, photos, names)
+     redraws the Summary and Messages tabs from scratch, so the page remembers which conversations the reader opened
+     (S.convOpen, as S.openThr does for the summary's threads) and keeps the row or card at the top of the screen where
+     it was. A reply being written keeps its message in place. */
+  if (!S.convOpen) S.convOpen = new Map();
+  function openConv(d) {
+    d.open = true;
+    if (d.dataset.conv) S.convOpen.set(d.dataset.conv, true);
+  }
+  /* a Messages conversation opens as the reader left it, else by the default (the first four) */
+  function rememberOpen(d, dflt) {
+    const id = d.dataset.conv;
+    d.open = S.convOpen.has(id) ? S.convOpen.get(id) : dflt;
+    d.addEventListener("click", e => {
+      if (e.target.closest("summary") && e.target.closest("details") === d) d._user = true;
+    });
+    d.addEventListener("toggle", () => {
+      if (d._user) S.convOpen.set(id, d.open);
+      d._user = false;
+    });
+  }
+  function placeKey(n) {
+    if (n.id) return "#" + CSS.escape(n.id);
+    const cv = n.closest("[data-conv]");
+    const ck = cv ? cv.tagName.toLowerCase() + '[data-conv="' + CSS.escape(cv.dataset.conv) + '"]' : null;
+    if (n.matches("details.conv > summary")) return ck && ck + " > summary";
+    if (n.matches("article.cv")) return ck;
+    const b = n.closest("[data-blk]");
+    if (n.matches(".sec-head") && b) return '.block[data-blk="' + CSS.escape(b.dataset.blk) + '"] > .sec-head';
+    return null;
+  }
+  function placeOf() {
+    const v = document.querySelector("section.view:not([hidden])");
+    if (!v || (v.id !== "v-messages" && v.id !== "v-summary") || scrollY < 1) return null;
+    const nav = document.querySelector("nav.tabs");
+    const top = nav ? nav.getBoundingClientRect().bottom : 0;
+    const seen = n => {
+      const r = n.getBoundingClientRect();
+      return r.height > 0 && r.bottom > top && r.top < innerHeight;
+    };
+    const inner = {};
+    v.querySelectorAll("article.cv[data-conv] details.thr[open] > .msgs").forEach(x => {
+      if (x.scrollTop) inner[x.closest("article.cv").dataset.conv] = x.scrollTop;
+    });
+    /* the message whose reply is being written (or was just queued), else the first row or card on screen */
+    const act = document.activeElement;
+    let n = act && act.closest ? act.closest("#msgs .msg[id]") : null;
+    if (!n || !seen(n)) {
+      n = null;
+      const sel =
+        v.id === "v-messages"
+          ? "#msgs .msg[id], #msgs details.conv > summary"
+          : "#v-summary article.cv, #v-summary .sec-head";
+      for (const x of v.querySelectorAll(sel)) {
+        if (seen(x) && placeKey(x)) {
+          n = x;
+          break;
+        }
+      }
+    }
+    return { key: n && placeKey(n), top: n ? n.getBoundingClientRect().top : 0, inner };
+  }
+  function restorePlace(a) {
+    if (!a) return;
+    Object.entries(a.inner).forEach(([id, st]) => {
+      const x = document.querySelector('article.cv[data-conv="' + CSS.escape(id) + '"] details.thr > .msgs');
+      if (x) x.scrollTop = st;
+    });
+    const n = a.key && document.querySelector(a.key);
+    if (!n) return;
+    const r = n.getBoundingClientRect();
+    if (r.height) scrollTo(0, scrollY + r.top - a.top);
+  }
+  function keepPlace(fn) {
+    const a = placeOf();
+    fn();
+    restorePlace(a);
+  }
   function goMsg(i) {
     if (location.hash !== "#messages") history.pushState(null, "", "#messages");
     route();
@@ -1861,12 +2116,13 @@
       S.autoOlder = i;
     }
     $("#msg-q").value = "";
+    clearTimeout(qT); /* a filter still waiting to apply would redraw over the jump */
     renderMessages();
     requestAnimationFrame(() => {
       const n = document.getElementById("m" + i);
       if (n) {
         const dd = n.closest("details");
-        if (dd) dd.open = true;
+        if (dd) openConv(dd);
         n.scrollIntoView({ block: "center" });
         n.classList.add("flash");
         setTimeout(() => n.classList.remove("flash"), 2200);
@@ -1974,6 +2230,7 @@
   }
   function block(title, sub) {
     const b = el("div", "block");
+    b.dataset.blk = title;
     const h = el("div", "sec-head");
     h.append(el("h2", null, title));
     if (sub) h.append(el("p", null, sub));
@@ -2100,11 +2357,12 @@
     $("#lay-thread").setAttribute("aria-pressed", "true");
     $("#lay-flat").setAttribute("aria-pressed", "false");
     $("#msg-q").value = "";
+    clearTimeout(qT);
     renderMessages();
     requestAnimationFrame(() => {
       const d = document.querySelector('details.conv[data-conv="' + CSS.escape(id) + '"]');
       if (d) {
-        d.open = true;
+        openConv(d);
         d.scrollIntoView({ block: "start" });
         d.classList.add("flash");
       }
@@ -2183,6 +2441,8 @@
         ta.disabled = true;
         c.textContent = "Close";
         q.hidden = true;
+        /* the outbox snapshot closes this box; if it came before the save returned, close it now */
+        if ((S.outbox || []).some(o => o.id === id)) outboxChanged();
       } catch (e) {
         q.disabled = false;
         st.textContent = "Couldn't save: " + ((e && e.message) || e);
@@ -2217,9 +2477,29 @@
   function composingAt(i, loc) {
     return S.composing.get(i) === loc;
   }
+  /* The "reply queued" chip sits in a slot that an outbox change refills in place (B39: no rebuild, so nothing moves). */
+  function fillPending(s) {
+    const q = queuedFor(+s.dataset.pt);
+    s.textContent = "";
+    if (q.length) s.append(el("span", "chip open", q.length > 1 ? q.length + " replies queued" : "reply queued"));
+  }
   function pendingTag(m) {
-    const q = queuedFor(m.i);
-    return q.length ? el("span", "chip open", q.length > 1 ? q.length + " replies queued" : "reply queued") : null;
+    const s = el("span", "pt");
+    s.dataset.pt = m.i;
+    fillPending(s);
+    return s;
+  }
+  function outboxChanged() {
+    const slot = document.getElementById("ob-slot");
+    if (slot) {
+      slot.textContent = "";
+      renderOutbox(slot);
+    }
+    document.querySelectorAll(".pt[data-pt]").forEach(fillPending);
+    /* a composer whose reply was queued closes; one still being written stays */
+    document.querySelectorAll(".compose[data-ci]").forEach(b => {
+      if (!S.composing.has(+b.dataset.ci)) b.remove();
+    });
   }
   function renderOutbox(v) {
     /* queued, failed, still sending, or not confirmed: shown until resolved; sent: shown for a day */
@@ -2366,10 +2646,21 @@
       if (head.has(i)) return lk && head.get(i) === lk[0] ? false : true;
       return !(par.has(i) && lk && par.get(i) === lk[0]);
     };
+    /* a run of "continues" bubbles sent close together is one block; replies to any of them nest under it */
+    const joins = (i, run) => {
+      const lk = L[i];
+      return lk && lk[1] === "c" && run.includes(lk[0]) && sameRun(S.byI.get(run[run.length - 1]), S.byI.get(i));
+    };
     (function add(arr, into) {
       arr.forEach(h => {
         const grp = [h].concat(conts.get(h) || []);
-        grp.forEach(i => into.append(onRow(i, L[i], shown(i))));
+        runsOf(grp, joins).forEach(run =>
+          into.append(
+            run.length > 1
+              ? blockOf(run, (i, pos) => onRow(i, L[i], shown(i), pos))
+              : onRow(run[0], L[run[0]], shown(run[0])),
+          ),
+        );
         const g = [].concat(...grp.map(i => kids.get(i) || [])).sort((a, b) => a - b);
         if (g.length) {
           const kk = el("div", "kids");
@@ -2380,10 +2671,162 @@
     })(roots, tree);
     return tree;
   }
+  /* B42: Messenger stores each bubble as its own message, and threading links a person's next bubble to the last with a
+   "continues" (c) link. Bubbles from one sender within RUN_MS of each other render as one block, as in Messenger: one
+   header (name, time), each bubble's text or photos beneath it, its number kept but quiet, and its own actions shown
+   when you hover, tap or tab to that bubble. Every bubble keeps its row id, so search, jumps and #n links find it. */
+  const RUN_MS = 5 * 60e3;
+  function tsMs(m) {
+    return m && m.ts ? Date.parse(m.ts + ":00") : NaN;
+  }
+  function sameRun(a, b) {
+    if (!a || !b || a.f !== b.f || (a.fn && b.fn && a.fn !== b.fn)) return false;
+    const x = tsMs(a),
+      y = tsMs(b);
+    if (isNaN(x) || isNaN(y)) return a.t === b.t && a.d === b.d;
+    return y >= x && y - x <= RUN_MS;
+  }
+  function runsOf(ids, joins) {
+    const runs = [];
+    ids.forEach(i => {
+      const run = runs[runs.length - 1];
+      if (run && joins(i, run)) run.push(i);
+      else runs.push([i]);
+    });
+    return runs;
+  }
+  function blockOf(run, rowFn) {
+    const g = el("div", "grp" + (S.byI.get(run[0]).f === "You" ? " own" : ""));
+    run.forEach((i, k) => g.append(rowFn(i, { more: k > 0 })));
+    return g;
+  }
+  /* Timeline (and "Not grouped yet"): next to each other in the list, and a continues link when threading covers it;
+     without threading, any next message from the same sender that isn't a Messenger reply. */
+  function joinsFlat(i, run) {
+    const m = S.byI.get(i);
+    if (!sameRun(S.byI.get(run[run.length - 1]), m)) return false;
+    const T = S.threading,
+      lk = T && T.links && T.links[i];
+    if (lk) return lk[1] === "c" && run.includes(lk[0]);
+    return !m.r && !(T && i <= (T.to ?? -1));
+  }
+  function flatRows(list, into, divider) {
+    let run = [];
+    const flush = () => {
+      if (run.length)
+        into.append(
+          run.length > 1 ? blockOf(run, (i, pos) => msgRow(S.byI.get(i), null, false, pos)) : msgRow(S.byI.get(run[0])),
+        );
+      run = [];
+    };
+    list.forEach(m => {
+      const d = divider && divider(m);
+      if (d) {
+        flush();
+        into.append(d);
+      }
+      if (run.length && joinsFlat(m.i, run)) run.push(m.i);
+      else {
+        flush();
+        run = [m.i];
+      }
+    });
+    flush();
+  }
+  /* B40: when threading put a reply in a new conversation, or the conversation's start is outside the window, the
+   message it answers is shown first, so the conversation says what it's about. */
+  function convOfMsg(i) {
+    const T = S.threading;
+    if (!T) return null;
+    if (convOfMsg.T !== T) {
+      convOfMsg.T = T;
+      convOfMsg.map = new Map();
+      (T.convs || []).forEach(c => (c.members || []).forEach(k => convOfMsg.map.set(k, c)));
+    }
+    return convOfMsg.map.get(i) || null;
+  }
+  /* The parent and the rest of its run of bubbles (B42), so the context shows the whole thing the person sent. Stops at
+     messages the conversation shows itself. */
+  function runAround(i, skip) {
+    const L = (S.threading || {}).links || {};
+    if (runAround.T !== S.threading) {
+      runAround.T = S.threading;
+      runAround.next = new Map();
+      Object.entries(L).forEach(([k, lk]) => {
+        if (!lk || lk[1] !== "c") return;
+        if (!runAround.next.has(lk[0])) runAround.next.set(lk[0], []);
+        runAround.next.get(lk[0]).push(+k);
+      });
+    }
+    let a = i;
+    for (let n = 0; n < 20; n++) {
+      const lk = L[a];
+      const p = lk && lk[1] === "c" && S.byI.get(lk[0]);
+      if (!p || skip.has(p.i) || !sameRun(p, S.byI.get(a))) break;
+      a = p.i;
+    }
+    const run = [a];
+    for (let n = 0; n < 20; n++) {
+      const last = S.byI.get(run[run.length - 1]);
+      const nx = (runAround.next.get(last.i) || [])
+        .filter(k => !skip.has(k) && sameRun(last, S.byI.get(k)))
+        .sort((x, y) => x - y)[0];
+      if (nx == null) break;
+      run.push(nx);
+    }
+    return run;
+  }
+  function ctxLine(mem, convId) {
+    const m0 = S.byI.get(mem[0]);
+    const lk = ((S.threading || {}).links || {})[mem[0]];
+    const linked = lk && lk[0] != null;
+    if (linked ? mem.includes(lk[0]) : !(m0 && m0.r && (m0.q || m0.pl || m0.pmid))) return null;
+    const p = linked ? S.byI.get(lk[0]) : null;
+    const box = el("div", "ctx");
+    const lab = el("div", "lab");
+    const verb = ({ c: "Continues", i: "Answers" }[linked && lk[1]] || "Replies to") + " ";
+    box.append(lab);
+    if (p) {
+      const pc = convOfMsg(p.i);
+      lab.append(
+        el("span", null, verb + (pc && pc.id !== convId ? "a message in “" + pc.title + "”" : "an earlier message")),
+      );
+      const go = el("button", "link", "Show #" + p.i + " →");
+      go.title = "Show #" + p.i + " in its conversation";
+      go.onclick = () => goMsg(p.i);
+      lab.append(go);
+      /* the message itself: full text and photos, with the rest of its run as one block */
+      const run = runAround(p.i, new Set(mem));
+      const row = (i, pos) => msgRow(S.byI.get(i), null, true, pos, { ctx: true });
+      const ms = el("div", "msgs");
+      ms.append(run.length > 1 ? blockOf(run, row) : row(run[0]));
+      box.append(ms);
+      return box;
+    }
+    /* the parent isn't stored here: what the reply itself says about it */
+    lab.append(
+      el(
+        "span",
+        null,
+        verb + (linked ? "#" + lk[0] : "a message from " + (m0.r || "someone")) + ", which isn't stored on this page",
+      ),
+    );
+    if (m0.pmid) {
+      const a = el("a", null, "Find it in Messenger ↗");
+      a.href = CHAT + "#mcjump=" + encodeURIComponent(m0.pmid) + "&noreply";
+      a.target = "_blank";
+      a.rel = "noopener";
+      lab.append(a);
+    }
+    const q = el("div", "q");
+    q.append(el("b", null, (m0.r || "?") + ": "), document.createTextNode(m0.q || m0.pl || "[photo or attachment]"));
+    box.append(q);
+    return box;
+  }
   function threadTree(mem) {
     const set = new Set(mem);
-    const tree = convTree(mem, (i, lk, showQ) => {
-      const r = msgRow(S.byI.get(i), lk, showQ);
+    const tree = convTree(mem, (i, lk, showQ, pos) => {
+      const r = msgRow(S.byI.get(i), lk, showQ, pos);
       r.removeAttribute("id");
       r.dataset.i = i;
       return r;
@@ -2487,6 +2930,8 @@
     h.append(act);
     if (!zOpen && composingAt(z.i, "card:" + c.id)) h.append(composer(z, "card:" + c.id));
     d.append(h);
+    const cx = ctxLine(mem, c.id);
+    if (cx) d.append(cx);
     /* thread (built lazily) */
     const thr = el("details", "thr");
     const ts = el("summary", null, "Show the thread (" + mem.length + ")");
@@ -2623,7 +3068,10 @@
       );
       return;
     }
-    renderOutbox(v);
+    const slot = el("div");
+    slot.id = "ob-slot";
+    v.append(slot);
+    renderOutbox(slot);
     /* Needs you: only messages that name you or reply to you */
     const ments = (sm.mentions || []).filter(x => (x.refs || []).some(r => after(r[0] ?? r)));
     const bn = block("Needs you", null);
@@ -2938,15 +3386,19 @@
     i: ["↳ answers", "i", "Claude's read of the conversation"],
     c: ["… continues", "c", "Same person continuing"],
   };
-  function msgRow(m, lk, showQuote) {
-    const r = el("div", "msg" + (m.f === "You" ? " own" : ""));
-    r.id = "m" + m.i;
+  /* pos: this row is a bubble in a block (blockOf); pos.more: not the first, so no header of its own */
+  /* o.ctx: a copy shown as context in another conversation (B40): no row id, no Reply here */
+  function msgRow(m, lk, showQuote, pos, o = {}) {
+    const r = el("div", "msg" + (m.f === "You" ? " own" : "") + (pos ? " bub" + (pos.more ? " more" : " first") : ""));
+    if (o.ctx) r.dataset.ctx = m.i;
+    else r.id = "m" + m.i;
     r.append(el("span", "n", "#" + m.i), el("span", "t", m.t));
     const c = el("div", "c");
     const head = el("div");
-    head.append(el("span", "who", nameOf(m)));
+    if (pos && pos.more) head.className = "sr";
+    head.append(el("span", pos && pos.more ? null : "who", nameOf(m)));
     if (m.r && !lk) head.append(el("span", "muted", " ↪ " + m.r));
-    if (lk && lk[0] != null) {
+    if (lk && lk[0] != null && !(pos && pos.more)) {
       const k = LK[lk[1]] || LK.i;
       const p = S.byI.get(lk[0]);
       const a = el("a", "lk " + k[1], k[0] + " #" + lk[0] + (p ? " " + nameOf(p) : ""));
@@ -2987,12 +3439,19 @@
     if (m.a) sub.append(el("span", null, "🔗 " + m.a.split("\n")[0].slice(0, 90)));
     (m.l || []).forEach(u => sub.append(outLink(hostOf(u), u)));
     if (m.x) sub.append(el("span", null, m.x));
-    sub.append(extLink(m));
-    if (S.db) sub.append(replyHereBtn(m, c, "row"));
-    const pt = pendingTag(m);
-    if (pt) sub.append(pt);
-    c.append(sub);
-    if (composingAt(m.i, "row")) c.append(composer(m, "row"));
+    /* a message's actions sit apart from what it says, and show when you hover, tap or tab to it, as in Messenger */
+    const acts = el("div", "sub acts");
+    acts.append(extLink(m));
+    if (S.db && !o.ctx) acts.append(replyHereBtn(m, c, "row"));
+    sub.append(pendingTag(m));
+    c.append(sub, acts);
+    r.addEventListener("click", e => {
+      if (e.target.closest("a, button, textarea, .compose") || String(getSelection())) return;
+      const on = !r.classList.contains("tap");
+      document.querySelectorAll(".msg.tap").forEach(x => x.classList.remove("tap"));
+      r.classList.toggle("tap", on);
+    });
+    if (!o.ctx && composingAt(m.i, "row")) c.append(composer(m, "row"));
     r.append(c);
     return r;
   }
@@ -3095,25 +3554,24 @@
       ob.append(bb);
     }
     let list = S.msgs.filter(m => all || inWindow(m));
+    /* "#123" finds message 123 */
+    const qn = /^#\d+$/.test(q) ? +q.slice(1) : null;
     const match = m =>
       !q ||
-      (m.f + " " + (fullOf(m) || "") + " " + (m.b || "") + " " + (m.a || "") + " " + (m.r || ""))
-        .toLowerCase()
-        .includes(q);
+      (qn != null
+        ? m.i === qn
+        : (m.f + " " + (fullOf(m) || "") + " " + (m.b || "") + " " + (m.a || "") + " " + (m.r || ""))
+            .toLowerCase()
+            .includes(q));
     if (!S.msgs.length) {
       box.append(el("div", "empty", "No messages stored yet."));
       return;
     }
     const ws = windowStart();
     if (layout === "flat") {
-      let shown = 0;
-      list.forEach(m => {
-        if (!match(m)) return;
-        if (m.i === ws + 1 && all) box.append(el("div", "divider", "Catch-up window starts"));
-        box.append(msgRow(m));
-        shown++;
-      });
-      $("#msg-note").textContent = shown + " messages" + (q ? " matching" : "") + ".";
+      const shown = list.filter(match);
+      flatRows(shown, box, m => (m.i === ws + 1 && all ? el("div", "divider", "Catch-up window starts") : null));
+      $("#msg-note").textContent = shown.length + " messages" + (q ? " matching" : "") + ".";
       return;
     }
     if (S.threading && renderConversations(list, match)) return;
@@ -3189,7 +3647,7 @@
         if (!mem.some(i => match(S.byI.get(i)))) return;
         const d = el("details", "item conv");
         d.dataset.conv = cv.id;
-        d.open = n < 4;
+        rememberOpen(d, n < 4);
         n++;
         const s = el("summary");
         const who = [...new Set(mem.map(i => nameOf(S.byI.get(i))))];
@@ -3212,7 +3670,9 @@
           ),
         );
         d.append(s);
-        const tree = convTree(mem, (i, lk, showQ) => msgRow(S.byI.get(i), lk, showQ));
+        const cx = ctxLine(mem, cv.id);
+        if (cx) d.append(cx);
+        const tree = convTree(mem, (i, lk, showQ, pos) => msgRow(S.byI.get(i), lk, showQ, pos));
         d.append(tree);
         box.append(d);
         shown += mem.length;
@@ -3220,6 +3680,8 @@
     const rest = list.filter(m => !assigned.has(m.i) && match(m));
     if (rest.length) {
       const d = el("details", "item conv");
+      d.dataset.conv = "_rest";
+      rememberOpen(d, false);
       const s = el("summary");
       s.append(
         el("h3", null, "Not grouped yet"),
@@ -3227,7 +3689,7 @@
       );
       d.append(s);
       const t = el("div", "msgs");
-      rest.forEach(m => t.append(msgRow(m)));
+      flatRows(rest, t);
       d.append(t);
       box.append(d);
     }
@@ -4006,9 +4468,11 @@
     S.msgs = all;
     S.byI = new Map(all.map(m => [m.i, m]));
     indexPeople();
-    renderHeader();
-    renderSummary();
-    renderMessages();
+    keepPlace(() => {
+      renderHeader();
+      renderSummary();
+      renderMessages();
+    });
   }
   renderSummary();
   renderQA();
@@ -4029,18 +4493,22 @@
     }
     db.doc("meta/chat").onSnapshot(
       s => {
-        S.meta = s.exists ? s.data() : null;
-        applyCfg();
-        rebuild();
-        renderRefresh();
+        keepPlace(() => {
+          S.meta = s.exists ? s.data() : null;
+          applyCfg();
+          rebuild();
+          renderRefresh();
+        });
       },
       () => {},
     );
     db.collection("summary").onSnapshot(
       q => {
         S.summary = mergeSummary(collDocs(q));
-        renderHeader();
-        renderSummary();
+        keepPlace(() => {
+          renderHeader();
+          renderSummary();
+        });
       },
       () => {},
     );
@@ -4075,8 +4543,7 @@
     db.collection("outbox").onSnapshot(
       q => {
         S.outbox = q.docs.map(d => Object.assign({ id: d.id }, d.data()));
-        renderSummary();
-        renderMessages();
+        outboxChanged();
       },
       () => {},
     );
@@ -4091,8 +4558,10 @@
       q => {
         S.rangeSums = {};
         q.docs.forEach(d => (S.rangeSums[d.id] = d.data()));
-        renderHeader();
-        renderSummary();
+        keepPlace(() => {
+          renderHeader();
+          renderSummary();
+        });
       },
       () => {},
     );
@@ -4100,7 +4569,7 @@
       s => {
         S.people = s.exists ? s.data() : null;
         indexPeople();
-        rerenderAll();
+        keepPlace(rerenderAll);
       },
       () => {},
     );
@@ -4109,7 +4578,11 @@
         const d = s.exists ? s.data() : null;
         S.photos = d ? d.byI || {} : null;
         S.gifs = new Set((d && d.gifs) || []);
-        renderMessages();
+        /* the summary shows photos too: in snippets and in context blocks */
+        keepPlace(() => {
+          renderMessages();
+          renderSummary();
+        });
       },
       () => {},
     );
@@ -4122,8 +4595,10 @@
           $("#lay-thread").setAttribute("aria-pressed", "true");
           $("#lay-flat").setAttribute("aria-pressed", "false");
         }
-        renderMessages();
-        renderSummary();
+        keepPlace(() => {
+          renderMessages();
+          renderSummary();
+        });
       },
       () => {},
     );
