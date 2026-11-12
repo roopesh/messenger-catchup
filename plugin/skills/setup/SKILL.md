@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up a private catch-up page for a Facebook Messenger group chat (summary, threads, deals, mentions, replies), read from the user's own Chrome through Claude in Chrome. Use for "set up messenger catch-up", a first catch-up page for a chat, changing the refresh schedule, or what refreshes need to work.
+description: "Set up a private catch-up page for a Facebook Messenger group chat (summary, threads, deals, mentions, replies), read from the user's own Chrome through Claude in Chrome. Use for \"set up messenger catch-up\", a first catch-up page for a chat, changing the refresh schedule, or what refreshes need to work."
 ---
 
 # Messenger Catch-up: setup

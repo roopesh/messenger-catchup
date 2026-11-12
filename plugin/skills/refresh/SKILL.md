@@ -1,6 +1,6 @@
 ---
 name: refresh
-description: Refresh the user's Messenger Catch-up page (summary, threads, deals, mentions) from their Facebook Messenger group chat in their own Chrome, and post replies they queued on it. Use for "refresh my catch-up", scheduled catch-up runs, "open #123", or a wrong reply link. A new page comes from messenger-catchup:setup.
+description: "Refresh the user's Messenger Catch-up page (summary, threads, deals, mentions) from their Facebook Messenger group chat in their own Chrome, and post replies they queued on it. Use for \"refresh my catch-up\", scheduled catch-up runs, \"open #123\", or a wrong reply link. A new page comes from messenger-catchup:setup."
 ---
 
 # Messenger Catch-up

@@ -567,11 +567,34 @@ def _rollback(th, toi):  # threading back to #toi: later links and memberships c
     return th
 
 
+def _chunk_names(lo, hi, chunks, cs):  # the chunk documents holding #lo-#hi: chunks start where imports landed
+    if not chunks:  # a WORK bootstrapped before 1.17.1 has no chunk list
+        return sorted({"chunks/c%04d" % (x // cs * cs) for x in range(lo, hi + 1)})
+    starts = sorted(chunks)
+    return sorted({"chunks/c%04d" % max([s for s in starts if s <= x] or [starts[0]]) for x in range(lo, hi + 1)})
+
+
+def _dedupe_convs(th):  # earlier sessions could create two conversations with one id; the block layout keys by id
+    seen, renamed = set(), []
+    for c in th["convs"]:
+        if c["id"] in seen:
+            new = c["id"] + str(c["members"][0] if c["members"] else len(renamed))
+            while new in seen:
+                new += "x"
+            renamed.append((c["id"], new))
+            c["id"] = new
+        seen.add(c["id"])
+    return renamed
+
+
 def bootstrap(work, db, rollback=False):
     shutil.rmtree(work + "/prev", ignore_errors=True)  # a fresh WORK has nothing to undo
-    ms = []
+    ms, chunks = [], []
     for f in sorted(glob.glob(db + "/chunks/*.json")):
-        ms += _load(f)["msgs"]
+        ch = _load(f)
+        ms += ch["msgs"]
+        if ch["msgs"]:
+            chunks.append(ch.get("start", ch["msgs"][0]["i"]))
     byi = {}
     for m in ms:
         byi[m["i"]] = m
@@ -591,6 +614,13 @@ def bootstrap(work, db, rollback=False):
         assert "current" in d, need % (db, c, c)
     th = _canon_threading(merge_threading(tdocs))
     sm = merge_summary(sdocs)
+    dup = sorted({c["id"] for c in sm.get("convs", []) if [x["id"] for x in sm["convs"]].count(c["id"]) > 1})
+    assert not dup, (
+        "summary has more than one conversation with id %s: nothing was changed. Merge each pair into one entry (or give "
+        "the second the id of its own threading conversation) in the fetched summary file, bootstrap again, and say so "
+        "in the report" % ", ".join(dup)
+    )
+    renamed = _dedupe_convs(th)
     to, toi, rolled = th.get("to"), sm.get("toI"), ""
     if isinstance(to, int) and isinstance(toi, int) and to != toi:  # every write sets both; a batch stopped partway
         how = (
@@ -623,7 +653,12 @@ def bootstrap(work, db, rollback=False):
         "seen": {c: {f: d["current"].get(f) for f in SEEN[c]} for c, d in docs.items()},
     }
     _dump(lay, work + "/base/layout.json")
-    st = {"base": base, "stops": (mt.get("anchorMids") or [])[::-1], "tz": mt.get("tz") or "America/Los_Angeles"}
+    st = {
+        "base": base,
+        "stops": (mt.get("anchorMids") or [])[::-1],
+        "tz": mt.get("tz") or "America/Los_Angeles",
+        "chunks": chunks,
+    }
     _dump(st, work + "/state.json")
     strays = {c: _strays(d) for c, d in docs.items()}
     past = max(
@@ -641,6 +676,12 @@ def bootstrap(work, db, rollback=False):
     print(
         "bootstrap ok: %d messages built through #%d; STOPS=%s" % (base + 1, base, json.dumps(st["stops"]))
         + rolled
+        + (
+            "; conversation id(s) used twice, renamed: %s (the summary stays with the first; say so in the report)"
+            % ", ".join("%s -> %s" % r for r in renamed)
+            if renamed
+            else ""
+        )
         + ("; %s in the single-document layout: the next build converts it" % " and ".join(old) if old else "")
         + (
             "; %d block document(s) no current names, left alone" % sum(map(len, strays.values()))
@@ -654,14 +695,7 @@ def bootstrap(work, db, rollback=False):
             % (
                 base + 1,
                 last,
-                ", ".join(
-                    sorted(
-                        {
-                            "chunks/c%04d" % (x // (mt.get("chunkSize") or 82) * (mt.get("chunkSize") or 82))
-                            for x in range(base + 1, last + 1)
-                        }
-                    )
-                ),
+                ", ".join(_chunk_names(base + 1, last, chunks, mt.get("chunkSize") or 82)),
             )
         )
         + (
@@ -680,9 +714,12 @@ def build(work, run, specp):
     base = st["base"]
     TZ = st.get("tz") or TZ
     lay = _layout(work)
-    ms = []
+    ms, starts = [], set()
     for f in sorted(glob.glob(run + "/chunks/*.json")):
-        ms += _load(f)["msgs"]
+        ch = _load(f)
+        ms += ch["msgs"]
+        if ch["msgs"]:
+            starts.add(ch.get("start", ch["msgs"][0]["i"]))
     al = _load(work + "/all.json")
     byi = {m["i"]: m for m in al}
     assert (al[-1]["i"] if al else -1) == base == len(al) - 1, (len(al), base)
@@ -705,11 +742,9 @@ def build(work, run, specp):
     mt = _load(run + "/meta/chat.json")
     hi = (ids[0] - 1) if ids else mt.get("lastI", base)
     if hi > base:  # messages after WORK's base that RUN doesn't carry (it may carry no chunks at all)
-        cs = mt.get("chunkSize") or 82
-        need = sorted({"c%04d" % (x // cs * cs) for x in range(base + 1, hi + 1)})
+        need = _chunk_names(base + 1, hi, st.get("chunks"), mt.get("chunkSize") or 82)
         raise AssertionError(
-            "RUN is missing #%d-#%d (stored, not built yet): fetch %s into RUN too"
-            % (base + 1, hi, ", ".join("chunks/" + c for c in need))
+            "RUN is missing #%d-#%d (stored, not built yet): fetch %s into RUN too" % (base + 1, hi, ", ".join(need))
         )
     assert ids, "nothing to build: meta/chat ends at #%d and WORK already covers it" % base
     assert ids and ids == list(range(base + 1, base + 1 + len(ids))), (
@@ -882,7 +917,10 @@ def build(work, run, specp):
     _dump(s, work + "/base/summary.json")
     _dump(al + new, work + "/all.json")
     _dump(_record(lay, docs), work + "/base/layout.json")
+    chunks = st.get("chunks")  # a WORK from before 1.17.1 has none; a partial list would name the wrong chunk
     st = {"base": ids[-1], "stops": a[::-1], "tz": TZ}
+    if chunks is not None:
+        st["chunks"] = sorted(set(chunks) | starts)
     _dump(st, work + "/state.json")
     print(
         "build ok: #%d-#%d | %s | next STOPS=%s"

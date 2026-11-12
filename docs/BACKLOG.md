@@ -63,8 +63,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B41 | P2 | bug | Full names are missing on a live page, so people who share a first name aren't told apart |
 | B42 | P3 | bug | A person's text and the photo they sent right after show as two separate messages instead of one |
 | B43 | P1 | bug | Threading and summary outgrow the database's 256 KiB per-document cap; sessions started dropping summaries · **done** (v1.17.0) |
-| B44 | P2 | bug | Multi-line replies can't post: `insertText` drops line breaks and the exact-match check fails (issue #32 §3) · **done** (v1.18.1) |
-| B45 | P3 | bug | An outbox row's `sentAt` was an estimate, not the real time at confirm (issue #32 §5) · **done** (v1.18.1) |
+| B44 | P1 | bug | 1.17.0's first refresh: conversation ids used twice stop the conversion; chunk names worked out by arithmetic; the refresh skill's description cut at `#` · **done** (v1.17.1) |
+| B45 | P2 | bug | Multi-line replies can't post: `insertText` drops line breaks and the exact-match check fails (issue #32 §3) · **done** (v1.18.1) |
+| B46 | P3 | bug | An outbox row's `sentAt` was an estimate, not the real time at confirm (issue #32 §5) · **done** (v1.18.1) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -92,7 +93,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
-| F10 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.1) |
+| F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection |
+| F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.1) |
 
 ---
 
@@ -244,12 +246,19 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Review of the PR** found five more, all fixed before merging, each with a test that failed first: the cleanup could delete blocks no `current` named (after an older skill wrote back its single documents); a relink after a cleanup could name a deleted block; a build accepted a listing without the blocks; the page silently skipped a missing block; and a batch that stopped partway wasn't covered (bootstrap now stops on it, and `--rollback` recovers).
   - **Tests:** a fake database that refuses what the real one refuses (documents over 262,144 bytes; batches over 50 writes or 1 MiB; unpinned writes to existing documents); migration with `fromI`; builds at 6.4k, 25k and 50k messages; a link correction in its block; interrupted migrations and retries; the size check; bootstrap from either layout; the page rendering both layouts the same, and the old layout as v1.16.2 rendered it.
 
-### B44 · P2 · Multi-line replies can't post · done (v1.18.1)
+### B44 · P1 · First refresh on 1.17.0: three problems · done (v1.17.1)
+- **Found:** by the owner's first live refresh on 1.17.0 (GitHub issue #33). The conversion was finished by hand that time.
+- **Conversation ids used twice:** older sessions created two conversations with one id. The block layout keys members by id, so the build's merge-back check stopped it ("internal error … don't merge back"). `bootstrap` now renames the second one to id + its first message number (the summary stays with the first) and says so; a summary with an id used twice stops bootstrap with what to do.
+- **Chunk names:** bootstrap and build named chunks as `i // chunkSize * chunkSize`, but the page starts chunks where imports landed. They now name the chunk from the stored chunks' starts (kept in WORK's `state.json`); `open-message.md` and `troubleshooting.md` look the chunk up by `start` instead of working it out.
+- **The refresh skill's description stopped at `"open`:** an unquoted ` #` starts a YAML comment, which dropped the open-message and wrong-link triggers. Both descriptions are quoted now.
+- **Tests:** `TestIssue33` (renaming, then a conversion and a build; a summary duplicate; chunk names from stored starts) and `test_descriptions_survive_yaml`; all four fail on 1.17.0.
+
+### B45 · P2 · Multi-line replies can't post · done (v1.18.1)
 - **Found:** in the owner's field report (issue #32 §3). Messenger's editor (Lexical) doesn't turn the line breaks inside `execCommand('insertText')` into breaks, so a reply with `\n\n` came out as one line, and `outbox.md`'s check `box.innerText.trim()===text.trim()` failed every multi-line reply.
 - **Fix (owner's option A):** type the first line in call 1; in call 3, for each later line press shift+Return and insert that line (an empty line gets only the shift+Return, so blank lines stay). The check compares the box with the reply with whitespace collapsed. The page keeps what the user wrote.
 - **Tests:** `tests/composer.sim.js` runs `outbox.md`'s code blocks word for word on a stand-in composer that drops line breaks the way Lexical does (`tests/mock/composer.html`), with the real helper's `jump`: the reply goes out with its paragraphs, blank line included; inserting the whole text at once gives one line; a box that doesn't match makes the check throw and Return sends nothing. `TestOutboxPosting.test_multi_line_replies` checks the text.
 
-### B45 · P3 · `sentAt` was estimated · done (v1.18.1)
+### B46 · P3 · `sentAt` was estimated · done (v1.18.1)
 - **Found:** in issue #32 §5: several rows had `sentAt` rounded to the minute and later than the row's own last write. The page shows `sentAt`.
 - **Fix:** the confirm returns the clock time (`at`), which becomes `sentAt`; a row settled on a later refresh takes the saved message's time (`d` and `t`, in `meta/chat.tz`). Every `sent` write sets both `sentAt` and `sentMid`, including when the user says it went out (`sentMid:null` only if it isn't in the saved messages).
 - **Tests:** `TestOutboxPosting.test_sent_always_has_a_real_sent_at_and_sent_mid`; the sim checks the confirm's `at` against the clock.
@@ -480,11 +489,16 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Page 2.2:** accepts people entries without positions.
 - **Still to see live:** the scan on the real chat (about 4,000 messages; it may stop at the 8-minute cap first, and later messages fill in the rest).
 
-### F10 · P2 · perf · Outbox: fewer round trips per reply · done (v1.18.1)
+
+### F10 · P2 · Restore the summary items pre-1.17 refreshes dropped
+- **Why:** before v1.17.0, a refresh on the owner's page hit the 256 KiB cap and dropped 91 conversations, 14 open questions, 34 answered, 31 deals, 9 mentions and 132 bullets (GitHub issue #32 §4). That session saved the full summary from before the drop in the page's `backups` collection (two parts; read back and checked).
+- **Owner's call (Nov 12):** restore everything into the block layout, with a dry-run count first; the 14 open questions are checked against later messages before they show as open again.
+
+### F11 · P2 · perf · Outbox: fewer round trips per reply · done (v1.18.1)
 - **Found:** in issue #32 §1: about 1 minute per reply (gaps of 42–109 s between `sent` writes over 10 replies), because `outbox.md` took about 6 tool calls per reply and each is a full model round trip. The browser work itself takes a few seconds.
 - **Fix (owner's option A, every check kept):** about 3 calls per reply.
   1. One JS call starts `jump`, waits for the tip, checks the "Replying to …" bar and the snip, checks the box is empty, and types the first line.
   2. One DB batch writes the earlier rows' outcomes (`sent` or `failed`) and this row's `sending`, all pinned.
-  3. One browser batch types any later lines (B44), runs the check (it throws and leaves the box if the box doesn't match, so Return never sends), presses Return, and runs the confirm (up to 15 s).
+  3. One browser batch types any later lines (B45), runs the check (it throws and leaves the box if the box doesn't match, so Return never sends), presses Return, and runs the confirm (up to 15 s).
   - A row's `sent` lands with the next row's `sending`, and a confirm that can't see the message stops posting for the run, so at most one row is ever in `sending`; the existing settle check handles it on the next run. The confirm only accepts a message that wasn't on screen before Return.
 - **Tests:** `TestOutboxPosting.test_three_calls_per_reply` (the order of the steps in each call), `test_row_without_mid_fails`, `test_sending_write_is_pinned_and_cancel_wins`, `test_failed_rows_are_never_retried`; `tests/composer.sim.js` runs the three calls end to end.
