@@ -2,8 +2,8 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
-## [1.18.1] - 2026-11-11
-**Queued replies post in about 3 calls instead of 6, multi-line replies post, and `sentAt` is the real time** (issue #32 §1, §3 and §5; BACKLOG F11, B45, B46, and G6). Skill text and tests only: no page or helper change (`PAGE_VERSION` 2.3, helper 1.9).
+## [1.18.0] - 2026-11-12
+**Queued replies post in about 3 calls instead of 6, multi-line replies post, and `sentAt` is the real time** (issue #32 §1, §3 and §5; BACKLOG F11, B45, B46, and G6). MINOR: Claude follows a new posting procedure. Skill text and tests only: no page or helper change (`PAGE_VERSION` 2.3, helper 1.9).
 
 ### Changed
 - **`references/outbox.md` › Posting** (F11, issue #32 §1, option A): about 3 calls per reply, every safety check kept.

@@ -4,7 +4,7 @@
 
 ## Where things stand
 - **Shipped:** release **v1.17.1** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.3, helper 1.9. **It's a plugin** (`messenger-catchup`, skills `setup` and `refresh`), installed from this repo as a marketplace (`rando-tools`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
-- **Outbox (v1.18.1, issue #32 §1, §3, §5):** queued replies post in about 3 calls instead of 6 (F11), multi-line replies post (B45), and `sentAt` is the real time (B46). `references/database.md` documents the `outbox/*` row and `coverage` (G6).
+- **Outbox (v1.18.0, issue #32 §1, §3, §5):** queued replies post in about 3 calls instead of 6 (F11), multi-line replies post (B45), and `sentAt` is the real time (B46). `references/database.md` documents the `outbox/*` row and `coverage` (G6).
 - **Defects:** four open: B39 (queuing a reply closes the conversation and jumps the page), B40 (a conversation that starts with a reply doesn't show the message it replies to), B41 (full names missing on a live page, so two people with the same first name look alike) and B42 (a text and the photo sent right after it show as two rows, not one block like Messenger). B43 (threading and summary outgrowing the 256 KiB document cap, P1) is fixed in v1.17.0. The 38 bugs before B39 are fixed:
   - B1–B11 came from the handoff review
   - B12–B37 came from three independent reviews run overnight; each round's fixes were checked by the next
@@ -41,7 +41,7 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
    - Tampermonkey picks up a later helper release by itself (the redirect from `latest/download`)
    - the plugin's skill loads in chat and Desktop, and a later release reaches it by itself
 2. **R2:** measure a large capture (many photos) to see whether the clipboard and paste hold up.
-3. **Outbox on the real chat:** post a multi-line reply the v1.18.1 way and time a batch of replies (issue #32 measured 45–66 s each before).
+3. **Outbox on the real chat:** post a multi-line reply the v1.18.0 way and time a batch of replies (issue #32 measured 45–66 s each before).
 4. **Plugin updates:** confirm that a release reaches a marketplace install in Desktop by itself, and how fast.
 
 ## Doc map
