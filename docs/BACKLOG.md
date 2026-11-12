@@ -58,6 +58,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B36 | P3 | bug | `unconfirmed`/`failed` replies could never be resolved or dismissed · **done** (v1.7.0) |
 | B37 | P3 | bug | A page that can't upload said "paste again" with no end · **done** (v1.7.0) |
 | B38 | P2 | bug | A photo-reply parent that loaded late could be recorded as the next reply's parent: a silent wrong link · **done** (v1.14.0) |
+| B39 | P2 | bug | Queuing a reply closes the conversation you're in and jumps the page |
+| B40 | P2 | bug | A conversation that starts with a reply to an older message doesn't show that message, so you can't tell what it's about |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -187,6 +189,18 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Found:** by the F2 test on helper 1.8. Reply #136 timed out waiting for focus. Its parent then loaded and took focus while #130 was being clicked, so #130 was linked to #136's parent with no warning.
 - **Fix:** the focused parent must be from the person the reply names ("X replied to Y", including you, themself and a first-name/full-name prefix). Otherwise the result is `perr:"wrongfocus"`, which becomes a CHECK at build time, never a link.
 - **Test:** sim section D with a parent slower than the 10 s wait gives `wrongfocus` and `nofocus`, and no link.
+
+### B39 · P2 · Queuing a reply closes the conversation you're in and jumps the page
+- **Found:** by the owner, Nov 11. After "Queue reply", the conversation the reply was written in closes and the page scrolls far down.
+- **Cause (from the code, not yet reproduced in a test):** the page listens for changes to `outbox`, and every change runs `renderSummary()` and `renderMessages()`, which rebuild both lists from scratch (`page.html`, the `outbox` `onSnapshot`). The Messages tab opens only the first four conversations on a rebuild (`d.open = n < 4`), and which conversations the reader opened isn't remembered (only the summary's "Show the thread" is, in `S.openThr`). So the conversation closes, the page gets shorter and the scroll position lands somewhere else. The same rebuild runs when a refresh adds chunks or Claude marks a reply sent.
+- **Fix:** keep the reader's place across rebuilds: remember open conversations (as `S.openThr` does) and the scroll anchor, and restore them; or have outbox changes update only the reply chips and outbox list instead of rebuilding everything.
+- **Test:** page test that opens a conversation past the fourth, queues a reply, and checks that the conversation is still open and the composer's message is still in view; the same after a chunk arrives.
+
+### B40 · P2 · A conversation that starts with a reply to an older message doesn't show that message
+- **Found:** by the owner, Nov 11, and "a common thing". Example shape: a conversation titled after Ana's pack holds one message, #6620, Ben's "↩ reply to #6400 Ana". Ana's #6400 isn't shown, so the card doesn't say what the conversation is about.
+- **Cause (from the code):** threading put the reply in a new conversation instead of the parent's. `catchup.py` only warns about a link that crosses conversations ("WARN link … crosses conversations … the page shows … as a new thread", B4), and the page shows only a conversation's own messages, so the parent shows as nothing more than a "reply to #n" chip.
+- **Fix options:** (a) the page shows a cross-conversation parent as a quoted context line at the top of the conversation, with a jump to it; (b) the refresh skill joins such replies to the parent's conversation, or starts the new conversation with the parent; (c) both. (a) also fixes pages that were already built.
+- **Test:** page test with a conversation whose first message replies to a message in another conversation: the parent's sender and text appear as context, and the jump goes to it.
 
 ## Risks
 
