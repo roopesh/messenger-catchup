@@ -32,6 +32,7 @@ REFERENCES = [
     "open-message.md",
     "outbox.md",
     "people.md",
+    "restoring-a-summary.md",
     "troubleshooting.md",
     "updating-the-page.md",
     "writing-the-build.md",
@@ -236,11 +237,17 @@ class TestSkillReferences(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(ROOT, SKILL, r)), r)
 
     def test_skill_names_every_reference_file(self):
-        """Claude only opens a reference file SKILL.md tells it about; an unnamed file would never be read."""
+        """Claude only opens a reference file SKILL.md tells it about, or one a reference it names tells it about (rare
+        procedures, kept out of SKILL.md, which is read on every refresh); an unnamed file would never be read."""
         skill = in_skill("SKILL.md")
         self.assertEqual(sorted(os.listdir(os.path.join(ROOT, SKILL, "references"))), REFERENCES)
+        rare = {"restoring-a-summary.md": "troubleshooting.md"}
         for f in REFERENCES:
-            self.assertIn("`references/%s`" % f, skill, f)
+            if f in rare:
+                self.assertIn("`references/%s`" % rare[f], skill, rare[f])
+                self.assertIn("`references/%s`" % f, in_skill("references", rare[f]), f)
+            else:
+                self.assertIn("`references/%s`" % f, skill, f)
 
     def test_skill_stays_small(self):
         """SKILL.md is read on every refresh (hourly); keep on-demand material in references/ (BACKLOG C7)."""
@@ -257,10 +264,38 @@ class TestSkillReferences(unittest.TestCase):
             self.assertIn(l, ref)
 
     def test_every_catchup_command_is_documented(self):
-        cmds = re.findall(r'cmd == "(\w+)"', in_skill("scripts", "catchup.py"))
-        self.assertEqual(sorted(cmds), ["bootstrap", "build", "relink", "restore"])
+        """Every refresh command in SKILL.md; restore-summary, run only when the user asks, in its own reference."""
+        py = in_skill("scripts", "catchup.py")
+        cmds = re.findall(r'cmd == "([\w-]+)"', py)
+        self.assertEqual(sorted(cmds), ["bootstrap", "build", "relink", "restore", "restore-summary"])
         for c in cmds:
-            self.assertIn("catchup.py " + c, in_skill("SKILL.md"), c)
+            where = in_skill("references", "restoring-a-summary.md") if c == "restore-summary" else in_skill("SKILL.md")
+            self.assertIn("catchup.py " + c, where, c)
+            self.assertIn("catchup.py " + c, py.split('"""')[1], "the usage text names " + c)
+
+    def test_restoring_a_summary_is_reachable_and_safe(self):
+        """F10: the restore procedure is named from troubleshooting.md (SKILL.md has no room), and it keeps a refresh's
+        safeguards: the run lock, a dry run the user confirms, open questions checked first, pinned writes."""
+        ref = in_skill("references", "restoring-a-summary.md")
+        trouble = in_skill("references", "troubleshooting.md")
+        self.assertRegex(trouble, r"put back summary items .*`references/restoring-a-summary\.md`")
+        self.assertNotIn("restoring-a-summary", in_skill("SKILL.md"))
+        for must in (
+            "**Take the run lock**",
+            '`{state:"running",startedAt,step:"restore",by:"restore-summary"}`, pinned',
+            "release the lock",
+            "--dry-run",
+            "ask them to confirm. Without a yes, release the lock and stop",
+            "`DB/out/restore-open.json`",
+            '`{"<ask>": "open"}`',
+            "`if_version` from step 2's read on every entry that has `pin`",
+            "nothing to restore: 0 restored",
+            "`python3 catchup.py restore WORK`",
+            "Delete it only if the user asks",
+            "Never start a restore on your own or during a scheduled run",
+        ):
+            self.assertIn(must, ref)
+        self.assertIn("`backups/<name>-a`", in_skill("references", "database.md"))
 
     def test_rare_import_toasts_are_reachable_from_step_4(self):
         step4 = re.search(r"^4\. Import by paste:.*?(?=^5\. )", in_skill("SKILL.md"), re.M | re.S).group(0)
