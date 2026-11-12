@@ -57,9 +57,12 @@ All code sits inside one IIFE guarded by `window.__mcHelper` / `data-mc-helper` 
 | `mcScan(STOPS, FIRST)` | 28 | Waits for `[role="log"]`, scrolls the inner scroller up 0.6 screen every 500 ms, merges each batch of `[data-message-id]` into `R.order` (a gap counter rises if a batch shares no id with what's known). Stops 3 steps after the anchor is seen: a STOP id, or for a first run the message before the newest `count`, or `__top__` when the chat is shorter. Then matches text replies by quote (`how:'q'`) and clicks "Go to replied message" only for photo/attachment replies. Saves `{win, info, parents, anchor}` to `sessionStorage.__mcsave`. Link clicks are blocked while a scan runs (one listener, registered at load). |
 | `mcVerify()` | 79 | After a reload: ID-only pass (fast 0.6/500 ms, then slow 0.35/900 ms if needed). OK when `gap==0` and the new window starts with exactly the scanned window (`prefixSame`). `extra` = messages that arrived since the scan; they are *not* captured (next run gets them). |
 | `mcCapture(BASE)` | 87 | Turns each saved DOM record into a message object (fields below), numbering from `BASE+1`. Parses sender, body, quote, reactions, links (strips tracking params), attachment title, date (`dOf`) and time. Fetches photos as base64. Builds the capture, then **replaces the page body** with the COPY CAPTURE button (`#__copy`, status `#__copyst`). |
-| `jump()` | 124 | Handles `#mcjump=<mid>[&noreply]`: scrolls to bottom, then up until the message exists, outlines it, hovers it and clicks "Reply to this message". Shows status in `#mcjump-tip`. |
+| `jump()` | 124 | Handles `#mcjump=<mid>[&noreply]`: scrolls to bottom, then up until the message exists, outlines it, hovers it and clicks "Reply to this message", or on a photo-only message More actions › "Reply" (v2.0). Shows status in `#mcjump-tip` and records the outcome in `window.__mcJumpRes` (`ready`/`found`/`notfound`/`noload`, `via`). |
+| `mcPost(a)` | — | `post{mid,to,snip,text,helperPost}` (v2.0, opt-in): refuses unless `helperPost===true`; runs `jump`, checks the "Replying to" bar and an empty box, types with shift+Enter between lines (`insertText` per line), presses Enter, confirms the new message within 15 s. `{sent:true,mid}` or `{sent:false,err,stage,entered,detail}`. Only the bridge calls it. |
+| `mcScroller(log)` | — | The scrolling list: the nearest scrollable ancestor of a message (`message`), else the first scrollable div (`first-div`), else a non-overflowing one (`message-short`). Results report the path as `scroller` (v2.0). |
+| warnings | — | `replyWarn`, `timeWarn`, `nameWarn`, `photoNoImage`, plus the page language and a 24-hour clock: `selfcheck`'s `warn` and the scan's `warn` (v2.0, R3). |
 | `avatar(e)` | — | The sender's full name: alt text of the ~28 px square image at the message's left edge (v1.6). |
-| `mcSelfcheck()` | — | `selfcheck` (v1.8): confirms the chat log, message ids, scroller, `At <time>, <name>: ` labels, reply links and "Original message:" quotes are present (`missing`), and that avatars and date labels read (`warn`). Run at refresh step 2. |
+| `mcSelfcheck()` | — | `selfcheck` (v1.8): confirms the chat log, message ids, scroller, `At <time>, <name>: ` labels, reply links and "Original message:" quotes are present (`missing`), and that avatars and date labels read (`warn`); v2.0 adds the warnings above, `lang` and `counts.scroller`. Run at refresh step 2. |
 | `mcPeople(a)` | — | `people{count,maxMs}` (v1.7): read-only scroll back collecting `[shown, full, n]` for the one-time name backfill. |
 | `probe(anchor)` | 151 | Quick check: visibility, loaded count, whether the anchor is on screen. |
 | `full(a)` / `resumePipe()` | 156 / 158 | Scan → `mc_pipe` in sessionStorage → reload → (on load) verify → capture → `mc_result`. `full` clears `mc_result` first; results carry `run`. |
@@ -171,7 +174,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 \* not listed in SKILL.md (BACKLOG G1).
 
 ### Message fields
-`i` number from 0 · `t` "Fri 8:41 AM" · `d` "YYYY-MM-DD" · `f` sender ("You" = owner) · `b` text · `m` Messenger id · `r` replied-to name · `q` quoted text (≤160) · `pi` parent number in the store · `pq` 1 when the parent was quote-matched · `pmid` / `pl` parent id and label when outside the capture window · `perr` why a photo-reply click failed (`notfound`, `nobtn`, `nofocus`) · `p` attachment id of a photo · `a` link-preview / attachment title (≤220) · `l` outside links · `x` reactions. The page adds `ts` in memory.
+`i` number from 0 · `t` "Fri 8:41 AM" · `d` "YYYY-MM-DD" · `f` sender ("You" = owner) · `b` text · `m` Messenger id · `r` replied-to name · `q` quoted text (≤160) · `pi` parent number in the store · `pq` 1 when the parent was quote-matched · `pmid` / `pl` parent id and label when outside the capture window · `perr` why a reply has no parent (`notfound`, `nobtn`, `nofocus`, `wrongfocus`, and from helper 2.0 `noreplyline`: the "X replied to Y" line couldn't be read) · `p` attachment id of a photo · `a` link-preview / attachment title (≤220) · `l` outside links · `x` reactions. The page adds `ts` in memory.
 
 ### Link types
 `r` Messenger's own reply link · `rq` reply matched by quote · `rg` photo reply, best match · `i` answers (Claude's judgment) · `c` same person continuing · `null` in a spec = deliberately no link.
@@ -188,14 +191,14 @@ Nothing here ships: only `plugin/` reaches users, and a test keeps it to the shi
 | `tests/test_catchup.py` | `catchup.py` unit tests; the `Env` class fakes WORK and ArtifactData `out_dir`s; `FakeDB` and `Live` drive whole refreshes against a database with the real limits (256 KiB documents, 50-write and 1 MiB batches, pins) |
 | `tests/synth.py` | Synthetic chat histories (mock cast) calibrated to the owner's page, for the size and layout tests |
 | `tests/test_tools.py` | Sync, version strings, leftover names, SKILL.md file references, the plugin and marketplace manifests, ZIP contents |
-| `tests/sim.js`, `tests/run.js`, `tests/mock/` | The helper against a simulated Messenger (`mock_total` and `mock_skip` in localStorage control its history); `run.js` serves the mock |
+| `tests/sim.js`, `tests/run.js`, `tests/mock/` | The helper against a simulated Messenger (`mock_total` and `mock_skip` in localStorage control its history; `mock_*` modes simulate each failure the warnings catch; every context starts at 12:00 today); its composer runs Lexical core (devDependency `lexical`) with Messenger's Enter-sends rule; `run.js` serves the mock and `/node_modules/lexical/dist/` |
 | `tests/page.test.js` | The page with a stand-in `window.claude` (in-memory `db` with `onSnapshot`, a write log, the 256 KiB document limit, and Claude's `batch` with its limits and pins; `assets`, `sample`); reads `tests/out/sim_caps.json` from the sim for the pipeline test, which writes catchup.py's manifest as Claude does |
 
 ## Versions in play
 | Thing | Where | Now |
 |---|---|---|
-| Plugin | `plugin/.claude-plugin/plugin.json` `version`, always the release version; installs update when it changes | 1.17.0 |
-| Page | `PAGE_VERSION` in page.html; stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 2.3 |
-| Helper | 4 places in `helper.user.js`; the page's bookmarklet is generated from it | 1.9 |
+| Plugin | `plugin/.claude-plugin/plugin.json` `version`, always the release version; installs update when it changes | 1.19.0 |
+| Page | `PAGE_VERSION` in page.html; stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 2.4 |
+| Helper | 4 places in `helper.user.js`; the page's bookmarklet is generated from it | 2.0 |
 | Summary schema | `summary.version` | 2 (the "v3" cards are a display change, same schema) |
 | Storage layout | `layout` in `threading/current` and `summary/current` | 2 (block documents, v1.17.0); absent = the single documents before it |

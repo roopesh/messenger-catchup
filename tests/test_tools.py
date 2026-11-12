@@ -29,9 +29,11 @@ def in_setup(*p):
 REFERENCES = [
     "database.md",
     "first-run.md",
+    "helper.md",
     "open-message.md",
     "outbox.md",
     "people.md",
+    "posting-with-helper.md",
     "troubleshooting.md",
     "updating-the-page.md",
     "writing-the-build.md",
@@ -381,6 +383,99 @@ class TestSkillReferences(unittest.TestCase):
         step8 = re.search(r"^8\. Handle the outbox.*$", skill, re.M).group(0)
         self.assertIn("read `references/outbox.md` in full first", step8)
         self.assertIn("Never send a message", skill, "the hard rule stays in SKILL.md")
+
+
+class TestHelper2(unittest.TestCase):
+    """Helper 2.0 (issue #32, R3, B41): what the skill text must say for the new helper behavior."""
+
+    def setUp(self):
+        self.skill = in_skill("SKILL.md")
+        self.src = in_skill("assets", "helper.user.js")
+
+    def jump_code(self):
+        return re.search(r"^([ \t]*)\(async function mcJump\(\) ?\{\n.*?^\1\}\)\(\);$", self.src, re.S | re.M).group(0)
+
+    def test_post_is_opt_in_and_documented(self):
+        """post sends messages: off by default, turned on only by the user through Claude (meta/chat.helperPost)."""
+        meta = re.search(r"^- `meta/chat`:(.*)$", in_skill("references", "database.md"), re.M).group(1)
+        self.assertIn("`helperPost`", meta)
+        self.assertIn("references/posting-with-helper.md", meta)
+        doc = in_skill("references", "posting-with-helper.md")
+        for s in (
+            "off by default",
+            "The user turns it on by asking you",
+            "Never set it on your own",
+            "helperPost:true",
+        ):
+            self.assertIn(s, doc)
+        self.assertRegex(
+            self.skill, r"`post` only when `meta/chat.helperPost` is true \(`references/posting-with-helper.md`\)"
+        )
+        self.assertIn("a.helperPost !== true", self.src, "the helper itself refuses without the opt-in")
+
+    def test_post_maps_every_result_to_an_outbox_state(self):
+        doc = in_skill("references", "posting-with-helper.md")
+        post = self.src[self.src.index("async function mcPost(") : self.src.index("async function probe(")]
+        errs = set(re.findall(r"err: '([\w-]+)'", post)) | set(
+            re.findall(r"'([\w-]+-not-accepted|type-mismatch)'", post)
+        )
+        self.assertTrue({"not-opted-in", "wrong-reply-target", "enter-not-accepted", "unconfirmed"} <= errs, errs)
+        for e in sorted(errs):
+            self.assertTrue(
+                "`%s`" % e in doc or 'err:"%s"' % e in doc, "posting-with-helper.md doesn't say what to do with " + e
+            )
+        for state in ('`state:"sending"`', '`state:"sent"`', '`state:"failed"`', "`unconfirmed`"):
+            self.assertIn(state, doc)
+
+    def test_only_the_bridge_can_post(self):
+        """The jump code (also the page's bookmarklet and URL-hash handler) never types or presses Enter, and post is
+        reached from the bridge's command table only."""
+        jump = self.jump_code()
+        for s in ("insertText", "'Enter'", "mcPost", "postOne"):
+            self.assertNotIn(s, jump)
+        self.assertEqual(re.findall(r"\bmcPost\(", self.src), ["mcPost(", "mcPost("], "defined once, called once")
+        self.assertIn("post: a => mcPost(a),", self.src)
+
+    def test_more_actions_reply_is_an_allowed_click(self):
+        rules = re.search(r"^## Hard rules.*?(?=^## )", self.skill, re.M | re.S).group(0)
+        self.assertIn("More actions › Reply", rules)
+        self.assertIn("More actions", in_skill("references", "posting-with-helper.md"))
+        self.assertIn('[aria-label="More actions"]', self.jump_code())
+
+    def test_stall_and_navigation_are_explained(self):
+        self.assertIn('"Inspected target navigated": expected', self.skill)
+        step3 = re.search(r"^3\. .*$", self.skill, re.M).group(0)
+        self.assertIn('`"stalled"`: retry once, `references/helper.md` › Scan results', step3)
+        self.assertIn('err:"stalled"', in_skill("references", "helper.md"))
+
+    def test_warnings_and_browsers_reach_the_report(self):
+        step2 = re.search(r"^2\. .*$", self.skill, re.M).group(0)
+        self.assertIn("`references/helper.md` › Which Chrome", step2)
+        self.assertIn("`references/helper.md` › Warnings", step2)
+        helper = in_skill("references", "helper.md")
+        for s in (
+            "never pick one yourself",
+            "names the browser used",
+            "page language",
+            "24-hour clock",
+            "go backwards",
+        ):
+            self.assertIn(s, helper)
+
+    def test_names_are_reported_until_captured_and_the_backfill_retried(self):
+        """B41: each refresh reports missing full names and a pending backfill, and retries the backfill once the
+        helper is 1.7+."""
+        step8 = re.search(r"^8\. .*$", self.skill, re.M).group(0)
+        self.assertIn("if it has no `scannedAt`, this run's messages from others carry no `fn`", step8)
+        people = in_skill("references", "people.md")
+        for s in (
+            "Full names: not captured",
+            "Full names: one-time scan pending",
+            "Each refresh tries again until `scannedAt` is set",
+            "Run it on every refresh until it has succeeded",
+            "Once the helper is 1.7 or later, the next refresh runs the scan",
+        ):
+            self.assertIn(s, people)
 
 
 class TestSetupSkill(unittest.TestCase):

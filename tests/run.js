@@ -12,9 +12,15 @@ const TYPES = {
   '.png': 'image/png',
   '.json': 'application/json',
 };
+/* The mock's composer imports Lexical core from the repo's node_modules (a devDependency): /node_modules/lexical/dist/ only. */
+const LEXICAL = path.join(ROOT, '..', 'node_modules', 'lexical', 'dist');
 const server = http.createServer((req, res) => {
-  const p = path.normalize(path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://x').pathname)));
-  if (!p.startsWith(ROOT + path.sep)) {
+  const u = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  const lex = u.startsWith('/node_modules/lexical/dist/');
+  const p = lex
+    ? path.normalize(path.join(LEXICAL, u.slice('/node_modules/lexical/dist/'.length)))
+    : path.normalize(path.join(ROOT, u));
+  if (!p.startsWith((lex ? LEXICAL : ROOT) + path.sep)) {
     res.writeHead(403);
     return res.end();
   }

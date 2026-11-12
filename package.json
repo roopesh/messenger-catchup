@@ -1,6 +1,6 @@
 {
   "name": "messenger-catchup",
-  "version": "1.17.1",
+  "version": "1.19.0",
   "private": true,
   "description": "Dev tooling for the Messenger Catch-up skill (tests only; the plugin itself is the plugin/ folder)",
   "scripts": {
@@ -16,6 +16,7 @@
     "sync": "python3 tools/sync.py"
   },
   "devDependencies": {
+    "lexical": "0.52.0",
     "playwright": "1.65.0",
     "prettier": "3.3.3"
   }

@@ -2,6 +2,35 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.19.0] - 2026-11-12
+**Helper 2.0: Reply on photo-only messages, warnings instead of silent misreads, full names on every message, and an opt-in `post`** (GitHub issue #32 §1, §2 and §5; BACKLOG R3, B41, B45, B46, F11, F12). MINOR: new helper behavior and skill procedure changes. Helper **2.0** (from 1.9), page **`PAGE_VERSION` 2.4** (its jump bookmarklet is generated from the helper). No re-setup; installed helpers (1.5+) update themselves from this release.
+
+### Added
+- **Reply on a photo-only message (B45, #32 §2).** Such a message has no "Reply to this message" button on its hover toolbar. `jump{reply:true}` now opens its **More actions** menu and clicks "Reply", so queued replies to photos post, and the page's Reply links open the box on them too. SKILL.md's allowed clicks name More actions › Reply when posting an approved reply.
+- **Opt-in `post` (F12, #32 §1, option B).** `post{mid,to,snip,text,helperPost:true}` posts one queued reply in one bridge call: it opens Reply, checks the "Replying to …" bar against `to` and `snip` and that the box is empty, types the text with shift+Enter between lines (Messenger's editor drops newlines from `insertText`), presses Enter, and waits up to 15 s for the message. It returns `{sent:true, mid}` or a precise error with `entered` (false: nothing can have been sent). **Off by default:** it refuses without `helperPost:true`, which Claude passes only when `meta/chat.helperPost` is true, and the user turns that on by asking Claude. No link, URL hash or page can reach it. New `references/posting-with-helper.md` maps every result to the outbox states (`sending` before; `sent`, `failed`, or left `sending` for the next run's check).
+- **Warnings (R3, option B).** `selfcheck` and the scan's result (`warn`, also in `mc_result.warn`) now warn instead of misreading silently: reply links without an "X replied to Y" line; "Original message:" quotes without reply links; photo links with no Facebook image; times going backwards or into the future across the window (catches time-only labels that aren't today; one hour back is allowed for clock changes); one shown name with full names that don't share a first name (two Bens are fine); no full names at all; a page language that isn't English (named; reading continues); a 24-hour clock.
+- **Scan results report `top`** (reached the start of the chat) and **`scroller`** (how the list was found).
+- **Two connected Chromes (F11, #32 §5).** Step 2 picks by `references/helper.md` › Which Chrome: the one this session uses, otherwise ask the user, recommending the newest helper (Claude in Chrome forbids picking for them); every report names the browser and helper version.
+- New `references/helper.md`: which Chrome, helper versions, what each warning means, stalls and `top`, and injecting without the helper (moved out of SKILL.md).
+
+### Changed
+- **Full names on every message (B41).** Messenger shows the avatar once per run of messages from one sender; the scan now gives the whole run that avatar's name (only when the run's avatars name one person). `references/people.md`: each refresh reports when full names aren't captured and while the one-time scan is pending, and the scan runs every refresh until it succeeds, so it starts by itself once the helper is 1.7+. Step 8 also sends Claude there when new messages from others carry no `fn`.
+- **A reply whose "X replied to Y" line can't be read is never linked** (`perr:"noreplyline"`); helper 1.9 accepted whatever message took focus.
+- **24-hour times are read** ("17:52", "3 Nov 2026 17:52") and stored as 12-hour `t`, with a warning.
+- **The scroller is the nearest scrollable ancestor of a message**, not the first scrollable element in the chat log.
+- **Stalls (B46, #32 §5).** A scan or verify with nothing new for 30 s returns `err:"stalled"` (retry once: `references/helper.md`) instead of hanging; the top of the chat needs 8 tries and 12 s with nothing loaded and no loading spinner, so a slow load no longer truncates a first run; a scan with stops that reaches the top says so. SKILL.md notes that the first poll after `full` often fails with "Inspected target navigated", which is expected.
+- `SKILL.md` stays under its cap (19,642 bytes, down from 19,865): the helper version notices and the injection steps moved to `references/helper.md`.
+- `references/database.md` (and setup's copy): `meta/chat.helperPost`.
+
+### Tests
+- The mock Messenger has a hover toolbar ("Reply to this message", or More actions › Reply on photo-only messages), a composer with a "Replying to …" bar where Enter posts, running **Lexical core** (`lexical` 0.52.0, a new devDependency served by `tests/run.js`) with `@lexical/plain-text`'s commands and Messenger's Enter-sends rule, and modes for each failure: another page language, 24-hour times, time-only labels across midnight, a stalled scan, an inner scroller, a photo link with no image, reworded reply lines, runs with one avatar, a wrong avatar, and a composer that ignores synthetic keys.
+- Every sim context now starts at 12:00 today, local time (Playwright's clock; time flows on), so the mock's time-only labels (9:25–11:20 AM) are always in the past, whatever time the tests run.
+- Sim section E (16 checks: each warning in its mode, quiet on the normal mock, the `perr` guard, scroller path, stall, `top`, full names across runs) and F (13 checks: More actions, `post` refusals, multi-line posting, synthetic keys ignored, URL hashes can't post), plus A1/A4 checks on `warn` and `top`. The key ones fail on helper 1.9. `test_tools.TestHelper2`: the opt-in, every `post` result mapped to an outbox state, the jump code never types or sends, the allowed click, stall and navigation notes, browsers and warnings reaching the report, and B41's reporting and retry.
+
+### Needs a live check
+- That Messenger accepts the helper's synthetic Enter and shift+Enter (Lexical itself does in Chromium; Messenger's own handlers are unknown). If not, `post` reports `enter-not-accepted` or `linebreak-not-accepted` and sends nothing.
+- That photo-only messages' menu is `[aria-label="More actions"]` › "Reply" as reported, a run's avatar sits on one of its messages, and the loading spinner is a `[role="progressbar"]`.
+
 ## [1.17.1] - 2026-11-12
 **Fixes from the first live refresh on 1.17.0** (BACKLOG B44, GitHub issue #33). PATCH: page, helper and database layout unchanged.
 

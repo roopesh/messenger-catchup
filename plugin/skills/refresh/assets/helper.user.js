@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      1.9
-// @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link.
+// @version      2.0
+// @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
 // @grant        none
@@ -11,8 +11,8 @@
 // ==/UserScript==
 (function () {
   if (window.__mcHelper || document.documentElement.hasAttribute('data-mc-helper')) return;
-  window.__mcHelper = '1.9';
-  document.documentElement.setAttribute('data-mc-helper', '1.9');
+  window.__mcHelper = '2.0';
+  document.documentElement.setAttribute('data-mc-helper', '2.0');
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener(
     'click',
@@ -22,9 +22,26 @@
     },
     true,
   );
+  /* Messenger's label on every message: "At <time>, <name>: <text>". The time is 12-hour ("9:15 AM") or 24-hour
+     ("17:52"), after an optional day ("Yesterday", "Mon", "November 3, 2026", "3 November 2026"). */
+  const AT = /^At (.*?\d{1,2}:\d{2}(?:\s?[AaPp][Mm])?), /;
+  const N = s => (s || '').replace(/\s+/g, ' ').trim();
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  /* The sender in a label: the name Messenger prints (a nickname or the first name), or "You". */
+  const nameOf = label => {
+    const a = String(label || '').replace(AT, '');
+    const k = a.indexOf(': ');
+    return k > 0 ? a.slice(0, k) : a;
+  };
+  const LANG = l =>
+    'page language is "' +
+    l +
+    '", not English: the reader reads Messenger\'s English labels, so dates, replies and names may be missed (Facebook settings › Language: English)';
+  const CLOCK24 =
+    '24-hour clock (times like 17:52): read and stored as 12-hour times; this form is tested on a simulated Messenger only';
   /* A message's date from its Messenger time label: "9:15 AM" (today), "Yesterday 9:15 AM", "Monday 9:15 AM" or "Mon 9:15 AM"
-   (the last 7 days), "November 3, 2026 9:15 AM" or "Nov 3 9:15 AM" (a year-less date in the future means last year).
-   Returns "YYYY-MM-DD", or null for a label it can't read. */
+   (the last 7 days), "November 3, 2026 9:15 AM", "Nov 3 9:15 AM" or "3 Nov 2026 17:52" (a year-less date in the future
+   means last year). Returns "YYYY-MM-DD", or null for a label it can't read. */
   function mcDate(when, now) {
     now = now || new Date();
     const W = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
@@ -53,18 +70,18 @@
       w = w.toLowerCase();
       return w.length >= 3 ? names.findIndex(x => x.indexOf(w) === 0) : -1;
     };
+    const day = (y, mi, d) => {
+      let x = new Date(y ? +y : now.getFullYear(), mi, +d);
+      if (!y && x - now > 864e5) x = new Date(now.getFullYear() - 1, mi, +d);
+      return ymd(x);
+    };
     const s = String(when || '').trim();
     if (/^\d{1,2}:\d{2}/.test(s) || /^today\b/i.test(s)) return ymd(now);
     if (/^yesterday\b/i.test(s)) return ago(1);
     const md = s.match(/^([A-Za-z]+)\.? (\d{1,2})(?![\d:])(?:,? (\d{4}))?/);
-    if (md) {
-      const mi = pick(M, md[1]);
-      if (mi >= 0) {
-        let d = new Date(md[3] ? +md[3] : now.getFullYear(), mi, +md[2]);
-        if (!md[3] && d - now > 864e5) d = new Date(now.getFullYear() - 1, mi, +md[2]);
-        return ymd(d);
-      }
-    }
+    if (md && pick(M, md[1]) >= 0) return day(md[3], pick(M, md[1]), md[2]);
+    const dm = s.match(/^(\d{1,2}) ([A-Za-z]+)\.?(?:,? (\d{4}))?(?![\d:])/);
+    if (dm && pick(M, dm[2]) >= 0) return day(dm[3], pick(M, dm[2]), dm[1]);
     const dw = s.match(/^([A-Za-z]+)\.?\s/);
     if (dw) {
       const wi = pick(W, dw[1]);
@@ -73,8 +90,45 @@
     return null;
   }
   window.__mcDate = mcDate;
+  /* Minutes after midnight from a label's time, 12- or 24-hour (the last time in it); null when it has none. */
+  function mcMinutes(when) {
+    const all = [...String(when || '').matchAll(/(\d{1,2}):(\d{2})(?:\s?([AaPp])[Mm])?/g)];
+    if (!all.length) return null;
+    const t = all[all.length - 1];
+    const h = t[3] ? (+t[1] % 12) + (/p/i.test(t[3]) ? 12 : 0) : +t[1];
+    return h > 23 || +t[2] > 59 ? null : h * 60 + +t[2];
+  }
+  /* The scrolling message list: the nearest scrollable ancestor of a message (path "message"); failing that, the first
+     scrollable element in the chat log ("first-div"), or a scrollable ancestor with nothing to scroll yet ("message-short",
+     a chat too short to scroll). Returns {el, path} or null. */
+  function mcScroller(log) {
+    if (!log) return null;
+    const can = x => /(auto|scroll)/.test(getComputedStyle(x).overflowY);
+    const m = log.querySelector('[data-message-id]');
+    let quiet = null;
+    for (let x = m && m.parentElement; x && x !== document.body; x = x.parentElement) {
+      if (!can(x)) continue;
+      if (x.scrollHeight > x.clientHeight) return { el: x, path: log.contains(x) ? 'message' : 'message-outside-log' };
+      quiet = quiet || x;
+    }
+    const first = Array.from(log.querySelectorAll('div')).find(x => can(x) && x.scrollHeight > x.clientHeight);
+    if (first) return { el: first, path: 'first-div' };
+    return quiet ? { el: quiet, path: 'message-short' } : null;
+  }
+  /* Messenger shows a spinner at the top of the list while it loads older messages: that isn't the top of the chat. */
+  function loadingTop(sc) {
+    if (!sc) return false;
+    const r = sc.getBoundingClientRect();
+    return Array.from(sc.querySelectorAll('[role="progressbar"]')).some(p => {
+      const b = p.getBoundingClientRect();
+      return b.height > 0 && b.top < r.top + 200;
+    });
+  }
+  const TOP_TRIES = 8;
+  const TOP_MS = 12000;
   /* The sender's avatar (a ~28 px square image at the message's left edge) carries their full name as alt text; the
-     name Messenger prints is a nickname or the first name. Reaction emoji and "seen" faces are smaller. */
+     name Messenger prints is a nickname or the first name. Reaction emoji and "seen" faces are smaller. Messenger shows
+     the avatar once per run of messages from one sender; the scan gives the run's other messages its name (avr). */
   function avatar(e) {
     const er = e.getBoundingClientRect();
     const im = Array.from(e.querySelectorAll('img[alt]')).find(i => {
@@ -84,49 +138,164 @@
     const a = im ? im.alt.trim() : '';
     return a.length <= 80 && !/^(GIF|Photo|Sticker|Open|Seen)\b/.test(a) ? a : '';
   }
-  /* people{count,maxMs}: read-only. Scrolls back through up to count messages (or to the top, or for maxMs) and reads
-     each sender's shown name and avatar name. Returns {seen, top, ms, people:[[shown, full, messages]]}. */
+  /* A photo link with no Facebook CDN image in it: the capture would miss that photo. Videos are left out. */
+  function photoNoImage(e) {
+    if (!e.querySelector('a[href*="messenger_media"]') || e.querySelector('video')) return false;
+    return !Array.from(e.querySelectorAll('a[href*="messenger_media"] img, [aria-label^="Open photo"] img')).some(i =>
+      /fbcdn/.test(i.currentSrc || i.getAttribute('src') || ''),
+    );
+  }
+  const refList = refs => refs.slice(0, 3).join(', ') + (refs.length > 3 ? ', …' : '');
+  /* Reply markers that disagree. Without this a reworded "X replied to Y" line reads as a reply to nobody, and both
+     markers reworded read as no replies at all. items: [{text, reply (has a "Go to replied message" link), ref}]. */
+  function replyWarn(items) {
+    const w = [];
+    const line = it => / replied to /.test((it.text || '').split('\n')[0]);
+    const noLine = items.filter(it => it.reply && !line(it));
+    const quoteOnly = items.filter(it => !it.reply && !line(it) && (it.text || '').includes('Original message:'));
+    if (noLine.length)
+      w.push(
+        noLine.length +
+          ' reply link(s) without an "X replied to Y" line (' +
+          refList(noLine.map(it => it.ref)) +
+          "): who they reply to can't be read, so they get no Messenger link (perr noreplyline). Messenger may have reworded that line",
+      );
+    if (quoteOnly.length)
+      w.push(
+        quoteOnly.length +
+          ' message(s) with an "Original message:" quote but no reply link or reply line (' +
+          refList(quoteOnly.map(it => it.ref)) +
+          '): their reply links are missed. Messenger may have reworded its reply markers',
+      );
+    return w;
+  }
+  /* Times that go backwards, or lie in the future, mean dates are being read wrong: a time-only label taken as today when
+     it isn't, or messages out of order. A step back of an hour or less is allowed (clock changes). seq: [{when, ref}]. */
+  function timeWarn(seq, now) {
+    const back = [];
+    const fut = [];
+    let prev = null;
+    for (const it of seq) {
+      const d = mcDate(it.when, now);
+      const mn = mcMinutes(it.when);
+      if (!d || mn == null) continue;
+      const ts = new Date(d + 'T00:00:00').getTime() + mn * 60000;
+      if (prev && ts < prev.ts - 3600000)
+        back.push(prev.ref + ' "' + prev.when + '" then ' + it.ref + ' "' + it.when + '"');
+      if (ts > now.getTime() + 600000) fut.push(it.ref + ' "' + it.when + '"');
+      prev = { ts, ref: it.ref, when: it.when };
+    }
+    const w = [];
+    if (back.length)
+      w.push(
+        'time labels go backwards ' +
+          back.length +
+          ' time(s) (' +
+          back.slice(0, 2).join('; ') +
+          '): those dates may be wrong',
+      );
+    if (fut.length)
+      w.push(
+        fut.length +
+          ' message(s) dated in the future (' +
+          refList(fut) +
+          '): a time-only label may not mean today, so those dates may be wrong',
+      );
+    return w;
+  }
+  /* One shown name with full names that don't share a first name: one of them likely came from the wrong avatar. Two
+     people who share a first name ("Ben" = Ben Brooks and Ben Ortiz) are normal and not reported. pairs: [[shown, full]]. */
+  function nameWarn(pairs) {
+    const by = new Map();
+    for (const [s, f] of pairs) {
+      if (!s || !f || s === 'You') continue;
+      if (!by.has(s)) by.set(s, new Set());
+      by.get(s).add(f);
+    }
+    const w = [];
+    for (const [s, fs] of by) {
+      const firsts = new Set([...fs].map(f => f.split(' ')[0].toLowerCase()));
+      if (fs.size > 1 && firsts.size > 1)
+        w.push(
+          '"' +
+            s +
+            '" shows as ' +
+            [...fs].join(' and ') +
+            ' in one capture: one of those full names may come from the wrong avatar',
+        );
+    }
+    return w;
+  }
   /* selfcheck: read-only and immediate. Confirms that each part of Messenger's page the reader relies on is present in
      the open chat, so a markup change reads "Messenger changed: <what>" instead of failing somewhere inside a scan.
-     missing = the reader can't work; warn = it works with less (no full names, guessed dates). */
+     missing = the reader can't work; warn = it works with less (no full names, guessed dates) or may read wrong. */
   function mcSelfcheck() {
     const missing = [];
     const warn = [];
-    const AT = /^At (.+?(?:AM|PM|am|pm)), /;
+    const lang = document.documentElement.lang || '';
+    if (lang && !/^en\b/i.test(lang)) warn.push(LANG(lang));
     const log = document.querySelector('[role="log"]');
     if (!log || log.getBoundingClientRect().width < 300) missing.push('chat log ([role="log"])');
     const msgs = log ? Array.from(log.querySelectorAll('[data-message-id]')) : [];
     if (log && !msgs.length) missing.push('message ids (data-message-id)');
-    const sc =
-      log &&
-      Array.from(log.querySelectorAll('div')).find(
-        x => /(auto|scroll)/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight,
-      );
-    if (log && msgs.length && !sc) missing.push('scrolling message list');
+    const S = mcScroller(log);
+    if (log && msgs.length && !S) missing.push('scrolling message list');
     const labels = msgs.map(e => e.getAttribute('aria-label') || '').filter(l => AT.test(l));
     if (msgs.length && labels.length < msgs.length / 2) missing.push('message labels ("At <time>, <name>: ...")');
+    const whens = labels.map(l => l.match(AT)[1]);
+    if (whens.length && whens.filter(w => !/[AaPp][Mm]$/.test(w)).length > whens.length / 2) warn.push(CLOCK24);
     const texts = msgs.map(e => e.innerText || '');
     const replyLines = texts.filter(t => / replied to /.test(t.split('\n')[0])).length;
     const replyLinks = msgs.filter(e => e.querySelector('[aria-label="Go to replied message"]')).length;
     if (replyLines && !replyLinks) missing.push('"Go to replied message" links');
     if (replyLinks && !texts.some(t => t.includes('Original message:'))) missing.push('"Original message:" quotes');
-    const others = msgs.filter(e => !/, You: /.test(e.getAttribute('aria-label') || ''));
+    warn.push(
+      ...replyWarn(
+        msgs.map((e, k) => ({
+          text: texts[k],
+          reply: !!e.querySelector('[aria-label="Go to replied message"]'),
+          ref: '"' + (e.getAttribute('aria-label') || '').slice(0, 40) + '"',
+        })),
+      ),
+    );
+    const noImg = msgs.filter(photoNoImage).length;
+    if (noImg)
+      warn.push(
+        noImg +
+          " photo link(s) with no Facebook image: the capture can't fetch those photos (Messenger's photo markup?)",
+      );
+    const others = msgs.filter(e => nameOf(e.getAttribute('aria-label')) !== 'You');
     const named = others.filter(e => avatar(e)).length;
     if (others.length >= 3 && !named) warn.push('sender avatars (full names)');
-    const undated = labels.filter(l => !mcDate(l.match(AT)[1], new Date())).length;
-    if (labels.length && undated > labels.length / 2)
-      warn.push('date labels (' + undated + ' of ' + labels.length + ' unreadable)');
+    const now = new Date();
+    const undated = whens.filter(w => !mcDate(w, now)).length;
+    if (whens.length && undated > whens.length / 2)
+      warn.push('date labels (' + undated + ' of ' + whens.length + ' unreadable)');
+    warn.push(
+      ...timeWarn(
+        whens.map((w, k) => ({ when: w, ref: 'label ' + (k + 1) })),
+        now,
+      ),
+    );
     return {
       ok: !missing.length,
       missing,
       warn,
-      counts: { messages: msgs.length, labeled: labels.length, named, replies: replyLinks },
+      lang,
+      counts: {
+        messages: msgs.length,
+        labeled: labels.length,
+        named,
+        replies: replyLinks,
+        scroller: S ? S.path : null,
+      },
     };
   }
+  /* people{count,maxMs}: read-only. Scrolls back through up to count messages (or to the top, or for maxMs) and reads
+     each sender's shown name and avatar name. Returns {seen, top, ms, people:[[shown, full, messages]]}. */
   async function mcPeople(a) {
     const count = (a && a.count) || 2000;
     const maxMs = (a && a.maxMs) || 480000;
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
     const t0 = Date.now();
     let log = null;
     for (let w = 0; w < 40 && !(log && log.getBoundingClientRect().width >= 300); w++) {
@@ -134,23 +303,20 @@
       if (!log || log.getBoundingClientRect().width < 300) await sleep(500);
     }
     if (!log) return { err: 'chat not loaded' };
-    const sc = () =>
-      Array.from(log.querySelectorAll('div')).find(x => {
-        const st = getComputedStyle(x);
-        return /(auto|scroll)/.test(st.overflowY) && x.scrollHeight > x.clientHeight;
-      });
+    const sc = () => (mcScroller(log) || {}).el;
     const seen = new Set();
     const pairs = new Map();
     const collect = () =>
       log.querySelectorAll('[data-message-id]').forEach(e => {
         const id = e.getAttribute('data-message-id');
         if (seen.has(id)) return;
-        const m = (e.getAttribute('aria-label') || '').match(/^At .+?(?:AM|PM|am|pm), (.+?): /);
+        const l = e.getAttribute('aria-label') || '';
+        const m = AT.test(l) ? nameOf(l) : null;
         const full = avatar(e);
-        if (m && m[1] !== 'You' && !full) return; /* avatar not laid out yet: read it on a later pass */
+        if (m && m !== 'You' && !full) return; /* avatar not laid out yet: read it on a later pass */
         seen.add(id);
-        if (!m || m[1] === 'You') return;
-        const k = m[1] + '\u0000' + full;
+        if (!m || m === 'You') return;
+        const k = m + '\u0000' + full;
         pairs.set(k, (pairs.get(k) || 0) + 1);
       });
     for (let b = 0; b < 4; b++) {
@@ -160,28 +326,33 @@
     }
     collect();
     let tops = 0;
-    while (seen.size < count && Date.now() - t0 < maxMs && tops <= 8) {
+    while (seen.size < count && Date.now() - t0 < maxMs && tops <= TOP_TRIES) {
       const s = sc();
       if (!s) break;
       s.scrollTop = Math.max(0, s.scrollTop - Math.round(s.clientHeight * 0.7));
       await sleep(s.scrollTop < 5 ? 1500 : 600);
       collect();
-      tops = s.scrollTop < 5 ? tops + 1 : 0;
+      tops = s.scrollTop < 5 && !loadingTop(s) ? tops + 1 : 0;
     }
     return {
       seen: seen.size,
-      top: tops > 8,
+      top: tops > TOP_TRIES,
       ms: Date.now() - t0,
       people: [...pairs].map(([k, n]) => k.split('\u0000').concat(n)),
     };
   }
-  async function mcScan(STOPS, FIRST) {
+  /* scan: scroll back from the newest message until a STOP id (or, for a first run, FIRST.count messages, or the top of
+     the chat), then settle reply parents. OPT: {base (numbers the warnings), stallMs (default 30 s)}. Stops with
+     err "stalled" when nothing new loads for stallMs, so Claude retries instead of waiting on a hung scan. */
+  async function mcScan(STOPS, FIRST, OPT) {
     STOPS = STOPS || [];
+    OPT = OPT || {};
+    const STALL = +OPT.stallMs || 30000;
     sessionStorage.removeItem('__mcsave');
     for (let w = 0; w < 40; w++) {
       const l = document.querySelector('[role="log"]');
       if (l && l.getBoundingClientRect().width >= 300) break;
-      await new Promise(r => setTimeout(r, 500));
+      await sleep(500);
     }
     window.__rf = {
       phase: 'collect',
@@ -196,8 +367,6 @@
     await (async () => {
       const R = window.__rf;
       try {
-        const sleep = ms => new Promise(r => setTimeout(r, ms));
-        const N = s => (s || '').replace(/\s+/g, ' ').trim();
         let LOG = null,
           SC = null;
         const log = () => {
@@ -205,11 +374,11 @@
           return LOG;
         };
         const sc = () => {
-          if (!SC || !SC.isConnected)
-            SC = Array.from(log().querySelectorAll('div')).find(x => {
-              const s = getComputedStyle(x);
-              return /(auto|scroll)/.test(s.overflowY) && x.scrollHeight > x.clientHeight;
-            });
+          if (!SC || !SC.isConnected) {
+            const f = mcScroller(log());
+            SC = f && f.el;
+            if (f) R.scroller = f.path;
+          }
           return SC;
         };
         const dec = h => {
@@ -260,6 +429,7 @@
                   links: [...new Set(Array.from(e.querySelectorAll('a[href]')).map(a => dec(a.getAttribute('href'))))],
                   ph: prev && prev.ph && prev.ph.srcs.length > ph.srcs.length ? prev.ph : ph,
                   av: av || (prev && prev.av) || '',
+                  vid: !!e.querySelector('video') || !!(prev && prev.vid),
                 };
               else {
                 if (ph.srcs.length > prev.ph.srcs.length) prev.ph = ph;
@@ -287,6 +457,7 @@
         }
         for (let w = 0; w < 20 && !(log() && sc()); w++) await sleep(500);
         let s = sc();
+        if (!s) throw new Error('no scrolling message list in the chat');
         for (let b = 0; b < 4; b++) {
           s = sc();
           s.scrollTop = s.scrollHeight;
@@ -300,8 +471,13 @@
           }
           return STOPS.find(m => R.order.includes(m));
         };
+        /* The top of the chat: the list stays at the top for TOP_TRIES steps and TOP_MS with nothing new and no
+           loading spinner. A stall: nothing new for STALL, not at the top. */
         let extra = 0,
-          tops = 0;
+          tops = 0,
+          topSince = 0,
+          grownAt = Date.now(),
+          len = R.order.length;
         for (let r = 0; r < 1500; r++) {
           if (hit()) {
             if (++extra > 2) break;
@@ -312,21 +488,54 @@
           await sleep(s.scrollTop < 5 ? 1500 : 500);
           collect();
           R.steps++;
-          if (FIRST && s.scrollTop < 5) {
-            if (++tops > 8) R.atTop = true;
+          const grew = R.order.length > len;
+          if (grew) {
+            len = R.order.length;
+            grownAt = Date.now();
+          }
+          if (s.scrollTop < 5 && !grew && !loadingTop(s)) {
+            if (!tops++) topSince = Date.now();
+            if (tops > TOP_TRIES && Date.now() - topSince >= TOP_MS) {
+              R.atTop = true;
+              if (!FIRST) break;
+            }
           } else tops = 0;
+          if (!hit() && !R.atTop && Date.now() - grownAt > STALL) {
+            R.stalled = true;
+            break;
+          }
         }
         R.tCollect = Date.now() - R.t0;
         const anchor = hit();
         if (!anchor) {
-          R.err = FIRST
-            ? 'Could not load enough history for the first catch-up'
-            : 'None of the stored anchor messages was found while scrolling back';
+          R.err = R.stalled
+            ? 'stalled'
+            : FIRST
+              ? 'Could not load enough history for the first catch-up'
+              : 'None of the stored anchor messages was found while scrolling back' +
+                (R.atTop ? ' (reached the top of the chat)' : '');
           R.done = true;
           return;
         }
         R.anchor = anchor;
         R.win = anchor === '__top__' ? R.order.slice() : R.order.slice(R.order.indexOf(anchor) + 1);
+        /* B41: Messenger shows the avatar once per run of messages from one sender. A run whose avatars all name the same
+           person gives that name to its other messages; a run with two names (two people who share a shown name) gets
+           nothing extra. */
+        for (let a = 0; a < R.order.length; ) {
+          const who = nameOf((R.info[R.order[a]] || {}).label);
+          let b = a + 1;
+          while (b < R.order.length && nameOf((R.info[R.order[b]] || {}).label) === who) b++;
+          const run = R.order.slice(a, b).filter(id => R.info[id]);
+          const avs = new Set(run.map(id => R.info[id].av).filter(Boolean));
+          if (who !== 'You' && AT.test((R.info[R.order[a]] || {}).label || '') && avs.size === 1) {
+            const av = [...avs][0];
+            run.forEach(id => {
+              if (!R.info[id].av) R.info[id].avr = av;
+            });
+          }
+          a = b;
+        }
         R.phase = 'replies';
         const reps = R.win.filter(id => R.info[id].reply);
         R.replyCount = reps.length;
@@ -341,7 +550,7 @@
           if (/^you$/i.test(who)) who = 'You';
           else if (/^(themself|themselves|himself|herself|yourself)$/i.test(who)) who = rm[1] === 'You' ? 'You' : rm[1];
           else if (/^participant$/i.test(who)) continue;
-          const lab = m.label.replace(/^At .+?(?:AM|PM|am|pm), /, '');
+          const lab = m.label.replace(AT, '');
           const from = rm[1];
           const lb = lab.indexOf(from + ': ') === 0 ? lab.slice(from.length + 2) : '';
           const oi = m.text.indexOf('Original message:\n');
@@ -354,8 +563,7 @@
           if (qn.length < 12) continue;
           const me = posOf(id);
           const c = R.order.slice(0, me).filter(o => {
-            const L = (R.info[o] || {}).label || '';
-            const a = L.replace(/^At .+?(?:AM|PM|am|pm), /, '');
+            const a = ((R.info[o] || {}).label || '').replace(AT, '');
             return a.indexOf(who + ': ') === 0 && N(a.slice(who.length + 2)).indexOf(qn) === 0;
           });
           if (c.length === 1) {
@@ -398,21 +606,25 @@
            bottom before the next reply (replies are in the recent window), instead of stepping down from up there. */
         let away = false;
         /* Who the reply is to, from its "X replied to Y" line: the focused parent must be theirs. A parent that loads late
-           can take focus while the next reply is being clicked; this keeps that from becoming a wrong link. */
+           can take focus while the next reply is being clicked; this keeps that from becoming a wrong link. null = the
+           line can't be read (then nothing is linked); {any:true} = "a participant" (anyone; Messenger doesn't say). */
         const repliedTo = id => {
           const rm = ((R.info[id].text || '').split('\n')[0] || '').match(/^(.*) replied to (.*)$/);
-          if (!rm || /^participant$/i.test(rm[2])) return null;
-          if (/^you$/i.test(rm[2])) return 'You';
-          if (/^(themself|themselves|himself|herself|yourself)$/i.test(rm[2])) return rm[1] === 'You' ? 'You' : rm[1];
-          return rm[2];
-        };
-        const fromOf = el => {
-          const l = (el.getAttribute('aria-label') || '').replace(/^At .+?(?:AM|PM|am|pm), /, '');
-          const k = l.indexOf(': ');
-          return k > 0 ? l.slice(0, k) : l;
+          if (!rm) return null;
+          if (/^participant$/i.test(rm[2])) return { any: true };
+          if (/^you$/i.test(rm[2])) return { who: 'You' };
+          if (/^(themself|themselves|himself|herself|yourself)$/i.test(rm[2]))
+            return { who: rm[1] === 'You' ? 'You' : rm[1] };
+          return { who: rm[2] };
         };
         for (const id of reps.slice().reverse()) {
-          if (R.parents[id] || !isPhotoReply(id)) continue;
+          if (R.parents[id]) continue;
+          const want = repliedTo(id);
+          if (!want) {
+            R.parents[id] = { err: 'noreplyline' };
+            continue;
+          }
+          if (!isPhotoReply(id)) continue;
           if (away) {
             for (let b = 0; b < 3; b++) {
               s = sc();
@@ -445,9 +657,9 @@
               break;
             }
           }
-          const want = repliedTo(id);
-          const from = got ? fromOf(got) : '';
-          const theirs = !want || from === want || from.startsWith(want + ' ') || want.startsWith(from + ' ');
+          const from = got ? nameOf(got.getAttribute('aria-label')) : '';
+          const theirs =
+            want.any || from === want.who || from.startsWith(want.who + ' ') || want.who.startsWith(from + ' ');
           if (!got) R.parents[id] = { err: 'nofocus' };
           else if (!theirs) R.parents[id] = { err: 'wrongfocus' };
           else
@@ -458,6 +670,42 @@
           R.steps++;
         }
         R.tReplies = Date.now() - R.t0;
+        /* Warnings: what the reader may have read wrong, for the refresh report (R3). */
+        const ref = k => (OPT.base != null ? '#' + (+OPT.base + 1 + k) : 'new message ' + (k + 1));
+        const W = [];
+        const lang = document.documentElement.lang || '';
+        if (lang && !/^en\b/i.test(lang)) W.push(LANG(lang));
+        const wins = R.win.map(id => R.info[id]);
+        const whens = wins.map(m => (m.label.match(AT) || [])[1] || '');
+        const timed = whens.filter(Boolean);
+        if (timed.length && timed.filter(w => !/[AaPp][Mm]$/.test(w)).length > timed.length / 2) W.push(CLOCK24);
+        W.push(...replyWarn(wins.map((m, k) => ({ text: m.text, reply: m.reply, ref: ref(k) }))));
+        const noImg = [];
+        wins.forEach((m, k) => {
+          if (m.links.some(l => /messenger_media/.test(l)) && !m.ph.srcs.length && !m.ph.gif && !m.vid)
+            noImg.push(ref(k));
+        });
+        if (noImg.length)
+          W.push(
+            noImg.length +
+              ' photo link(s) with no Facebook image (' +
+              refList(noImg) +
+              "): those photos are missing from the capture. Messenger's photo markup may have changed",
+          );
+        const seq = [];
+        if (anchor !== '__top__' && R.info[anchor]) {
+          const aw = (R.info[anchor].label.match(AT) || [])[1];
+          if (aw) seq.push({ when: aw, ref: FIRST ? 'the message before them' : 'the last stored message' });
+        }
+        whens.forEach((w, k) => seq.push({ when: w, ref: ref(k) }));
+        W.push(...timeWarn(seq, new Date()));
+        const others = wins.filter(m => AT.test(m.label) && nameOf(m.label) !== 'You');
+        W.push(...nameWarn(others.map(m => [nameOf(m.label), m.av || m.avr])));
+        if (others.length >= 3 && !others.some(m => m.av || m.avr))
+          W.push(
+            'no full names: none of the ' + others.length + ' new messages from others had an avatar to read (fn)',
+          );
+        R.warn = W;
         sessionStorage.setItem(
           '__mcsave',
           JSON.stringify({
@@ -493,16 +741,20 @@
       gap: R.gap || 0,
       perr: Object.values(R.parents || {}).filter(p => p.err).length,
       photoReplies: R.photoReplies || 0,
+      top: !!R.atTop,
+      stalled: !!R.stalled,
+      scroller: R.scroller || null,
+      warn: R.warn || [],
       ms: Date.now() - R.t0,
       labels: (R.win || []).slice(-40).map(id => (R.info[id].label || '').slice(0, 90)),
     };
   }
-  async function mcVerify() {
+  async function mcVerify(OPT) {
+    const STALL = +((OPT && OPT.stallMs) || 30000);
     window.__v = { order: [], done: false, err: null, gap: 0 };
     await (async () => {
       const V = window.__v;
       try {
-        const sleep = ms => new Promise(r => setTimeout(r, ms));
         const S = JSON.parse(sessionStorage.getItem('__mcsave'));
         const anchor = S.anchor;
         let LOG = null,
@@ -512,11 +764,7 @@
           return LOG;
         };
         const sc = () => {
-          if (!SC || !SC.isConnected)
-            SC = Array.from(log().querySelectorAll('div')).find(x => {
-              const s = getComputedStyle(x);
-              return /(auto|scroll)/.test(s.overflowY) && x.scrollHeight > x.clientHeight;
-            });
+          if (!SC || !SC.isConnected) SC = (mcScroller(log()) || {}).el;
           return SC;
         };
         function collect() {
@@ -544,7 +792,11 @@
           V.order = [];
           V.gap = 0;
           const TOP = anchor === '__top__';
-          let tops = 0;
+          let tops = 0,
+            topSince = 0,
+            atTop = false,
+            len = 0,
+            grownAt = Date.now();
           let s = sc();
           for (let b = 0; b < 4; b++) {
             s = sc();
@@ -554,7 +806,7 @@
           collect();
           let extra = 0;
           for (let r = 0; r < 1500; r++) {
-            if (TOP ? tops > 8 : V.order.includes(anchor)) {
+            if (TOP ? atTop : V.order.includes(anchor)) {
               if (++extra > 2) break;
             }
             s = sc();
@@ -562,10 +814,21 @@
             s.scrollTop = s.scrollTop > st ? s.scrollTop - st : 0;
             await sleep(s.scrollTop < 5 ? 1500 : ms);
             collect();
-            if (s.scrollTop < 5) tops++;
-            else tops = 0;
+            const grew = V.order.length > len;
+            if (grew) {
+              len = V.order.length;
+              grownAt = Date.now();
+            }
+            if (s.scrollTop < 5 && !grew && !loadingTop(s)) {
+              if (!tops++) topSince = Date.now();
+              if (tops > TOP_TRIES && Date.now() - topSince >= TOP_MS) atTop = true;
+            } else tops = 0;
+            if (!(TOP ? atTop : V.order.includes(anchor)) && Date.now() - grownAt > STALL) {
+              V.stalled = true;
+              break;
+            }
           }
-          if (!TOP && !V.order.includes(anchor)) return false;
+          if (TOP ? !atTop : !V.order.includes(anchor)) return false;
           const w = TOP ? V.order.slice() : V.order.slice(V.order.indexOf(anchor) + 1);
           V.win = w;
           V.prefixSame = JSON.stringify(w.slice(0, S.win.length)) === JSON.stringify(S.win);
@@ -580,7 +843,8 @@
           ok = await pass(0.35, 900);
         }
         V.ok = ok;
-        if (!ok && !V.order.includes(anchor)) V.err = 'anchor not found';
+        if (!ok && V.stalled) V.err = 'stalled';
+        else if (!ok && anchor !== '__top__' && !V.order.includes(anchor)) V.err = 'anchor not found';
       } catch (e) {
         V.err = String(e);
       }
@@ -600,7 +864,6 @@
   async function mcCapture(BASE) {
     return await (async () => {
       const R = JSON.parse(sessionStorage.getItem('__mcsave'));
-      const N = s => (s || '').replace(/\s+/g, ' ').trim();
       const now = new Date();
       const todayD = mcDate('12:00', now);
       const guessed = [];
@@ -611,7 +874,7 @@
       const out = R.win.map((id, k) => {
         const m = R.info[id];
         const lab = m.label;
-        const wm = lab.match(/^At (.+?(?:AM|PM|am|pm)), /);
+        const wm = lab.match(AT);
         const when = wm ? wm[1] : '';
         const after = wm ? lab.slice(wm[0].length) : '';
         const lines = m.text.split('\n');
@@ -707,13 +970,21 @@
           guessed.push(BASE + 1 + k);
           dd = lastD || todayD;
         }
-        lastD = dd;
-        /* unreadable label: borrow the previous message's date */ const tmm = when.match(/(\d{1,2}:\d{2})\s*([AP]M)/i);
-        const tm = tmm ? tmm[1] + ' ' + tmm[2].toUpperCase() : '12:00 AM';
+        lastD = dd; /* unreadable label: borrow the previous message's date */
+        const mn = mcMinutes(when);
+        const tm =
+          mn == null
+            ? '12:00 AM'
+            : (Math.floor(mn / 60) % 12 || 12) +
+              ':' +
+              String(mn % 60).padStart(2, '0') +
+              ' ' +
+              (mn < 720 ? 'AM' : 'PM');
         const wd = D[new Date(dd + 'T12:00:00').getDay()];
         const o = { i: BASE + 1 + k, t: wd + ' ' + tm, f: from, b, m: id, d: dd };
         if (rTo) o.r = rTo;
-        if (m.av && from !== 'You') o.fn = m.av;
+        const fn = m.av || m.avr;
+        if (fn && from !== 'You') o.fn = fn;
         if (q) o.q = q.slice(0, 160);
         if (m.rx.length)
           o.x = m.rx
@@ -832,6 +1103,7 @@
       var wantReply = !/noreply/.test(location.hash);
       if (window.__mcJumping === mid) return;
       window.__mcJumping = mid;
+      window.__mcJumpRes = { mid: mid, state: 'running' };
       var sleep = function (ms) {
         return new Promise(function (r) {
           setTimeout(r, ms);
@@ -849,6 +1121,10 @@
         tip.textContent = t;
         tip.style.display = 'block';
       };
+      /* The outcome, for the helper's post command: ready (Reply is open), found (no Reply), notfound or noload. */
+      var done = function (state, via) {
+        window.__mcJumpRes = { mid: mid, state: state, via: via || null, tip: tip.textContent };
+      };
       say('Jump: finding the message…');
       var log = function () {
         return document.querySelector('[role="log"]');
@@ -856,13 +1132,18 @@
       for (var w = 0; w < 60 && !(log() && log().getBoundingClientRect().width >= 300); w++) await sleep(250);
       if (!log()) {
         say('Jump: chat not loaded.');
+        done('noload');
+        window.__mcJumping = null;
         return;
       }
+      /* The scrolling list: the nearest scrollable ancestor of a message, else the first scrollable element in the log. */
       var sc = function () {
-        return Array.prototype.find.call(log().querySelectorAll('div'), function (x) {
-          var s = getComputedStyle(x);
-          return /(auto|scroll)/.test(s.overflowY) && x.scrollHeight > x.clientHeight;
-        });
+        var can = function (x) {
+          return /(auto|scroll)/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight;
+        };
+        var m = log().querySelector('[data-message-id]');
+        for (var x = m && m.parentElement; x && x !== document.body; x = x.parentElement) if (can(x)) return x;
+        return Array.prototype.find.call(log().querySelectorAll('div'), can);
       };
       var find = function () {
         return log().querySelector('[data-message-id="' + CSS.escape(mid) + '"]');
@@ -893,6 +1174,7 @@
       }
       if (!e) {
         say('Jump: couldn’t find that message.');
+        done('notfound');
         window.__mcJumping = null;
         setTimeout(function () {
           tip.style.display = 'none';
@@ -909,25 +1191,196 @@
         if (x) x.style.outline = '';
       }, 8000);
       if (wantReply) {
+        /* The message's own toolbar: in the message, or in wrappers around it that hold no other message. */
+        var own = e;
+        for (var up = 0; up < 4 && own.parentElement; up++) {
+          if (own.parentElement.querySelectorAll('[data-message-id]').length > 1) break;
+          own = own.parentElement;
+        }
         ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(function (t) {
           e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
         });
-        var b = null;
+        var b = null,
+          via = 'button';
         for (var k = 0; k < 10 && !b; k++) {
           await sleep(150);
-          b = e.querySelector('[aria-label="Reply to this message"]');
+          b = own.querySelector('[aria-label="Reply to this message"]');
+        }
+        if (!b) {
+          /* A photo-only message has no Reply button on its toolbar: Reply is in its More actions menu. */
+          var more = own.querySelector('[aria-label="More actions"]');
+          if (more) {
+            via = 'menu';
+            more.click();
+            for (var j = 0; j < 14 && !b; j++) {
+              await sleep(150);
+              b =
+                Array.prototype.find.call(document.querySelectorAll('[role="menuitem"]'), function (x) {
+                  return (x.innerText || '').trim() === 'Reply' && x.getBoundingClientRect().height > 0;
+                }) || null;
+            }
+            if (!b)
+              document.dispatchEvent(
+                new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }),
+              );
+          }
         }
         if (b) {
           b.click();
           say('Jump: reply box is ready. Type and press Enter.');
-        } else say('Jump: found it (hover it and click Reply).');
-      } else say('Jump: found it.');
+          done('ready', via);
+        } else {
+          say('Jump: found it (hover it and click Reply).');
+          done('found');
+        }
+      } else {
+        say('Jump: found it.');
+        done('found');
+      }
       history.replaceState(null, '', location.pathname + location.search);
       window.__mcJumping = null;
       setTimeout(function () {
         tip.style.display = 'none';
       }, 5000);
     })();
+  }
+  /* post{mid,to,snip,text,helperPost}: sends one approved reply, and only when the user turned helper posting on
+     (meta/chat.helperPost, which Claude passes as helperPost:true). Only this bridge command reaches it: no link, URL hash
+     or page can. It opens Reply on the message (jump, with the More actions fallback), checks that the "Replying to" bar
+     names `to` and shows `snip`, checks that the box is empty, types the text (shift+Enter between lines), presses Enter,
+     and waits up to 15 s for the message to appear. Returns {sent:true, mid} or {sent:false, err, stage, entered,
+     detail}; entered:false means nothing can have been sent. */
+  async function mcPost(a) {
+    a = a || {};
+    const t0 = Date.now();
+    const out = o => Object.assign({ sent: false, entered: false, ms: Date.now() - t0 }, o);
+    if (a.helperPost !== true)
+      return out({
+        err: 'not-opted-in',
+        stage: 'optin',
+        detail: 'helper posting is off (meta/chat.helperPost): post by references/outbox.md instead',
+      });
+    if (![a.mid, a.to, a.text].every(x => typeof x === 'string' && x.trim()) || (a.snip && typeof a.snip !== 'string'))
+      return out({ err: 'bad-args', stage: 'args', detail: 'post needs mid, to and text (strings), and snip' });
+    if (window.__mcPosting || (window.__rf && !window.__rf.done))
+      return out({ err: 'busy', stage: 'args', detail: 'a scan or another post is running in this tab' });
+    window.__mcPosting = true;
+    try {
+      return await postOne(a, out, t0);
+    } finally {
+      window.__mcPosting = false;
+    }
+  }
+  async function postOne(a, out, t0) {
+    const box = () => document.querySelector('[role="textbox"][contenteditable="true"]');
+    const lines = s =>
+      String(s || '')
+        .split('\n')
+        .map(N)
+        .filter(Boolean);
+    const press = (el, o) => {
+      o = Object.assign({ bubbles: true, cancelable: true }, o);
+      el.dispatchEvent(new KeyboardEvent('keydown', o));
+      el.dispatchEvent(new KeyboardEvent('keyup', o));
+    };
+    const key = (el, shift) => press(el, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, shiftKey: shift });
+    /* Messenger's editor (Lexical) undoes DOM edits it didn't make, so the box is cleared with keys: select all
+       (ctrl+A, or cmd+A on a Mac), then Backspace. Lexical also needs a moment after focus before it takes input. */
+    const clear = async el => {
+      el.focus();
+      await sleep(120);
+      press(el, { key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true });
+      press(el, { key: 'a', code: 'KeyA', keyCode: 65, metaKey: true });
+      press(el, { key: 'Backspace', code: 'Backspace', keyCode: 8 });
+      await sleep(150);
+    };
+    const ids = () =>
+      Array.from(document.querySelectorAll('[role="log"] [data-message-id]')).map(e =>
+        e.getAttribute('data-message-id'),
+      );
+    if (!box())
+      return out({ err: 'no-box', stage: 'check', detail: 'no message box ([role="textbox"][contenteditable])' });
+    if (N(box().innerText))
+      return out({ err: 'box-not-empty', stage: 'check', detail: 'the message box already has text' });
+    window.__mcJumpRes = null;
+    history.replaceState(null, '', location.pathname + location.search + '#mcjump=' + encodeURIComponent(a.mid));
+    jump();
+    let j = null;
+    for (let k = 0; k < 1000; k++) {
+      await sleep(250);
+      j = window.__mcJumpRes;
+      if (j && j.mid === a.mid && j.state !== 'running') break;
+    }
+    if (!j || j.state !== 'ready')
+      return out({ err: 'jump-failed', stage: 'jump', detail: (j && j.tip) || 'the jump did not finish' });
+    await sleep(300);
+    const who = a.to === 'You' ? 'yourself' : a.to.split(' ')[0];
+    const t = document.body.innerText;
+    const k = t.lastIndexOf('Replying to ' + who);
+    const snip = N(a.snip);
+    if (k < 0 || (snip && snip !== '[photo]' && N(t.slice(k, k + 300)).indexOf(snip.slice(0, 20)) < 0))
+      return out({
+        err: 'wrong-reply-target',
+        stage: 'check',
+        via: j.via,
+        detail: k < 0 ? 'no "Replying to ' + who + '" bar' : 'the reply bar does not show the queued message',
+      });
+    if (!box() || N(box().innerText))
+      return out({ err: 'box-not-empty', stage: 'check', detail: 'the message box already has text' });
+    box().focus();
+    await sleep(120);
+    const parts = a.text.replace(/\r\n?/g, '\n').split('\n');
+    for (let p = 0; p < parts.length; p++) {
+      if (p) key(box(), true);
+      if (parts[p]) document.execCommand('insertText', false, parts[p]);
+      await sleep(40);
+    }
+    await sleep(200);
+    const typed = box() ? box().innerText : '';
+    if (JSON.stringify(lines(typed)) !== JSON.stringify(lines(a.text))) {
+      const bare = s => String(s || '').replace(/\s+/g, '');
+      const err = bare(typed) === bare(a.text) ? 'linebreak-not-accepted' : 'type-mismatch';
+      if (box()) await clear(box());
+      return out({
+        err,
+        stage: 'type',
+        cleared: !box() || !N(box().innerText),
+        detail: 'the box did not hold the text as queued, so nothing was sent',
+      });
+    }
+    const before = new Set(ids());
+    key(box(), false);
+    for (let w = 0; w < 60; w++) {
+      await sleep(250);
+      const empty = !box() || !N(box().innerText);
+      const want = lines(a.text);
+      const el = Array.from(document.querySelectorAll('[role="log"] [data-message-id]'))
+        .reverse()
+        .find(e => {
+          if (before.has(e.getAttribute('data-message-id'))) return false;
+          const l = e.getAttribute('aria-label') || '';
+          const body = N((e.innerText || '') + ' ' + l);
+          return (
+            (nameOf(l) === 'You' || /^You replied to /.test(e.innerText || '')) && want.every(x => body.includes(x))
+          );
+        });
+      if (empty && el)
+        return { sent: true, mid: el.getAttribute('data-message-id'), entered: true, via: j.via, ms: Date.now() - t0 };
+    }
+    if (box() && N(box().innerText))
+      return out({
+        err: 'enter-not-accepted',
+        stage: 'enter',
+        entered: true,
+        detail:
+          'the text is still in the box with Reply open, so it was not sent: press Enter with the computer tool, then confirm as references/outbox.md says',
+      });
+    return out({
+      err: 'unconfirmed',
+      stage: 'confirm',
+      entered: true,
+      detail: 'the box emptied but the message did not show up within 15 s: leave the row sending',
+    });
   }
   async function probe(anchor) {
     var sleep = function (ms) {
@@ -950,13 +1403,16 @@
   /* Full refresh pipeline: scan, reload, verify after the reload, then capture. State rides in sessionStorage across the reload. */
   async function full(a) {
     sessionStorage.removeItem('mc_result');
-    const r = await mcScan(a.stops, a.first);
+    const r = await mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs });
     if (r.err || !r.win) {
       const o = Object.assign({ stage: 'scan', run: a.run || null }, r);
       sessionStorage.setItem('mc_result', JSON.stringify(o));
       return o;
     }
-    sessionStorage.setItem('mc_pipe', JSON.stringify({ base: a.base, run: a.run || null, scan: r, t0: Date.now() }));
+    sessionStorage.setItem(
+      'mc_pipe',
+      JSON.stringify({ base: a.base, run: a.run || null, scan: r, stallMs: a.stallMs, t0: Date.now() }),
+    );
     setTimeout(function () {
       location.reload();
     }, 300);
@@ -966,12 +1422,12 @@
     const p = JSON.parse(sessionStorage.getItem('mc_pipe') || 'null');
     if (!p) return;
     sessionStorage.removeItem('mc_pipe');
-    let out = { stage: 'verify', run: p.run || null, scan: p.scan };
+    let out = { stage: 'verify', run: p.run || null, scan: p.scan, warn: (p.scan && p.scan.warn) || [] };
     try {
       await new Promise(function (r) {
         setTimeout(r, 5000);
       });
-      const v = await mcVerify();
+      const v = await mcVerify({ stallMs: p.stallMs });
       out.verify = v;
       if (v.ok) {
         out.stage = 'captured';
@@ -985,8 +1441,8 @@
   }
   const CMDS = {
     probe: a => probe(a.anchor),
-    scan: a => mcScan(a.stops, a.first),
-    verify: () => mcVerify(),
+    scan: a => mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs }),
+    verify: a => mcVerify(a),
     capture: a => mcCapture(a.base),
     people: a => mcPeople(a),
     selfcheck: () => mcSelfcheck(),
@@ -1000,7 +1456,8 @@
       jump();
       return { started: true };
     },
-    ping: () => ({ v: '1.9' }),
+    post: a => mcPost(a),
+    ping: () => ({ v: '2.0' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
   document.addEventListener('mc-cmd', async function (e) {

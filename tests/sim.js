@@ -60,11 +60,28 @@ function checkCap(cap, base, mockFrom, n, label) {
   );
   return cap;
 }
+/* Every context starts at 12:00 today, local time (time flows on from there): the mock's time-only labels (9:25-11:20 AM)
+   mean "today", so they must be in the past, as they always are in Messenger. The captures stay dated today, which the
+   page suite (tests/page.test.js) expects. */
+const NOW = (d => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0))(new Date());
+const ymdOf = d =>
+  d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+const newCtx = async (b, helper) => {
+  const c = await b.newContext({ viewport: { width: 900, height: 800 } });
+  await c.clock.install({ time: NOW });
+  if (helper) await c.addInitScript('document.addEventListener("DOMContentLoaded",function(){' + HELPER + '\n});');
+  return c;
+};
 (async () => {
   const b = await chromium.launch();
+  if (process.env.SIM_ONLY) {
+    /* SIM_ONLY=E, F or EF runs just those sections (quicker while working on them) */
+    if (process.env.SIM_ONLY.includes('E')) await helper2(b);
+    if (process.env.SIM_ONLY.includes('F')) await posting(b);
+    return b.close();
+  }
   // ---------- A: helper installed (userscript manager emulated with an init script) ----------
-  const ctxA = await b.newContext({ viewport: { width: 900, height: 800 } });
-  await ctxA.addInitScript('document.addEventListener("DOMContentLoaded",function(){' + HELPER + '\n});');
+  const ctxA = await newCtx(b, true);
   const p = await ctxA.newPage();
   await p.goto(URL);
   await p.evaluate(() => {
@@ -101,6 +118,11 @@ function checkCap(cap, base, mockFrom, n, label) {
     ['2026-11-06', 'Someday 9:15 AM', null],
     ['2026-11-06', '', null],
     ['2026-11-06', 'Mont 3 9:15 AM', null],
+    ['2026-11-06', '17:52', '2026-11-06'],
+    ['2026-11-06', 'Yesterday 17:52', '2026-11-05'],
+    ['2026-11-06', '3 Nov 2026 17:52', '2026-11-03'],
+    ['2026-11-06', '12 October 2025 09:05', '2025-10-12'],
+    ['2027-01-04', '28 Dec 17:52', '2026-12-28'],
   ];
   const got = await p.evaluate(rows => rows.map(([now, l]) => window.__mcDate(l, new Date(now + 'T12:00:00'))), DATES);
   const bad = DATES.filter((r, k) => got[k] !== r[2]).map(
@@ -131,6 +153,12 @@ function checkCap(cap, base, mockFrom, n, label) {
   ok(
     res && res.stage === 'captured' && res.verify.ok && res.verify.extra === 0,
     'A1: verify after reload ok, captured',
+  );
+  ok(
+    res && Array.isArray(res.warn) && !res.warn.length && res.scan.top === false && res.scan.scroller === 'message',
+    'A1: the normal mock gives no warnings (mc_result.warn ' +
+      JSON.stringify(res && res.warn) +
+      '), top false, scroller "message"',
   );
   const cap1 = checkCap(JSON.parse(await p.evaluate(() => window.__capText)), -1, 70, 50, 'A1');
   const byM = Object.fromEntries(cap1.msgs.map(m => [m.m, m]));
@@ -277,7 +305,10 @@ function checkCap(cap, base, mockFrom, n, label) {
   await p.goto(URL);
   await p.waitForTimeout(800);
   r = await bridge(p, 'full', { first: { count: 50 }, base: -1, run: 'runS' });
-  ok(r.stage === 'reloading' && r.scan.win === 30, 'A4 short chat: scan took all 30 (anchor = top of chat)');
+  ok(
+    r.stage === 'reloading' && r.scan.win === 30 && r.scan.top === true,
+    'A4 short chat: scan took all 30 (anchor = top of chat, top:true)',
+  );
   await p.waitForLoadState('load');
   res = await pollResult(p);
   ok(res && res.stage === 'captured' && res.run === 'runS', 'A4: verify to the top ok, captured');
@@ -290,7 +321,7 @@ function checkCap(cap, base, mockFrom, n, label) {
     m0.d === '2025-10-12' && m0.t === 'Sun 9:00 AM',
     'A4: full-date label -> d=2025-10-12, t="Sun 9:00 AM" (got ' + m0.d + ' / ' + m0.t + ')',
   );
-  const now = new Date(),
+  const now = NOW,
     dec28 = new Date(now.getFullYear(), 11, 28),
     yr = (dec28 - now > 864e5 ? now.getFullYear() - 1 : now.getFullYear()) + '-12-28';
   ok(
@@ -332,7 +363,7 @@ function checkCap(cap, base, mockFrom, n, label) {
   );
   fs.writeFileSync(D + 'tests/out/sim_cap4.json', JSON.stringify(cap4));
   // ---------- B: no helper; Claude injects the file on each step ----------
-  const ctxB = await b.newContext({ viewport: { width: 900, height: 800 } });
+  const ctxB = await newCtx(b, false);
   const q = await ctxB.newPage();
   await q.goto(URL);
   await q.evaluate(() => {
@@ -361,8 +392,7 @@ function checkCap(cap, base, mockFrom, n, label) {
   const cap3 = checkCap(JSON.parse(await q.evaluate(() => window.__capText)), 54, 125, 2, 'B');
   fs.writeFileSync(D + 'tests/out/sim_caps.json', JSON.stringify([cap1, cap2, cap3]));
   // ---------- D: photo replies whose parents are far up the chat (not loaded; Messenger takes seconds to bring them) ----------
-  const ctxD = await b.newContext({ viewport: { width: 900, height: 800 } });
-  await ctxD.addInitScript('document.addEventListener("DOMContentLoaded",function(){' + HELPER + '\n});');
+  const ctxD = await newCtx(b, true);
   const dp = await ctxD.newPage();
   await dp.goto(URL);
   await dp.evaluate(() => {
@@ -418,7 +448,7 @@ function checkCap(cap, base, mockFrom, n, label) {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&');
-  const ctxC = await b.newContext({ viewport: { width: 900, height: 800 } });
+  const ctxC = await newCtx(b, false);
   const w = await ctxC.newPage();
   await w.goto(URL + '#mcjump=' + encodeURIComponent('mid.$mock80') + '&noreply');
   await w.waitForTimeout(600);
@@ -433,5 +463,347 @@ function checkCap(cap, base, mockFrom, n, label) {
     });
   }
   ok(bmJumped, 'C: the bookmarklet scrolled back and highlighted #mock80');
+  await helper2(b);
+  await posting(b);
   await b.close();
 })();
+
+/* ---------- E: helper 2.0: silent failures become warnings (R3), the scroller, the stall timeout, full names (B41) ---------- */
+const STOPS99 = ['mid.$mock99', 'mid.$mock98', 'mid.$mock97']; /* window #100-#119 (base 99) of the 120-message mock */
+async function mode(p, m, total) {
+  await p.goto(URL);
+  await p.evaluate(
+    ([m, total]) => {
+      localStorage.clear();
+      sessionStorage.clear();
+      localStorage.setItem('mock_total', String(total || 120));
+      for (const [k, v] of Object.entries(m)) localStorage.setItem('mock_' + k, v);
+    },
+    [m, total],
+  );
+  await p.goto(URL);
+  await p.waitForTimeout(700);
+}
+const has = (list, s) => (list || []).some(x => x.includes(s));
+const short = r => JSON.stringify(r && { err: r.err, win: r.win, top: r.top, scroller: r.scroller, warn: r.warn });
+async function helper2(b) {
+  const ctx = await newCtx(b, true);
+  const p = await ctx.newPage();
+  // the normal mock: selfcheck and the scan stay quiet, and report the scroller they used
+  await mode(p, {});
+  let sck = await bridge(p, 'selfcheck', {});
+  ok(
+    sck && sck.ok && !sck.warn.length && sck.counts.scroller === 'message' && sck.lang === 'en',
+    'E: selfcheck on the normal mock: ok, no warnings, scroller found from a message (' +
+      JSON.stringify([sck.warn, sck.counts]) +
+      ')',
+  );
+  let r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
+  ok(
+    r &&
+      !r.err &&
+      r.win === 20 &&
+      Array.isArray(r.warn) &&
+      !r.warn.length &&
+      r.top === false &&
+      r.stalled === false &&
+      r.scroller === 'message',
+    'E: scan on the normal mock: 20 new, no warnings (two Bens and a nickname are normal), top false, scroller "message" (' +
+      short(r) +
+      ')',
+  );
+  // the page language isn't English: warn and keep reading
+  await mode(p, { lang: 'de' });
+  sck = await bridge(p, 'selfcheck', {});
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
+  ok(
+    sck &&
+      sck.ok &&
+      has(sck.warn, 'page language is "de"') &&
+      r &&
+      !r.err &&
+      r.win === 20 &&
+      has(r.warn, 'page language is "de"'),
+    'E: lang="de": selfcheck and the scan warn and name it, and the scan still reads all 20 (' +
+      JSON.stringify(sck.warn) +
+      ')',
+  );
+  // a 24-hour clock: its own warning, not "Messenger changed", and the times are read
+  await mode(p, { h24: '1' });
+  sck = await bridge(p, 'selfcheck', {});
+  ok(
+    sck.ok && !sck.missing.length && has(sck.warn, '24-hour clock'),
+    'E: 24-hour labels: selfcheck ok with a 24-hour-clock warning, nothing missing (' +
+      JSON.stringify([sck.missing, sck.warn]) +
+      ')',
+  );
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
+  await bridge(p, 'capture', { base: 99 });
+  const capOf = async () => JSON.parse((await p.evaluate(() => window.__capText)) || '{"msgs":[]}');
+  let cap = await capOf();
+  const m110 = cap.msgs.find(m => m.m === 'mid.$mock110') || {};
+  ok(
+    !r.err &&
+      has(r.warn, '24-hour clock') &&
+      m110.t === ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][NOW.getDay()] + ' 10:50 AM' &&
+      m110.d === ymdOf(NOW) &&
+      m110.f === 'Ana' &&
+      m110.b === 'Message number 110 about trail shoes and packs',
+    'E: 24-hour labels: "10:50" captured as ' + JSON.stringify([m110.t, m110.d, m110.f, m110.b]),
+  );
+  // time-only labels across midnight: dates in the future and times going backwards
+  await mode(p, { midnight: '1' });
+  sck = await bridge(p, 'selfcheck', {});
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
+  ok(
+    has(r.warn, 'dated in the future') && has(r.warn, 'go backwards') && has(sck.warn, 'go backwards'),
+    'E: time-only labels across midnight: the scan and selfcheck warn (' + JSON.stringify(r.warn) + ')',
+  );
+  // a photo link with no Facebook image
+  await mode(p, { noimg: '1' });
+  sck = await bridge(p, 'selfcheck', {});
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
+  ok(
+    has(sck.warn, 'photo link') && has(r.warn, 'photo link(s) with no Facebook image (#100)'),
+    'E: a photo link with no image: selfcheck and the scan warn, naming #100 (' + JSON.stringify(r.warn) + ')',
+  );
+  // "X replied to Y" reworded: a warning, and a photo reply whose reply line can't be read is never linked (perr)
+  await mode(p, { reword: '1' });
+  sck = await bridge(p, 'selfcheck', {});
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
+  const saved = await p.evaluate(() => JSON.parse(sessionStorage.getItem('__mcsave') || 'null'));
+  const p103 = (saved && saved.parents['mid.$mock103']) || {};
+  ok(
+    sck.ok && has(sck.warn, 'without an "X replied to Y" line') && has(r.warn, 'without an "X replied to Y" line'),
+    'E: reworded reply lines: selfcheck and the scan warn (' + JSON.stringify(sck.warn) + ')',
+  );
+  await bridge(p, 'capture', { base: 99 });
+  cap = await capOf();
+  const c103 = cap.msgs.find(m => m.m === 'mid.$mock103') || {};
+  ok(
+    p103.err === 'noreplyline' && !p103.p && c103.perr === 'noreplyline' && !('pi' in c103) && !('pmid' in c103),
+    'E: a photo reply with no readable reply line gets perr "noreplyline", never a link (' +
+      JSON.stringify([p103, c103.perr, c103.pi]) +
+      ')',
+  );
+  // one shown name with full names that don't share a first name (the wrong avatar)
+  await mode(p, { wrongav: '1' });
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
+  ok(
+    has(r.warn, '"Ben" shows as') && has(r.warn, 'Dee Diaz'),
+    'E: one shown name mapping to two people warns (' + JSON.stringify(r.warn) + ')',
+  );
+  // B41: runs of messages with one avatar: every message in the run gets the run's full name
+  await mode(p, { group: '1' });
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
+  await bridge(p, 'capture', { base: 99 });
+  cap = await capOf();
+  const names = ['Ana', 'Ben', 'You', 'Cy', 'Dee'];
+  const FULL = { Ana: 'Ana Alvarez', Ben: 'Ben Brooks', Cy: 'Cy Chen', Dee: 'Dee Diaz' };
+  const wrongFn = cap.msgs.filter((m, k) => {
+    const who = names[Math.floor((100 + k) / 3) % 5];
+    return m.f !== who || (who === 'You' ? m.fn !== undefined : m.fn !== FULL[who]);
+  });
+  ok(
+    !r.err && cap.count === 20 && !wrongFn.length && !has(r.warn, 'no full names'),
+    'E: grouped runs with one avatar each: all ' +
+      cap.msgs.filter(m => m.f !== 'You').length +
+      " messages from others carry the run's fn (wrong: " +
+      JSON.stringify(wrongFn.map(m => [m.i, m.f, m.fn])) +
+      ')',
+  );
+  // a scrollable pinned bar before the message list: the scroller is found from a message, not the first scrollable div
+  await mode(p, { inner: '1' });
+  sck = await bridge(p, 'selfcheck', {});
+  r = await bridge(p, 'scan', { stops: ['mid.$mock79', 'mid.$mock78', 'mid.$mock77'], base: 79 });
+  ok(
+    sck.ok && sck.counts.scroller === 'message' && r && !r.err && r.win === 40 && r.scroller === 'message',
+    'E: an inner scrollable bar before the list: selfcheck and the scan use the list (scroller "message"), 40 read (' +
+      short(r) +
+      ')',
+  );
+  // a scan that stops growing: err "stalled" instead of hanging (stops) or calling it the top of the chat (first run)
+  await mode(p, { stall: '1' });
+  let t0 = Date.now();
+  r = await bridge(p, 'scan', { stops: ['mid.$mock3', 'mid.$mock2', 'mid.$mock1'], stallMs: 4000 });
+  ok(
+    r && r.err === 'stalled' && r.stalled && !r.top && Date.now() - t0 < 20000,
+    'E: history stops loading (spinner stays): the scan returns err "stalled" in ' +
+      Math.round((Date.now() - t0) / 1000) +
+      ' s (' +
+      short(r) +
+      ')',
+  );
+  await mode(p, { stall: '1' });
+  r = await bridge(p, 'full', { first: { count: 100 }, base: -1, run: 'runStall', stallMs: 4000 });
+  ok(
+    r && r.stage === 'scan' && r.err === 'stalled' && r.top === false && r.run === 'runStall',
+    'E: a first run that stalls is "stalled", not a truncated "top of the chat" (' +
+      JSON.stringify(r && [r.stage, r.err, r.top, r.win, r.anchor]) +
+      ')',
+  );
+  // the top of a short chat is reported (top:true), and a stop scan that reaches the top ends with a clear error
+  await mode(p, {}, 30);
+  r = await bridge(p, 'scan', { first: { count: 50 } });
+  ok(
+    r && !r.err && r.anchor === '__top__' && r.win === 30 && r.top === true,
+    'E: a 30-message chat, first run of 50: top:true, anchor __top__, all 30 (' + short(r) + ')',
+  );
+  t0 = Date.now();
+  r = await bridge(p, 'scan', { stops: ['mid.$gone1', 'mid.$gone2'] });
+  ok(
+    r && r.top === true && /None of the stored anchor messages was found.*top of the chat/.test(r.err || ''),
+    'E: anchors that are gone: the scan stops at the top of the chat with a clear error in ' +
+      Math.round((Date.now() - t0) / 1000) +
+      ' s (' +
+      (r && r.err) +
+      ')',
+  );
+  await ctx.close();
+}
+
+/* ---------- F: Reply on photo-only messages (More actions) and the opt-in post command ---------- */
+async function posting(b) {
+  const ctx = await newCtx(b, true);
+  const p = await ctx.newPage();
+  const state = () =>
+    p.evaluate(() => ({
+      sent: window.mockSent.slice(),
+      box: document.querySelector('#box').innerText.trim(),
+      bar: document.querySelector('#replybar').hidden ? '' : document.querySelector('#replybar').innerText,
+      hash: location.hash,
+      tip: (document.getElementById('mcjump-tip') || {}).textContent || '',
+      res: window.__mcJumpRes || null,
+    }));
+  const waitTip = async () => {
+    for (let k = 0; k < 60; k++) {
+      await p.waitForTimeout(250);
+      const s = await state();
+      if (s.res && s.res.state !== 'running') return s;
+    }
+    return state();
+  };
+  // jump{reply} on a photo-only message: its toolbar has no Reply button, so it goes through More actions -> Reply
+  await mode(p, {});
+  await bridge(p, 'jump', { mid: 'mid.$mock100', reply: true });
+  let s = await waitTip();
+  ok(
+    /reply box is ready/.test(s.tip) && (s.res || {}).via === 'menu' && /^Replying to Ana\nPhoto/.test(s.bar),
+    'F: jump{reply} on a photo-only message opens Reply through More actions (' + JSON.stringify([s.tip, s.bar]) + ')',
+  );
+  await mode(p, {});
+  await bridge(p, 'jump', { mid: 'mid.$mock110', reply: true });
+  s = await waitTip();
+  ok(
+    /reply box is ready/.test(s.tip) &&
+      (s.res || {}).via === 'button' &&
+      /^Replying to Ana\nMessage number 110/.test(s.bar),
+    'F: jump{reply} on a text message still uses its Reply button (' + JSON.stringify([s.tip, (s.res || {}).via]) + ')',
+  );
+  const row = { mid: 'mid.$mock110', to: 'Ana', snip: 'Message number 110 about trail shoes', text: 'Sounds good' };
+  // not opted in: refused before anything happens
+  await mode(p, {});
+  let r = await bridge(p, 'post', row);
+  s = await state();
+  ok(
+    r && r.sent === false && r.err === 'not-opted-in' && !r.entered && !s.sent.length && !s.bar && !s.box,
+    'F: post without helperPost:true is refused; no Reply opened, nothing typed or sent (' + JSON.stringify(r) + ')',
+  );
+  r = await bridge(p, 'post', Object.assign({}, row, { helperPost: 'true' }));
+  ok(r && r.err === 'not-opted-in', 'F: post with helperPost:"true" (not the boolean) is refused too');
+  // the "Replying to" bar names someone else: refused, nothing typed or sent
+  await mode(p, {});
+  r = await bridge(p, 'post', Object.assign({}, row, { to: 'Ben', helperPost: true }));
+  s = await state();
+  ok(
+    r && r.err === 'wrong-reply-target' && !r.entered && !s.sent.length && !s.box,
+    'F: post refuses when "Replying to" names someone else; nothing typed or sent (' + JSON.stringify(r) + ')',
+  );
+  // the right person but a different message (snip doesn't match)
+  await mode(p, {});
+  r = await bridge(p, 'post', Object.assign({}, row, { snip: 'Message number 105 about', helperPost: true }));
+  s = await state();
+  ok(
+    r && r.err === 'wrong-reply-target' && !s.sent.length,
+    'F: post refuses when the reply bar shows a different message (' + JSON.stringify(r && r.detail) + ')',
+  );
+  // a box that already holds text
+  await mode(p, {});
+  await p.evaluate(async () => {
+    document.querySelector('#box').focus();
+    await new Promise(z => setTimeout(z, 120));
+    document.execCommand('insertText', false, 'draft');
+  });
+  r = await bridge(p, 'post', Object.assign({}, row, { helperPost: true }));
+  s = await state();
+  ok(
+    r && r.err === 'box-not-empty' && !s.sent.length && s.box === 'draft',
+    'F: post refuses when the box already has text, and leaves it (' + JSON.stringify(r) + ')',
+  );
+  // multi-line: paragraphs with shift+Enter between them, then Enter; returns sent and the new message id
+  await mode(p, {});
+  const text = 'First line\nSecond line\n\nFourth line, after a blank one';
+  r = await bridge(p, 'post', Object.assign({}, row, { text, helperPost: true }));
+  s = await state();
+  const posted = await p.evaluate(id => {
+    const e = document.querySelector('[data-message-id="' + CSS.escape(id || '') + '"]');
+    return e ? e.innerText : null;
+  }, r && r.mid);
+  ok(
+    r &&
+      r.sent === true &&
+      /^mid\.\$sent/.test(r.mid) &&
+      s.sent.length === 1 &&
+      s.sent[0].text === text &&
+      s.sent[0].to === 'mid.$mock110' &&
+      !s.box &&
+      /^You replied to Ana\n/.test(posted || ''),
+    'F: post types a multi-line reply (Lexical line breaks), sends it once as a reply to #110, returns sent + mid (' +
+      JSON.stringify([r, s.sent]) +
+      ')',
+  );
+  // a photo-only message: post goes through More actions as well
+  await mode(p, {});
+  r = await bridge(p, 'post', { mid: 'mid.$mock100', to: 'Ana', snip: '[photo]', text: 'Nice pack', helperPost: true });
+  s = await state();
+  ok(
+    r && r.sent === true && r.via === 'menu' && s.sent.length === 1 && s.sent[0].to === 'mid.$mock100',
+    'F: post replies to a photo-only message through More actions (' + JSON.stringify(r) + ')',
+  );
+  // Messenger ignores the helper's Enter (synthetic keys refused): nothing is sent, the text stays for a real Enter
+  await mode(p, { trusted: '1' });
+  r = await bridge(p, 'post', Object.assign({}, row, { helperPost: true }));
+  s = await state();
+  ok(
+    r && r.sent === false && r.err === 'enter-not-accepted' && r.entered && !s.sent.length && s.box === 'Sounds good',
+    'F: when Enter is not accepted: err enter-not-accepted, nothing sent, the text left in the box (' +
+      JSON.stringify(r) +
+      ')',
+  );
+  await p.keyboard.press('Enter'); /* what Claude does next with the computer tool */
+  await p.waitForTimeout(700);
+  s = await state();
+  ok(
+    s.sent.length === 1 && s.sent[0].text === 'Sounds good' && s.sent[0].to === 'mid.$mock110',
+    'F: ...and a real Enter then posts it as the reply (' + JSON.stringify(s.sent) + ')',
+  );
+  await mode(p, { trusted: '1' });
+  r = await bridge(p, 'post', Object.assign({}, row, { text: 'One\nTwo', helperPost: true }));
+  s = await state();
+  ok(
+    r && r.err === 'linebreak-not-accepted' && !r.entered && r.cleared && !s.box && !s.sent.length,
+    'F: line breaks not accepted: refused before Enter, box cleared, nothing sent (' + JSON.stringify(r) + ')',
+  );
+  // nothing but the bridge command can post: not a link or URL hash, which only ever opens Reply
+  await mode(p, {});
+  await p.goto(URL + '#mcjump=' + encodeURIComponent('mid.$mock110') + '&post=1&text=hi&helperPost=true');
+  await p.waitForTimeout(4000);
+  await p.goto(URL + '#mcpost=' + encodeURIComponent('mid.$mock110') + '&text=hi');
+  await p.waitForTimeout(1500);
+  s = await state();
+  ok(
+    !s.sent.length && !s.box,
+    'F: a URL hash asking to post only opens Reply; nothing is typed or sent (' + JSON.stringify(s) + ')',
+  );
+  await ctx.close();
+}
