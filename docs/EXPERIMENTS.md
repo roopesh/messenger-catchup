@@ -193,3 +193,19 @@ print(us == open('assets/helper.user.js').read())
 | Page snapshot stale (store moved on silently) | Would refuse or misjudge the overlap | Fresh reads, overlap checked against the store, nothing lost |
 | Runtime without `acquire()` | n/a | Imports without a lease |
 
+
+## 13. Document sizes and the block layout (v1.17.0, Nov 11)
+- **On the owner's page (read-only, sizes and counts only):** 6,933 messages; `threading/current` 185.6 KB compact (504 conversations 75 KB, 6,068 links 110 KB); `summary/current` 249 KB in the morning, 215 KB with 315 conversations in the evening after sessions dropped older ones (`fromI` 2797). The cap is 262,144 bytes (BACKLOG B43).
+- **Synthetic chats** (`tests/synth.py`, mock cast) calibrated to that page: at 6,933 messages, 519 conversations, 5,794 links, threading 175 KB (25 bytes a message) and a full summary 371 KB (54 bytes a message). "Heavy" has a 1.6× denser summary (more and longer bullets, more answers and deals).
+- **Largest document per layout** (compact JSON bytes; blocks of 1,000 messages):
+
+| Messages | Old layout: threading / summary | Threading block (max) | Summary block (max) | `summary/current` | Documents |
+|---|---|---|---|---|---|
+| 6,400 | 162 KB / 316 KB (over the cap) | 27 KB | 55 KB | 84 KB | 14 |
+| 25,000 | 675 KB / 1,404 KB | 31 KB | 63 KB | 61 KB | 51 |
+| 50,000 | 1,378 KB / 2,812 KB | 30 KB | 62 KB | 59 KB | 101 |
+| 50,000 heavy | 1,378 KB / 3,803 KB | 30 KB | 85 KB | 79 KB | 101 |
+
+- **Why bullets are split too:** with each conversation kept whole in the block of its last message, a long-running conversation (up to 500 messages over many days in the model) carried all its bullets with it: summary blocks reached 124 KB at 50,000 messages, and `summary/current` 174 KB with the heavy summary (1.5× headroom). Putting a conversation's bullets in the blocks they cite brought the worst case to 85 KB (3×).
+- **A build** writes the newest threading block and both `current` documents, plus a summary block when conversations are archived (once per 1,000 messages) or come back. The test builds at 6,400, 25,000 and 50,000 messages each wrote 4 documents in one batch: the newest threading block, the summary block a returning conversation left, and both `current` documents.
+- **Tests:** `TestLayout` in `tests/test_catchup.py` (a fake database with the real limits) and `layouts()` in `tests/page.test.js` (the same synthetic history in both layouts renders the same text: 24,234 characters of summary and 16,686 of threads with every thread open; the old layout renders exactly as v1.16.2's page did).

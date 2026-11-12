@@ -143,12 +143,17 @@ Related docs:
   - Commit references in these docs point at the new commits (v1.14.2). GitHub still shows old PR diffs, which only GitHub Support can purge.
 - **Left:** live checks (R2, R3, R5, R6, R9), G6, F1, F5, F6, F7.
 
+## Phase 11: the document size cap (Nov 11)
+- **Found** on the owner's page (read-only): `threading/current` at 185.6 KB and growing about 20 KB a day, `summary/current` at 249 KB, against the database's 256 KiB per-document cap. Refresh sessions had begun dropping older summaries to make room and wrote an undocumented `fromI` (BACKLOG B43).
+- **v1.17.0:** threading and summary became collections of 1,000-message block documents with content-hashed ids; `catchup.py` writes only what changed through a manifest, refuses a document over 240 KiB, and never drops anything; page 2.3 merges the blocks back into the objects every view reads. Synthetic chats calibrated to the owner's page (`tests/synth.py`) keep every document at most 85 KB up to 50,000 messages.
+- **Filed with it:** B41 (full names missing on the live page) and B42 (a text and its photo shown as two rows). Backlog-only edits now wait on a branch for the next real change (CLAUDE.md).
+
 ## Version map
 | Thing | Versions |
 |---|---|
 | Helper (user-specific) | 2.0 → 2.1 → 2.2 (`cc-cmd`, `cc_result`) |
 | Helper (generic) | 1.0 → 1.1 (`mc-cmd`, `mc_result`) → … → 1.5 (self-updating) → 1.9 |
-| Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) → … → 2.2 |
+| Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) → … → 2.2 → 2.3 (block layout) |
 | Skill | user-specific skill (named after the original chat) → generic `messenger-catchup` v1.1 |
 | Build tool | `cctool.py` → `catchup.py` (Phase 8, same commands and behavior) |
 | Release (`VERSION`) | v1.1.0 (tagged retroactively at `9c353de`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2) → … → v1.7.1 (Phase 9) → v1.14.1 (Phase 10). From here on, see CHANGELOG.md |

@@ -11,6 +11,9 @@ Read this when the page, the reader or catchup.py reports an error that SKILL.md
 - `RUN is missing #a-#b (stored, not built yet): fetch chunks/… into RUN too`: fetch the chunks it names into RUN and build again.
 - bootstrap says "#a-#b are saved but not counted in meta/chat yet": an earlier import stopped before updating `meta/chat`. Carry on: this run's paste repairs it (the toast starts with REPAIRED), and the build then covers those messages too.
 - `nothing left to build: WORK already covers RUN` (or `nothing to build`): another session already built these messages. Skip the build, and write only `meta/chat` `{lastRefresh}` and `refresh/status` by SKILL.md › Refresh steps, step 7's rule.
+- `threading/current changed since WORK was bootstrapped` (or `summary/current`): another session built after this WORK was made. Bootstrap WORK again from a fresh fetch, then build.
+- `WORK was made by an older catchup.py`: bootstrap WORK again.
+- `… would be N bytes, over the 245760-byte limit`, `… names b…, which isn't in the folder`, or a write refused at step 7: `references/writing-the-build.md`.
 - "meta/chat.lastI (#x) is ahead of the newest saved message (#y)": update `meta/chat` (pinned) with `lastI: y`, `lastMid` = message #y's `m` (it's in chunk `c` + the 4-digit `floor(y/chunkSize)*chunkSize`), and `anchorMids` = the `m` of the three newest saved messages, then paste again.
 
 - `selfcheck` says `ok:false` ("Messenger changed: …"): Facebook changed a part of Messenger's page the reader relies on, named in `missing`. Nothing was read or saved, so don't try to scan around it. Tell the user what changed, and that the skill needs an update (github.com/roopesh/messenger-catchup). Each run stops at this check until it passes again. `warn` alone (no full names, unreadable dates) doesn't stop the run: mention it in the report.

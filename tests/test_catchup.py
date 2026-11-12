@@ -2,7 +2,7 @@
 Known bugs from docs/BACKLOG.md are marked expectedFailure; when one starts passing, unittest reports
 "unexpected success": remove the marker and close the backlog item."""
 
-import contextlib, importlib.util, io, json, os, sys, tempfile, unittest
+import contextlib, copy, importlib.util, io, json, os, random, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location(
@@ -10,6 +10,8 @@ _spec = importlib.util.spec_from_file_location(
 )
 catchup = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(catchup)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import synth  # noqa: E402
 
 
 def tm(h, mi, day="Fri"):
@@ -184,7 +186,7 @@ class TestBuild(unittest.TestCase):
 
     def test_default_links(self):
         run, out = self.first()
-        t = r(os.path.join(run, "out", "threading.json"))
+        t = r(os.path.join(run, "out", "merged", "threading.json"))
         self.assertEqual(
             t["links"],
             {
@@ -214,8 +216,8 @@ class TestBuild(unittest.TestCase):
 
     def test_threading_and_summary_outputs(self):
         run, _ = self.first()
-        t = r(os.path.join(run, "out", "threading.json"))
-        s = r(os.path.join(run, "out", "summary.json"))
+        t = r(os.path.join(run, "out", "merged", "threading.json"))
+        s = r(os.path.join(run, "out", "merged", "summary.json"))
         self.assertEqual(
             {c["id"]: c["members"] for c in t["convs"]}, {"gear1106": [0, 1, 2, 3, 4, 5, 8, 9, 10], "pics1106": [6, 7]}
         )
@@ -263,8 +265,8 @@ class TestBuild(unittest.TestCase):
                 "bullets": {"stove1106": [["Ana is selling a stove", [13]]]},
             },
         )
-        t = r(os.path.join(run, "out", "threading.json"))
-        s = r(os.path.join(run, "out", "summary.json"))
+        t = r(os.path.join(run, "out", "merged", "threading.json"))
+        s = r(os.path.join(run, "out", "merged", "summary.json"))
         self.assertEqual(t["links"]["11"], [1, "r"])
         self.assertEqual(t["links"]["12"], [11, "i"])
         self.assertNotIn("13", t["links"])  # first message of a new conv
@@ -339,7 +341,9 @@ class TestRestore(unittest.TestCase):
         self.assertEqual(self.W("base/threading.json")["convs"], [])
         self.assertFalse(os.path.exists(os.path.join(self.e.work, "prev")))
         self.e.build(self.run, {"newconvs": [{"id": "b", "title": "B"}], "join": {"b": [0, 1]}})
-        self.assertEqual([c["id"] for c in r(os.path.join(self.run, "out", "threading.json"))["convs"]], ["b"])
+        self.assertEqual(
+            [c["id"] for c in r(os.path.join(self.run, "out", "merged", "threading.json"))["convs"]], ["b"]
+        )
         self.assertEqual(self.e.state()["base"], 1)
 
     def test_restore_only_undoes_the_last_build(self):
@@ -507,7 +511,7 @@ class TestBugFixes(unittest.TestCase):
     def test_B1_note_filled_for_new_pages(self):
         run = self.e.run([msg(0, "Ana", "a"), msg(1, "Ben", "b", r="Ana", q="a", pi=0)])
         self.e.build(run, {"newconvs": [{"id": "a", "title": "A"}], "join": {"a": [0, 1]}})
-        self.assertIn("reply links", r(os.path.join(run, "out", "threading.json"))["note"])
+        self.assertIn("reply links", r(os.path.join(run, "out", "merged", "threading.json"))["note"])
 
     def test_B3_dealEdit_without_deal_is_a_clear_error(self):
         run = self.e.run([msg(0, "Ana", "a")])
@@ -531,7 +535,7 @@ class TestBugFixes(unittest.TestCase):
     def test_B5_unfound_reply_left_unlinked(self):
         run = self.e.run([msg(0, "Ana", "a"), msg(1, "Ben", "b", r="Zed", q="something from before the window")])
         self.e.build(run, {"newconvs": [{"id": "a", "title": "A"}], "join": {"a": [0, 1]}})
-        self.assertNotIn("1", r(os.path.join(run, "out", "threading.json"))["links"])
+        self.assertNotIn("1", r(os.path.join(run, "out", "merged", "threading.json"))["links"])
 
     def test_B11_messenger_link_to_message_zero(self):
         # pi=0 is falsy, so a Messenger reply link to #0 is ignored and the quote/photo fallback runs instead.
@@ -543,7 +547,7 @@ class TestBugFixes(unittest.TestCase):
             ]
         )
         self.e.build(run, {"newconvs": [{"id": "a", "title": "A"}], "join": {"a": [0, 1, 2]}})
-        self.assertEqual(r(os.path.join(run, "out", "threading.json"))["links"]["2"], [0, "r"])
+        self.assertEqual(r(os.path.join(run, "out", "merged", "threading.json"))["links"]["2"], [0, "r"])
 
     def test_B1_note_keeps_an_old_custom_note(self):
         e = Env(tempfile.mkdtemp(dir=self.t.name))
@@ -551,7 +555,7 @@ class TestBugFixes(unittest.TestCase):
         run = e.run([msg(0, "Ana", "a")])
         e.build(run, {"newconvs": [{"id": "a", "title": "A"}], "join": {"a": [0]}})
         self.assertEqual(
-            r(os.path.join(run, "out", "threading.json"))["note"],
+            r(os.path.join(run, "out", "merged", "threading.json"))["note"],
             "0 reply links read straight from Messenger; 0 matched by their quoted text and 0 (replies to photos) by best match. Imported from the old page",
         )
 
@@ -561,7 +565,7 @@ class TestBugFixes(unittest.TestCase):
         run = self.e.run([msg(2, "Cy", "c", r="Ben", q="b", pi=1)])
         self.e.build(run, {"join": {"a": [2]}})
         self.assertTrue(
-            r(os.path.join(run, "out", "threading.json"))["note"].startswith(
+            r(os.path.join(run, "out", "merged", "threading.json"))["note"].startswith(
                 "2 reply links read straight from Messenger"
             )
         )
@@ -577,7 +581,7 @@ class TestBugFixes(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, '2 deals in a; add "index"'):
             self.e.build(run, {"join": {"a": [2]}, "dealEdit": {"a": {"text": "z"}}})
         self.e.build(run, {"join": {"a": [2]}, "dealEdit": {"a": {"text": "two, sold", "index": 1, "addRefs": [2]}}})
-        d = r(os.path.join(run, "out", "summary.json"))["deals"]
+        d = r(os.path.join(run, "out", "merged", "summary.json"))["deals"]
         self.assertEqual([x["text"] for x in d], ["one", "two, sold"])
         self.assertEqual(d[1]["refs"], [1, 2])
 
@@ -703,7 +707,7 @@ class TestReviewFixes(unittest.TestCase):
             run,
             {"join": {"a": [3]}, "closeOpen": [1], "answered": [{"conv": "a", "ask": 1, "answer": "$80", "refs": [3]}]},
         )
-        self.assertEqual(r(os.path.join(run, "out", "summary.json"))["open"], [])
+        self.assertEqual(r(os.path.join(run, "out", "merged", "summary.json"))["open"], [])
 
     # B21: stored but never built
     def seed_partly_built(self):
@@ -759,7 +763,9 @@ class TestReviewFixes(unittest.TestCase):
         w(p, {"join": {"a": list(range(80, 96))}})
         out = quiet(catchup.build, e.work, run, p)
         self.assertIn("build ok: #80-#95", out)
-        self.assertEqual(r(os.path.join(run, "out", "threading.json"))["convs"][0]["members"], list(range(96)))
+        self.assertEqual(
+            r(os.path.join(run, "out", "merged", "threading.json"))["convs"][0]["members"], list(range(96))
+        )
 
 
 class TestReview2Fixes(unittest.TestCase):
@@ -810,8 +816,8 @@ class TestReview2Fixes(unittest.TestCase):
         run = e.run([msg(0, "Ana", "a"), msg(1, "Ben", "b")])
         e.build(run, {"newconvs": [{"id": "a", "title": "A"}], "join": {"a": [0, 1]}})
         e2 = Env(tempfile.mkdtemp(dir=self.t.name))
-        th = r(os.path.join(run, "out", "threading.json"))
-        sm = r(os.path.join(run, "out", "summary.json"))
+        th = r(os.path.join(run, "out", "merged", "threading.json"))
+        sm = r(os.path.join(run, "out", "merged", "summary.json"))
         e2.seed(e.msgs, threading=th, summary=sm)  # the other session already built #0-#1
         p = os.path.join(e2.d, "s.json")
         w(p, {"join": {"a": [0, 1]}})
@@ -892,14 +898,14 @@ class TestRelink(unittest.TestCase):
         out = self.e.build(run, {"join": {"gear1106": [11]}, "relink": {"2": [0, "i"], "9": [8, "i"]}})
         self.assertIn("RELINK 2 -> 0 i", out)
         self.assertIn("RELINK 9 -> 8 i", out)
-        links = r(os.path.join(run, "out", "threading.json"))["links"]
+        links = r(os.path.join(run, "out", "merged", "threading.json"))["links"]
         self.assertEqual((links["2"], links["9"], links["11"][0]), ([0, "i"], [8, "i"], 10))
 
     def test_relink_on_its_own(self):
         out, d = self.relink({"relink": {"10": None, "2": [0, "i"]}})
         self.assertIn("UNLINK 10", out)
         self.assertIn("relink ok: 2 change(s)", out)
-        t = r(os.path.join(d, "threading.json"))
+        t = r(os.path.join(d, "merged", "threading.json"))
         self.assertNotIn("10", t["links"])
         self.assertEqual(t["links"]["2"], [0, "i"])
         self.assertEqual(r(os.path.join(self.e.work, "base", "threading.json")), t, "WORK's base follows")
@@ -923,6 +929,568 @@ class TestRelink(unittest.TestCase):
     def test_relink_across_conversations_warns(self):
         out, _ = self.relink({"relink": {"7": [5, "i"]}})  # 7 is in pics1106, 5 in gear1106
         self.assertIn("WARN link 7 -> 5 crosses conversations (pics1106 -> gear1106)", out)
+
+
+class Refused(Exception):
+    """The database or the batch tool refused a write; nothing was written."""
+
+
+class FakeDB:
+    """ArtifactData with the real limits (artifact runtime contract 0.2.92 and the ArtifactData tool): a document holds at
+    most 262,144 bytes of compact JSON; a batch takes 1-50 writes, each document at most once, at most 1 MiB in all; a
+    write to an existing document needs the version last read (if_version); a refused batch writes nothing."""
+
+    DOC, WRITES, BODY = 262144, 50, 1 << 20
+
+    def __init__(self):
+        self.docs, self.ver = {}, {}
+
+    @staticmethod
+    def size(d):
+        return len(json.dumps(d, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+    def put(self, p, d):
+        """A write by the page or by setup (the page's runtime has no pins); the size limit still applies."""
+        if self.size(d) > self.DOC:
+            raise Refused("%s is %d bytes, over 262,144" % (p, self.size(d)))
+        self.docs[p] = copy.deepcopy(d)
+        self.ver[p] = self.ver.get(p, 0) + 1
+
+    def batch(self, writes):
+        if not 1 <= len(writes) <= self.WRITES:
+            raise Refused("a batch takes 1-50 writes, not %d" % len(writes))
+        paths = [x["collection"] + "/" + x["doc_id"] for x in writes]
+        if len(set(paths)) != len(paths):
+            raise Refused("a document twice in one batch")
+        body = self.size(writes)
+        if body > self.BODY:
+            raise Refused("batch body is %d bytes, over 1 MiB" % body)
+        new = {}
+        for x, p in zip(writes, paths):
+            if p in self.docs and "if_version" not in x:
+                raise Refused("%s exists: the write needs if_version" % p)
+            if "if_version" in x and self.ver.get(p) != x["if_version"] or "if_version" in x and p not in self.docs:
+                raise Refused("%s changed (version %s, pinned %s)" % (p, self.ver.get(p), x["if_version"]))
+            if x["op"] == "delete":
+                new[p] = None
+                continue
+            d = x["data"] if x["op"] == "set" else dict(self.docs[p], **x["data"])
+            if self.size(d) > self.DOC:
+                raise Refused("%s would be %d bytes, over 262,144" % (p, self.size(d)))
+            new[p] = d
+        for p, d in new.items():
+            if d is None:
+                del self.docs[p]
+            else:
+                self.docs[p] = copy.deepcopy(d)
+            self.ver[p] = self.ver.get(p, 0) + 1
+
+    def coll(self, c):
+        return {p.split("/")[1]: d for p, d in self.docs.items() if p.split("/")[0] == c and p.count("/") == 1}
+
+    def fetch(self, into, chunks=None):
+        """ArtifactData reads into an out_dir (list threading, list summary, chunks, meta/chat); -> the versions seen."""
+        for p, d in self.docs.items():
+            c = p.split("/")[0]
+            if c in ("threading", "summary", "meta") or c == "chunks" and (chunks is None or p in chunks):
+                w(os.path.join(into, p + ".json"), d)
+        os.makedirs(os.path.join(into, "chunks"), exist_ok=True)
+        return dict(self.ver)
+
+    def merged(self):
+        return catchup.merge_threading(self.coll("threading")), catchup.merge_summary(self.coll("summary"))
+
+    def layout_sizes(self):
+        return {p: self.size(d) for p, d in self.docs.items() if p.split("/")[0] in ("threading", "summary")}
+
+
+def write_manifest(db, out, seen, upto=None, cleanup=True, one_by_one=False):
+    """Step 7 as SKILL.md has Claude do it: each batch in order, writes as listed, pins from step 5's read (`seen`),
+    meta/chat and refresh/status added to the last batch; then, once every batch succeeded, the cleanup, skipping what
+    step 5 didn't see. upto=k stops after k batches; one_by_one applies a batch's unpinned creates one write at a time
+    and stops before its pinned writes (a tool that can't batch, interrupted)."""
+    man = r(os.path.join(out, "manifest.json"))
+    for k, bt in enumerate(man["batches"]):
+        if upto is not None and k >= upto:
+            return man
+        ws = []
+        for e in bt:
+            x = {"op": e["op"], "collection": e["collection"], "doc_id": e["doc_id"], "data": r(e["file_path"])}
+            if e.get("pin"):
+                x["if_version"] = seen[e["collection"] + "/" + e["doc_id"]]
+            ws.append(x)
+        if one_by_one:
+            for x in ws:
+                if "if_version" not in x:
+                    db.batch([x])
+            return man
+        if k == len(man["batches"]) - 1:
+            ws.append(
+                {
+                    "op": "update",
+                    "collection": "meta",
+                    "doc_id": "chat",
+                    "data": {"lastRefresh": "now"},
+                    "if_version": seen["meta/chat"],
+                }
+            )
+            ws.append(
+                {
+                    "op": "update",
+                    "collection": "refresh",
+                    "doc_id": "status",
+                    "data": {"state": "done"},
+                    "if_version": seen["refresh/status"],
+                }
+            )
+        db.batch(ws)
+    for g in man["cleanup"] if cleanup else []:
+        ws = [
+            {"op": "delete", "collection": e["collection"], "doc_id": e["doc_id"], "if_version": seen[p]}
+            for e in g
+            for p in [e["collection"] + "/" + e["doc_id"]]
+            if p in seen and p in db.docs
+        ]
+        if ws:
+            db.batch(ws)
+    return man
+
+
+EMPTY_TH = {"convs": [], "links": {}, "to": -1, "note": ""}
+EMPTY_SM = {"version": 2, "convs": [], "open": [], "answered": [], "deals": [], "mentions": [], "toI": -1}
+
+
+def small(n):
+    """n messages, all built into one conversation "a"."""
+    th = {"convs": [{"id": "a", "title": "A", "members": list(range(n))}], "links": {}, "to": n - 1, "note": ""}
+    sm = dict(EMPTY_SM, convs=[{"id": "a", "tag": "", "synopsis": [], "outcome": "", "key": []}], toI=n - 1)
+    return [msg(i, "Ana", "m%d" % i, mi=i % 60) for i in range(n)], th, sm
+
+
+class Live:
+    """A page's database (FakeDB) plus Claude's WORK, driven the way a refresh drives them: the page imports into chunks
+    and meta/chat, step 5 reads into a RUN folder, catchup.py builds, step 7 writes the manifest."""
+
+    def __init__(self, d, msgs=(), th=None, sm=None, layout="old"):
+        self.d, self.db, self.n = d, FakeDB(), 0
+        self.work = os.path.join(d, "work")
+        self.msgs = list(msgs)
+        for k, ch in synth.chunks(self.msgs).items():
+            self.db.put("chunks/" + k, ch)
+        self.db.put(
+            "meta/chat",
+            {
+                "lastI": len(self.msgs) - 1,
+                "anchorMids": [m["m"] for m in self.msgs[-3:]],
+                "tz": "America/Los_Angeles",
+                "chunkSize": 82,
+            },
+        )
+        self.db.put("refresh/status", {"state": "running", "by": "refresh 1"})
+        th, sm = copy.deepcopy(th or EMPTY_TH), copy.deepcopy(sm or EMPTY_SM)
+        docs = (
+            {"threading/current": th, "summary/current": sm}
+            if layout == "old"
+            else catchup.layout_docs(catchup._canon_threading(th), sm)
+        )
+        for p, x in docs.items():
+            self.db.put(p, x)
+
+    def bootstrap(self, work=None):
+        self.n += 1
+        dbd = os.path.join(self.d, "db%d" % self.n)
+        self.db.fetch(dbd)
+        return quiet(catchup.bootstrap, work or self.work, dbd)
+
+    def run(self, new, imported=False):
+        """The page imports `new` (unless already imported), then step 5 reads the touched chunks, meta/chat and both
+        collections into a fresh RUN folder."""
+        if not imported:
+            self.msgs += new
+            for k, ch in synth.chunks(self.msgs).items():
+                if ch["msgs"][-1]["i"] >= new[0]["i"]:
+                    self.db.put("chunks/" + k, ch)
+            self.db.put(
+                "meta/chat",
+                dict(self.db.docs["meta/chat"], lastI=self.msgs[-1]["i"], anchorMids=[m["m"] for m in self.msgs[-3:]]),
+            )
+        self.n += 1
+        run = os.path.join(self.d, "run%d" % self.n)
+        touched = {"chunks/c%04d" % (m["i"] // 82 * 82) for m in new}
+        self.seen = self.db.fetch(run, chunks=touched)
+        return run
+
+    def build(self, run, spec, work=None):
+        p = os.path.join(self.d, "spec%d.json" % self.n)
+        w(p, spec)
+        return quiet(catchup.build, work or self.work, run, p)
+
+    def write(self, run, **kw):
+        return write_manifest(self.db, os.path.join(run, "out"), self.seen, **kw)
+
+
+def tail_spec(th, new, nid="tail1111"):
+    """A realistic build: a new conversation, one more message each for the busiest and the longest-quiet conversation
+    (it comes back from an archive block), bullets, an answer, a deal and a mention."""
+    built = [c for c in th["convs"] if c["members"]]
+    busy = max(built, key=lambda c: max(c["members"]))
+    quiet_ = min(built, key=lambda c: max(c["members"]))
+    ids = [m["i"] for m in new]
+    others = [m["i"] for m in new[2:] if m["f"] != "You"]
+    return {
+        "newconvs": [
+            {"id": nid, "title": "Pack question", "tag": "Question", "outcome": "Still open", "key": ids[2:4]}
+        ],
+        "join": {busy["id"]: ids[:1], quiet_["id"]: ids[1:2], nid: ids[2:]},
+        "bullets": {
+            nid: [["Ana asked about a pack", ids[2:4]]],
+            busy["id"]: [["One more reply here", ids[:1]]],
+            quiet_["id"]: [["Came back to this", ids[1:2]]],
+        },
+        "answered": [{"conv": nid, "ask": ids[2], "answer": "Yes, still available", "refs": [ids[3]]}],
+        "deals": [{"kind": "sale", "tag": "For sale", "conv": nid, "text": "Pack, $80", "refs": [ids[4]]}],
+        "mentions": [{"note": "Named you", "refs": [[others[-1]]]}] if others else [],
+    }
+
+
+def without_times(o):
+    return {k: v for k, v in o.items() if k not in ("builtAt", "generatedAt")}
+
+
+class TestLayout(unittest.TestCase):
+    """v1.17: threading and summary are collections of documents that never approach the 256 KiB cap (BACKLOG B43)."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.d = self.t.name
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def patch(self, **kw):
+        for k, v in kw.items():
+            old = getattr(catchup, k)
+            setattr(catchup, k, v)
+            self.addCleanup(setattr, catchup, k, old)
+
+    def headroom(self, db):
+        """Every threading and summary document at most half the cap: at least 2x headroom."""
+        sz = db.layout_sizes()
+        big = max(sz.items(), key=lambda kv: kv[1])
+        self.assertLessEqual(big[1], FakeDB.DOC // 2, big)
+        return big
+
+    def test_fake_db_enforces_the_real_limits(self):
+        db = FakeDB()
+        with self.assertRaisesRegex(Refused, "over 262,144"):
+            db.put("x/big", {"b": "x" * 262144})
+        db.put("x/a", {"v": 1})
+        put = lambda i, **kw: dict({"op": "set", "collection": "x", "doc_id": i, "data": kw.pop("data", {})}, **kw)
+        with self.assertRaisesRegex(Refused, "needs if_version"):
+            db.batch([put("a")])
+        with self.assertRaisesRegex(Refused, "changed"):
+            db.batch([put("a", if_version=7)])
+        with self.assertRaisesRegex(Refused, "1-50 writes"):
+            db.batch([put("n%d" % k) for k in range(51)])
+        with self.assertRaisesRegex(Refused, "over 1 MiB"):
+            db.batch([put("n%d" % k, data={"b": "x" * 200000}) for k in range(6)])
+        with self.assertRaisesRegex(Refused, "would be"):
+            db.batch([put("n0", data={"b": "x" * 262144})])
+        with self.assertRaisesRegex(Refused, "needs if_version"):
+            db.batch([put("new"), put("a")])  # all or nothing
+        self.assertNotIn("x/new", db.docs)
+        db.batch([put("new"), put("a", data={"v": 2}, if_version=1)])
+        self.assertEqual((db.docs["x/a"], db.ver["x/a"]), ({"v": 2}, 2))
+
+    def test_migration_from_the_old_layout_keeps_everything_and_fromI(self):
+        """The owner's page on Nov 11, in miniature: one threading document near the cap, and a summary that earlier
+        sessions cut down to the conversations after fromI. The first build converts both; nothing is dropped."""
+        msgs, th, sm = synth.chat(6400, seed=5)
+        sm = synth.drop_before(sm, th, 2797)
+        live = Live(self.d, msgs, th, sm, "old")
+        bt, bs = copy.deepcopy(live.db.merged())
+        self.assertGreater(FakeDB.size(bt), 150000)
+        self.assertIn(
+            "threading and summary in the single-document layout: the next build converts it", live.bootstrap()
+        )
+        new = synth.more(6400, 20)
+        run = live.run(new)
+        out = live.build(run, tail_spec(th, new))
+        self.assertIn("build ok: #6400-#6419", out)
+        man = live.write(run)
+        self.assertEqual(len(man["batches"]), 1)
+        cur = live.db.docs
+        self.assertEqual((cur["threading/current"]["layout"], cur["summary/current"]["layout"]), (2, 2))
+        self.assertNotIn("links", cur["threading/current"])
+        self.assertEqual(cur["summary/current"]["fromI"], 2797, "fromI is kept as is")
+        t, s = live.db.merged()
+        self.assertEqual(s["fromI"], 2797)
+        # nothing dropped: every conversation, bullet, link and list item from before is still there, in order
+        after = {c["id"]: c for c in s["convs"]}
+        for c in bs["convs"]:
+            self.assertEqual(after[c["id"]]["synopsis"][: len(c["synopsis"])], c["synopsis"])
+        self.assertEqual(s["answered"][1:], bs["answered"])
+        self.assertEqual(s["mentions"][1:], bs["mentions"])
+        self.assertEqual(s["deals"][:-1], bs["deals"])
+        tc = {c["id"]: c["members"] for c in t["convs"]}
+        for c in bt["convs"]:
+            self.assertEqual(tc[c["id"]][: len(c["members"])], c["members"])
+        self.assertTrue(all(t["links"][k] == v for k, v in bt["links"].items()))
+        quiet_ = tail_spec(th, new)["join"]
+        revived = [c for c in quiet_ if c != "tail1111" and c not in {x["id"] for x in bs["convs"]}]
+        self.assertEqual(len(revived), 1, "the longest-quiet conversation's summary was among those dropped")
+        self.assertEqual(
+            [b["t"] for b in after[revived[0]]["synopsis"]], ["Came back to this"], "its summary starts again"
+        )
+        # what the database now holds is exactly what WORK built, and a fresh bootstrap reads it back the same
+        self.assertEqual(t, r(os.path.join(self.d, "work", "base", "threading.json")))
+        self.assertEqual(s, r(os.path.join(self.d, "work", "base", "summary.json")))
+        self.assertEqual(t, r(os.path.join(run, "out", "merged", "threading.json")))
+        live.bootstrap(os.path.join(self.d, "work2"))
+        for f in ("all.json", "base/threading.json", "base/summary.json", "state.json"):
+            self.assertEqual(r(os.path.join(self.d, "work2", f)), r(os.path.join(self.d, "work", f)), f)
+        self.headroom(live.db)
+
+    def test_build_at_scale_every_document_under_the_cap(self):
+        """6.4k, 25k and 50k messages (the design target): every document at most half the cap, a build writes a few
+        documents, and the tool's batch limits hold."""
+        for n in (6400, 25000, 50000):
+            with self.subTest(n=n):
+                d = os.path.join(self.d, str(n))
+                msgs, th, sm = synth.chat(n - 20, seed=n)
+                if n >= 6400:
+                    self.assertGreater(FakeDB.size(sm), FakeDB.DOC, "one summary document couldn't hold this")
+                live = Live(d, msgs, th, sm, "new")
+                live.bootstrap()
+                new = synth.more(n - 20, 20)
+                run = live.run(new)
+                self.assertIn("build ok", live.build(run, tail_spec(th, new)))
+                man = live.write(run)
+                self.assertLessEqual(sum(map(len, man["batches"])), 6, man["sizes"])
+                big = self.headroom(live.db)
+                t, s = live.db.merged()
+                self.assertEqual(len(t["convs"]), len(th["convs"]) + 1)
+                self.assertEqual(t["to"], n - 1)
+                print(
+                    "\n  %d messages: %d layout documents, largest %s %d bytes; the build wrote %d in %d batch"
+                    % (n, len(live.db.layout_sizes()), *big, sum(map(len, man["batches"])), len(man["batches"])),
+                    end="",
+                )
+
+    def test_link_correction_lands_in_its_block(self):
+        msgs, th, sm = synth.chat(3500, seed=11)
+        live = Live(self.d, msgs, th, sm, "new")
+        live.bootstrap()
+        conv = next(c for c in th["convs"] if 1234 in c["members"])
+        parent = next(i for i in conv["members"][::-1] if i < 1234 and th["links"].get("1234", [None])[0] != i)
+        before = live.db.docs["threading/current"]["blocks"]
+        spec = os.path.join(self.d, "relink.json")
+        w(spec, {"relink": {"1234": [parent, "i"]}})
+        out = os.path.join(self.d, "rout")
+        self.assertIn("relink ok: 1 change(s)", quiet(catchup.relink, live.work, out, spec))
+        man = r(os.path.join(out, "manifest.json"))
+        made = [e["doc_id"] for bt in man["batches"] for e in bt]
+        self.assertEqual(len(made), 2, made)
+        self.assertTrue(made[0].startswith("b001000-") and made[1] == "current", made)
+        sv = {p: v for p, v in live.db.ver.items() if p.startswith("summary/")}
+        write_manifest(live.db, out, dict(live.db.ver))
+        t, _ = live.db.merged()
+        self.assertEqual(t["links"]["1234"], [parent, "i"])
+        now = live.db.docs["threading/current"]["blocks"]
+        self.assertEqual(
+            [b for b in now if not b.startswith("b001000-")], [b for b in before if not b.startswith("b001000-")]
+        )
+        self.assertEqual({p: v for p, v in live.db.ver.items() if p.startswith("summary/")}, sv, "summary untouched")
+        # the same correction inside a build lands in the same block, next to the block the new messages go to
+        new = synth.more(3500, 20)
+        run = live.run(new)
+        spec = dict(tail_spec(t, new), relink={"1234": None})
+        live.build(run, spec)
+        made = [e["doc_id"] for bt in r(os.path.join(run, "out", "manifest.json"))["batches"] for e in bt]
+        self.assertTrue(
+            any(x.startswith("b001000-") for x in made) and any(x.startswith("b003000-") for x in made), made
+        )
+        live.write(run)
+        self.assertNotIn("1234", live.db.merged()[0]["links"])
+
+    def test_interrupted_migration_is_safe_and_a_retry_finishes_it(self):
+        msgs, th, sm = synth.chat(2600, seed=13)
+        live = Live(self.d, msgs, th, sm, "old")
+        before = copy.deepcopy(live.db.merged())
+        live.bootstrap()
+        new = synth.more(2600, 20)
+        run = live.run(new)
+        spec = tail_spec(th, new)
+        live.build(run, spec)
+        whole = r(os.path.join(run, "out", "merged", "summary.json"))
+        live.write(run, one_by_one=True)  # the blocks landed, then the run died before the `current` documents
+        self.assertGreater(len(live.db.coll("threading")), 1)
+        self.assertEqual(live.db.merged(), before, "until `current` names them, new blocks change nothing anyone reads")
+        # the next session: a fresh WORK, bootstrapped from what's there, builds the same messages again
+        work2 = os.path.join(self.d, "work2")
+        live.bootstrap(work2)
+        run2 = live.run(new, imported=True)
+        live.build(run2, spec, work2)
+        man = r(os.path.join(run2, "out", "manifest.json"))
+        self.assertEqual(
+            [e["doc_id"] for bt in man["batches"] for e in bt], ["current", "current"], "blocks already there"
+        )
+        live.write(run2)
+        t, s = live.db.merged()
+        self.assertEqual(without_times(s), without_times(whole))
+        self.assertEqual(t, r(os.path.join(work2, "base", "threading.json")))
+        self.assertEqual(man["cleanup"], [])
+
+    def test_interrupted_between_batches_and_before_cleanup(self):
+        self.patch(BATCH_DOCS=2)
+        msgs, th, sm = synth.chat(2600, seed=21)
+        live = Live(self.d, msgs, th, sm, "old")
+        before = copy.deepcopy(live.db.merged())
+        live.bootstrap()
+        new = synth.more(2600, 20)
+        run = live.run(new)
+        live.build(run, tail_spec(th, new))
+        man = r(os.path.join(run, "out", "manifest.json"))
+        self.assertGreater(len(man["batches"]), 2)
+        self.assertTrue(all(len(b) <= 2 for b in man["batches"]))
+        live.write(run, upto=1)
+        self.assertEqual(live.db.merged(), before)
+        work2 = os.path.join(self.d, "work2")
+        live.bootstrap(work2)
+        run2 = live.run(new, imported=True)
+        live.build(run2, tail_spec(th, new), work2)
+        live.write(run2, cleanup=False)  # done, but the run stopped before deleting the old blocks
+        t, s = copy.deepcopy(live.db.merged())
+        self.assertEqual(t, r(os.path.join(work2, "base", "threading.json")))
+        new2 = synth.more(2620, 20, seed=4)
+        run3 = live.run(new2)
+        live.build(run3, {"join": {"tail1111": [m["i"] for m in new2]}}, work2)
+        man3 = live.write(run3)
+        self.assertTrue(man3["cleanup"])
+        named = set(live.db.docs["threading/current"]["blocks"]) | set(live.db.docs["summary/current"]["blocks"])
+        self.assertEqual(
+            {p.split("/")[1] for p in live.db.layout_sizes()} - {"current"}, named, "no unused blocks left"
+        )
+
+    def test_hard_size_check(self):
+        live = Live(self.d, *small(50))
+        live.bootstrap()
+        new = [msg(i, "Ben", "n%d" % i, h=10, mi=i % 60) for i in range(50, 80)]
+        run = live.run(new)
+        long = " ".join(["abcdefghi"] * 15)
+        spec = {
+            "join": {"a": list(range(50, 80))},
+            "bullets": {"a": [[long, [50 + k % 30]] for k in range(1700)]},
+        }
+        before = live.db.layout_sizes()
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"summary/current would be \d+ bytes, over the 245760-byte limit .*Nothing was written and WORK is unchanged\. "
+            r"Never drop or shorten .*largest conversations: a \(",
+        ):
+            live.build(run, spec)
+        self.assertEqual(json.loads(json.dumps(r(os.path.join(live.work, "state.json"))))["base"], 49)
+        self.assertFalse(os.path.exists(os.path.join(run, "out")))
+        self.assertEqual(live.db.layout_sizes(), before)
+
+    def test_bootstrap_from_either_layout_gives_the_same_state(self):
+        msgs, th, sm = synth.chat(2600, seed=17)
+        a = Live(os.path.join(self.d, "a"), msgs, th, sm, "old")
+        b = Live(os.path.join(self.d, "b"), msgs, th, sm, "new")
+        self.assertGreater(len(b.db.coll("summary")), 2)
+        a.bootstrap()
+        b.bootstrap()
+        for f in ("all.json", "base/threading.json", "base/summary.json", "state.json"):
+            self.assertEqual(r(os.path.join(a.work, f)), r(os.path.join(b.work, f)), f)
+
+    def test_split_and_merge_keep_every_item_in_order(self):
+        """Lists in any order, items with no message numbers, empty conversations, an old string synopsis: merging the
+        documents gives back exactly what was split, for several block sizes and activeFrom values."""
+        for seed in range(6):
+            for block in (7, 50, 1000):
+                rnd = random.Random(seed)
+                self.patch(BLOCK=block)
+                msgs, th, sm = synth.chat(700, seed=seed, per_build=5)
+                rnd.shuffle(sm["answered"])
+                sm["answered"].insert(0, {"conv": sm["convs"][-1]["id"], "ask": 3, "answer": "late", "refs": []})
+                sm["deals"][0]["refs"].append(690)  # dealEdit adds a later message to an old deal
+                sm["mentions"].insert(5, {"note": "no refs", "refs": []})
+                sm["convs"].insert(
+                    3, {"id": "str", "tag": "", "synopsis": "Old one. Two sentences.", "outcome": "", "key": []}
+                )
+                sm["convs"].append({"id": "nothing", "tag": "", "synopsis": [], "outcome": "", "key": []})
+                th["convs"].append({"id": "nothing", "title": "No messages yet", "members": []})
+                t = catchup._canon_threading(copy.deepcopy(th))
+                docs = catchup.layout_docs(t, copy.deepcopy(sm), active_from=rnd.choice([0, 100, 333]))
+                by = lambda c: {p.split("/")[1]: d for p, d in docs.items() if p.startswith(c + "/")}
+                self.assertEqual(catchup.merge_threading(by("threading")), t)
+                self.assertEqual(catchup.merge_summary(by("summary")), sm)
+                for c in ("threading", "summary"):
+                    self.assertEqual(sorted(by(c)), sorted(docs[c + "/current"]["blocks"] + ["current"]))
+
+    def test_an_ordinary_build_rewrites_only_the_newest_block(self):
+        msgs, th, sm = synth.chat(2500, seed=19)
+        live = Live(self.d, msgs, th, sm, "new")
+        live.bootstrap()
+        for k in range(2):
+            new = synth.more(2500 + 20 * k, 20, seed=k)
+            run = live.run(new)
+            busy = max(live.db.merged()[0]["convs"], key=lambda c: max(c["members"]))
+            live.build(run, {"join": {busy["id"]: [m["i"] for m in new]}})
+            man = live.write(run)
+            made = [e["collection"] + "/" + e["doc_id"] for bt in man["batches"] for e in bt]
+            self.assertEqual(
+                [m for m in made if "/b" in m and m.startswith("threading/")][0][:18], "threading/b002000-"
+            )
+            self.assertEqual(len(made), 3, made)  # the newest threading block, then both `current` documents
+            self.assertEqual([e["doc_id"][:8] for g in man["cleanup"] for e in g], ["b002000-"])
+
+    def test_cleanup_deletes_only_unused_blocks(self):
+        msgs, th, sm = synth.chat(2500, seed=23)
+        live = Live(self.d, msgs, th, sm, "new")
+        live.db.put("summary/notes-kept", {"from": "an earlier session"})
+        live.db.put("threading/b009000-deadbeef", {"start": 9000})
+        live.bootstrap()
+        new = synth.more(2500, 20)
+        run = live.run(new)
+        live.build(run, tail_spec(th, new))
+        man = live.write(run)
+        gone = [e["doc_id"] for g in man["cleanup"] for e in g]
+        self.assertIn("b009000-deadbeef", gone)
+        self.assertNotIn("notes-kept", gone)
+        self.assertIn("summary/notes-kept", live.db.docs)
+        self.assertIn("threading/current", live.db.docs)
+
+    def test_build_refuses_when_another_session_built(self):
+        live = Live(self.d, *small(5))
+        live.bootstrap()
+        live.db.put("threading/current", dict(live.db.docs["threading/current"], builtAt="Wed Nov 11, 9:05 PM"))
+        run = live.run([msg(5, "Ben", "x")])
+        with self.assertRaisesRegex(
+            AssertionError, "threading/current changed since WORK was bootstrapped .*Bootstrap WORK again"
+        ):
+            live.build(run, {"join": {"a": [5]}})
+
+    def test_work_from_an_older_catchup_needs_a_bootstrap(self):
+        live = Live(self.d, *small(5))
+        live.bootstrap()
+        os.remove(os.path.join(live.work, "base", "layout.json"))
+        run = live.run([msg(5, "Ben", "x")])
+        with self.assertRaisesRegex(AssertionError, "older catchup.py .*bootstrap it again"):
+            live.build(run, {"join": {"a": [5]}})
+
+    def test_a_big_migration_fits_the_tool_in_several_batches(self):
+        self.patch(BLOCK=20)
+        msgs, th, sm = synth.chat(1500, seed=29)
+        live = Live(self.d, msgs, th, sm, "old")
+        live.bootstrap()
+        new = synth.more(1500, 20)
+        run = live.run(new)
+        live.build(run, tail_spec(th, new))
+        man = live.write(run)  # FakeDB refuses any batch over 50 writes or 1 MiB
+        self.assertGreater(len(man["batches"]), 2)
+        self.assertTrue(all(len(b) <= catchup.BATCH_DOCS for b in man["batches"]))
+        self.assertEqual(live.db.merged()[0], r(os.path.join(live.work, "base", "threading.json")))
 
 
 class TestCli(unittest.TestCase):

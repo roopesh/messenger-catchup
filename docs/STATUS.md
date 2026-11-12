@@ -1,21 +1,22 @@
 # Status and handoff
 
-**Read this first** when picking the project up. Last updated Nov 7, 2026 (US Pacific), after Phase 10 (DEVELOPMENT.md): the repo went public, cleanup, names, self-check, relink, faster photo replies, and it became a plugin (v1.15.0) with separate setup and refresh skills (v1.16.0).
+**Read this first** when picking the project up. Last updated Nov 11, 2026 (US Pacific), after v1.17.0: threading and summary are stored as block documents, so they never hit the database's 256 KiB per-document cap (BACKLOG B43). Before that, Phase 10 (DEVELOPMENT.md): the repo went public, cleanup, names, self-check, relink, faster photo replies, and it became a plugin (v1.15.0) with separate setup and refresh skills (v1.16.0).
 
 ## Where things stand
-- **Shipped:** release **v1.16.2** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.2, helper 1.9. **It's a plugin** (`messenger-catchup`, skills `setup` and `refresh`), installed from this repo as a marketplace (`rando-tools`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
-- **Defects:** two open: B39 (queuing a reply closes the conversation and jumps the page) and B40 (a conversation that starts with a reply doesn't show the message it replies to). The 38 bugs before them are fixed:
+- **Shipped:** release **v1.17.0** (see `VERSION` and [CHANGELOG.md](../CHANGELOG.md)): page `PAGE_VERSION` 2.3, helper 1.9. **It's a plugin** (`messenger-catchup`, skills `setup` and `refresh`), installed from this repo as a marketplace (`rando-tools`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached. Installed helpers (1.5+) update themselves from the latest release.
+- **Defects:** four open: B39 (queuing a reply closes the conversation and jumps the page), B40 (a conversation that starts with a reply doesn't show the message it replies to), B41 (full names missing on a live page, so two people with the same first name look alike) and B42 (a text and the photo sent right after it show as two rows, not one block like Messenger). B43 (threading and summary outgrowing the 256 KiB document cap, P1) is fixed in v1.17.0. The 38 bugs before B39 are fixed:
   - B1–B11 came from the handoff review
   - B12–B37 came from three independent reviews run overnight; each round's fixes were checked by the next
   - B38, a silent wrong photo-reply link, was exposed by the F2 test
   - every fix has a test that fails on the code before it
+- **Storage (v1.17.0, B43):** `threading` and `summary` are collections of 1,000-message block documents named by their `current` document; the page merges them back. Measured on synthetic chats calibrated to the owner's page: the largest document stays at most 85 KB up to 50,000 messages (EXPERIMENTS.md §13). Old pages convert on their next refresh; nothing is dropped, and `summary.fromI` is kept.
 - **Open:** live-only risks (R2, R3, R5, R6, R9), doc gap G6, features F1, F5, F6. F7 is done; its one open question (whether marketplace installs update by themselves in web and Desktop chat) needs a live check. See [BACKLOG.md](BACKLOG.md).
 - **Workflow:** every change goes branch → PR → version bump → CI → squash-merge → `tools/release.sh`. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
 - **Enforcement:** GitHub branch protection on `main` (since Nov 7): changes only through a PR, `test` and `version-bump` must pass, the branch must be up to date, linear history, no force-push or deletion, admins included. CI also flags any commit on `main` that didn't come from a merged PR, and a local `pre-push` hook blocks direct pushes before they reach GitHub.
 - **In use:** the original user's page and hourly loop run the generic skill.
-  - **As of Nov 7 the live page is still at page 1.1 with helper 1.1**, checked read-only.
+  - **As of Nov 11** (read-only): 6,933 messages; `threading/current` 185.6 KB and `summary/current` 215 KB, still the single documents, with `fromI` 2797 from sessions that dropped older summaries (B43). Only 7 messages, all captured Nov 11, carry full names (B41).
   - **Install the plugin** from the marketplace (README › Install), **remove the uploaded skill**, re-point the hourly loop at `messenger-catchup:refresh`, and **install the userscript once from the link**: the 1.1 copy was pasted, so it can't update itself.
-  - On the next refresh, Claude republishes the page (2.2), and later runs the one-time name scan and asks which aliases to add.
+  - On the next refresh on v1.17.0, Claude republishes the page (2.3), and that refresh's build converts threading and summary to the block layout in one batch; later it runs the one-time name scan and asks which aliases to add.
 - **Repo:** public (since Nov 7), `github.com/roopesh/messenger-catchup`, branch `main`. **Never commit real names or text from a user's chat**: tests use the mock cast (Ana, Ben, Cy, Dee, You).
 
 ## Test suites
@@ -30,10 +31,11 @@
 When a bug is found, write its test as the *fixed* behavior first. Python can mark it `expectedFailure`, and the page test has `known()`, which prints `KNOWN` without failing the run. Remove the marker in the PR that fixes it.
 
 ## Where to start
-1. **One live refresh on the real chat**, after installing the plugin and the userscript from the link. The mock can't prove these, and they're the main remaining risk:
+1. **One live refresh on the real chat** on v1.17.0. The mock can't prove these, and they're the main remaining risk:
+   - the page republishes to 2.3, the build converts both collections (its manifest: blocks plus the two `current` documents, one batch), and the page shows the same summary and threads as before
    - `selfcheck` passes; no `DATES-GUESSED`
    - full names arrive (`fn`), and the one-time name scan fills `people/index`
-   - the page republishes cleanly to 2.2 and shows names by the rule
+   - the page shows names by the rule
    - a queued reply posts: R9, the "Replying to …" bar
    - Tampermonkey picks up a later helper release by itself (the redirect from `latest/download`)
    - the plugin's skill loads in chat and Desktop, and a later release reaches it by itself
@@ -69,10 +71,10 @@ Exit code 0 means everything passed. The page suite reads `tests/out/sim_caps.js
 
 ### Try `catchup.py` locally
 ```sh
-python3 plugin/skills/refresh/scripts/catchup.py bootstrap WORK DBDIR      # DBDIR: chunks/*.json, threading/current.json, summary/current.json, meta/chat.json
-python3 plugin/skills/refresh/scripts/catchup.py build WORK RUNDIR spec.json
+python3 plugin/skills/refresh/scripts/catchup.py bootstrap WORK DBDIR      # DBDIR: chunks/*.json, threading/*.json, summary/*.json, meta/chat.json
+python3 plugin/skills/refresh/scripts/catchup.py build WORK RUNDIR spec.json  # writes RUNDIR/out/manifest.json and the documents it names
 ```
-`build` advances WORK in place. Copy WORK first if you want to rerun (BACKLOG B2). `tests/test_catchup.py` has an `Env` class that builds these folders, so it's the quickest way to try a spec.
+`build` advances WORK in place; `restore WORK` undoes one build. `tests/test_catchup.py` has an `Env` class that builds these folders, and `Live` (with `FakeDB`) runs whole refreshes against a database with the real limits, so it's the quickest way to try a spec. `tests/synth.py` makes large synthetic histories.
 
 ### Change the helper
 1. Edit `plugin/skills/refresh/assets/helper.user.js`.
@@ -98,4 +100,5 @@ python3 plugin/skills/refresh/scripts/catchup.py build WORK RUNDIR spec.json
 - Claude in Chrome tool calls die at about 45 s. Anything long is started and then polled in calls of 25 s or less.
 - The capture step **replaces the Messenger tab's page** with the COPY CAPTURE button. Navigate back to the chat afterwards.
 - Timestamps in status docs must come from the tool clock, not memory (LEARNINGS.md › Tooling).
-- Pin every Claude-side database write with `if_version`.
+- Pin every Claude-side write to an existing document with `if_version`. New block documents have no version; step 7 writes exactly what `RUN/out/manifest.json` lists.
+- A database document holds at most 256 KiB, and a batch at most 50 writes and 1 MiB (LEARNINGS.md › Page database). Never store something that grows with the chat in one document.

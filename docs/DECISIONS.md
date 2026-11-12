@@ -7,7 +7,10 @@ Each entry has what was decided, why, and what was rejected.
 |---|---|---|
 | Store everything in the claude.ai artifact's own DB | Private to the user, no server to run, readable by Claude and the page | Google Sheet; a standalone stack (considered, not built) |
 | Chunks of 82 messages (`chunks/cNNNN`) | Keeps each doc small; appends touch one or two chunks | One big doc |
-| Every write pinned with `if_version` | Two refreshes, or the page and Claude, can't overwrite each other | Blind writes |
+| Every write to an existing document pinned with `if_version` (new block documents have none) | Two refreshes, or the page and Claude, can't overwrite each other | Blind writes |
+| Threading and summary are collections of 1,000-message block documents, named by `current` (v1.17.0, B43) | A document holds at most 256 KiB; the owner's single documents reached 185 KB and 249 KB, growing about 20 KB a day each. Splitting by message number bounds every document, whatever the conversations look like (a conversation's bullets split by block too) | A rolling window that drops old summaries (what sessions improvised, losing them); a document per conversation (thousands of tiny documents, and a long conversation still grows); larger blocks (summary blocks reached 124 KB at 2,000 messages before bullets were split) |
+| A block's id carries a hash of its content; a changed block is a new document, deleted after `current` stops naming it | A run that stops partway, or a batch the tool applies one write at a time, never changes what the page reads; a retry finds what it already wrote; only the two `current` documents need pins | Updating blocks in place (every block write needs a pin, and an interrupted move of a conversation between documents could lose it) |
+| `summary.fromI` is kept, never moved | It records which summaries earlier sessions dropped; the page offers range summaries before it | Removing it (the page would show the dropped stretch as summarized) |
 | Settings live in `meta/chat`, not in the skill | One skill serves any user and any chat | Hard-coded chat URL and names (the original skill) |
 | Keep full history; the summary covers only messages after the start point | Old context stays searchable; the summary stays short | Pruning old messages |
 

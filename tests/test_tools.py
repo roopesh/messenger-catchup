@@ -1,7 +1,7 @@
 """Repo-level checks: helper copies in sync, the sync tool itself, the plugin and its ZIP, and SKILL.md's file references.
 Run: python3 -m unittest discover -s tests"""
 
-import html, importlib.util, os, re, shutil, subprocess, tempfile, unittest, urllib.parse, zipfile
+import contextlib, html, importlib.util, io, os, re, shutil, subprocess, tempfile, unittest, urllib.parse, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location("sync_helper", os.path.join(ROOT, "tools", "sync.py"))
@@ -34,6 +34,7 @@ REFERENCES = [
     "people.md",
     "troubleshooting.md",
     "updating-the-page.md",
+    "writing-the-build.md",
 ]
 SHIPPED = ["SKILL.md", "assets/page.html", "assets/helper.user.js", "scripts/catchup.py"] + [
     "references/" + f for f in REFERENCES
@@ -250,6 +251,109 @@ class TestSkillReferences(unittest.TestCase):
         """Setup seeds meta/chat from the user's answers; the field names live in references/database.md."""
         seed = re.search(r"^4\. \*\*Seed the database\*\*.*$", in_setup("SKILL.md"), re.M).group(0)
         self.assertIn("`references/database.md`", seed)
+
+    def test_step_7_writes_what_the_manifest_lists(self):
+        """B43: threading and summary are block documents; step 7 writes exactly what the build's manifest names, pinned
+        where it says, and cleans up only after every batch succeeded."""
+        skill = in_skill("SKILL.md")
+        step5 = re.search(r"^5\. .*$", skill, re.M).group(0)
+        step7 = re.search(r"^7\. .*$", skill, re.M).group(0)
+        self.assertIn("`list threading` and `list summary` (limit 1000) into RUN", step5)
+        for must in (
+            "`RUN/out/manifest.json`",
+            "one `batch` per entry of `batches`, in order",
+            "`if_version` from step 5 where it has `pin`",
+            "The last batch also gets `meta/chat`",
+            "Once every batch has succeeded, delete what `cleanup` lists",
+            "`references/writing-the-build.md` › Refused writes",
+        ):
+            self.assertIn(must, step7)
+        self.assertNotIn("RUN/out/*.json", skill, "the old single-document write")
+        self.assertIn(
+            "`list threading` and `list summary`, each limit 1000", skill, "bootstrap fetches the collections"
+        )
+        relink = re.search(r"^- \*\*Fixing a link with nothing new to build:\*\*.*$", skill, re.M).group(0)
+        self.assertIn("`OUT/manifest.json`", relink)
+        ref = in_skill("references", "writing-the-build.md")
+        for must in (
+            "## Refused writes",
+            "`pin:true`",
+            "48 documents and 900 KiB",
+            "never invent a window",
+            "`summary.fromI`",
+        ):
+            self.assertIn(must, ref)
+
+    def test_never_drop_anything_to_save_space(self):
+        rules = re.search(r"^## Hard rules.*?(?=^## )", in_skill("SKILL.md"), re.M | re.S).group(0)
+        self.assertRegex(
+            rules, r"Never drop, shorten or prune conversations, bullets or other summary items to save space"
+        )
+        self.assertIn("## Never drop anything to save space", in_skill("references", "writing-the-build.md"))
+
+    def test_page_and_catchup_merge_the_same_layout(self):
+        """The page and catchup.py each merge the block documents; their layout keys and list orders must agree."""
+        page, py = in_skill("assets", "page.html"), in_skill("scripts", "catchup.py")
+        keys = lambda s: re.findall(r'"(\w+)"', s)
+        self.assertEqual(
+            keys(re.search(r"const LAYOUT_KEYS = \[([^\]]*)\]", page).group(1)),
+            keys(re.search(r"^LAYOUT_KEYS = \(([^)]*)\)", py, re.M).group(1)),
+        )
+        self.assertEqual(
+            keys(re.search(r'\[("convs", "open", "answered", "mentions")\]\.forEach', page).group(1)),
+            keys(re.search(r"^NEWEST_FIRST = \(([^)]*)\)", py, re.M).group(1)),
+        )
+        db = in_skill("references", "database.md")
+        for f in ("`layout:2`", "`blocks`", "`activeFrom`", "`members:", "`syn:", "`start`", "newest block first"):
+            self.assertIn(f, db)
+
+    def test_setup_seed_bootstraps_and_the_first_build_converts_it(self):
+        """Setup seeds the single-document layout; first-run.md says the first build converts it. Run exactly that."""
+        import json
+
+        seed = re.search(r"^4\. \*\*Seed the database\*\*.*$", in_setup("SKILL.md"), re.M).group(0)
+        js = lambda s: json.loads(re.sub(r"([{,])(\w+):", r'\1"\2":', s))
+        th = js(re.search(r"`threading/current` `(\{[^`]*\})`", seed).group(1))
+        sm = js(re.search(r"`summary/current` `(\{[^`]*\})`", seed).group(1))
+        self.assertIn("first build's manifest turns them into the block layout", in_skill("references", "first-run.md"))
+        _c = importlib.util.spec_from_file_location("catchup_seed", os.path.join(ROOT, SKILL, "scripts", "catchup.py"))
+        catchup = importlib.util.module_from_spec(_c)
+        _c.loader.exec_module(catchup)
+        with tempfile.TemporaryDirectory() as t:
+            for p, o in (
+                ("threading/current", th),
+                ("summary/current", sm),
+                ("meta/chat", {"lastI": -1, "anchorMids": []}),
+            ):
+                os.makedirs(os.path.dirname(os.path.join(t, "seed", p)), exist_ok=True)
+                with open(os.path.join(t, "seed", p + ".json"), "w") as fh:
+                    json.dump(o, fh)
+            os.makedirs(os.path.join(t, "seed", "chunks"))
+            with contextlib.redirect_stdout(io.StringIO()):
+                catchup.bootstrap(os.path.join(t, "work"), os.path.join(t, "seed"))
+            run = os.path.join(t, "run")
+            os.makedirs(os.path.join(run, "chunks"))
+            os.makedirs(os.path.join(run, "meta"))
+            msgs = [
+                {"i": i, "t": "Fri 9:0%d AM" % i, "d": "2026-11-06", "f": "Ana", "b": "m", "m": "mid.%d" % i}
+                for i in range(3)
+            ]
+            for p, o in (
+                ("chunks/c0000", {"start": 0, "msgs": msgs}),
+                ("meta/chat", {"lastI": 2, "anchorMids": ["mid.0", "mid.1", "mid.2"]}),
+            ):
+                with open(os.path.join(run, p + ".json"), "w") as fh:
+                    json.dump(o, fh)
+            with open(os.path.join(t, "spec.json"), "w") as fh:
+                json.dump({"newconvs": [{"id": "a", "title": "A"}], "join": {"a": [0, 1, 2]}}, fh)
+            with contextlib.redirect_stdout(io.StringIO()):
+                catchup.build(os.path.join(t, "work"), run, os.path.join(t, "spec.json"))
+            with open(os.path.join(run, "out", "manifest.json")) as fh:
+                man = json.load(fh)
+            written = [e["collection"] + "/" + e["doc_id"] for b in man["batches"] for e in b]
+            self.assertEqual(written[-2:], ["threading/current", "summary/current"])
+            with open(os.path.join(run, "out", "threading", "current.json")) as fh:
+                self.assertEqual(json.load(fh)["layout"], 2)
 
     def test_outbox_is_read_before_any_reply_is_posted(self):
         skill = in_skill("SKILL.md")

@@ -28,3 +28,4 @@ The owner's standing rule. No exceptions for "small" changes, docs or tests.
 - `plugin/skills/refresh/assets/page.html` holds the page **without** the document skeleton (`<!doctype html>…<body>`): the Artifact tool adds it at publish time. A test enforces this.
 - A skill's `SKILL.md` and `references/*.md` (under `plugin/skills/<name>/`) are what Claude executes for users. Treat edits to them as behavior changes. `SKILL.md` is read on **every** refresh, so keep it to what a refresh needs (a test caps it at 20 KB), and put anything needed only sometimes in a reference file that `SKILL.md` names, saying when to read it.
 - Keep `docs/BACKLOG.md` current: close items in the PR that fixes them, and file anything new you find.
+- Backlog-only edits don't get their own PR: they wait on a branch and ship with the next real change.

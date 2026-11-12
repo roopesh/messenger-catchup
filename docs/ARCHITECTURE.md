@@ -1,6 +1,6 @@
 # Architecture
 
-How the pieces fit together, as of Nov 6, 2026 (Phase 8: build tool renamed `catchup.py`, helper functions `mc*`). Line numbers are current as of that change.
+How the pieces fit together, as of Nov 11, 2026 (v1.17.0: threading and summary stored as block documents). Line numbers date from Nov 6 (Phase 8) and have drifted; search by name.
 
 Related docs: [STATUS.md](STATUS.md) (start here) · [BACKLOG.md](BACKLOG.md) · [DECISIONS.md](DECISIONS.md) · [LEARNINGS.md](LEARNINGS.md)
 
@@ -14,7 +14,7 @@ They ship as a plugin (v1.15.0): the repo is a marketplace (`.claude-plugin/mark
 | `references/*.md` | Claude, on demand | `first-run.md` (the first capture after setup), `updating-the-page.md`, `outbox.md` (posting queued replies), `open-message.md`, `database.md` (full reference, `qa`/`notes`), `troubleshooting.md`. `SKILL.md` says when to read each (v1.9.0, BACKLOG C7). |
 | `assets/helper.user.js` | The user's Messenger tab (userscript, or injected by Claude) | Scroll back and read messages (scan), confirm them by ID (verify), build the capture JSON (capture), jump links. |
 | `assets/page.html` | claude.ai artifact, in the user's browser | The catch-up page. Also the **importer**: checks a pasted capture and writes it to the database. |
-| `scripts/catchup.py` | Claude's code sandbox | Builds `threading/current` and `summary/current` from Claude's spec and asserts the rules. |
+| `scripts/catchup.py` | Claude's code sandbox | Builds threading and summary from Claude's spec, asserts the rules, and writes the documents that changed plus a manifest of what to write (block layout, v1.17.0). |
 
 There is no server. The artifact database (ArtifactData) is the only store, and both Claude and the page read and write it.
 
@@ -38,9 +38,10 @@ There is no server. The artifact database (ArtifactData) is the only store, and 
                                                                            read back, update meta/chat,
                                                                            upload photos, photos/index
  read refresh/lastImport ◀──────────────────────────────────────────────── refresh/lastImport
- get touched chunks + meta/chat into RUN/
- write spec.json; catchup.py build WORK RUN spec.json
- batch write (if_version): threading, summary, meta/chat, refresh/status
+ get touched chunks + meta/chat, list threading + summary into RUN/
+ write spec.json; catchup.py build WORK RUN spec.json  ->  RUN/out/manifest.json
+ batch write per manifest: new blocks (unpinned), threading/current +
+   summary/current (if_version), meta/chat, refresh/status; then cleanup
  handle outbox (jump{mid,reply} + insertText + Enter)
 ```
 
@@ -83,7 +84,7 @@ The helper exists **twice**: the file itself, and its `jump()` body as a URL-enc
 
 - **Capabilities:** `db`, `assets` (photo uploads), `sample` (Ask Claude, Views, range summaries). Published by Claude with `capabilities: {"db":{}, "assets":{}, "sample":{}}`.
 - **Config:** everything chat-specific comes from `meta/chat` via `applyCfg()` (line 500). `PAGE_VERSION` is at line 493.
-- **Boot** (line 1032): subscribes with `onSnapshot` to `meta/chat`, `summary/current`, `chunks`, `qa`, `views`, `notes`, `outbox`, `refresh/status`, `rangeSummaries`, `photos/index`, `threading/current`. Every chunk change rebuilds the full in-memory message list (`rebuild`, line 1029).
+- **Boot:** subscribes with `onSnapshot` to `meta/chat`, the `summary` collection, `chunks`, `qa`, `views`, `notes`, `outbox`, `refresh/status`, `rangeSummaries`, `people/index`, `photos/index` and the `threading` collection. Every chunk change rebuilds the full in-memory message list (`rebuild`). `mergeThreading` and `mergeSummary` turn each collection back into the single objects `S.threading` and `S.summary` that every view reads (old single documents are used as they are), so nothing else knows about blocks.
 - **Tabs:** Summary · Ask Claude · Messages · Views, plus a fixed "Refreshing" section with helper setup and the manual Import box.
 
 ### Catch-up window (`winRange`, line 546)
@@ -118,19 +119,28 @@ Every outcome goes to `refresh/lastImport`. A dry run reports what it would do, 
 "Reply here" writes `outbox/r<timestamp>` `{i, mid, to, snip, text, state:"queued", queuedAt}`; Cancel sets `state:"cancelled"`. Claude moves rows to `sending` → `sent` (`sentAt`, `sentMid`), `failed` (`error`) or `unconfirmed` (sent but never found in the chat; never reposted). Failed and unconfirmed rows have a Dismiss button (`state:"dismissed"`), and they stay listed until resolved.
 
 ### Range summaries (pages carried over from the original chat)
-- `renderRangeSummary` / `writeRangeSummary`: when the catch-up window is set by date (`markerMode:"time"`) and starts before `summary/current.fromI`, the page offers to have Claude (through the page's `sample`) summarize exactly that span, and saves it in `rangeSummaries/r<lo>_<hi>`.
-- Only summaries written before the generic skill have `fromI`. `catchup.py` never sets it but keeps it, because each build edits the stored summary. So new pages never show range summaries, while the original page does (checked live Nov 7: `fromI` 1654, two saved spans).
+- `renderRangeSummary` / `writeRangeSummary`: when the catch-up window is set by date (`markerMode:"time"`) and starts before the summary's `fromI`, the page offers to have Claude (through the page's `sample`) summarize exactly that span, and saves it in `rangeSummaries/r<lo>_<hi>`.
+- `fromI` is the first message the stored summary covers. Only pages from before v1.17.0 have it: the original page's summary started there (checked live Nov 7: `fromI` 1654, two saved spans), and by Nov 11 refresh sessions had moved it to 2797 while dropping older conversations to stay under the document cap (BACKLOG B43). `catchup.py` keeps it and never moves it; nothing is dropped any more. New pages never show range summaries.
 - The removed legacy code (C1, v1.7.3): the in-page Refresh trigger (`REFRESH_TASK`, `startRefresh`, `fire_trigger`), the summary v1 renderer, and `dayMap`/`meta.dates`. Every stored message carries `d`; checked live: 3,992 of 3,992.
 
 ## Build tool (`scripts/catchup.py`)
 
-- `bootstrap WORK DBDIR`: loads all chunks, asserts numbering has no gaps and `meta.lastI` matches, writes `WORK/all.json`, `WORK/base/{threading,summary}.json`, `WORK/state.json` (`base`, `stops`, `tz`). WORK's base is the last *built* message (`threading/current.to`). Messages stored after it (from a run that stopped after its import) are built by the next RUN, and `build` names the chunks to fetch if they're missing.
-- `build WORK RUN SPEC`: loads new messages from `RUN/chunks` (must be exactly `base+1…`), applies the spec, picks default links, runs the asserts, writes `RUN/out/{threading,summary}.json`, copies the WORK it started from to `WORK/prev/`, then **advances WORK**. Building the same RUN again fails with "RUN already built into WORK … run: catchup.py restore WORK".
-- `relink WORK OUT SPEC` (v1.12.0): corrects links on messages an earlier build threaded, when there's nothing new to build. SPEC holds only `relink` `{i:[parent,type]|null}`, and the same key works inside a build spec. It writes `OUT/threading.json`, then advances WORK's threading, keeping `WORK/prev`.
+- `bootstrap WORK DBDIR`: loads all chunks, asserts numbering has no gaps and `meta.lastI` matches, merges the `threading` and `summary` collections (either layout, below), writes `WORK/all.json`, `WORK/base/{threading,summary}.json` (the merged state), `WORK/base/layout.json` (which documents exist, `activeFrom`), `WORK/state.json` (`base`, `stops`, `tz`). WORK's base is the last *built* message (threading's `to`). Messages stored after it (from a run that stopped after its import) are built by the next RUN, and `build` names the chunks to fetch if they're missing.
+- `build WORK RUN SPEC`: loads new messages from `RUN/chunks` (must be exactly `base+1…`), applies the spec, picks default links, runs the asserts, splits the state into block documents and checks that they merge back into it and that none is over 240 KiB, writes the documents that changed to `RUN/out/{threading,summary}/` with `RUN/out/manifest.json` (and the merged state in `RUN/out/merged/`, for checking), copies the WORK it started from to `WORK/prev/`, then **advances WORK**. If step 5 listed the collections into RUN, it first checks that the stored `current` documents are still the ones WORK was built from. Building the same RUN again fails with "RUN already built into WORK … run: catchup.py restore WORK".
+- `relink WORK OUT SPEC` (v1.12.0): corrects links on messages an earlier build threaded, when there's nothing new to build. SPEC holds only `relink` `{i:[parent,type]|null}`, and the same key works inside a build spec. It writes `OUT/manifest.json` and the threading documents it names (no cleanup; the next build's does it), then advances WORK's threading, keeping `WORK/prev`.
 - `restore WORK`: puts `WORK/prev/` back and removes it (one step of undo). Used after a refused DB write or to rebuild with a corrected spec. `bootstrap` clears any stale `WORK/prev/`.
 - Default link for each new message, in order: Messenger parent in window (`pi` → `r`, or `rq` if quote-matched in the browser) → Messenger parent by id from history (`pmid`) → quote match on stored history (`resolve`: same author, 300-message window, latest wins; the first 20 normalized chars as a prefix → `rq`; a quote under 12 chars must equal the whole text, and a long quote found only inside a text is accepted, both printed as `CHECK quote match (…)`; empty or "Photo"-type quote → author's latest media → `rg` + CHECK) → previous member of its conversation if ≤3 h older (`c` same author, else `i`, printed as GUESS) → none (ROOT).
-- Asserts: conv ids new; every new message joined exactly once; every message from the lowest member up is in exactly one conversation; links point backward; bullets ≤15 words; outcomes ≤12; bullet/key/open/answered refs belong to their conversation; deals name a real conversation; `meta/chat` was updated by the import.
+- Asserts: WORK isn't behind the database; conv ids new; every new message joined exactly once; every message from the lowest member up is in exactly one conversation; links point backward; bullets ≤15 words; outcomes ≤12; bullet/key/open/answered refs belong to their conversation; deals name a real conversation; `meta/chat` was updated by the import; every output document is at most 240 KiB ("… would be N bytes, over the 245760-byte limit … Never drop or shorten …", nothing written).
 - Timestamps (`builtAt`, `generatedAt`) come from the system clock in `meta.tz` (falls back to America/Los_Angeles).
+
+### Threading and summary layout (v1.17.0, BACKLOG B43)
+A database document holds at most 256 KiB, and threading (about 25 bytes a message) and summary (about 50) grow with the chat, so each is a collection. Full field list: the refresh skill's `references/database.md`.
+- `threading/current` `{layout:2, block:1000, blocks:[ids], to, note, builtAt, convs:[conversations with no messages yet]}`; `threading/b<start>-<hash>` `{start, convs:[{id,title}] starting in the block, members:{conv:[i…]}, links:{i:[p,t]}}`.
+- `summary/current` `{layout:2, block, blocks, activeFrom, version, toI, generatedAt, fromI?, mentionsNote?, convs, open, answered, mentions, deals}` holds what's at or after `activeFrom` (the start of the block before the newest, moved up a block while `current` is over 96 KiB; it never moves back). `summary/b<start>-<hash>` holds older items by the block of their messages: `convs` (by last message), `open` (ask), `answered` (newest of ask and refs), `mentions` (newest ref), `deals` (first ref), and `syn:{conv:[bullets]}`, a conversation's bullets by the block they cite.
+- Each list's key is a running maximum from its oldest end, so every document holds one unbroken run of each list, and merging (`catchup.merge_threading`/`merge_summary`, the page's `mergeThreading`/`mergeSummary`) gives back the exact single documents, order included. `catchup.py` asserts that round trip on every build.
+- Ids carry a hash of the content. A changed block is a new document; `current` switches to it in the same batch, and the old one is deleted afterwards (`cleanup`). An interrupted run leaves `current` naming intact blocks, and a retry finds the blocks it already created. Only documents that look like blocks (`b000000-0123abcd`) are ever deleted.
+- The old layout (one `current` each, no `layout`) is read by the page and by bootstrap; the first build converts it. Setup still seeds the old empty documents.
+- Measured: the largest document stays at most 85 KB from 6,400 to 50,000 messages (EXPERIMENTS.md §13).
 
 ## Database reference (all writers)
 
@@ -144,8 +154,8 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | | Claude per refresh | `lastRefresh`, `coverage`, `ideasSeenAt` |
 | | (no longer read) | `dates` (left in old pages; the page stopped reading it in v1.7.3) |
 | `chunks/cNNNN` | Page importer | `{start, msgs}` |
-| `threading/current` | Claude (from catchup.py) | `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
-| `summary/current` | Claude (from catchup.py) | `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
+| `threading/*` | Claude (from catchup.py's manifest) | `current` + blocks (layout above); merged: `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
+| `summary/*` | Claude (from catchup.py's manifest) | `current` + blocks (layout above); merged: `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
 | `people/index` | Page importer; Claude's one-time scan (`scannedAt`, `scanned`; entries without positions) | `people{"<full name>":{shown:[names Messenger showed],firstI,lastI}}`. The page names people from it: the first name, the full name when two share a first name, and a nickname as "nickname (first or full name)". Real names live only in each user's page database, never in the repo |
 | `photos/index` | Page importer | `byI{i:["/_blob/<id>",…]}` (what the page shows), `byK{i:{k:"/_blob/<id>"}}` (which capture slot each came from, so a re-paste skips the right ones), `gifs[i]` |
 | `refresh/status` | Claude | `state` (idle/running/done/error), `startedAt`, `step`, `by`, `finishedAt`, `added`, `message` |
@@ -154,7 +164,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `outbox/*` | Page, then Claude | see Outbox above |
 | `qa/*` | Page (Ask) | `q`, `a`, `at`, `scope`, `toI` |
 | `views/*` | Page (Views) | `kind:"view"` (title, intro, sections, prompt, at, toI) or `kind:"idea"` (prompt, at) |
-| `rangeSummaries/*` | Page (only when `summary/current` has `fromI`) | same shape as summary plus `by:"page"`, `fromI` |
+| `rangeSummaries/*` | Page (only when the summary has `fromI`) | same shape as summary plus `by:"page"`, `fromI` |
 | `notes/*` | Claude (SKILL.md › What the page saves for Claude) | `title`, `when`, `at`, `intro`, `table`, `sections`, `footer` |
 
 \* not listed in SKILL.md (BACKLOG G1).
@@ -174,15 +184,17 @@ Nothing here ships: only `plugin/` reaches users, and a test keeps it to the shi
 | `.github/workflows/test.yml` | CI: `test` (`npm test`), `version-bump` (PRs must raise `VERSION`), `pr-only` (commits on `main` must come from a merged PR) |
 | `.githooks/pre-push` | Blocks direct pushes to `main` from a local clone (`npm run hooks`) |
 | `tools/sync.py` | Regenerates the page's `#jump-bm` bookmarklet from `helper.user.js` and the setup skill's copies of shared files; `--check` mode |
-| `tests/test_catchup.py` | `catchup.py` unit tests; the `Env` class fakes WORK and ArtifactData `out_dir`s |
+| `tests/test_catchup.py` | `catchup.py` unit tests; the `Env` class fakes WORK and ArtifactData `out_dir`s; `FakeDB` and `Live` drive whole refreshes against a database with the real limits (256 KiB documents, 50-write and 1 MiB batches, pins) |
+| `tests/synth.py` | Synthetic chat histories (mock cast) calibrated to the owner's page, for the size and layout tests |
 | `tests/test_tools.py` | Sync, version strings, leftover names, SKILL.md file references, the plugin and marketplace manifests, ZIP contents |
 | `tests/sim.js`, `tests/run.js`, `tests/mock/` | The helper against a simulated Messenger (`mock_total` and `mock_skip` in localStorage control its history); `run.js` serves the mock |
-| `tests/page.test.js` | The page with a stand-in `window.claude` (in-memory `db` with `onSnapshot` and a write log, `assets`, `sample`); reads `tests/out/sim_caps.json` from the sim for the pipeline test |
+| `tests/page.test.js` | The page with a stand-in `window.claude` (in-memory `db` with `onSnapshot`, a write log, the 256 KiB document limit, and Claude's `batch` with its limits and pins; `assets`, `sample`); reads `tests/out/sim_caps.json` from the sim for the pipeline test, which writes catchup.py's manifest as Claude does |
 
 ## Versions in play
 | Thing | Where | Now |
 |---|---|---|
-| Plugin | `plugin/.claude-plugin/plugin.json` `version`, always the release version; installs update when it changes | 1.15.0 |
-| Page | `PAGE_VERSION` (page.html:493); stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 1.7 |
-| Helper | 4 places in `helper.user.js` + the page's embedded copy | 1.4 |
-| Summary schema | `summary/current.version` | 2 (the "v3" cards are a display change, same schema) |
+| Plugin | `plugin/.claude-plugin/plugin.json` `version`, always the release version; installs update when it changes | 1.17.0 |
+| Page | `PAGE_VERSION` in page.html; stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 2.3 |
+| Helper | 4 places in `helper.user.js`; the page's bookmarklet is generated from it | 1.9 |
+| Summary schema | `summary.version` | 2 (the "v3" cards are a display change, same schema) |
+| Storage layout | `layout` in `threading/current` and `summary/current` | 2 (block documents, v1.17.0); absent = the single documents before it |
