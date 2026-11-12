@@ -85,6 +85,7 @@ The helper exists **twice**: the file itself, and its `jump()` body as a URL-enc
 - **Capabilities:** `db`, `assets` (photo uploads), `sample` (Ask Claude, Views, range summaries). Published by Claude with `capabilities: {"db":{}, "assets":{}, "sample":{}}`.
 - **Config:** everything chat-specific comes from `meta/chat` via `applyCfg()` (line 500). `PAGE_VERSION` is at line 493.
 - **Boot:** subscribes with `onSnapshot` to `meta/chat`, the `summary` collection, `chunks`, `qa`, `views`, `notes`, `outbox`, `refresh/status`, `rangeSummaries`, `people/index`, `photos/index` and the `threading` collection. Every chunk change rebuilds the full in-memory message list (`rebuild`). `mergeThreading` and `mergeSummary` turn each collection back into the single objects `S.threading` and `S.summary` that every view reads (old single documents are used as they are), so nothing else knows about blocks.
+- **Keeping the reader's place (v1.18.0, BACKLOG B39):** a snapshot of new data redraws the Summary and Messages tabs from scratch inside `keepPlace`, which notes the message whose reply is being written (else the first row or card on screen) and its height on screen, redraws, and scrolls it back to the same height; open summary threads keep their inner scroll. Which Messages conversations the reader opened or closed is kept in `S.convOpen` (the summary's threads in `S.openThr`); only untouched ones follow the first-four default. An `outbox` change redraws nothing: `outboxChanged` refills the "reply queued" chips (`.pt[data-pt]`), the Summary's "Your replies" (`#ob-slot`) and closes the composer whose reply was queued.
 - **Tabs:** Summary · Ask Claude · Messages · Views, plus a fixed "Refreshing" section with helper setup and the manual Import box.
 
 ### Catch-up window (`winRange`, line 546)
@@ -99,6 +100,8 @@ Everything (summary cards, counts, mentions, open questions) filters to the wind
 
 ### Threading display (`convTree`, line 703)
 One tree for cards and the Messages tab. `r`/`rq`/`rg`/`i` links nest under their parent; `c` (same person continuing) sits right after the earlier message at the same level; depth is capped at 3. **A link only nests when its parent is in the same conversation**; otherwise the message shows as a root.
+- **Blocks (v1.18.0, B42):** a run of `c` messages from the same sender, each at most 5 minutes after the last (`RUN_MS`, `sameRun`), renders as one block (`blockOf`, `.grp`), as Messenger shows a person's bubbles: one header, each bubble's text or photos beneath it. Each bubble is still a `.msg` row with its own id (`#m<i>`, or `data-i` in summary threads) and quiet number, so search, jumps and `#n` links find it; its actions (`.acts`) float in on hover, show on keyboard focus, and appear under it on a tap where there's no hover. Replies to any bubble nest under the block. The timeline and "Not grouped yet" group the same way with `flatRows` (next in the list and a `c` link; without threading, the same sender and not a Messenger reply). The Messages filter takes `#123` for message 123.
+- **Context line (v1.18.0, B40):** when a conversation's first shown message links to a message that isn't shown in it (threading put a reply in a new conversation, or the conversation started before the window), `ctxLine` shows that message first: which conversation it's in, the sender, an excerpt or "[photo]", its time and "Show #n →", which jumps to it. In the Messages tab's threaded layout and on Summary cards.
 
 ### Importer (`importCore`, line 957)
 The page's database has **no version-checked writes and no transactions** (runtime contract: last-writer-wins). So since v1.2.0 the importer protects itself in three ways:
@@ -189,13 +192,13 @@ Nothing here ships: only `plugin/` reaches users, and a test keeps it to the shi
 | `tests/synth.py` | Synthetic chat histories (mock cast) calibrated to the owner's page, for the size and layout tests |
 | `tests/test_tools.py` | Sync, version strings, leftover names, SKILL.md file references, the plugin and marketplace manifests, ZIP contents |
 | `tests/sim.js`, `tests/run.js`, `tests/mock/` | The helper against a simulated Messenger (`mock_total` and `mock_skip` in localStorage control its history); `run.js` serves the mock |
-| `tests/page.test.js` | The page with a stand-in `window.claude` (in-memory `db` with `onSnapshot`, a write log, the 256 KiB document limit, and Claude's `batch` with its limits and pins; `assets`, `sample`); reads `tests/out/sim_caps.json` from the sim for the pipeline test, which writes catchup.py's manifest as Claude does |
+| `tests/page.test.js` | The page with a stand-in `window.claude` (in-memory `db` with `onSnapshot`, a write log, the 256 KiB document limit, and Claude's `batch` with its limits and pins; `assets`, `sample`); reads `tests/out/sim_caps.json` from the sim for the pipeline test, which writes catchup.py's manifest as Claude does. `PAGE_FILE=<path>` tests another copy of the page (e.g. the last release's, to check that a new test fails on it) and `ONLY=messagesView,names` runs just those sections |
 
 ## Versions in play
 | Thing | Where | Now |
 |---|---|---|
 | Plugin | `plugin/.claude-plugin/plugin.json` `version`, always the release version; installs update when it changes | 1.17.0 |
-| Page | `PAGE_VERSION` in page.html; stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 2.3 |
+| Page | `PAGE_VERSION` in page.html; stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 2.4 |
 | Helper | 4 places in `helper.user.js`; the page's bookmarklet is generated from it | 1.9 |
 | Summary schema | `summary.version` | 2 (the "v3" cards are a display change, same schema) |
 | Storage layout | `layout` in `threading/current` and `summary/current` | 2 (block documents, v1.17.0); absent = the single documents before it |

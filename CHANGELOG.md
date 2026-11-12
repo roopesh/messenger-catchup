@@ -2,6 +2,28 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.18.0] - 2026-11-12
+**The Messages view: a person's bubbles as one block, your place kept, and the message a conversation answers** (BACKLOG B39, B40, B42). MINOR: page `PAGE_VERSION` 2.4, so Claude republishes the page on the next refresh. Helper, skills, `catchup.py` and the database layout unchanged.
+
+### Changed
+- **A person's bubbles read as one block, as in Messenger (B42).** Messenger stores each bubble as its own message, so a text and the photo sent a minute later showed as two full rows, the second labelled "… continues". Now a run of bubbles from the same sender, each at most 5 minutes after the last and linked as "continues" by threading, is one block: one header (name, time), each bubble's text or photos beneath it, its number kept but quiet.
+  - Each bubble keeps its own "Reply in Messenger", "Open photo" and "Reply here". With a mouse they appear in a small bar when you hover that bubble; with a keyboard, when one of them has focus; on a phone, when you tap the bubble. Single messages keep their actions printed as before.
+  - Replies to any bubble nest under the block. Search, jumps and `#n` links still find each bubble. It works in the timeline, the threaded layout and the Summary's "Show the thread".
+  - The Messages filter takes `#123` to find message 123.
+
+### Fixed
+- **Queuing a reply no longer closes the conversation and jumps the page (B39).** Every outbox change used to rebuild the Summary and Messages tabs, and the rebuild reopened only the first four conversations. Now:
+  - an outbox change only refills the "reply queued" chips and the "Your replies" list, and closes the composer whose reply was queued
+  - the Messages tab remembers which conversations you opened or closed
+  - every other rebuild from new data (a refresh's chunks, threading, the summary, photos, names) keeps the message you were replying to, or the row at the top of the screen, where it was. Chromium anchors scrolling itself; Safari doesn't, so this matters most there.
+- **A conversation that starts with a reply shows what it replies to (B40).** When threading put a reply in a new conversation, the message it answered was only a "reply to #n" chip. The conversation now opens with a context line: which conversation that message is in, its sender and an excerpt (or "[photo]"), its time and "Show #n →", which jumps to it. Also when a conversation started before the catch-up window. In the Messages tab and on Summary cards; it works on pages already built, with no change to the refresh.
+- A jump made while a typed filter was still waiting to apply could be redrawn over.
+
+### Tests
+- Page: `messagesView` (24 checks): the block, its single header and quiet numbers; a reply nesting under it; an 8-minute gap and a different sender kept apart; hover and keyboard focus showing only that bubble's actions; "Reply here" on the second bubble queuing a reply to it; the `#n` link and the filter finding each bubble, threaded and in the timeline; the Summary thread; a phone (tap shows the actions, no sideways scroll); the context line, its jump and its Summary card; the reader's place through a queued reply, a new chunk and a threading update, with Chromium's own scroll anchoring off. Each fails on v1.17's page, except the ones that guard against regressions: rows kept apart, no context line where none belongs, "Reply here" on the right message, no sideways scroll and no page errors.
+- The layout test compares the old layout with the last release's page by what it shows (the header, the Summary cards and every message's number, text and photos) rather than exact text, since rows are now grouped.
+- `ONLY=section,...` runs some page-test sections.
+
 ## [1.17.1] - 2026-11-12
 **Fixes from the first live refresh on 1.17.0** (BACKLOG B44, GitHub issue #33). PATCH: page, helper and database layout unchanged.
 
