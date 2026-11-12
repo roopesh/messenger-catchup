@@ -273,7 +273,8 @@ class TestSkillReferences(unittest.TestCase):
             "`list threading` and `list summary`, each limit 1000", skill, "bootstrap fetches the collections"
         )
         relink = re.search(r"^- \*\*Fixing a link with nothing new to build:\*\*.*$", skill, re.M).group(0)
-        self.assertIn("`OUT/manifest.json`", relink)
+        self.assertIn("`list threading` (limit 1000) into a fresh RUN", relink)
+        self.assertIn("`RUN/out/manifest.json`", relink)
         ref = in_skill("references", "writing-the-build.md")
         for must in (
             "## Refused writes",
@@ -283,6 +284,22 @@ class TestSkillReferences(unittest.TestCase):
             "`summary.fromI`",
         ):
             self.assertIn(must, ref)
+
+    def test_writing_the_build_covers_partial_writes_strays_and_missing_blocks(self):
+        """Review of #31, finding 5: a refused batch writes nothing, but one applied a write at a time can stop partway;
+        and the reference says what to do about blocks no current names and a block that's gone."""
+        ref = in_skill("references", "writing-the-build.md")
+        self.assertNotIn("A refused batch writes nothing", ref)
+        for must in (
+            "## A partly applied write",
+            "`catchup.py bootstrap WORK DBDIR --rollback`",
+            "## Blocks no current names",
+            "Never delete them",
+            "## A missing block",
+            "Blocks no `current` names are never in it",
+        ):
+            self.assertIn(must, ref)
+        self.assertIn('"--rollback" in sys.argv', in_skill("scripts", "catchup.py"))
 
     def test_never_drop_anything_to_save_space(self):
         rules = re.search(r"^## Hard rules.*?(?=^## )", in_skill("SKILL.md"), re.M | re.S).group(0)
@@ -334,6 +351,10 @@ class TestSkillReferences(unittest.TestCase):
             run = os.path.join(t, "run")
             os.makedirs(os.path.join(run, "chunks"))
             os.makedirs(os.path.join(run, "meta"))
+            for c, o in (("threading", th), ("summary", sm)):  # step 5's listing: the seeded documents
+                os.makedirs(os.path.join(run, c))
+                with open(os.path.join(run, c, "current.json"), "w") as fh:
+                    json.dump(o, fh)
             msgs = [
                 {"i": i, "t": "Fri 9:0%d AM" % i, "d": "2026-11-06", "f": "Ana", "b": "m", "m": "mid.%d" % i}
                 for i in range(3)

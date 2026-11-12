@@ -1641,6 +1641,34 @@ async function layouts() {
   ok(pNew.errors.length === 0 && pOld.errors.length === 0, 'layout: no page errors ' + JSON.stringify(pNew.errors));
   await pNew.context().close();
   await pOld.context().close();
+  // a block `current` names that never arrives is reported; one a moment late isn't (review of #31, finding 4)
+  const lateId = sumBlocks.find(k => k !== sb);
+  const lateSeed = Object.assign({}, newSeed);
+  delete lateSeed[lateId];
+  const pLate = await open(lateSeed);
+  await pLate.waitForTimeout(1000);
+  await pLate.evaluate(([k, v]) => __rt.write(k, v), [lateId, S0.new[lateId]]);
+  await pLate.waitForTimeout(6500);
+  const note = await pLate.$('#layout-st');
+  ok(
+    !!note && (await note.evaluate(e => e.hidden)),
+    'layout: a block that arrives a moment after current shows no notice',
+  );
+  await pLate.evaluate(k => __rt.del(k), lateId);
+  ok(
+    await until(
+      pLate,
+      () => {
+        const e = document.getElementById('layout-st');
+        return e && !e.hidden && /didn't load \(1 document missing\)/.test(e.textContent);
+      },
+      null,
+      9000,
+    ),
+    'layout: a block current names that stays missing is reported on the page, not silently dropped',
+  );
+  ok(pLate.errors.length === 0, 'layout: no page errors with a block missing ' + JSON.stringify(pLate.errors));
+  await pLate.context().close();
 }
 
 /* ---------- 5. names from the importer's side ---------- */

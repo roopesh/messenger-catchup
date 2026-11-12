@@ -27,7 +27,7 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
   - step 7 writes what the manifest lists (pins where it says, `meta/chat` and `refresh/status` in the last batch), then deletes what `cleanup` lists
   - new hard rule: never drop, shorten or prune conversations, bullets or other summary items to save space
   - new `references/writing-the-build.md` (the manifest, the cleanup, refused writes, the first build on v1.17, `fromI`)
-  - `references/database.md` documents the layout (setup's copy too); `first-run.md` and `troubleshooting.md` updated. `SKILL.md`: 19,836 bytes.
+  - `references/database.md` documents the layout (setup's copy too); `first-run.md` and `troubleshooting.md` updated. `SKILL.md`: 19,859 bytes.
 - **Migration:** the first refresh on 1.17.0 republishes the page (2.3), and its build converts both collections, usually in one batch: it creates the blocks, then replaces both `current` documents. If it stops partway, the old documents still stand and the next refresh finishes it. The stray `fromI` (2797 on the owner's page) is kept, so the page keeps offering to summarize spans before it.
 - **Measured** on synthetic chats calibrated to the owner's page (`tests/synth.py`, mock cast): from 6,400 to 50,000 messages the largest document is at most 84 KB, or 85 KB with a 1.6× denser summary, at least 3× under the cap. A build writes about 4 documents in one batch (docs/EXPERIMENTS.md §13).
 - **Tests:**
@@ -49,6 +49,12 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
     - a live change to one block re-renders
     - the pipeline writes catchup.py's manifest as Claude does, and the page's merge equals catchup.py's state
   - skill text: step 5 and step 7 name the collections and the manifest, the never-drop rule exists, the page and `catchup.py` merge with the same keys, and setup's seed bootstraps and converts
+- **Fixed after an independent review of the PR** (each reproduced first, each with a test that failed before the fix):
+  - the cleanup deleted every block document the new `current` didn't name, so a `current` an older version of the skill wrote back could lead to deleting the newer build's blocks. It now deletes only blocks the replaced `current` named; blocks no `current` names are left alone, and bootstrap reports them, with a warning when they hold messages past threading's last one. A 1.16 build's `RUN/out/threading.json` and `summary.json` are removed when a build reuses that RUN folder.
+  - a relink after a cleanup could write a `current` naming a block that cleanup had deleted. `relink` now reads a fresh `list threading` (`relink WORK RUN SPEC`, writing `RUN/out/`) and has a cleanup like a build's; WORK records only the blocks its `current` names.
+  - a build accepted a RUN holding only the two `current` documents and wrote `current` documents naming blocks it never listed. Build and relink now require the whole collections and say so.
+  - the page silently left out a block that `current` names but that isn't there. It now shows a notice when one stays missing for 5 seconds; bootstrap's message for a missing block says not to write anything and to tell the user.
+  - `writing-the-build.md` no longer says a refused batch always writes nothing whatever happens: a batch applied one write at a time can stop partway. Bootstrap now stops when threading and summary disagree on the last message built, and `catchup.py bootstrap WORK DBDIR --rollback` recovers by rebuilding threading's extra messages.
 - **Backlog:**
   - B43 filed and closed
   - B41 (full names missing on a live page) and B42 (a text and the photo sent right after show as two rows instead of one block; the owner chose to show them like Messenger) filed, not fixed

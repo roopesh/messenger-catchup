@@ -1104,6 +1104,7 @@
     <div class="window muted" id="window">Loading the chat…</div>
     <div class="marker" id="marker" role="radiogroup" aria-label="Catch up from"></div>
     <div class="refresh"><span class="st" id="refresh-st" role="status"></span></div>
+    <p class="note" id="layout-st" role="status" hidden></p>
     <div class="strip" id="strip"></div>
   </header>
 
@@ -3899,9 +3900,41 @@
      S.threading or S.summary works as before (catchup.py's merge_threading and merge_summary do the same). A `current`
      without layout 2 is the old single document and is used as it is. */
   const LAYOUT_KEYS = ["layout", "block", "blocks", "activeFrom"];
-  function layoutParts(docs) {
+  /* A block `current` names can arrive a moment after it (snapshot order); one still missing after MISSING_MS is
+     reported, since the merge then lacks part of the conversations. */
+  const MISSING_MS = 5000;
+  const missing = { threading: 0, summary: 0 };
+  let missingTimer = null;
+  function noteMissing(kind, n) {
+    missing[kind] = n;
+    const box = $("#layout-st");
+    if (!missing.threading && !missing.summary) {
+      clearTimeout(missingTimer);
+      missingTimer = null;
+      box.hidden = true;
+      return;
+    }
+    if (missingTimer) return;
+    missingTimer = setTimeout(() => {
+      missingTimer = null;
+      const k = missing.threading + missing.summary;
+      if (!k) return;
+      box.textContent =
+        "Part of the saved conversations didn't load (" +
+        k +
+        " document" +
+        (k > 1 ? "s" : "") +
+        " missing), so some threads or summaries may be incomplete. Reload the page; if this stays, ask Claude in chat to check the catch-up data.";
+      box.hidden = false;
+    }, MISSING_MS);
+  }
+  function layoutParts(docs, kind) {
     const cur = docs.current;
-    if (!cur || cur.layout !== 2) return null;
+    if (!cur || cur.layout !== 2) {
+      noteMissing(kind, 0);
+      return null;
+    }
+    noteMissing(kind, (cur.blocks || []).filter(id => !docs[id]).length);
     const out = {};
     Object.keys(cur).forEach(k => {
       if (!LAYOUT_KEYS.includes(k)) out[k] = cur[k];
@@ -3913,7 +3946,7 @@
     return { cur, out, bs };
   }
   function mergeThreading(docs) {
-    const L = layoutParts(docs);
+    const L = layoutParts(docs, "threading");
     if (!L) return docs.current || null;
     const convs = [],
       by = new Map(),
@@ -3936,7 +3969,7 @@
     return Object.assign(L.out, { convs, links });
   }
   function mergeSummary(docs) {
-    const L = layoutParts(docs);
+    const L = layoutParts(docs, "summary");
     if (!L) return docs.current || null;
     const s = L.out,
       newestFirst = L.bs.slice().reverse();

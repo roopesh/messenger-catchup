@@ -17,7 +17,7 @@ A document holds at most 256 KiB, so since v1.17 threading and summary are colle
 - `summary/current`: `layout:2`, `block`, `blocks`, `activeFrom`, `version`, `toI`, `generatedAt`, `fromI`, `mentionsNote`, and the conversations, `open`, `answered`, `mentions` and `deals` whose messages reach `activeFrom` (recent ones).
 - `summary/b<start>-<hash>`: `start`, and the older items by the block of their messages: `convs` (by their last message), `open`, `answered`, `mentions`, `deals`, and `syn:{conv:[bullets]}` (a conversation's bullets from that block).
 - Merging: links, members and bullets join in block order; `convs`, `open`, `answered` and `mentions` are `current`'s then the blocks', newest block first; `deals` the blocks' oldest first, then `current`'s.
-- A block id carries a hash of its content: a changed block is written as a new document and the old one is deleted after `current` stops naming it. Other documents in these collections are never touched.
+- A block id carries a hash of its content: a changed block is written as a new document, and the old one is deleted once the write that stops naming it has landed. Blocks no `current` names, and any other documents in these collections, are never deleted.
 - `summary.fromI` (pages from before v1.17): the first message the stored summary covers; earlier sessions dropped older conversations. The page offers summaries of spans before it (`rangeSummaries`). Kept as it is.
 - A page set up before v1.17 has one `current` document each with no `layout`; it's still read, and the first build converts it.
 

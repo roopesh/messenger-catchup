@@ -2,7 +2,7 @@
 Known bugs from docs/BACKLOG.md are marked expectedFailure; when one starts passing, unittest reports
 "unexpected success": remove the marker and close the backlog item."""
 
-import contextlib, copy, importlib.util, io, json, os, random, sys, tempfile, unittest
+import contextlib, copy, importlib.util, io, json, os, random, shutil, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location(
@@ -73,12 +73,37 @@ class Env:
         )  # seeded history counts as built
         w(
             os.path.join(db, "summary", "current.json"),
-            summary or {"version": 2, "convs": [], "open": [], "answered": [], "deals": [], "mentions": [], "toI": -1},
+            summary
+            or {
+                "version": 2,
+                "convs": [],
+                "open": [],
+                "answered": [],
+                "deals": [],
+                "mentions": [],
+                "toI": last["i"] if last else -1,
+            },
         )
         return quiet(catchup.bootstrap, self.work, db)
 
+    def listing(self, into):
+        """Step 5's `list threading` and `list summary`: the database as it stands when every build's manifest was
+        written (a restore puts WORK, and so this, back to before the build)."""
+        lay = r(os.path.join(self.work, "base", "layout.json"))
+        t, s = (r(os.path.join(self.work, "base", f + ".json")) for f in ("threading", "summary"))
+        new = catchup.layout_docs(copy.deepcopy(t), copy.deepcopy(s), lay.get("activeFrom", 0))
+        for c, single in (("threading", t), ("summary", s)):
+            docs = (
+                {p: x for p, x in new.items() if p.startswith(c + "/")}
+                if lay["layout"][c] == 2
+                else {c + "/current": single}
+            )
+            for p, x in docs.items():
+                w(os.path.join(into, p + ".json"), x)
+
     def run(self, new, meta=None):
-        """Simulate an import: append `new`, write the touched chunks and the updated meta/chat into a RUN dir."""
+        """Simulate an import: append `new`, write the touched chunks and the updated meta/chat into a RUN dir, plus
+        step 5's listing of threading and summary."""
         self.n += 1
         run = os.path.join(self.d, "run%d" % self.n)
         first = new[0]["i"]
@@ -88,6 +113,7 @@ class Env:
             os.path.join(run, "meta", "chat.json"),
             meta or {"lastI": self.msgs[-1]["i"], "anchorMids": [m["m"] for m in self.msgs[-3:]]},
         )
+        self.listing(run)
         return run
 
     def build(self, run, spec):
@@ -758,6 +784,7 @@ class TestReviewFixes(unittest.TestCase):
         new = [msg(i, "Cy", "n%d" % i, mi=i % 60) for i in range(90, 96)]
         e.msgs += new
         e._chunks(run, 80)
+        e.listing(run)
         w(os.path.join(run, "meta", "chat.json"), {"lastI": 95, "anchorMids": ["mid.93", "mid.94", "mid.95"]})
         p = os.path.join(e.d, "s.json")
         w(p, {"join": {"a": list(range(80, 96))}})
@@ -799,6 +826,7 @@ class TestReview2Fixes(unittest.TestCase):
         run = os.path.join(e.d, "runR")
         e.msgs = ms
         e._chunks(run, 4)  # after the REPAIRED paste: chunk + repaired meta/chat
+        e.listing(run)
         w(os.path.join(run, "meta", "chat.json"), {"lastI": 6, "anchorMids": ["mid.4", "mid.5", "mid.6"]})
         p = os.path.join(e.d, "s.json")
         w(p, {"join": {"a": [4, 5, 6]}})
@@ -888,10 +916,13 @@ class TestRelink(unittest.TestCase):
         self.t.cleanup()
 
     def relink(self, spec):
+        """A relink as SKILL.md has it: `list threading` into a fresh RUN, then relink; -> (printout, RUN/out)."""
         p = os.path.join(self.t.name, "relink.json")
         w(p, spec)
-        out = os.path.join(self.t.name, "rout")
-        return quiet(catchup.relink, self.e.work, out, p), out
+        run = os.path.join(self.t.name, "rrun")
+        shutil.rmtree(run, ignore_errors=True)
+        self.e.listing(run)
+        return quiet(catchup.relink, self.e.work, run, p), os.path.join(run, "out")
 
     def test_relink_in_a_build_spec(self):
         run = self.e.run([msg(11, "Dee", "later", h=13, mi=40)])
@@ -1004,12 +1035,14 @@ class FakeDB:
         return {p: self.size(d) for p, d in self.docs.items() if p.split("/")[0] in ("threading", "summary")}
 
 
-def write_manifest(db, out, seen, upto=None, cleanup=True, one_by_one=False):
+def write_manifest(db, out, seen, upto=None, cleanup=True, one_by_one=False, stop_after=None):
     """Step 7 as SKILL.md has Claude do it: each batch in order, writes as listed, pins from step 5's read (`seen`),
     meta/chat and refresh/status added to the last batch; then, once every batch succeeded, the cleanup, skipping what
     step 5 didn't see. upto=k stops after k batches; one_by_one applies a batch's unpinned creates one write at a time
-    and stops before its pinned writes (a tool that can't batch, interrupted)."""
+    and stops before its pinned writes (a tool that can't batch, interrupted); stop_after=k applies every write one at
+    a time and stops after k of them, `current` documents included (a last batch that half landed)."""
     man = r(os.path.join(out, "manifest.json"))
+    done = 0
     for k, bt in enumerate(man["batches"]):
         if upto is not None and k >= upto:
             return man
@@ -1043,6 +1076,13 @@ def write_manifest(db, out, seen, upto=None, cleanup=True, one_by_one=False):
                     "if_version": seen["refresh/status"],
                 }
             )
+        if stop_after is not None:
+            for x in ws:
+                if done == stop_after:
+                    return man
+                db.batch([x])
+                done += 1
+            continue
         db.batch(ws)
     for g in man["cleanup"] if cleanup else []:
         ws = [
@@ -1119,6 +1159,12 @@ class Live:
         touched = {"chunks/c%04d" % (m["i"] // 82 * 82) for m in new}
         self.seen = self.db.fetch(run, chunks=touched)
         return run
+
+    def listing(self, into):
+        """`list threading` and `list summary` (and meta/chat) into a fresh folder, as a relink's RUN; keeps the
+        versions it saw for the write."""
+        self.seen = self.db.fetch(into, chunks=set())
+        return into
 
     def build(self, run, spec, work=None):
         p = os.path.join(self.d, "spec%d.json" % self.n)
@@ -1286,14 +1332,15 @@ class TestLayout(unittest.TestCase):
         before = live.db.docs["threading/current"]["blocks"]
         spec = os.path.join(self.d, "relink.json")
         w(spec, {"relink": {"1234": [parent, "i"]}})
-        out = os.path.join(self.d, "rout")
-        self.assertIn("relink ok: 1 change(s)", quiet(catchup.relink, live.work, out, spec))
+        rrun = live.listing(os.path.join(self.d, "rrun"))
+        out = os.path.join(rrun, "out")
+        self.assertIn("relink ok: 1 change(s)", quiet(catchup.relink, live.work, rrun, spec))
         man = r(os.path.join(out, "manifest.json"))
         made = [e["doc_id"] for bt in man["batches"] for e in bt]
         self.assertEqual(len(made), 2, made)
         self.assertTrue(made[0].startswith("b001000-") and made[1] == "current", made)
         sv = {p: v for p, v in live.db.ver.items() if p.startswith("summary/")}
-        write_manifest(live.db, out, dict(live.db.ver))
+        write_manifest(live.db, out, live.seen)
         t, _ = live.db.merged()
         self.assertEqual(t["links"]["1234"], [parent, "i"])
         now = live.db.docs["threading/current"]["blocks"]
@@ -1445,21 +1492,24 @@ class TestLayout(unittest.TestCase):
             self.assertEqual(len(made), 3, made)  # the newest threading block, then both `current` documents
             self.assertEqual([e["doc_id"][:8] for g in man["cleanup"] for e in g], ["b002000-"])
 
-    def test_cleanup_deletes_only_unused_blocks(self):
+    def test_cleanup_deletes_only_blocks_the_replaced_current_named(self):
+        """Review of #31, finding 1: blocks no `current` names, and documents that aren't blocks, are never deleted."""
         msgs, th, sm = synth.chat(2500, seed=23)
         live = Live(self.d, msgs, th, sm, "new")
         live.db.put("summary/notes-kept", {"from": "an earlier session"})
         live.db.put("threading/b009000-deadbeef", {"start": 9000})
         live.bootstrap()
+        named = {c: set(live.db.docs[c + "/current"]["blocks"]) for c in ("threading", "summary")}
         new = synth.more(2500, 20)
         run = live.run(new)
         live.build(run, tail_spec(th, new))
         man = live.write(run)
-        gone = [e["doc_id"] for g in man["cleanup"] for e in g]
-        self.assertIn("b009000-deadbeef", gone)
-        self.assertNotIn("notes-kept", gone)
-        self.assertIn("summary/notes-kept", live.db.docs)
-        self.assertIn("threading/current", live.db.docs)
+        gone = {e["collection"] + "/" + e["doc_id"] for g in man["cleanup"] for e in g}
+        dropped = {c + "/" + b for c in named for b in named[c] - set(live.db.docs[c + "/current"]["blocks"])}
+        self.assertTrue(gone)
+        self.assertEqual(gone, dropped)
+        for p in ("threading/b009000-deadbeef", "summary/notes-kept", "threading/current"):
+            self.assertIn(p, live.db.docs)
 
     def test_build_refuses_when_another_session_built(self):
         live = Live(self.d, *small(5))
@@ -1491,6 +1541,172 @@ class TestLayout(unittest.TestCase):
         self.assertGreater(len(man["batches"]), 2)
         self.assertTrue(all(len(b) <= catchup.BATCH_DOCS for b in man["batches"]))
         self.assertEqual(live.db.merged()[0], r(os.path.join(live.work, "base", "threading.json")))
+
+
+class TestReview31(unittest.TestCase):
+    """Findings of the independent review of PR #31 (v1.17.0), each reproduced before it was fixed."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.d = self.t.name
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def deal(self, live):
+        return any(x.get("text") == "Pack, $80" for x in live.db.merged()[1]["deals"])
+
+    def test_a_current_an_older_skill_wrote_never_leads_to_deleting_blocks(self):
+        """Finding 1 (s6): after 1.17 converts a page, a 1.16 session writes its stale single documents (left in a
+        reused RUN/out) to both `current` documents. The next build's cleanup used to delete the blocks that held the
+        conversion build, and with them its deal."""
+        msgs, th, sm = synth.chat(2600, seed=13)
+        live = Live(self.d, msgs, th, sm, "old")
+        stale_t, stale_s = copy.deepcopy(th), copy.deepcopy(sm)
+        live.bootstrap()
+        new = synth.more(2600, 20)
+        run = live.run(new)
+        live.build(run, tail_spec(th, new))
+        live.write(run)
+        self.assertTrue(self.deal(live))
+        kept = {p for p in live.db.docs if "/b" in p}
+        live.db.batch(
+            [
+                {
+                    "op": "set",
+                    "collection": c,
+                    "doc_id": "current",
+                    "data": x,
+                    "if_version": live.db.ver[c + "/current"],
+                }
+                for c, x in (("threading", stale_t), ("summary", stale_s))
+            ]
+        )
+        out = live.bootstrap(os.path.join(self.d, "w2"))
+        run2 = live.run(new, imported=True)
+        busy = max(th["convs"], key=lambda c: max(c["members"]))
+        live.build(run2, {"join": {busy["id"]: [m["i"] for m in new]}}, os.path.join(self.d, "w2"))
+        man = live.write(run2)
+        self.assertEqual(man["cleanup"], [], "the replaced current was a single document: it named no blocks")
+        self.assertTrue(kept <= set(live.db.docs), "every block of the conversion build is still stored")
+        self.assertIn(
+            "WARN block documents no current names hold messages through #2619, past threading/current's #2599", out
+        )
+        self.assertIn("block document(s) no current names, left alone", out)
+
+    def test_a_reused_run_folder_loses_its_legacy_files(self):
+        """Finding 1: a 1.16 build's RUN/out/threading.json and summary.json must not survive a 1.17 build in the same
+        RUN folder, where a model could take them for this build's output."""
+        live = Live(self.d, *small(20))
+        live.bootstrap()
+        run = live.run([msg(20, "Ben", "x", mi=20)])
+        for f in ("threading.json", "summary.json"):
+            w(os.path.join(run, "out", f), {"stale": True})
+        live.build(run, {"join": {"a": [20]}})
+        self.assertFalse(os.path.exists(os.path.join(run, "out", "threading.json")))
+        self.assertFalse(os.path.exists(os.path.join(run, "out", "summary.json")))
+        self.assertTrue(os.path.exists(os.path.join(run, "out", "manifest.json")))
+
+    def test_relink_after_cleanup_writes_the_block_it_names(self):
+        """Finding 2 (S3): a build changes a link and its cleanup deletes the old block; a relink that undoes the change
+        hashes back to that deleted block's id, and used to write a `current` naming it without creating it."""
+        msgs, th, sm = synth.chat(3500, seed=11)
+        live = Live(self.d, msgs, th, sm, "new")
+        live.bootstrap()
+        orig = th["links"].get("1234")
+        conv = next(c for c in th["convs"] if 1234 in c["members"])
+        parent = next(i for i in conv["members"][::-1] if i < 1234 and (orig is None or orig[0] != i))
+        new = synth.more(3500, 20)
+        run = live.run(new)
+        live.build(run, dict(tail_spec(th, new), relink={"1234": [parent, "i"]}))
+        man = live.write(run)
+        gone = [e["doc_id"] for g in man["cleanup"] for e in g if e["doc_id"].startswith("b001000-")]
+        self.assertEqual(len(gone), 1)
+        spec = os.path.join(self.d, "rl.json")
+        w(spec, {"relink": {"1234": orig}})
+        rrun = live.listing(os.path.join(self.d, "rrun"))
+        quiet(catchup.relink, live.work, rrun, spec)
+        made = [e["doc_id"] for bt in r(os.path.join(rrun, "out", "manifest.json"))["batches"] for e in bt]
+        self.assertEqual(made, [gone[0], "current"], "the block comes back as a new document")
+        write_manifest(live.db, os.path.join(rrun, "out"), live.seen)
+        cur = live.db.docs["threading/current"]
+        self.assertEqual([b for b in cur["blocks"] if "threading/" + b not in live.db.docs], [])
+        self.assertEqual(live.db.merged()[0]["links"].get("1234"), orig)
+        self.assertIn("bootstrap ok", live.bootstrap(os.path.join(self.d, "w3")))
+        self.assertEqual(r(os.path.join(live.work, "base", "layout.json"))["threading"], cur["blocks"])
+
+    def test_build_and_relink_refuse_an_incomplete_listing(self):
+        """Finding 3 (s5): with only the two `current` documents in RUN (what 1.16's step 5 fetched), a build used to
+        write `current` documents naming blocks it never listed."""
+        msgs, th, sm = synth.chat(3500, seed=11)
+        live = Live(self.d, msgs, th, sm, "new")
+        live.bootstrap()
+        new = synth.more(3500, 20)
+        run = live.run(new)
+        for c in ("threading", "summary"):
+            for f in os.listdir(os.path.join(run, c)):
+                if f != "current.json":
+                    os.remove(os.path.join(run, c, f))
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"RUN/threading/current names b\d{6}-\w+, .* not in RUN: list the whole threading collection",
+        ):
+            live.build(run, tail_spec(th, new))
+        self.assertFalse(os.path.exists(os.path.join(run, "out")))
+        shutil.rmtree(os.path.join(run, "threading"))
+        with self.assertRaisesRegex(AssertionError, "RUN has no threading/current.json: list the whole threading"):
+            live.build(run, tail_spec(th, new))
+        spec = os.path.join(self.d, "rl.json")
+        w(spec, {"relink": {"1234": None}})
+        with self.assertRaisesRegex(AssertionError, "RUN has no threading/current.json"):
+            quiet(catchup.relink, live.work, os.path.join(self.d, "empty"), spec)
+
+    def test_bootstrap_says_what_to_do_about_a_missing_block(self):
+        """Finding 4: fetching again doesn't bring back a block that was deleted."""
+        msgs, th, sm = synth.chat(2500, seed=3)
+        live = Live(self.d, msgs, th, sm, "new")
+        b = live.db.docs["threading/current"]["blocks"][1]
+        del live.db.docs["threading/" + b]
+        with self.assertRaisesRegex(
+            AssertionError,
+            "threading/current names %s, which is not in the folder. Fetch the whole threading collection .*If it's "
+            "still missing after that, it was deleted: write nothing, and tell the user" % b,
+        ):
+            live.bootstrap()
+
+    def test_a_partly_applied_write_stops_bootstrap_and_rollback_recovers(self):
+        """Finding 5: a tool that applies a batch one write at a time and stops after threading/current leaves threading
+        a build ahead of summary. Bootstrap stops and says how to recover; --rollback rebuilds those messages."""
+        msgs, th, sm = synth.chat(2600, seed=31)
+        live = Live(self.d, msgs, th, sm, "new")
+        live.bootstrap()
+        new = synth.more(2600, 20)
+        run = live.run(new)
+        spec = tail_spec(th, new)
+        live.build(run, spec)
+        whole = {c: r(os.path.join(run, "out", "merged", c + ".json")) for c in ("threading", "summary")}
+        man = r(os.path.join(run, "out", "manifest.json"))
+        writes = [e["collection"] + "/" + e["doc_id"] for bt in man["batches"] for e in bt]
+        live.write(run, stop_after=writes.index("threading/current") + 1)
+        t, s = live.db.merged()
+        self.assertEqual((t["to"], s["toI"]), (2619, 2599))
+        w2 = os.path.join(self.d, "w2")
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"threading/current is built through #2619 but summary/current through #2599: the last write was only "
+            r"partly applied\. Nothing was changed\. .*--rollback`: #2600-#2619 then count as not built yet",
+        ):
+            live.bootstrap(w2)
+        self.assertFalse(os.path.exists(os.path.join(w2, "state.json")), "WORK isn't made")
+        dbd = os.path.join(self.d, "dbr")
+        live.db.fetch(dbd)
+        self.assertIn("rolled threading back from #2619 to #2599", quiet(catchup.bootstrap, w2, dbd, True))
+        run2 = live.run(new, imported=True)
+        self.assertIn("build ok: #2600-#2619", live.build(run2, spec, w2))
+        live.write(run2)
+        t, s = live.db.merged()
+        for c, got in (("threading", t), ("summary", s)):
+            self.assertEqual(without_times(got), without_times(whole[c]), c)
 
 
 class TestCli(unittest.TestCase):

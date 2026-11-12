@@ -2,18 +2,21 @@
 """Messenger Catch-up build tool (generic).
   catchup.py bootstrap WORK DBDIR    DBDIR = ArtifactData out_dir holding chunks/*.json, the threading and summary
                                      collections (threading/*.json, summary/*.json) and meta/chat.json. Reads either
-                                     layout (below). Writes WORK/all.json, WORK/base/*, WORK/state.json.
-  catchup.py build WORK RUNDIR SPEC  RUNDIR = out_dir with the touched chunks/*.json + meta/chat.json fetched after import
-                                     (and the threading and summary collections, listed at step 5). Writes the documents
-                                     that changed into RUNDIR/out/{threading,summary}/ and RUNDIR/out/manifest.json (what to
-                                     write, in which batches, and what to delete after), then advances WORK (all.json, base,
-                                     state), keeping the previous WORK in WORK/prev. RUNDIR/out/merged/ holds the whole
-                                     state as the page merges it, for checking only: never write it.
+                                     layout (below). Writes WORK/all.json, WORK/base/*, WORK/state.json. It stops if
+                                     threading and summary disagree on the last message built (a write that half landed);
+                                     add --rollback to count threading's extra messages as not built yet.
+  catchup.py build WORK RUNDIR SPEC  RUNDIR = out_dir with the touched chunks/*.json + meta/chat.json fetched after import,
+                                     and the whole threading and summary collections (listed at step 5). Writes the
+                                     documents that changed into RUNDIR/out/{threading,summary}/ and
+                                     RUNDIR/out/manifest.json (what to write, in which batches, and what to delete after),
+                                     then advances WORK (all.json, base, state), keeping the previous WORK in WORK/prev.
+                                     RUNDIR/out/merged/ holds the whole state as the page merges it, for checking only.
   catchup.py restore WORK            Undo the last build or relink (WORK back to WORK/prev): after a refused DB write, or to
                                      rebuild the same RUN with a corrected spec.
-  catchup.py relink WORK OUTDIR SPEC Correct links on messages already built, when there's nothing new to build. SPEC holds
-                                     only "relink". Writes OUTDIR/manifest.json and the threading documents it names, then
-                                     advances WORK's threading, keeping the previous WORK in WORK/prev.
+  catchup.py relink WORK RUNDIR SPEC Correct links on messages already built, when there's nothing new to build. RUNDIR
+                                     holds the whole threading collection (list); SPEC holds only "relink". Writes
+                                     RUNDIR/out/manifest.json and the threading documents it names, then advances WORK's
+                                     threading, keeping the previous WORK in WORK/prev.
 LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summary are collections of documents:
   threading/current {layout:2, block, blocks:[ids], to, note, builtAt, convs:[conversations with no messages yet]}
   threading/b<start>-<hash> {start, convs:[{id,title}] starting in the block, members:{conv:[i...]}, links:{i:[p,t]}}
@@ -26,7 +29,8 @@ LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summ
   document: nothing anyone reads is overwritten until `current` names the new one, and a retry finds what an
   interrupted write already created. Merged, these are exactly the old single documents (newest-first lists:
   current, then blocks newest first; deals: blocks oldest first, then current). The old layout, one `current`
-  document each without `layout`, is still read, and the first build converts it. Nothing is ever dropped.
+  document each without `layout`, is still read, and the first build converts it. Nothing is ever dropped: the
+  cleanup deletes only blocks the replaced `current` named and the new one doesn't, never blocks no `current` names.
   summary.fromI (optional, pages from before v1.17): the first message the stored summary covers. Earlier sessions
   dropped older conversations and moved it; the page offers to summarize spans before it. catchup.py keeps it as is.
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
@@ -166,10 +170,38 @@ def _docs(d):  # an out_dir collection folder -> {doc id: document}
 
 
 def _blocks(cur, docs, name):
-    need = "%s/current names %s, which isn't in the folder: fetch the whole %s collection (list, limit 1000)"
-    for b in cur.get("blocks") or []:
-        assert b in docs, need % (name, b, name)
+    missing = [b for b in cur.get("blocks") or [] if b not in docs]
+    assert not missing, (
+        "%s/current names %s, which %s not in the folder. Fetch the whole %s collection (list, limit 1000). If it's "
+        "still missing after that, it was deleted: write nothing, and tell the user (references/writing-the-build.md "
+        "› A missing block)" % (name, ", ".join(missing), "is" if len(missing) == 1 else "are", name)
+    )
     return sorted((docs[b] for b in cur.get("blocks") or []), key=lambda d: d["start"])
+
+
+def _named(docs):  # the block ids a collection's `current` names ([] in the old single-document layout)
+    cur = docs.get("current") or {}
+    return list(cur.get("blocks") or []) if cur.get("layout") == 2 else []
+
+
+def _listing(run, c):
+    """Step 5's read of a collection in RUN, which must be the whole collection: every block `current` names."""
+    docs = _docs(run + "/" + c)
+    assert "current" in docs, "RUN has no %s/current.json: list the whole %s collection into RUN (list, limit 1000)" % (
+        c,
+        c,
+    )
+    missing = [b for b in _named(docs) if b not in docs]
+    assert not missing, (
+        "RUN/%s/current names %s, which %s not in RUN: list the whole %s collection into RUN (list, limit 1000), not "
+        "only its current document" % (c, ", ".join(missing), "is" if len(missing) == 1 else "are", c)
+    )
+    return docs
+
+
+def _strays(docs):  # block documents no `current` names: an interrupted write, or a `current` another writer replaced
+    named = set(_named(docs))
+    return sorted(x for x in docs if BLOCK_ID.match(x) and x not in named)
 
 
 def merge_threading(docs):
@@ -337,16 +369,17 @@ def _too_big(big, docs):
     )
 
 
-def _plan(docs, existing, cleanup=True):
-    """Check every document's size, then decide what to write: blocks that don't exist yet (unpinned creates) and the
-    `current` documents (pinned) last, in batches the tool accepts; and the blocks nothing names any more (deleted once
-    the batches have succeeded)."""
+def _plan(docs, listing):
+    """Check every document's size, then decide what to write: blocks that RUN's listing doesn't hold yet (unpinned
+    creates) and the `current` documents (pinned) last, in batches the tool accepts; and the blocks the replaced
+    `current` named that the new one doesn't (deleted once the batches have succeeded). Blocks no `current` named are
+    never deleted: they may be all that's left of a build another writer's `current` replaced."""
     big = sorted(((p, _size(d)) for p, d in docs.items() if _size(d) > DOC_LIMIT), key=lambda x: -x[1])
     if big:
         raise AssertionError(_too_big(big, docs))
     coll = lambda p: p.split("/")[0]
     did = lambda p: p.split("/")[1]
-    creates = [p for p in sorted(docs) if did(p) != "current" and did(p) not in existing.get(coll(p), ())]
+    creates = [p for p in sorted(docs) if did(p) != "current" and did(p) not in listing[coll(p)]]
     currents = [p for p in ("threading/current", "summary/current") if p in docs]
     batches, b, n = [], [], 0
     for p in creates:
@@ -361,16 +394,20 @@ def _plan(docs, existing, cleanup=True):
         b = []
     batches.append(b + currents)
     gone = []
-    for c in sorted({coll(p) for p in currents}) if cleanup else []:
-        named = set(docs[c + "/current"]["blocks"])
-        gone += [c + "/" + x for x in sorted(existing.get(c, ())) if BLOCK_ID.match(x) and x not in named]
+    for c in sorted({coll(p) for p in currents}):
+        keep = set(docs[c + "/current"]["blocks"])
+        gone += [c + "/" + x for x in _named(listing[c]) if x not in keep and BLOCK_ID.match(x) and x in listing[c]]
     return batches, [gone[k : k + 50] for k in range(0, len(gone), 50)]
 
 
 def _write_out(out, docs, batches, cleanup, merged):
-    """OUT/<collection>/<id>.json for each document to write, OUT/manifest.json, and OUT/merged/ (for checking only)."""
+    """OUT/<collection>/<id>.json for each document to write, OUT/manifest.json, and OUT/merged/ (for checking only).
+    Clears what an earlier build or an older catchup.py left there, its single threading.json and summary.json too."""
     for x in ("threading", "summary", "merged"):
         shutil.rmtree(os.path.join(out, x), ignore_errors=True)
+    for x in ("threading.json", "summary.json", "manifest.json"):
+        if os.path.exists(os.path.join(out, x)):
+            os.remove(os.path.join(out, x))
     entry = lambda p: dict(
         {"op": "set", "collection": p.split("/")[0], "doc_id": p.split("/")[1]},
         file_path=os.path.abspath(os.path.join(out, p + ".json")),
@@ -407,16 +444,34 @@ def _write_out(out, docs, batches, cleanup, merged):
 
 def _layout(work):
     p = work + "/base/layout.json"
-    assert os.path.exists(p), "WORK was made by an older catchup.py (no base/layout.json): bootstrap it again"
-    return _load(p)
+    lay = _load(p) if os.path.exists(p) else {}
+    assert "seen" in lay, "WORK was made by an older catchup.py (no base/layout.json record): bootstrap it again"
+    return lay
 
 
-def _existing(run, lay):
-    """The documents each collection holds: step 5's listing in RUN when it's there, else WORK's record."""
-    return {
-        c: sorted(_docs(run + "/" + c)) if run and os.path.exists(run + "/" + c + "/current.json") else lay.get(c, [])
-        for c in ("threading", "summary")
-    }
+SEEN = {"threading": ("to", "builtAt"), "summary": ("toI", "generatedAt")}
+
+
+def _fresh(listing, lay):  # the database's `current` must still be the one WORK was bootstrapped or built from
+    for c, docs in listing.items():
+        db, mine = docs["current"], lay["seen"][c]
+        assert all(db.get(f) == mine.get(f) for f in SEEN[c]), (
+            "%s/current changed since WORK was bootstrapped (%s): another session built. Bootstrap WORK again from a "
+            "fresh fetch, then build"
+            % (c, ", ".join("%s %s, WORK has %s" % (f, db.get(f), mine.get(f)) for f in SEEN[c]))
+        )
+
+
+def _record(lay, docs):  # what the database holds once this write lands: what its `current` documents name
+    for c in ("threading", "summary"):
+        cur = docs.get(c + "/current")
+        if cur is not None:
+            lay[c] = list(cur["blocks"])
+            lay.setdefault("layout", {})[c] = 2
+            lay["seen"][c] = {f: cur.get(f) for f in SEEN[c]}
+            if c == "summary":
+                lay["activeFrom"] = cur["activeFrom"]
+    return lay
 
 
 def _roundtrip(docs, t, s):  # never write a layout that doesn't merge back into exactly this state
@@ -462,7 +517,7 @@ def _relink(t, sp, stored, base):  # correct the link on messages an earlier bui
             )
 
 
-def relink(work, out, specp):
+def relink(work, run, specp):
     global TZ
     sp = _load(specp)
     assert (
@@ -471,22 +526,20 @@ def relink(work, out, specp):
     st = _load(work + "/state.json")
     TZ = st.get("tz") or TZ
     lay = _layout(work)
+    listing = {"threading": _listing(run, "threading")}  # a fresh read: which blocks exist, and that WORK is current
+    _fresh(listing, lay)
     t = _load(work + "/base/threading.json")
     _relink(t, sp, {m["i"]: m for m in _load(work + "/all.json")}, st["base"])
     _note(t)
     t["builtAt"] = _ts()
     docs = layout_docs(t)
     _roundtrip(docs, t, None)
-    batches, _ = _plan(docs, _existing(None, lay), cleanup=False)  # the next build's cleanup removes the old block
-    told = _write_out(out, docs, batches, [], {"threading": t})
+    batches, cleanup = _plan(docs, listing)
+    told = _write_out(run + "/out", docs, batches, cleanup, {"threading": t})
     _snapshot(work)
     _dump(t, work + "/base/threading.json")
-    lay["threading"] = sorted(set(lay.get("threading", [])) | {p.split("/")[1] for bt in batches for p in bt})
-    _dump(lay, work + "/base/layout.json")
-    print(
-        "relink ok: %d change(s); write what %s lists (as step 7: creates unpinned, threading/current pinned)"
-        % (len(sp["relink"]), told)
-    )
+    _dump(_record(lay, docs), work + "/base/layout.json")
+    print("relink ok: %d change(s); write what %s lists, as in step 7" % (len(sp["relink"]), told))
 
 
 def _snapshot(work):  # the WORK a build started from, so `restore` can undo it
@@ -506,7 +559,15 @@ def restore(work):
     print("restore ok: WORK back at #%d" % _load(work + "/state.json")["base"])
 
 
-def bootstrap(work, db):
+def _rollback(th, toi):  # threading back to #toi: later links and memberships come from a write that half landed
+    gone = {c["id"] for c in th["convs"] if c["members"] and min(c["members"]) > toi}
+    th["convs"] = [dict(c, members=[i for i in c["members"] if i <= toi]) for c in th["convs"] if c["id"] not in gone]
+    th["links"] = {k: v for k, v in th["links"].items() if int(k) <= toi}
+    th["to"] = toi
+    return th
+
+
+def bootstrap(work, db, rollback=False):
     shutil.rmtree(work + "/prev", ignore_errors=True)  # a fresh WORK has nothing to undo
     ms = []
     for f in sorted(glob.glob(db + "/chunks/*.json")):
@@ -529,21 +590,63 @@ def bootstrap(work, db):
         need = "%s/%s/current.json is missing: fetch the whole %s collection into DBDIR (list, limit 1000)"
         assert "current" in d, need % (db, c, c)
     th = _canon_threading(merge_threading(tdocs))
-    to = th.get("to")
+    sm = merge_summary(sdocs)
+    to, toi, rolled = th.get("to"), sm.get("toI"), ""
+    if isinstance(to, int) and isinstance(toi, int) and to != toi:  # every write sets both; a batch stopped partway
+        how = (
+            "If the session that built it still has its RUN/out/manifest.json, send the rest of its last batch again "
+            "(pinned with fresh versions), then bootstrap again. Otherwise run `catchup.py bootstrap WORK DBDIR "
+            "--rollback`: #%d-#%d then count as not built yet, and the next build threads and summarizes them again"
+            % (toi + 1, to)
+            if to > toi
+            else "catchup.py never writes summary ahead of threading: write nothing, and tell the user"
+        )
+        assert rollback and to > toi, (
+            "threading/current is built through #%d but summary/current through #%d: the last write was only partly "
+            "applied. Nothing was changed. %s (references/writing-the-build.md › A partly applied write)"
+            % (to, toi, how)
+        )
+        th, to, rolled = _rollback(th, toi), toi, "; rolled threading back from #%d to #%d" % (to, toi)
     base = last
     if isinstance(to, int) and -1 <= to < last:
         base = to  # stored but never built (a run that stopped after its import): the next build covers them
     _dump(al[: base + 1], work + "/all.json")
     _dump(th, work + "/base/threading.json")
-    _dump(merge_summary(sdocs), work + "/base/summary.json")
-    old = [c for c, d in (("threading", tdocs), ("summary", sdocs)) if d["current"].get("layout") != 2]
-    lay = {"threading": sorted(tdocs), "summary": sorted(sdocs), "activeFrom": sdocs["current"].get("activeFrom", 0)}
+    _dump(sm, work + "/base/summary.json")
+    docs = {"threading": tdocs, "summary": sdocs}
+    old = [c for c, d in docs.items() if d["current"].get("layout") != 2]
+    lay = {
+        "threading": _named(tdocs),
+        "summary": _named(sdocs),
+        "activeFrom": sdocs["current"].get("activeFrom", 0) if "summary" not in old else 0,
+        "layout": {c: 1 if c in old else 2 for c in docs},
+        "seen": {c: {f: d["current"].get(f) for f in SEEN[c]} for c, d in docs.items()},
+    }
     _dump(lay, work + "/base/layout.json")
     st = {"base": base, "stops": (mt.get("anchorMids") or [])[::-1], "tz": mt.get("tz") or "America/Los_Angeles"}
     _dump(st, work + "/state.json")
+    strays = {c: _strays(d) for c, d in docs.items()}
+    past = max(
+        [int(k) for b in strays["threading"] for k in tdocs[b].get("links", {})]
+        + [i for b in strays["threading"] for m in tdocs[b].get("members", {}).values() for i in m]
+        or [-1]
+    )
+    if isinstance(th.get("to"), int) and past > th["to"]:
+        print(
+            "WARN block documents no current names hold messages through #%d, past threading/current's #%d: a write "
+            "was interrupted (the next build redoes it), or an older version of the skill replaced current. Nothing is "
+            "deleted; say so in the report (references/writing-the-build.md › Blocks no current names)"
+            % (past, th["to"])
+        )
     print(
         "bootstrap ok: %d messages built through #%d; STOPS=%s" % (base + 1, base, json.dumps(st["stops"]))
+        + rolled
         + ("; %s in the single-document layout: the next build converts it" % " and ".join(old) if old else "")
+        + (
+            "; %d block document(s) no current names, left alone" % sum(map(len, strays.values()))
+            if any(strays.values())
+            else ""
+        )
         + (
             ""
             if base == last
@@ -616,14 +719,8 @@ def build(work, run, specp):
     bym = {m.get("m"): m["i"] for m in al + new if m.get("m")}
     t = _load(work + "/base/threading.json")
     s = _load(work + "/base/summary.json")
-    for c, mine, fields in (("threading", t, ("to", "builtAt")), ("summary", s, ("toI", "generatedAt"))):
-        if os.path.exists(run + "/" + c + "/current.json"):  # step 5's read: the database must still be what WORK has
-            db = _load(run + "/" + c + "/current.json")
-            assert all(db.get(f) == mine.get(f) for f in fields), (
-                "%s/current changed since WORK was bootstrapped (%s): another session built. Bootstrap WORK again from a "
-                "fresh fetch, then build"
-                % (c, ", ".join("%s %s, WORK has %s" % (f, db.get(f), mine.get(f)) for f in fields))
-            )
+    listing = {c: _listing(run, c) for c in ("threading", "summary")}  # step 5's read of both whole collections
+    _fresh(listing, lay)
     _relink(t, sp, byi, base)
     C = {cv["id"]: cv for cv in t["convs"]}
     for nc in sp.get("newconvs", []):
@@ -774,20 +871,17 @@ def build(work, run, specp):
     ts = _ts()
     t["builtAt"] = ts
     s["generatedAt"] = ts
-    docs = layout_docs(t, s, lay.get("activeFrom", 0))
+    scur = listing["summary"]["current"]
+    docs = layout_docs(t, s, scur.get("activeFrom", 0) if scur.get("layout") == 2 else 0)
     _roundtrip(docs, t, s)
     # _plan fails here, before anything is written, if a document is too big
-    batches, cleanup = _plan(docs, _existing(run, lay))
+    batches, cleanup = _plan(docs, listing)
     told = _write_out(run + "/out", docs, batches, cleanup, {"threading": t, "summary": s})
     _snapshot(work)
     _dump(t, work + "/base/threading.json")
     _dump(s, work + "/base/summary.json")
     _dump(al + new, work + "/all.json")
-    made = {p for bt in batches for p in bt}
-    ex = _existing(run, lay)
-    lay = {c: sorted(set(ex[c]) | {p.split("/")[1] for p in made if p.startswith(c + "/")}) for c in ex}
-    lay["activeFrom"] = docs["summary/current"]["activeFrom"]
-    _dump(lay, work + "/base/layout.json")
+    _dump(_record(lay, docs), work + "/base/layout.json")
     st = {"base": ids[-1], "stops": a[::-1], "tz": TZ}
     _dump(st, work + "/state.json")
     print(
@@ -800,7 +894,7 @@ def build(work, run, specp):
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "bootstrap":
-        bootstrap(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"))
+        bootstrap(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), "--rollback" in sys.argv[4:])
     elif cmd == "build":
         build(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4])
     elif cmd == "restore":
