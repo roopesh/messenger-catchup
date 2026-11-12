@@ -1,7 +1,7 @@
 """Repo-level checks: helper copies in sync, the sync tool itself, the plugin and its ZIP, and SKILL.md's file references.
 Run: python3 -m unittest discover -s tests"""
 
-import contextlib, html, importlib.util, io, os, re, shutil, subprocess, tempfile, unittest, urllib.parse, zipfile
+import contextlib, html, importlib.util, io, json, os, re, shutil, subprocess, tempfile, unittest, urllib.parse, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location("sync_helper", os.path.join(ROOT, "tools", "sync.py"))
@@ -570,6 +570,20 @@ class TestPlugin(unittest.TestCase):
         for d in sorted(os.listdir(root)):
             name = re.search(r"^name: (\S+)$", read("plugin", "skills", d, "SKILL.md"), re.M).group(1)
             self.assertEqual(name, d)
+
+    def test_descriptions_survive_yaml(self):
+        """An unquoted ` #` starts a YAML comment: the loaded description stopped at "open (issue #33). A double-quoted
+        description is read like a JSON string, so json.loads gives what Claude sees."""
+        root = os.path.join(ROOT, "plugin", "skills")
+        for d in sorted(os.listdir(root)):
+            raw = re.search(r"^description: (.*)$", read("plugin", "skills", d, "SKILL.md"), re.M).group(1)
+            if raw.startswith('"'):
+                text = json.loads(raw)
+            else:
+                self.assertNotRegex(raw, r" #|: |^[\[{&*!|>'%@`]", d + ": quote the description")
+                text = raw
+            self.assertTrue(text.endswith("."), (d, text[-40:]))
+            self.assertGreater(len(text), 200, d)
 
     def test_nothing_that_stops_claude_ai_installing_it(self):
         """claude.ai and Cowork refuse a plugin with a top-level bin/."""

@@ -2,6 +2,17 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.17.1] - 2026-11-12
+**Fixes from the first live refresh on 1.17.0** (BACKLOG B44, GitHub issue #33). PATCH: page, helper and database layout unchanged.
+
+### Fixed
+- **Conversation ids used twice no longer stop the conversion.** `bootstrap` renames the second conversation (its id plus its first message number) and says so in its output; the summary stays with the first. A summary with an id used twice stops bootstrap with what to do instead of failing later as an "internal error".
+- **Chunk names come from the stored chunks.** Bootstrap's "stored but not built yet" line and build's "RUN is missing" line named chunks by arithmetic (`i // chunkSize * chunkSize`), which is wrong on pages whose chunks start where imports landed. `open-message.md` and `troubleshooting.md` now look a message's chunk up by `start`.
+- **The refresh skill's full description loads again.** It was unquoted YAML, so ` #123` started a comment and Claude saw it cut off at "open. Both skills' descriptions are quoted, and a test checks them.
+
+### Added
+- BACKLOG F10: restore the summary items pre-1.17 refreshes dropped (issue #32 §4), with the owner's decisions.
+
 ## [1.17.0] - 2026-11-11
 **Threading and summary fit the database at any size, and nothing is dropped** (BACKLOG B43, P1). MINOR: both are now stored as collections of block documents. No re-setup: a page converts on its next refresh, and the page still reads the old layout.
 
