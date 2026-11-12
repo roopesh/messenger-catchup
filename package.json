@@ -1,6 +1,6 @@
 {
   "name": "messenger-catchup",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "private": true,
   "description": "Dev tooling for the Messenger Catch-up skill (tests only; the plugin itself is the plugin/ folder)",
   "scripts": {

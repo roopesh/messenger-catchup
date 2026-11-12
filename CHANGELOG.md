@@ -2,7 +2,7 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
-## [1.18.0] - 2026-11-12
+## [1.19.0] - 2026-11-12
 **The Messages view: a person's bubbles as one block, your place kept, and the message a conversation answers** (BACKLOG B39, B40, B42). MINOR: page `PAGE_VERSION` 2.4, so Claude republishes the page on the next refresh. Helper, skills, `catchup.py` and the database layout unchanged.
 
 ### Changed
@@ -23,6 +23,26 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 - Page: `messagesView` (24 checks): the block, its single header and quiet numbers; a reply nesting under it; an 8-minute gap and a different sender kept apart; hover and keyboard focus showing only that bubble's actions; "Reply here" on the second bubble queuing a reply to it; the `#n` link and the filter finding each bubble, threaded and in the timeline; the Summary thread; a phone (tap shows the actions, no sideways scroll); the context line, its jump and its Summary card; the reader's place through a queued reply, a new chunk and a threading update, with Chromium's own scroll anchoring off. Each fails on v1.17's page, except the ones that guard against regressions: rows kept apart, no context line where none belongs, "Reply here" on the right message, no sideways scroll and no page errors.
 - The layout test compares the old layout with the last release's page by what it shows (the header, the Summary cards and every message's number, text and photos) rather than exact text, since rows are now grouped.
 - `ONLY=section,...` runs some page-test sections.
+
+## [1.18.0] - 2026-11-12
+**Queued replies post in about 3 calls instead of 6, multi-line replies post, and `sentAt` is the real time** (issue #32 §1, §3 and §5; BACKLOG F11, B45, B46, and G6). MINOR: Claude follows a new posting procedure. Skill text and tests only: no page or helper change (`PAGE_VERSION` 2.3, helper 1.9).
+
+### Changed
+- **`references/outbox.md` › Posting** (F11, issue #32 §1, option A): about 3 calls per reply, every safety check kept.
+  1. One JS call starts `jump`, waits for the tip, checks the "Replying to …" bar, the snip and the empty box, then types the first line.
+  2. One DB batch writes the earlier rows' outcomes and this row's `sending`, all pinned with `if_version`.
+  3. One browser batch types any later lines, runs the check, presses Return and runs the confirm.
+  - A row's `sent` lands with the next row's `sending`, and a confirm that can't see the message stops posting for the run, so a crash leaves at most one row in `sending`; the existing settle check handles it.
+  - The check throws and takes the focus off the box when the box doesn't match the reply, so Return never sends it. The confirm only accepts a message that wasn't on screen before Return.
+  - On the owner's page, replies took about 45–66 s each.
+- **Multi-line replies** (B45, issue #32 §3, option A): each later line is typed after shift+Return, since Messenger's editor drops line breaks inside inserted text, and the box is compared with the reply with whitespace collapsed. The page keeps what the user wrote.
+- **`sentAt`** (B46, issue #32 §5): the clock time at confirm, or the saved message's time when a row is settled on a later refresh. Every `sent` write sets both `sentAt` and `sentMid`, including when the user says it went out.
+- **New rules:** a row with a null `mid` is marked `failed` ("no Messenger id"); a refused `sending` write means the user cancelled it on the page, and their Cancel wins; failed rows aren't retried, so the user queues a new reply.
+- **`references/database.md`** (G6; setup's copy too): an `outbox/r<ms>` line with every field, who writes it, and the state transitions; `meta/chat.coverage` defined. `references/open-message.md` says how to queue a reply with the page's fields.
+
+### Tests
+- `tests/composer.sim.js` (run by `npm run test:sim` after `sim.js`) runs `outbox.md`'s three code blocks word for word on `tests/mock/composer.html`, a stand-in for Messenger's composer that drops line breaks the way Lexical does, with the real helper's `jump`. It covers a multi-line reply sent with its paragraphs, a box that doesn't match (Return sends nothing), a bar for another message, and a message that can't be found.
+- `tests/test_tools.py`: `TestOutboxPosting` (the 3-call order, multi-line steps, `sentAt` and `sentMid`, null `mid`, the pinned `sending` write, no retries); the page's three outbox writes against database.md's outbox line; open-message.md queues with the page's fields; `coverage` is defined; the `meta/chat` fields test starts from each `doc("meta/chat")` write.
 
 ## [1.17.1] - 2026-11-12
 **Fixes from the first live refresh on 1.17.0** (BACKLOG B44, GitHub issue #33). PATCH: page, helper and database layout unchanged.

@@ -1428,7 +1428,7 @@ async function ranges() {
    One synthetic history (tests/synth.py, mock cast) stored both ways: the old single documents and the block layout
    catchup.py writes (blocks of 10 messages here, so it has archived conversations and many blocks). */
 const SYNTH = path.join(__dirname, 'synth.py');
-/* Every message row as [number, text, photos]: a page that lays rows out differently (v1.18 groups a person's bubbles
+/* Every message row as [number, text, photos]: a page that lays rows out differently (v1.19 groups a person's bubbles
    into one block and adds context lines) still shows the same messages. */
 const rowsOf = (p, sel) =>
   p.$$eval(sel + ' .msg', rs =>
@@ -1761,7 +1761,7 @@ async function names() {
   await p.context().close();
 }
 
-/* ---------- 6. the Messages view (v1.18: B39, B40, B42) ----------
+/* ---------- 6. the Messages view (v1.19: B39, B40, B42) ----------
    60 messages in 11 conversations. "packs" holds Ana's text and the photo she sent a minute later (#30, #31, a
    continues link), Ben's reply to the photo and Ana's two-bubble answer; "gap" has Ana again 8 minutes later; "diff"
    has a continues link between two senders; "lend" starts with Dee's reply to #30, which is in "packs". */

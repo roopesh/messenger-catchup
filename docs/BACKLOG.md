@@ -58,12 +58,14 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B36 | P3 | bug | `unconfirmed`/`failed` replies could never be resolved or dismissed · **done** (v1.7.0) |
 | B37 | P3 | bug | A page that can't upload said "paste again" with no end · **done** (v1.7.0) |
 | B38 | P2 | bug | A photo-reply parent that loaded late could be recorded as the next reply's parent: a silent wrong link · **done** (v1.14.0) |
-| B39 | P2 | bug | Queuing a reply closes the conversation you're in and jumps the page · **done** (v1.18.0) |
-| B40 | P2 | bug | A conversation that starts with a reply to an older message doesn't show that message, so you can't tell what it's about · **done** (v1.18.0) |
+| B39 | P2 | bug | Queuing a reply closes the conversation you're in and jumps the page · **done** (v1.19.0) |
+| B40 | P2 | bug | A conversation that starts with a reply to an older message doesn't show that message, so you can't tell what it's about · **done** (v1.19.0) |
 | B41 | P2 | bug | Full names are missing on a live page, so people who share a first name aren't told apart |
-| B42 | P3 | bug | A person's text and the photo they sent right after show as two separate messages instead of one · **done** (v1.18.0) |
+| B42 | P3 | bug | A person's text and the photo they sent right after show as two separate messages instead of one · **done** (v1.19.0) |
 | B43 | P1 | bug | Threading and summary outgrow the database's 256 KiB per-document cap; sessions started dropping summaries · **done** (v1.17.0) |
 | B44 | P1 | bug | 1.17.0's first refresh: conversation ids used twice stop the conversion; chunk names worked out by arithmetic; the refresh skill's description cut at `#` · **done** (v1.17.1) |
+| B45 | P2 | bug | Multi-line replies can't post: `insertText` drops line breaks and the exact-match check fails (issue #32 §3) · **done** (v1.18.0) |
+| B46 | P3 | bug | An outbox row's `sentAt` was an estimate, not the real time at confirm (issue #32 §5) · **done** (v1.18.0) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -72,7 +74,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B10 | P3 | bug | `make-zip.sh` only works when the repo folder is named `messenger-catchup` · **done** (v1.4.1) |
 | G4 | P3 | doc gap | Page text refers to a Refresh button that is hidden · **done** (v1.2.2) |
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
-| G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads |
+| G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads · **done** (v1.18.0) |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) |
 | R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
@@ -92,6 +94,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
 | F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection |
+| F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.0) |
 
 ---
 
@@ -195,23 +198,23 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Fix:** the focused parent must be from the person the reply names ("X replied to Y", including you, themself and a first-name/full-name prefix). Otherwise the result is `perr:"wrongfocus"`, which becomes a CHECK at build time, never a link.
 - **Test:** sim section D with a parent slower than the 10 s wait gives `wrongfocus` and `nofocus`, and no link.
 
-### B39 · P2 · Queuing a reply closes the conversation you're in and jumps the page · done (v1.18.0)
+### B39 · P2 · Queuing a reply closes the conversation you're in and jumps the page · done (v1.19.0)
 - **Found:** by the owner, Nov 11. After "Queue reply", the conversation the reply was written in closes and the page scrolls far down.
 - **Cause (from the code, not yet reproduced in a test):** the page listens for changes to `outbox`, and every change runs `renderSummary()` and `renderMessages()`, which rebuild both lists from scratch (`page.html`, the `outbox` `onSnapshot`). The Messages tab opens only the first four conversations on a rebuild (`d.open = n < 4`), and which conversations the reader opened isn't remembered (only the summary's "Show the thread" is, in `S.openThr`). So the conversation closes, the page gets shorter and the scroll position lands somewhere else. The same rebuild runs when a refresh adds chunks or Claude marks a reply sent.
 - **Fix:** keep the reader's place across rebuilds: remember open conversations (as `S.openThr` does) and the scroll anchor, and restore them; or have outbox changes update only the reply chips and outbox list instead of rebuilding everything.
 - **Test:** page test that opens a conversation past the fourth, queues a reply, and checks that the conversation is still open and the composer's message is still in view; the same after a chunk arrives.
-- **Done in v1.18.0 (page 2.4):** all three.
+- **Done in v1.19.0 (page 2.4):** all three.
   - An outbox change no longer rebuilds anything: it refills the "reply queued" chips and the Summary's "Your replies" list in place, and closes the composer whose reply was queued (`outboxChanged`).
   - The Messages tab remembers which conversations the reader opened or closed (`S.convOpen`; a jump or "Open thread" counts as opening). Only conversations the reader never touched follow the first-four default.
   - Every other rebuild from new data (chunks, `meta/chat`, threading, summary, photos, names) keeps the reader's place (`keepPlace`): the message whose reply is being written, else the first row or card on screen, stays at the same height, and open summary threads keep their inner scroll. Chromium anchors scrolling by itself, but Safari doesn't, so the test turns Chromium's off.
   - Tests (`messagesView`): queue a reply on #26 in the fifth conversation with another closed by the reader; then a chunk arrives; then a threading update adds lines above the list. Each time the conversations stay as left and #26 stays within 2 px. All three fail on v1.17.
 
-### B40 · P2 · A conversation that starts with a reply to an older message doesn't show that message · done (v1.18.0)
+### B40 · P2 · A conversation that starts with a reply to an older message doesn't show that message · done (v1.19.0)
 - **Found:** by the owner, Nov 11, and "a common thing". Example shape: a conversation titled after Ana's pack holds one message, #6620, Ben's "↩ reply to #6400 Ana". Ana's #6400 isn't shown, so the card doesn't say what the conversation is about.
 - **Cause (from the code):** threading put the reply in a new conversation instead of the parent's. `catchup.py` only warns about a link that crosses conversations ("WARN link … crosses conversations … the page shows … as a new thread", B4), and the page shows only a conversation's own messages, so the parent shows as nothing more than a "reply to #n" chip.
 - **Fix options:** (a) the page shows a cross-conversation parent as a quoted context line at the top of the conversation, with a jump to it; (b) the refresh skill joins such replies to the parent's conversation, or starts the new conversation with the parent; (c) both. (a) also fixes pages that were already built.
 - **Test:** page test with a conversation whose first message replies to a message in another conversation: the parent's sender and text appear as context, and the jump goes to it.
-- **Done in v1.18.0 (page 2.4), option (a):** when a conversation's first shown message replies to (or answers, or continues) a message that isn't shown in it, the conversation opens with a context line: "Replies to a message in “<that conversation>”" (or "an earlier message" when it's in the same conversation, before the catch-up window), the sender and an excerpt (or "[photo]") with its time, and "Show #n →". Clicking it jumps to the message in its own conversation. It shows in the Messages tab's threaded layout and on the Summary card. Option (b), joining such replies in the refresh skill, is still open if the owner wants it.
+- **Done in v1.19.0 (page 2.4), option (a):** when a conversation's first shown message replies to (or answers, or continues) a message that isn't shown in it, the conversation opens with a context line: "Replies to a message in “<that conversation>”" (or "an earlier message" when it's in the same conversation, before the catch-up window), the sender and an excerpt (or "[photo]") with its time, and "Show #n →". Clicking it jumps to the message in its own conversation. It shows in the Messages tab's threaded layout and on the Summary card. Option (b), joining such replies in the refresh skill, is still open if the owner wants it.
 
 ### B41 · P2 · Full names are missing on a live page, so people who share a first name aren't told apart
 - **Found:** by the owner, Nov 11: two Bens still both show as "Ben".
@@ -226,12 +229,12 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - Give a sender's consecutive messages the `fn` read from the one avatar.
 - **Test:** a sim with grouped messages and one avatar per run, where every message in the run gets `fn`; and a skill-text test that a pending backfill is retried and reported.
 
-### B42 · P3 · A person's text and the photo they sent right after show as two separate messages · done (v1.18.0)
+### B42 · P3 · A person's text and the photo they sent right after show as two separate messages · done (v1.19.0)
 - **Found:** by the owner, Nov 11. Ana's text (#6739) and the photo she sent the same minute (#6740) show as two full rows. The second has its own number, time, name, actions and a "… continues #6739 Ana" line. Messenger shows them as one block.
 - **Cause:** Messenger stores each bubble as its own message (`data-message-id`), so the capture is right. Threading links the second with a `c` link ("same person continuing", `catchup.py:348`), and `convTree` already places it right after the first (`page.html` › `convTree`). But the row renderer gives a `c` row the full header and its own actions, labelled "… continues".
 - **Fix (owner's call, Nov 11: like Messenger):** render a run of `c` messages from the same sender within a few minutes as one block. One header (name, time), each bubble's text or photo stacked beneath it, and the message numbers kept but quiet. As in Messenger, each bubble keeps its own actions ("Reply in Messenger", "Reply here"), shown when you hover or tap that bubble instead of under every one. Replies to any bubble still nest under the block. Search, jumps and #n links must still find each bubble. The owner expects this to help the Messages view a lot.
 - **Test:** a page test where text plus a photo from the same sender within a minute renders as one block with one header, and both #numbers are reachable by jump and search; a gap of more than the window, or a different sender, still makes separate rows.
-- **Done in v1.18.0 (page 2.4):**
+- **Done in v1.19.0 (page 2.4):**
   - **The rule:** a message joins the block above it when it's from the same sender (same full name when both have one), sent at most 5 minutes after the previous bubble (`RUN_MS`), and threading links it to a bubble in the block with `c`. In the timeline it must also be next in the list; for messages threading doesn't cover yet, any next message from the same sender that isn't a Messenger reply joins.
   - **The block** (`.grp`): one header (name, any reply chip of the first bubble, the first bubble's time), each bubble's text or photos stacked beneath it. Every bubble is still its own row (`#m<i>`, `data-i` in summary threads) with its own number, kept quiet; its time shows on hover. Replies to any bubble nest under the block. It works in the timeline, the threaded layout, "Not grouped yet" and the Summary's "Show the thread".
   - **Actions:** each bubble keeps its own "Reply in Messenger", "Open photo" and "Reply here". With a mouse they float in a small bar at the bubble's top right while you hover it; with a keyboard they show when one of them has focus; on a phone (no hover) they appear under the bubble when you tap it. Link previews, reactions and the "reply queued" chip stay visible. Single messages keep their actions printed as before.
@@ -261,6 +264,16 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Chunk names:** bootstrap and build named chunks as `i // chunkSize * chunkSize`, but the page starts chunks where imports landed. They now name the chunk from the stored chunks' starts (kept in WORK's `state.json`); `open-message.md` and `troubleshooting.md` look the chunk up by `start` instead of working it out.
 - **The refresh skill's description stopped at `"open`:** an unquoted ` #` starts a YAML comment, which dropped the open-message and wrong-link triggers. Both descriptions are quoted now.
 - **Tests:** `TestIssue33` (renaming, then a conversion and a build; a summary duplicate; chunk names from stored starts) and `test_descriptions_survive_yaml`; all four fail on 1.17.0.
+
+### B45 · P2 · Multi-line replies can't post · done (v1.18.0)
+- **Found:** in the owner's field report (issue #32 §3). Messenger's editor (Lexical) doesn't turn the line breaks inside `execCommand('insertText')` into breaks, so a reply with `\n\n` came out as one line, and `outbox.md`'s check `box.innerText.trim()===text.trim()` failed every multi-line reply.
+- **Fix (owner's option A):** type the first line in call 1; in call 3, for each later line press shift+Return and insert that line (an empty line gets only the shift+Return, so blank lines stay). The check compares the box with the reply with whitespace collapsed. The page keeps what the user wrote.
+- **Tests:** `tests/composer.sim.js` runs `outbox.md`'s code blocks word for word on a stand-in composer that drops line breaks the way Lexical does (`tests/mock/composer.html`), with the real helper's `jump`: the reply goes out with its paragraphs, blank line included; inserting the whole text at once gives one line; a box that doesn't match makes the check throw and Return sends nothing. `TestOutboxPosting.test_multi_line_replies` checks the text.
+
+### B46 · P3 · `sentAt` was estimated · done (v1.18.0)
+- **Found:** in issue #32 §5: several rows had `sentAt` rounded to the minute and later than the row's own last write. The page shows `sentAt`.
+- **Fix:** the confirm returns the clock time (`at`), which becomes `sentAt`; a row settled on a later refresh takes the saved message's time (`d` and `t`, in `meta/chat.tz`). Every `sent` write sets both `sentAt` and `sentMid`, including when the user says it went out (`sentMid:null` only if it isn't in the saved messages).
+- **Tests:** `TestOutboxPosting.test_sent_always_has_a_real_sent_at_and_sent_mid`; the sim checks the confirm's `at` against the clock.
 
 ## Risks
 
@@ -339,9 +352,10 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Where:** `page.html:304-305` vs SKILL.md › Helper
 - **What:** the page's steps name only Violentmonkey; SKILL.md recommends Tampermonkey (both tested).
 
-### G6 · P3 · `outbox/*` fields and `coverage` undefined
+### G6 · P3 · `outbox/*` fields and `coverage` undefined · done (v1.18.0)
 - **Found:** by the v1.9.0 split review. The fields of an `outbox/*` row as the page writes it (`i`, `mid`, `to`, `snip`, `text`, `state`, `queuedAt`, …) aren't listed anywhere, though `references/open-message.md` tells Claude to queue a reply. `meta/chat.coverage` is written every refresh but never defined.
 - **Fix:** list both in `references/database.md`, and derive the outbox fields from the page source in a test, as is done for `meta/chat`.
+- **Done (v1.18.0):** `references/database.md` has an `outbox/r<ms>` line (every field, who writes it, and the state transitions) and defines `coverage`. `outbox.md` adds the rules that were missing: a row with a null `mid` is marked `failed` ("no Messenger id"), the `sending` write is pinned so a Cancel on the page wins, and failed rows aren't retried. `open-message.md` says how to queue a reply with the page's fields. `test_database_md_documents_every_outbox_field_and_state` reads the page's three outbox writes (it fails if it finds a different number) and checks every field and state, plus every state `outbox.md` uses. The `meta/chat` fields test now starts from each `doc("meta/chat")` write and traces variables back to their literals.
 
 ## Cleanup
 
@@ -491,3 +505,12 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### F10 · P2 · Restore the summary items pre-1.17 refreshes dropped
 - **Why:** before v1.17.0, a refresh on the owner's page hit the 256 KiB cap and dropped 91 conversations, 14 open questions, 34 answered, 31 deals, 9 mentions and 132 bullets (GitHub issue #32 §4). That session saved the full summary from before the drop in the page's `backups` collection (two parts; read back and checked).
 - **Owner's call (Nov 12):** restore everything into the block layout, with a dry-run count first; the 14 open questions are checked against later messages before they show as open again.
+
+### F11 · P2 · perf · Outbox: fewer round trips per reply · done (v1.18.0)
+- **Found:** in issue #32 §1: about 1 minute per reply (gaps of 42–109 s between `sent` writes over 10 replies), because `outbox.md` took about 6 tool calls per reply and each is a full model round trip. The browser work itself takes a few seconds.
+- **Fix (owner's option A, every check kept):** about 3 calls per reply.
+  1. One JS call starts `jump`, waits for the tip, checks the "Replying to …" bar and the snip, checks the box is empty, and types the first line.
+  2. One DB batch writes the earlier rows' outcomes (`sent` or `failed`) and this row's `sending`, all pinned.
+  3. One browser batch types any later lines (B45), runs the check (it throws and leaves the box if the box doesn't match, so Return never sends), presses Return, and runs the confirm (up to 15 s).
+  - A row's `sent` lands with the next row's `sending`, and a confirm that can't see the message stops posting for the run, so at most one row is ever in `sending`; the existing settle check handles it on the next run. The confirm only accepts a message that wasn't on screen before Return.
+- **Tests:** `TestOutboxPosting.test_three_calls_per_reply` (the order of the steps in each call), `test_row_without_mid_fails`, `test_sending_write_is_pinned_and_cancel_wins`, `test_failed_rows_are_never_retried`; `tests/composer.sim.js` runs the three calls end to end.
