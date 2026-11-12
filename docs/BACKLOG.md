@@ -63,6 +63,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B41 | P2 | bug | Full names are missing on a live page, so people who share a first name aren't told apart |
 | B42 | P3 | bug | A person's text and the photo they sent right after show as two separate messages instead of one |
 | B43 | P1 | bug | Threading and summary outgrow the database's 256 KiB per-document cap; sessions started dropping summaries · **done** (v1.17.0) |
+| B44 | P1 | bug | 1.17.0's first refresh: conversation ids used twice stop the conversion; chunk names worked out by arithmetic; the refresh skill's description cut at `#` · **done** (v1.17.1) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -90,6 +91,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
+| F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection |
 
 ---
 
@@ -240,6 +242,13 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Also fixed:** a build that continued a conversation whose summary an earlier session had dropped crashed (`KeyError`); its summary now starts again.
   - **Review of the PR** found five more, all fixed before merging, each with a test that failed first: the cleanup could delete blocks no `current` named (after an older skill wrote back its single documents); a relink after a cleanup could name a deleted block; a build accepted a listing without the blocks; the page silently skipped a missing block; and a batch that stopped partway wasn't covered (bootstrap now stops on it, and `--rollback` recovers).
   - **Tests:** a fake database that refuses what the real one refuses (documents over 262,144 bytes; batches over 50 writes or 1 MiB; unpinned writes to existing documents); migration with `fromI`; builds at 6.4k, 25k and 50k messages; a link correction in its block; interrupted migrations and retries; the size check; bootstrap from either layout; the page rendering both layouts the same, and the old layout as v1.16.2 rendered it.
+
+### B44 · P1 · First refresh on 1.17.0: three problems · done (v1.17.1)
+- **Found:** by the owner's first live refresh on 1.17.0 (GitHub issue #33). The conversion was finished by hand that time.
+- **Conversation ids used twice:** older sessions created two conversations with one id. The block layout keys members by id, so the build's merge-back check stopped it ("internal error … don't merge back"). `bootstrap` now renames the second one to id + its first message number (the summary stays with the first) and says so; a summary with an id used twice stops bootstrap with what to do.
+- **Chunk names:** bootstrap and build named chunks as `i // chunkSize * chunkSize`, but the page starts chunks where imports landed. They now name the chunk from the stored chunks' starts (kept in WORK's `state.json`); `open-message.md` and `troubleshooting.md` look the chunk up by `start` instead of working it out.
+- **The refresh skill's description stopped at `"open`:** an unquoted ` #` starts a YAML comment, which dropped the open-message and wrong-link triggers. Both descriptions are quoted now.
+- **Tests:** `TestIssue33` (renaming, then a conversion and a build; a summary duplicate; chunk names from stored starts) and `test_descriptions_survive_yaml`; all four fail on 1.17.0.
 
 ## Risks
 
@@ -465,3 +474,8 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
     - asks the user once (never during a scheduled run) which aliases count as them, setting `meta/chat.aliasesAskedAt`
   - **Page 2.2:** accepts people entries without positions.
 - **Still to see live:** the scan on the real chat (about 4,000 messages; it may stop at the 8-minute cap first, and later messages fill in the rest).
+
+
+### F10 · P2 · Restore the summary items pre-1.17 refreshes dropped
+- **Why:** before v1.17.0, a refresh on the owner's page hit the 256 KiB cap and dropped 91 conversations, 14 open questions, 34 answered, 31 deals, 9 mentions and 132 bullets (GitHub issue #32 §4). That session saved the full summary from before the drop in the page's `backups` collection (two parts; read back and checked).
+- **Owner's call (Nov 12):** restore everything into the block layout, with a dry-run count first; the 14 open questions are checked against later messages before they show as open again.

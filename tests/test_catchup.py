@@ -172,7 +172,7 @@ class TestBootstrap(unittest.TestCase):
     def test_empty_seed(self):
         out = self.e.seed()
         self.assertIn("bootstrap ok: 0 messages built through #-1", out)
-        self.assertEqual(self.e.state(), {"base": -1, "stops": [], "tz": "America/Los_Angeles"})
+        self.assertEqual(self.e.state(), {"base": -1, "stops": [], "tz": "America/Los_Angeles", "chunks": []})
         self.assertEqual(r(os.path.join(self.e.work, "all.json")), [])
 
     def test_existing_history_and_stops(self):
@@ -1707,6 +1707,73 @@ class TestReview31(unittest.TestCase):
         t, s = live.db.merged()
         for c, got in (("threading", t), ("summary", s)):
             self.assertEqual(without_times(got), without_times(whole[c]), c)
+
+
+class TestIssue33(unittest.TestCase):
+    """Found on the first live refresh on 1.17.0 (GitHub issue #33)."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.d = self.t.name
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def collection(self, db, c):
+        return {p.split("/", 1)[1]: d for p, d in db.docs.items() if p.startswith(c + "/")}
+
+    def test_conversation_ids_used_twice_are_renamed_and_the_conversion_goes_through(self):
+        msgs = [msg(i, "Ana", "m%d" % i, mi=i % 60) for i in range(200)]
+        th = {
+            "convs": [
+                {"id": "a", "title": "A", "members": list(range(0, 50))},
+                {"id": "b", "title": "B", "members": list(range(50, 100))},
+                {"id": "a", "title": "A again", "members": list(range(100, 150))},
+                {"id": "b", "title": "B again", "members": list(range(150, 200))},
+            ],
+            "links": {},
+            "to": 199,
+            "note": "",
+        }
+        sm = dict(EMPTY_SM, convs=[{"id": "a", "tag": "", "synopsis": [], "outcome": "", "key": []}], toI=199)
+        live = Live(self.d, msgs, th, sm)
+        out = live.bootstrap()
+        self.assertIn("conversation id(s) used twice, renamed: a -> a100, b -> b150", out)
+        new = [msg(i, "Ben", "n%d" % i, mi=i % 60) for i in range(200, 204)]
+        run = live.run(new)
+        self.assertIn("build ok", live.build(run, {"join": {"a100": [200, 201], "b": [202, 203]}}))
+        live.write(run)
+        got = catchup.merge_threading(self.collection(live.db, "threading"))
+        mem = {c["id"]: c["members"] for c in got["convs"]}
+        self.assertEqual(sorted(mem), ["a", "a100", "b", "b150"])
+        self.assertEqual(mem["a100"], list(range(100, 150)) + [200, 201])
+        self.assertEqual(mem["b"], list(range(50, 100)) + [202, 203])
+        self.assertEqual(mem["a"], list(range(0, 50)))
+
+    def test_a_summary_with_an_id_used_twice_stops_bootstrap_with_what_to_do(self):
+        msgs, th, sm = small(20)
+        sm["convs"].append(dict(sm["convs"][0]))
+        live = Live(self.d, msgs, th, sm)
+        with self.assertRaisesRegex(
+            AssertionError, r"summary has more than one conversation with id a: nothing was changed"
+        ):
+            live.bootstrap()
+
+    def test_chunk_names_come_from_the_stored_chunks(self):
+        """Chunks start where imports landed (c0000, c0049, …), not at multiples of chunkSize."""
+        msgs, th, sm = small(120)
+        th["convs"][0]["members"] = list(range(100))
+        th["to"] = sm["toI"] = 99
+        live = Live(self.d, msgs, th, sm)
+        for p in [p for p in live.db.docs if p.startswith("chunks/")]:
+            del live.db.docs[p]
+        live.db.put("chunks/c0000", {"start": 0, "msgs": msgs[:49]})
+        live.db.put("chunks/c0049", {"start": 49, "msgs": msgs[49:]})
+        out = live.bootstrap()
+        self.assertIn("#100-#119 are stored but not built yet: the next RUN must include chunks/c0049", out)
+        self.assertEqual(r(os.path.join(live.work, "state.json"))["chunks"], [0, 49])
+        self.assertEqual(catchup._chunk_names(40, 60, [0, 49], 82), ["chunks/c0000", "chunks/c0049"])
+        self.assertEqual(catchup._chunk_names(90, 95, None, 82), ["chunks/c0082"], "an older WORK falls back")
 
 
 class TestCli(unittest.TestCase):
