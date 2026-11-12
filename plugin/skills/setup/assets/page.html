@@ -503,17 +503,18 @@
   .msg.more:focus-within .t {
     visibility: visible;
   }
-  .msg.bub > .c > .sub:not(.acts):has(> .pt:empty:only-child) {
+  .msg > .c > .sub:not(.acts):has(> .pt:empty:only-child) {
     display: none;
   }
-  .bub {
+  /* every message's actions (Reply in Messenger, Open photo, Reply here) show on hover, keyboard focus or a tap */
+  .msg {
     position: relative;
   }
-  .bub > .c > .acts {
+  .msg > .c > .acts {
     align-items: baseline;
   }
   @media (hover: hover) {
-    .bub > .c > .acts {
+    .msg > .c > .acts {
       position: absolute;
       top: 2px;
       right: 6px;
@@ -527,15 +528,15 @@
       pointer-events: none;
       transition: opacity 0.12s;
     }
-    .bub:hover > .c > .acts,
-    .bub:focus-within > .c > .acts,
-    .bub.tap > .c > .acts {
+    .msg:hover > .c > .acts,
+    .msg:focus-within > .c > .acts,
+    .msg.tap > .c > .acts {
       opacity: 1;
       pointer-events: auto;
     }
   }
   @media (hover: none) {
-    .bub > .c > .acts:not(:focus-within) {
+    .msg > .c > .acts:not(:focus-within) {
       position: absolute;
       width: 1px;
       height: 1px;
@@ -543,7 +544,7 @@
       clip-path: inset(50%);
       white-space: nowrap;
     }
-    .bub.tap > .c > .acts {
+    .msg.tap > .c > .acts {
       position: static;
       width: auto;
       height: auto;
@@ -551,21 +552,22 @@
       clip-path: none;
       white-space: normal;
     }
-    .bub {
+    .msg {
       cursor: pointer;
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .bub > .c > .acts {
+    .msg > .c > .acts {
       transition: none;
     }
   }
-  /* B40: the message a conversation answers, when it's outside the conversation */
+  /* B40: the message a conversation answers, when it's outside the conversation: quoted, set apart */
   .ctx {
     display: grid;
-    gap: 3px;
-    padding: 6px 10px;
-    border-left: 3px solid var(--line);
+    gap: 4px;
+    margin-left: 1.4em;
+    padding: 6px 4px 4px 10px;
+    border-left: 3px solid var(--olive);
     border-radius: 0 5px 5px 0;
     background: var(--bg);
     min-width: 0;
@@ -573,38 +575,35 @@
   .ctx .lab {
     display: flex;
     flex-wrap: wrap;
-    gap: 2px 10px;
+    gap: 2px 12px;
     align-items: baseline;
+    padding-right: 6px;
     font-family: var(--mono);
     font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--muted);
   }
-  .ctx .lab button.link {
-    margin-left: auto;
+  .ctx .lab button.link,
+  .ctx .lab a {
     font: 600 0.82rem var(--body);
     letter-spacing: 0;
     text-transform: none;
   }
+  .ctx .lab button.link {
+    margin-left: auto;
+  }
+  .ctx > .msgs .msg,
+  .ctx > .msgs .grp {
+    background: transparent;
+  }
+  .ctx > .msgs .msg {
+    padding-inline: 0 4px;
+  }
   .ctx .q {
     overflow-wrap: anywhere;
-  }
-  .ctx .q .t {
-    font-family: var(--mono);
-    font-size: 0.7rem;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-  .ctx[tabindex] {
-    cursor: pointer;
-  }
-  .ctx[tabindex]:hover b {
-    text-decoration: underline;
-  }
-  .ctx:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+    white-space: pre-line;
+    padding-right: 6px;
   }
   .divider {
     font-family: var(--mono);
@@ -2746,39 +2745,82 @@
     }
     return convOfMsg.map.get(i) || null;
   }
+  /* The parent and the rest of its run of bubbles (B42), so the context shows the whole thing the person sent. Stops at
+     messages the conversation shows itself. */
+  function runAround(i, skip) {
+    const L = (S.threading || {}).links || {};
+    if (runAround.T !== S.threading) {
+      runAround.T = S.threading;
+      runAround.next = new Map();
+      Object.entries(L).forEach(([k, lk]) => {
+        if (!lk || lk[1] !== "c") return;
+        if (!runAround.next.has(lk[0])) runAround.next.set(lk[0], []);
+        runAround.next.get(lk[0]).push(+k);
+      });
+    }
+    let a = i;
+    for (let n = 0; n < 20; n++) {
+      const lk = L[a];
+      const p = lk && lk[1] === "c" && S.byI.get(lk[0]);
+      if (!p || skip.has(p.i) || !sameRun(p, S.byI.get(a))) break;
+      a = p.i;
+    }
+    const run = [a];
+    for (let n = 0; n < 20; n++) {
+      const last = S.byI.get(run[run.length - 1]);
+      const nx = (runAround.next.get(last.i) || [])
+        .filter(k => !skip.has(k) && sameRun(last, S.byI.get(k)))
+        .sort((x, y) => x - y)[0];
+      if (nx == null) break;
+      run.push(nx);
+    }
+    return run;
+  }
   function ctxLine(mem, convId) {
+    const m0 = S.byI.get(mem[0]);
     const lk = ((S.threading || {}).links || {})[mem[0]];
-    if (!lk || lk[0] == null || mem.includes(lk[0])) return null;
-    const p = S.byI.get(lk[0]);
-    if (!p) return null;
-    const pc = convOfMsg(p.i);
+    const linked = lk && lk[0] != null;
+    if (linked ? mem.includes(lk[0]) : !(m0 && m0.r && (m0.q || m0.pl || m0.pmid))) return null;
+    const p = linked ? S.byI.get(lk[0]) : null;
     const box = el("div", "ctx");
     const lab = el("div", "lab");
+    const verb = ({ c: "Continues", i: "Answers" }[linked && lk[1]] || "Replies to") + " ";
+    box.append(lab);
+    if (p) {
+      const pc = convOfMsg(p.i);
+      lab.append(
+        el("span", null, verb + (pc && pc.id !== convId ? "a message in “" + pc.title + "”" : "an earlier message")),
+      );
+      const go = el("button", "link", "Show #" + p.i + " →");
+      go.title = "Show #" + p.i + " in its conversation";
+      go.onclick = () => goMsg(p.i);
+      lab.append(go);
+      /* the message itself: full text and photos, with the rest of its run as one block */
+      const run = runAround(p.i, new Set(mem));
+      const row = (i, pos) => msgRow(S.byI.get(i), null, true, pos, { ctx: true });
+      const ms = el("div", "msgs");
+      ms.append(run.length > 1 ? blockOf(run, row) : row(run[0]));
+      box.append(ms);
+      return box;
+    }
+    /* the parent isn't stored here: what the reply itself says about it */
     lab.append(
       el(
         "span",
         null,
-        ({ c: "Continues", i: "Answers" }[lk[1]] || "Replies to") +
-          (pc && pc.id !== convId ? " a message in “" + pc.title + "”" : " an earlier message"),
+        verb + (linked ? "#" + lk[0] : "a message from " + (m0.r || "someone")) + ", which isn't stored on this page",
       ),
     );
-    lab.append(el("button", "link", "Show #" + p.i + " →"));
+    if (m0.pmid) {
+      const a = el("a", null, "Find it in Messenger ↗");
+      a.href = CHAT + "#mcjump=" + encodeURIComponent(m0.pmid) + "&noreply";
+      a.target = "_blank";
+      a.rel = "noopener";
+      lab.append(a);
+    }
     const q = el("div", "q");
-    q.append(
-      el("b", null, nameOf(p) + ": "),
-      document.createTextNode(
-        p.b ? trunc(p.b, 160) : p.p ? "[photo]" : p.a ? "[link] " + trunc(p.a, 80) : "[attachment]",
-      ),
-      " ",
-      el("span", "t", p.t),
-    );
-    box.append(lab, q);
-    box.tabIndex = 0;
-    box.title = "Show #" + p.i + " in its conversation";
-    box.onclick = () => goMsg(p.i);
-    box.onkeydown = e => {
-      if (e.key === "Enter" && e.target === box) goMsg(p.i);
-    };
+    q.append(el("b", null, (m0.r || "?") + ": "), document.createTextNode(m0.q || m0.pl || "[photo or attachment]"));
+    box.append(q);
     return box;
   }
   function threadTree(mem) {
@@ -3345,9 +3387,11 @@
     c: ["… continues", "c", "Same person continuing"],
   };
   /* pos: this row is a bubble in a block (blockOf); pos.more: not the first, so no header of its own */
-  function msgRow(m, lk, showQuote, pos) {
+  /* o.ctx: a copy shown as context in another conversation (B40): no row id, no Reply here */
+  function msgRow(m, lk, showQuote, pos, o = {}) {
     const r = el("div", "msg" + (m.f === "You" ? " own" : "") + (pos ? " bub" + (pos.more ? " more" : " first") : ""));
-    r.id = "m" + m.i;
+    if (o.ctx) r.dataset.ctx = m.i;
+    else r.id = "m" + m.i;
     r.append(el("span", "n", "#" + m.i), el("span", "t", m.t));
     const c = el("div", "c");
     const head = el("div");
@@ -3395,22 +3439,19 @@
     if (m.a) sub.append(el("span", null, "🔗 " + m.a.split("\n")[0].slice(0, 90)));
     (m.l || []).forEach(u => sub.append(outLink(hostOf(u), u)));
     if (m.x) sub.append(el("span", null, m.x));
-    /* a bubble's actions sit apart from what it says, and show when you hover, tap or tab to it */
-    const acts = pos ? el("div", "sub acts") : sub;
+    /* a message's actions sit apart from what it says, and show when you hover, tap or tab to it, as in Messenger */
+    const acts = el("div", "sub acts");
     acts.append(extLink(m));
-    if (S.db) acts.append(replyHereBtn(m, c, "row"));
+    if (S.db && !o.ctx) acts.append(replyHereBtn(m, c, "row"));
     sub.append(pendingTag(m));
-    c.append(sub);
-    if (pos) {
-      c.append(acts);
-      r.addEventListener("click", e => {
-        if (e.target.closest("a, button, textarea, .compose") || String(getSelection())) return;
-        const on = !r.classList.contains("tap");
-        document.querySelectorAll(".bub.tap").forEach(x => x.classList.remove("tap"));
-        r.classList.toggle("tap", on);
-      });
-    }
-    if (composingAt(m.i, "row")) c.append(composer(m, "row"));
+    c.append(sub, acts);
+    r.addEventListener("click", e => {
+      if (e.target.closest("a, button, textarea, .compose") || String(getSelection())) return;
+      const on = !r.classList.contains("tap");
+      document.querySelectorAll(".msg.tap").forEach(x => x.classList.remove("tap"));
+      r.classList.toggle("tap", on);
+    });
+    if (!o.ctx && composingAt(m.i, "row")) c.append(composer(m, "row"));
     r.append(c);
     return r;
   }
@@ -4537,7 +4578,11 @@
         const d = s.exists ? s.data() : null;
         S.photos = d ? d.byI || {} : null;
         S.gifs = new Set((d && d.gifs) || []);
-        keepPlace(renderMessages);
+        /* the summary shows photos too: in snippets and in context blocks */
+        keepPlace(() => {
+          renderMessages();
+          renderSummary();
+        });
       },
       () => {},
     );

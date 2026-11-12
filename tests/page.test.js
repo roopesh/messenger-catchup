@@ -1145,6 +1145,7 @@ async function pipeline() {
   await p.click('#lay-flat');
   await p.waitForTimeout(200);
   const ri = 56;
+  await p.hover('#m' + ri + ' .who'); /* a message's actions show on hover (v1.19) */
   await p.click('#m' + ri + ' button.rh');
   await p.fill('#m' + ri + ' .compose textarea', 'on my way');
   await p.click('#m' + ri + ' .compose button.primary');
@@ -1241,6 +1242,7 @@ async function variants() {
     location.hash = '#messages';
   });
   await p.waitForTimeout(200);
+  await p.hover('#m4 .who');
   await p.click('#m4 button.rh');
   await p.fill('#m4 .compose textarea', 'hi');
   await p.evaluate(() => {
@@ -1764,15 +1766,18 @@ async function names() {
 /* ---------- 6. the Messages view (v1.19: B39, B40, B42) ----------
    60 messages in 11 conversations. "packs" holds Ana's text and the photo she sent a minute later (#30, #31, a
    continues link), Ben's reply to the photo and Ana's two-bubble answer; "gap" has Ana again 8 minutes later; "diff"
-   has a continues link between two senders; "lend" starts with Dee's reply to #30, which is in "packs". */
+   has a continues link between two senders; "lend" starts with Dee's reply to #30, which is in "packs"; "gone" starts
+   with Ben's reply to a message that isn't stored (from before the history, so no link). */
 const SWATCH =
   'data:image/svg+xml,' +
   encodeURIComponent(
     "<svg xmlns='http://www.w3.org/2000/svg' width='200' height='150'><rect width='200' height='150' fill='#8a9a5b'/><circle cx='70' cy='60' r='26' fill='#d8dcc8'/></svg>",
   );
+const PACK_TEXT =
+  'Selling my old pack, $40. Barely used, all buckles work. It has a rain cover, two side pockets and a hip belt that fits most sizes. I can bring it to the trailhead on Saturday morning, or you can pick it up near the park.';
 function viewSeed() {
   const ov = {
-    30: { f: 'Ana', b: 'Selling my old pack, $40. Barely used, all buckles work.' },
+    30: { f: 'Ana', b: PACK_TEXT },
     31: { f: 'Ana', b: '', p: 'att31' },
     32: { f: 'Ben', b: 'Is it still available?', r: 'Ana' },
     33: { f: 'Ana', b: 'Yes, still here', r: 'Ben', q: 'Is it still available?' },
@@ -1784,6 +1789,13 @@ function viewSeed() {
     44: { f: 'Ana', b: 'Leaving at 8 if so' },
     50: { f: 'Dee', b: 'I can lend you mine instead', r: 'Ana', q: 'Selling my old pack, $40. Barely used' },
     51: { f: 'Ana', b: 'Thanks Dee, that works', r: 'Dee', q: 'I can lend you mine instead' },
+    58: {
+      f: 'Ben',
+      b: 'I still have mine, want it?',
+      r: 'Dee',
+      q: 'Anyone selling a tent? Mine tore',
+      pmid: 'mid.old7',
+    },
   };
   const msgs = range(0, 59, i => mk(i, ov[i]));
   const conv = (id, title, members) => ({ id, title, members });
@@ -1830,8 +1842,9 @@ function viewSeed() {
       conv(
         't6',
         'Snacks',
-        range(52, 59, i => i),
+        range(52, 57, i => i),
       ),
+      conv('gone', 'Tent', [58, 59]),
     ],
     links: {
       31: [30, 'c'],
@@ -1956,9 +1969,64 @@ async function messagesView() {
       !/Open photo/.test(await txt(p, '#m30 .acts')),
     'B42: each bubble keeps its own actions (the photo bubble has Open photo)',
   );
+  await p.evaluate(() => document.activeElement.blur());
+  await p.waitForTimeout(250);
+  const rowsHid = await p.evaluate(() => {
+    const rows = [...document.querySelectorAll('#msgs details.conv[open] .msg')];
+    return {
+      n: rows.length,
+      hidden: rows.filter(r => {
+        const a = r.querySelector(':scope > .c > .acts');
+        return a && getComputedStyle(a).opacity === '0' && /Reply in Messenger/.test(a.textContent);
+      }).length,
+      chips: !!document.querySelector('#m35 .acts .chip'),
+    };
+  });
+  await p.hover('#m35 .body');
+  await p.waitForTimeout(250);
+  const single = await opacity(p, '#m35 .acts');
+  ok(
+    rowsHid.n > 20 && rowsHid.hidden === rowsHid.n && single === '1',
+    'every message row hides its actions until you hover it (' +
+      rowsHid.hidden +
+      ' of ' +
+      rowsHid.n +
+      ' hidden; hovering the single message #35: ' +
+      single +
+      ')',
+  );
+  await p.mouse.move(5, 5);
+  await p.evaluate(() => {
+    const b = document.querySelector('#m34 .acts button.rh');
+    if (b) b.focus();
+  });
+  await p.keyboard.press('Tab');
+  await p.waitForTimeout(250);
+  const kb = await p.evaluate(() => {
+    const a = document.activeElement;
+    const acts = document.querySelector('#m35 > .c > .acts');
+    return {
+      inRow: !!(acts && acts.contains(a)),
+      shown: acts ? getComputedStyle(acts).opacity : null,
+      ring: a ? getComputedStyle(a).outlineStyle : null,
+    };
+  });
+  ok(
+    kb.inRow && kb.shown === '1' && kb.ring !== 'none',
+    "Tab reaches the next message's actions, shows them, and the focus ring is visible (" + JSON.stringify(kb) + ')',
+  );
   await p.hover('#m31 .pics');
   await p.click('#m31 button.rh');
   await p.fill('#m31 .compose textarea', 'Still have it?');
+  await p.mouse.move(5, 5);
+  await p.waitForTimeout(250);
+  ok(
+    await p.$eval('#m31 .compose', c => {
+      const r = c.getBoundingClientRect();
+      return r.width > 200 && r.height > 40 && getComputedStyle(c).opacity === '1';
+    }),
+    '"Reply here"\'s composer stays open and visible when the pointer leaves the message',
+  );
   await p.click('#m31 .compose button.primary');
   const ob = await until(p, () => {
     const k = [...__rt.store.keys()].find(k => k.startsWith('outbox/'));
@@ -2017,18 +2085,51 @@ async function messagesView() {
   await p.fill('#msg-q', '');
   await p.click('#lay-thread');
   // B40: the conversation that starts with a reply to #30 (in "packs") shows #30 first
-  const cx = await p.evaluate(() => {
-    const c = document.querySelector('#msgs details.conv[data-conv="lend"] > .ctx');
-    return c && { text: c.textContent, first: c.previousElementSibling.tagName };
-  });
+  const ctxOf = sel =>
+    p.evaluate(s => {
+      const c = document.querySelector(s);
+      return (
+        c && {
+          text: c.textContent,
+          first: c.previousElementSibling && c.previousElementSibling.tagName,
+          who: [...c.querySelectorAll('.who')].map(x => x.textContent),
+          body: [...c.querySelectorAll('.body')].map(x => x.textContent),
+          imgs: [...c.querySelectorAll('.pics img')].map(x => x.getAttribute('src')),
+          time: (c.querySelector('.msg .t') || {}).textContent,
+          ids: [...c.querySelectorAll('[id]')].length,
+        }
+      );
+    }, sel);
+  const cx = await ctxOf('#msgs details.conv[data-conv="lend"] > .ctx');
+  ok(
+    cx && cx.first === 'SUMMARY' && /Show #30/.test(cx.text) && /Pack for sale/.test(cx.text),
+    'B40: a conversation that starts with a reply to another conversation shows that message first (' +
+      JSON.stringify(cx && { first: cx.first, text: cx.text.slice(0, 80) }) +
+      ')',
+  );
   ok(
     cx &&
-      cx.first === 'SUMMARY' &&
-      /#30/.test(cx.text) &&
-      /Ana: Selling my old pack/.test(cx.text) &&
-      /Pack for sale/.test(cx.text),
-    'B40: a conversation that starts with a reply to another conversation shows that message first (' +
-      JSON.stringify(cx) +
+      cx.who.join() === 'Ana' &&
+      cx.body.join() === PACK_TEXT &&
+      cx.time === 'Fri 9:30 AM' &&
+      cx.imgs.join() === SWATCH &&
+      cx.ids === 0,
+    "B40: the context block shows the message itself: Ana's full text, the time, and the photo she sent with it as " +
+      'one block (' +
+      JSON.stringify(cx && { who: cx.who, len: cx.body.map(b => b.length), imgs: cx.imgs.length, ids: cx.ids }) +
+      ')',
+  );
+  const gone = await ctxOf('#msgs details.conv[data-conv="gone"] > .ctx');
+  ok(
+    gone &&
+      /isn.t stored/.test(gone.text) &&
+      /Dee/.test(gone.text) &&
+      /Anyone selling a tent\? Mine tore/.test(gone.text) &&
+      (await p.$eval('#msgs details.conv[data-conv="gone"] > .ctx a', a => a.href).catch(() => '')).includes(
+        'mcjump=mid.old7',
+      ),
+    "B40: a parent that isn't stored shows what the reply says about it and says it isn't stored (" +
+      JSON.stringify(gone && gone.text) +
       ')',
   );
   ok(
@@ -2054,10 +2155,9 @@ async function messagesView() {
   });
   await p.waitForTimeout(200);
   ok(
-    /Ana: Selling my old pack/.test(
-      await p.$eval('#v-summary article.cv[data-conv="lend"] .ctx', e => e.textContent).catch(() => ''),
-    ),
-    "B40: the summary's card shows the context line too",
+    (await p.$$eval('#v-summary article.cv[data-conv="lend"] .ctx .body', b => b.map(x => x.textContent))).join() ===
+      PACK_TEXT && !!(await p.$('#v-summary article.cv[data-conv="lend"] .ctx .pics img')),
+    "B40: the summary's card shows the context block too, text and photo",
   );
   await p.click('#v-summary article.cv[data-conv="packs"] details.thr > summary');
   await p.waitForTimeout(200);
@@ -2095,6 +2195,18 @@ async function messagesView() {
     w0 != null && w0 <= 1 && w1 > 100,
     "B42: on a phone a bubble's actions are hidden until you tap it (width " + w0 + ' → ' + w1 + ')',
   );
+  const s0 = await width('#m35 .acts');
+  await p.tap('#m35 .body');
+  await p.waitForTimeout(150);
+  const s1 = await width('#m35 .acts');
+  ok(
+    s0 != null && s0 <= 1 && s1 > 100 && (await width('#m31 .acts')) <= 1,
+    "on a phone a single message's actions are hidden until you tap it, and tapping it hides the last one's (width " +
+      s0 +
+      ' → ' +
+      s1 +
+      ')',
+  );
   ok(
     await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     'B42: at phone width the Messages view has no sideways scroll',
@@ -2112,6 +2224,7 @@ async function messagesView() {
     const r = document.querySelector('#m26').getBoundingClientRect();
     scrollBy(0, r.top - 260);
   });
+  await p.hover('#m26 .who');
   await p.click('#m26 button.rh');
   await p.fill('#m26 .compose textarea', 'I can drive');
   const y0 = await topOf(p, '#m26');
