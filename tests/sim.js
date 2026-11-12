@@ -612,6 +612,41 @@ async function helper2(b) {
       JSON.stringify(wrongFn.map(m => [m.i, m.f, m.fn])) +
       ')',
   );
+  // review #7: two people shown as "Ben" post back to back: each group takes its own avatar's name, never the other's
+  await mode(p, { group: '1', twobens: '1' });
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
+  await bridge(p, 'capture', { base: 99 });
+  cap = await capOf();
+  const bens = [105, 106, 107, 108, 109, 110].map(i => (cap.msgs.find(m => m.m === 'mid.$mock' + i) || {}).fn);
+  ok(
+    JSON.stringify(bens) ===
+      JSON.stringify(['Ben Brooks', 'Ben Brooks', 'Ben Brooks', 'Ben Ortiz', 'Ben Ortiz', 'Ben Ortiz']),
+    'E: two people shown as "Ben" back to back: each group gets its own avatar\'s full name (' +
+      JSON.stringify(bens) +
+      ')',
+  );
+  // review #4: a message inside its own small scrolling box is not the list: a first run still reads all it asked for
+  await mode(p, { nested: '1' }, 120);
+  sck = await bridge(p, 'selfcheck', {});
+  r = await bridge(p, 'scan', { first: { count: 100 } });
+  ok(
+    sck.counts.scroller === 'message' && r && !r.err && r.win === 100 && r.top === false && r.scroller === 'message',
+    'E: the first message in its own scrolling box: the scroller is the list, a first run of 100 reads 100 (' +
+      short(r) +
+      ')',
+  );
+  // review #2: a progress bar inside a message (a poll, a voice clip), or a hidden one, isn't a loading spinner
+  await mode(p, { msgbar: '1' }, 30);
+  let t0 = Date.now();
+  r = await bridge(p, 'scan', { first: { count: 50 } });
+  ok(
+    r && !r.err && r.win === 30 && r.top === true && r.anchor === '__top__',
+    'E: progress bars inside message 0 and hidden at the top: the top of a 30-message chat is still found in ' +
+      Math.round((Date.now() - t0) / 1000) +
+      ' s (' +
+      short(r) +
+      ')',
+  );
   // a scrollable pinned bar before the message list: the scroller is found from a message, not the first scrollable div
   await mode(p, { inner: '1' });
   sck = await bridge(p, 'selfcheck', {});
@@ -622,13 +657,26 @@ async function helper2(b) {
       short(r) +
       ')',
   );
-  // a scan that stops growing: err "stalled" instead of hanging (stops) or calling it the top of the chat (first run)
-  await mode(p, { stall: '1' });
-  let t0 = Date.now();
+  // a scan that stops growing: an error instead of hanging (stops) or calling it the top of the chat (first run).
+  // Without a spinner (the list keeps snapping back to the bottom): "stalled".
+  await mode(p, { stall: 'stuck' });
+  t0 = Date.now();
   r = await bridge(p, 'scan', { stops: ['mid.$mock3', 'mid.$mock2', 'mid.$mock1'], stallMs: 4000 });
   ok(
     r && r.err === 'stalled' && r.stalled && !r.top && Date.now() - t0 < 20000,
-    'E: history stops loading (spinner stays): the scan returns err "stalled" in ' +
+    'E: a list that never scrolls back (no spinner): the scan returns err "stalled" in ' +
+      Math.round((Date.now() - t0) / 1000) +
+      ' s (' +
+      short(r) +
+      ')',
+  );
+  // With a loading spinner that stays at the top: "top-spinner", for a stop scan and for a first run
+  await mode(p, { stall: '1' });
+  t0 = Date.now();
+  r = await bridge(p, 'scan', { stops: ['mid.$mock3', 'mid.$mock2', 'mid.$mock1'], stallMs: 4000 });
+  ok(
+    r && r.err === 'top-spinner' && r.stalled && !r.top && Date.now() - t0 < 20000,
+    'E: history stops loading under a spinner: the scan returns err "top-spinner" in ' +
       Math.round((Date.now() - t0) / 1000) +
       ' s (' +
       short(r) +
@@ -637,9 +685,36 @@ async function helper2(b) {
   await mode(p, { stall: '1' });
   r = await bridge(p, 'full', { first: { count: 100 }, base: -1, run: 'runStall', stallMs: 4000 });
   ok(
-    r && r.stage === 'scan' && r.err === 'stalled' && r.top === false && r.run === 'runStall',
-    'E: a first run that stalls is "stalled", not a truncated "top of the chat" (' +
+    r && r.stage === 'scan' && r.err === 'top-spinner' && r.top === false && r.run === 'runStall',
+    'E: a first run under a spinner that stays is "top-spinner", not a truncated "top of the chat" (' +
       JSON.stringify(r && [r.stage, r.err, r.top, r.win, r.anchor]) +
+      ')',
+  );
+  // the people scan and verify don't hang on that spinner either
+  await mode(p, { stall: '1' });
+  t0 = Date.now();
+  const pp = await bridge(p, 'people', { count: 1000, stallMs: 4000 });
+  ok(
+    pp && pp.stalled && pp.spinner && !pp.top && Date.now() - t0 < 25000,
+    'E: the people scan under a spinner stops in ' +
+      Math.round((Date.now() - t0) / 1000) +
+      ' s with stalled and spinner (' +
+      JSON.stringify(pp && { seen: pp.seen, top: pp.top, stalled: pp.stalled, spinner: pp.spinner }) +
+      ')',
+  );
+  await mode(p, {}, 30);
+  r = await bridge(p, 'scan', { first: { count: 50 } });
+  await p.evaluate(() => localStorage.setItem('mock_stall', '1'));
+  await p.reload();
+  await p.waitForTimeout(700);
+  t0 = Date.now();
+  const vr = await bridge(p, 'verify', { stallMs: 4000 });
+  ok(
+    r && r.top && vr && !vr.ok && vr.err === 'top-spinner' && Date.now() - t0 < 25000,
+    'E: verify under a spinner that stays ends with err "top-spinner" in ' +
+      Math.round((Date.now() - t0) / 1000) +
+      ' s (' +
+      JSON.stringify(vr) +
       ')',
   );
   // the top of a short chat is reported (top:true), and a stop scan that reaches the top ends with a clear error
@@ -701,6 +776,29 @@ async function posting(b) {
     'F: jump{reply} on a text message still uses its Reply button (' + JSON.stringify([s.tip, (s.res || {}).via]) + ')',
   );
   const row = { mid: 'mid.$mock110', to: 'Ana', snip: 'Message number 110 about trail shoes', text: 'Sounds good' };
+  // review #5: a More actions menu without Reply is closed again, and a menu left open elsewhere is never used
+  await mode(p, { noreplymenu: '1' });
+  await bridge(p, 'jump', { mid: 'mid.$mock100', reply: true });
+  s = await waitTip();
+  let menus = await p.evaluate(() => document.querySelectorAll('[role="menu"]').length);
+  ok(
+    /found it/.test(s.tip) && !menus && !s.bar,
+    'F: a More actions menu with no Reply: jump says "found it" and closes the menu (' +
+      JSON.stringify([s.tip, menus]) +
+      ')',
+  );
+  await mode(p, { stalemenu: '1' });
+  await p.evaluate(() => {
+    const e = document.querySelector('[data-message-id="mid.$mock110"]');
+    e.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    e.querySelector('[aria-label="More actions"]').click(); /* #110's menu, with Reply, left open */
+  });
+  await bridge(p, 'jump', { mid: 'mid.$mock100', reply: true });
+  s = await waitTip();
+  ok(
+    /reply box is ready/.test(s.tip) && /^Replying to Ana\nPhoto/.test(s.bar),
+    "F: with another message's menu still open, jump uses the menu it opened (" + JSON.stringify(s.bar) + ')',
+  );
   // not opted in: refused before anything happens
   await mode(p, {});
   let r = await bridge(p, 'post', row);
@@ -716,16 +814,20 @@ async function posting(b) {
   r = await bridge(p, 'post', Object.assign({}, row, { to: 'Ben', helperPost: true }));
   s = await state();
   ok(
-    r && r.err === 'wrong-reply-target' && !r.entered && !s.sent.length && !s.box,
-    'F: post refuses when "Replying to" names someone else; nothing typed or sent (' + JSON.stringify(r) + ')',
+    r && r.err === 'wrong-reply-target' && !r.entered && r.barClosed && !s.bar && !s.sent.length && !s.box,
+    'F: post refuses when "Replying to" names someone else; nothing typed or sent, the reply bar closed (' +
+      JSON.stringify([r, s.bar]) +
+      ')',
   );
   // the right person but a different message (snip doesn't match)
   await mode(p, {});
   r = await bridge(p, 'post', Object.assign({}, row, { snip: 'Message number 105 about', helperPost: true }));
   s = await state();
   ok(
-    r && r.err === 'wrong-reply-target' && !s.sent.length,
-    'F: post refuses when the reply bar shows a different message (' + JSON.stringify(r && r.detail) + ')',
+    r && r.err === 'wrong-reply-target' && r.barClosed && !s.bar && !s.sent.length,
+    'F: post refuses when the reply bar shows a different message, and closes the bar (' +
+      JSON.stringify(r && r.detail) +
+      ')',
   );
   // a box that already holds text
   await mode(p, {});
@@ -737,8 +839,86 @@ async function posting(b) {
   r = await bridge(p, 'post', Object.assign({}, row, { helperPost: true }));
   s = await state();
   ok(
-    r && r.err === 'box-not-empty' && !s.sent.length && s.box === 'draft',
-    'F: post refuses when the box already has text, and leaves it (' + JSON.stringify(r) + ')',
+    r && r.err === 'box-not-empty' && !s.sent.length && s.box === 'draft' && !s.bar,
+    "F: post refuses when the box already has text (the user's draft), leaves it and opens no Reply (" +
+      JSON.stringify(r) +
+      ')',
+  );
+  // review #1: Messenger reads a scripted shift+Enter as Enter: the first line goes out. Never "nothing sent".
+  await mode(p, { shiftsends: '1' });
+  r = await bridge(p, 'post', Object.assign({}, row, { text: 'First line\nSecond line', helperPost: true }));
+  await p.waitForTimeout(600);
+  s = await state();
+  ok(
+    r &&
+      r.sent === false &&
+      r.err === 'unconfirmed' &&
+      r.entered === true &&
+      r.partial === true &&
+      s.sent.length === 1 &&
+      s.sent[0].text === 'First line',
+    'F: a shift+Enter taken as Enter sent the first line: post says "unconfirmed" with entered, never a retryable error (' +
+      JSON.stringify([r, s.sent]) +
+      ')',
+  );
+  // review #6: the reply bar moves to another message while typing: caught before Enter, nothing sent, all tidied
+  await mode(p, { retarget: '1' });
+  r = await bridge(p, 'post', Object.assign({}, row, { helperPost: true }));
+  s = await state();
+  ok(
+    r && r.err === 'wrong-reply-target' && r.stage === 'enter' && r.cleared && r.barClosed && !s.sent.length && !s.box,
+    'F: a reply bar that moves while typing is caught just before Enter; nothing sent, box cleared, bar closed (' +
+      JSON.stringify(r) +
+      ')',
+  );
+  // review #6: a jump from a page Reply link is running: post refuses instead of racing it
+  await mode(p, {});
+  await p.evaluate(() => {
+    location.hash = '#mcjump=' + encodeURIComponent('mid.$mock40');
+  });
+  await p.waitForTimeout(200);
+  r = await bridge(p, 'post', Object.assign({}, row, { helperPost: true }));
+  await p.waitForTimeout(500);
+  s = await state();
+  ok(
+    r && r.err === 'jump-running' && !r.entered && !s.sent.length && !s.box,
+    'F: a page Reply link still jumping: post refuses with "jump-running", nothing typed (' + JSON.stringify(r) + ')',
+  );
+  // review #3: a second post while one runs: "post-running", never a second send; the first records its stage
+  await mode(p, { trusted: '1' });
+  const firstPost = p.evaluate(
+    async args => {
+      const id = 'firstpost';
+      document.dispatchEvent(new CustomEvent('mc-cmd', { detail: JSON.stringify({ id, cmd: 'post', args }) }));
+      let stages = [],
+        r;
+      for (let k = 0; k < 160; k++) {
+        await new Promise(z => setTimeout(z, 150));
+        r = JSON.parse(sessionStorage.getItem('mc_res_' + id) || 'null');
+        if (r && r.running && r.stage && stages[stages.length - 1] !== r.stage) stages.push(r.stage);
+        if (r && !r.running) break;
+      }
+      return { r, stages, post: JSON.parse(sessionStorage.getItem('mc_post') || 'null') };
+    },
+    Object.assign({}, row, { helperPost: true }),
+  );
+  await p.waitForTimeout(400);
+  const second = await bridge(p, 'post', Object.assign({}, row, { helperPost: true }));
+  const fp = await firstPost;
+  s = await state();
+  ok(
+    second && second.err === 'post-running' && !second.entered && !s.sent.length,
+    'F: a second post while one is running is refused with "post-running" (' + JSON.stringify(second) + ')',
+  );
+  ok(
+    fp.stages.join(',') === 'jump,enter' &&
+      fp.post &&
+      fp.post.stage === 'enter' &&
+      fp.r &&
+      fp.r.err === 'enter-not-accepted',
+    'F: post records its stage in its result and in mc_post before each key (' +
+      JSON.stringify([fp.stages, fp.post && fp.post.stage, fp.r && fp.r.err]) +
+      ')',
   );
   // multi-line: paragraphs with shift+Enter between them, then Enter; returns sent and the new message id
   await mode(p, {});
@@ -775,7 +955,13 @@ async function posting(b) {
   r = await bridge(p, 'post', Object.assign({}, row, { helperPost: true }));
   s = await state();
   ok(
-    r && r.sent === false && r.err === 'enter-not-accepted' && r.entered && !s.sent.length && s.box === 'Sounds good',
+    r &&
+      r.sent === false &&
+      r.err === 'enter-not-accepted' &&
+      r.entered &&
+      r.held &&
+      !s.sent.length &&
+      s.box === 'Sounds good',
     'F: when Enter is not accepted: err enter-not-accepted, nothing sent, the text left in the box (' +
       JSON.stringify(r) +
       ')',
@@ -791,19 +977,50 @@ async function posting(b) {
   r = await bridge(p, 'post', Object.assign({}, row, { text: 'One\nTwo', helperPost: true }));
   s = await state();
   ok(
-    r && r.err === 'linebreak-not-accepted' && !r.entered && r.cleared && !s.box && !s.sent.length,
-    'F: line breaks not accepted: refused before Enter, box cleared, nothing sent (' + JSON.stringify(r) + ')',
+    r &&
+      r.err === 'linebreak-not-accepted' &&
+      r.entered &&
+      r.cleared &&
+      r.barClosed &&
+      !s.box &&
+      !s.bar &&
+      !s.sent.length,
+    'F: line breaks not accepted: refused before Enter (entered: a shift+Enter was pressed), box cleared, bar closed, nothing sent (' +
+      JSON.stringify(r) +
+      ')',
+  );
+  // (c) outbox.md's call 1 when the composer isn't focused yet: Lexical needs a moment after focus before it takes text
+  const call1 = [
+    ...fs.readFileSync(D + 'plugin/skills/refresh/references/outbox.md', 'utf8').matchAll(/```js\n([\s\S]*?)```/g),
+  ][0][1]
+    .replace(/^await /, '')
+    .replace('ROW', JSON.stringify(row));
+  await mode(p, { nofocus: '1' });
+  r = await p.evaluate(call1);
+  s = await state();
+  ok(
+    r && r.typed === true && s.box === 'Sounds good',
+    "F: outbox.md's call 1 types the first line even when Reply leaves the composer unfocused (" +
+      JSON.stringify([r, s.box]) +
+      ')',
   );
   // nothing but the bridge command can post: not a link or URL hash, which only ever opens Reply
   await mode(p, {});
   await p.goto(URL + '#mcjump=' + encodeURIComponent('mid.$mock110') + '&post=1&text=hi&helperPost=true');
   await p.waitForTimeout(4000);
-  await p.goto(URL + '#mcpost=' + encodeURIComponent('mid.$mock110') + '&text=hi');
-  await p.waitForTimeout(1500);
+  const opened = await state();
+  for (const h of ['#mcpost=', '#post=', '#mcjump=']) {
+    await p.goto(URL + h + encodeURIComponent('mid.$mock110') + '&cmd=post&text=hi&helperPost=true&to=Ana');
+    await p.waitForTimeout(2500);
+  }
   s = await state();
   ok(
-    !s.sent.length && !s.box,
-    'F: a URL hash asking to post only opens Reply; nothing is typed or sent (' + JSON.stringify(s) + ')',
+    /^Replying to Ana\nMessage number 110/.test(opened.bar) && !opened.sent.length && !s.sent.length && !s.box,
+    'F: a URL hash with every post field only opens Reply (it did: ' +
+      JSON.stringify(opened.bar) +
+      '); nothing is typed or sent (' +
+      JSON.stringify(s.sent) +
+      ')',
   );
   await ctx.close();
 }

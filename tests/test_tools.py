@@ -487,6 +487,56 @@ class TestHelper2(unittest.TestCase):
             self.assertIn(state, doc)
         self.assertIn("**stop posting**", doc, "an unconfirmed post leaves at most one row in sending (outbox.md)")
 
+    def settle(self):
+        """The bullets of posting-with-helper.md's step 4, keyed by the first code span in each."""
+        doc = in_skill("references", "posting-with-helper.md")
+        step = re.search(r"^4\. Settle.*?(?=^5\. )", doc, re.M | re.S).group(0)
+        return step, re.findall(r"^   - (.*)$", step, re.M)
+
+    def test_only_unconfirmed_may_have_sent_and_it_is_never_retried(self):
+        """Review of PR #38: a result that may have sent must leave the row sending and stop posting, never retry, never
+        press Return; a lost result counts the same; post is never started twice for a row."""
+        doc = in_skill("references", "posting-with-helper.md")
+        step, bullets = self.settle()
+        self.assertIn("**Never start `post` twice for a row**", doc)
+        self.assertIn("Only `unconfirmed` means some of the reply may have gone out", step)
+        unconf = [b for b in bullets if b.startswith('`err:"unconfirmed"`')]
+        self.assertEqual(len(unconf), 1, bullets)
+        for s in ("Leave the row in `sending`", "**stop posting**", "Never post it again", "never press Return"):
+            self.assertIn(s, unconf[0])
+        lost = [b for b in bullets if b.startswith("**No result**")]
+        self.assertEqual(len(lost), 1, bullets)
+        self.assertIn("counts as `unconfirmed`", lost[0])
+        self.assertIn("stop posting", lost[0])
+        # Return, or another post, only after results the helper checked sent nothing
+        for b in bullets:
+            says_return = re.search(r"\bReturn\b", b) and "never press Return" not in b
+            if says_return:
+                self.assertTrue(
+                    b.startswith('`err:"enter-not-accepted"`'), "Return after a result that may have sent: " + b
+                )
+            if "start `post` once" in b or "start `post` again" in b:
+                self.assertTrue(b.startswith("`scan-running`"), "post started again after: " + b)
+        running = [b for b in bullets if b.startswith("`post-running`")][0]
+        self.assertIn("Don't start another", running)
+
+    def test_a_users_draft_is_never_cleared(self):
+        step, bullets = self.settle()
+        b = [x for x in bullets if "`box-not-empty`" in x][0]
+        self.assertIn("leave it as it is", b)
+        self.assertNotRegex(b.lower(), r"\bclear (it|the box)")
+
+    def test_post_never_reports_entered_false_after_a_key(self):
+        """Every result after the first scripted shift+Enter or Enter says `entered` (true), and a matching message from
+        you is never followed by a retryable error."""
+        post = self.src[self.src.index("async function postOne(") : self.src.index("async function probe(")]
+        after = post[post.index("mark('typing')") :]
+        calls = re.findall(r"(?:out|refuse)\(\{([^{}]*)\}\)", after)
+        self.assertTrue(calls)
+        for c in calls:
+            self.assertRegex(c, r"\bentered\b", "a result after a key press without entered: " + c)
+        self.assertIn("const el = match();\n    if (el)\n      return {\n        sent: true", post)
+
     def test_only_the_bridge_can_post(self):
         """The jump code (also the page's bookmarklet and URL-hash handler) never types or presses Enter, and post is
         reached from the bridge's command table only."""
@@ -494,7 +544,7 @@ class TestHelper2(unittest.TestCase):
         for s in ("insertText", "'Enter'", "mcPost", "postOne"):
             self.assertNotIn(s, jump)
         self.assertEqual(re.findall(r"\bmcPost\(", self.src), ["mcPost(", "mcPost("], "defined once, called once")
-        self.assertIn("post: a => mcPost(a),", self.src)
+        self.assertIn("post: (a, id) => mcPost(a, id),", self.src)
 
     def test_more_actions_reply_is_an_allowed_click(self):
         rules = re.search(r"^## Hard rules.*?(?=^## )", self.skill, re.M | re.S).group(0)
@@ -505,8 +555,11 @@ class TestHelper2(unittest.TestCase):
     def test_stall_and_navigation_are_explained(self):
         self.assertIn('"Inspected target navigated": expected', self.skill)
         step3 = re.search(r"^3\. .*$", self.skill, re.M).group(0)
-        self.assertIn('`"stalled"`: retry once, `references/helper.md` › Scan results', step3)
-        self.assertIn('err:"stalled"', in_skill("references", "helper.md"))
+        self.assertIn('`"stalled"` or `"top-spinner"`: retry once, `references/helper.md` › Scan results', step3)
+        for e in ('err:"stalled"', 'err:"top-spinner"'):
+            self.assertIn(e, in_skill("references", "helper.md"))
+        for e in ("'top-spinner'", "'stalled'"):
+            self.assertIn(e, self.src)
 
     def test_warnings_and_browsers_reach_the_report(self):
         step2 = re.search(r"^2\. .*$", self.skill, re.M).group(0)

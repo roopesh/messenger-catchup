@@ -98,16 +98,19 @@
     const h = t[3] ? (+t[1] % 12) + (/p/i.test(t[3]) ? 12 : 0) : +t[1];
     return h > 23 || +t[2] > 59 ? null : h * 60 + +t[2];
   }
-  /* The scrolling message list: the nearest scrollable ancestor of a message (path "message"); failing that, the first
-     scrollable element in the chat log ("first-div"), or a scrollable ancestor with nothing to scroll yet ("message-short",
-     a chat too short to scroll). Returns {el, path} or null. */
+  /* The scrolling message list. Path "message": the nearest scrollable ancestor of a message that holds (nearly) all of
+     the log's messages, so a scrollable box inside one message (a code block, a carousel) is never taken for the list.
+     Failing that, helper 1.9's rule, the first scrollable element in the chat log ("first-div"), or a scrollable ancestor
+     with nothing to scroll yet ("message-short", a chat too short to scroll). Returns {el, path} or null. */
   function mcScroller(log) {
     if (!log) return null;
     const can = x => /(auto|scroll)/.test(getComputedStyle(x).overflowY);
+    const all = log.querySelectorAll('[data-message-id]').length;
+    const most = x => x.querySelectorAll('[data-message-id]').length >= Math.max(1, all * 0.9);
     const m = log.querySelector('[data-message-id]');
     let quiet = null;
     for (let x = m && m.parentElement; x && x !== document.body; x = x.parentElement) {
-      if (!can(x)) continue;
+      if (!can(x) || !most(x)) continue;
       if (x.scrollHeight > x.clientHeight) return { el: x, path: log.contains(x) ? 'message' : 'message-outside-log' };
       quiet = quiet || x;
     }
@@ -115,13 +118,18 @@
     if (first) return { el: first, path: 'first-div' };
     return quiet ? { el: quiet, path: 'message-short' } : null;
   }
-  /* Messenger shows a spinner at the top of the list while it loads older messages: that isn't the top of the chat. */
+  /* Messenger shows a spinner at the top of the list while it loads older messages: that isn't the top of the chat. Only a
+     visible progress bar near the top of the list counts, never one inside a message (a poll, a voice clip, an upload). */
   function loadingTop(sc) {
     if (!sc) return false;
     const r = sc.getBoundingClientRect();
     return Array.from(sc.querySelectorAll('[role="progressbar"]')).some(p => {
+      if (p.closest('[data-message-id]')) return false;
       const b = p.getBoundingClientRect();
-      return b.height > 0 && b.top < r.top + 200;
+      const seen = p.checkVisibility
+        ? p.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+        : !!p.offsetParent;
+      return seen && b.height > 0 && b.width > 0 && b.top < r.top + 200;
     });
   }
   const TOP_TRIES = 8;
@@ -292,10 +300,13 @@
     };
   }
   /* people{count,maxMs}: read-only. Scrolls back through up to count messages (or to the top, or for maxMs) and reads
-     each sender's shown name and avatar name. Returns {seen, top, ms, people:[[shown, full, messages]]}. */
+     each sender's shown name and avatar name. Stops early, with `stalled` (and `spinner` when a loading spinner stays at
+     the top), when nothing new loads for stallMs (30 s). Returns {seen, top, stalled, spinner, ms, people:[[shown, full,
+     messages]]}. */
   async function mcPeople(a) {
     const count = (a && a.count) || 2000;
     const maxMs = (a && a.maxMs) || 480000;
+    const STALL = +(a && a.stallMs) || 30000;
     const t0 = Date.now();
     let log = null;
     for (let w = 0; w < 40 && !(log && log.getBoundingClientRect().width >= 300); w++) {
@@ -305,10 +316,12 @@
     if (!log) return { err: 'chat not loaded' };
     const sc = () => (mcScroller(log) || {}).el;
     const seen = new Set();
+    const loaded = new Set();
     const pairs = new Map();
     const collect = () =>
       log.querySelectorAll('[data-message-id]').forEach(e => {
         const id = e.getAttribute('data-message-id');
+        loaded.add(id);
         if (seen.has(id)) return;
         const l = e.getAttribute('aria-label') || '';
         const m = AT.test(l) ? nameOf(l) : null;
@@ -325,18 +338,34 @@
       await sleep(600);
     }
     collect();
-    let tops = 0;
+    let tops = 0,
+      len = loaded.size,
+      grownAt = Date.now(),
+      stalled = false,
+      spinner = false;
     while (seen.size < count && Date.now() - t0 < maxMs && tops <= TOP_TRIES) {
       const s = sc();
       if (!s) break;
       s.scrollTop = Math.max(0, s.scrollTop - Math.round(s.clientHeight * 0.7));
       await sleep(s.scrollTop < 5 ? 1500 : 600);
       collect();
-      tops = s.scrollTop < 5 && !loadingTop(s) ? tops + 1 : 0;
+      const grew = loaded.size > len;
+      if (grew) {
+        len = loaded.size;
+        grownAt = Date.now();
+      }
+      spinner = s.scrollTop < 5 && loadingTop(s);
+      tops = s.scrollTop < 5 && !grew && !spinner ? tops + 1 : 0;
+      if (Date.now() - grownAt > STALL) {
+        stalled = true;
+        break;
+      }
     }
     return {
       seen: seen.size,
       top: tops > TOP_TRIES,
+      stalled,
+      spinner: stalled && spinner,
       ms: Date.now() - t0,
       people: [...pairs].map(([k, n]) => k.split('\u0000').concat(n)),
     };
@@ -502,14 +531,18 @@
           } else tops = 0;
           if (!hit() && !R.atTop && Date.now() - grownAt > STALL) {
             R.stalled = true;
+            R.spinner = s.scrollTop < 5 && loadingTop(s);
             break;
           }
         }
         R.tCollect = Date.now() - R.t0;
         const anchor = hit();
         if (!anchor) {
+          /* top-spinner: at the top, a loading spinner stayed for stallMs and nothing loaded */
           R.err = R.stalled
-            ? 'stalled'
+            ? R.spinner
+              ? 'top-spinner'
+              : 'stalled'
             : FIRST
               ? 'Could not load enough history for the first catch-up'
               : 'None of the stored anchor messages was found while scrolling back' +
@@ -519,20 +552,26 @@
         }
         R.anchor = anchor;
         R.win = anchor === '__top__' ? R.order.slice() : R.order.slice(R.order.indexOf(anchor) + 1);
-        /* B41: Messenger shows the avatar once per run of messages from one sender. A run whose avatars all name the same
-           person gives that name to its other messages; a run with two names (two people who share a shown name) gets
-           nothing extra. */
+        /* B41: Messenger shows a sender's avatar once per group of messages, on the group's last message. So within a run
+           of one shown name, each avatar names the messages from the end of the previous group up to itself, and no others:
+           two people who share a shown name and post back to back each keep their own name. Messages after the run's last
+           avatar get none. */
         for (let a = 0; a < R.order.length; ) {
           const who = nameOf((R.info[R.order[a]] || {}).label);
           let b = a + 1;
           while (b < R.order.length && nameOf((R.info[R.order[b]] || {}).label) === who) b++;
-          const run = R.order.slice(a, b).filter(id => R.info[id]);
-          const avs = new Set(run.map(id => R.info[id].av).filter(Boolean));
-          if (who !== 'You' && AT.test((R.info[R.order[a]] || {}).label || '') && avs.size === 1) {
-            const av = [...avs][0];
-            run.forEach(id => {
-              if (!R.info[id].av) R.info[id].avr = av;
-            });
+          if (who !== 'You' && AT.test((R.info[R.order[a]] || {}).label || '')) {
+            let group = [];
+            for (const id of R.order.slice(a, b)) {
+              const m = R.info[id];
+              if (!m) continue;
+              group.push(m);
+              if (!m.av) continue;
+              group.forEach(g => {
+                if (!g.av) g.avr = m.av;
+              });
+              group = [];
+            }
           }
           a = b;
         }
@@ -825,6 +864,7 @@
             } else tops = 0;
             if (!(TOP ? atTop : V.order.includes(anchor)) && Date.now() - grownAt > STALL) {
               V.stalled = true;
+              V.spinner = s.scrollTop < 5 && loadingTop(s);
               break;
             }
           }
@@ -838,12 +878,13 @@
         for (let w = 0; w < 20 && !(log() && sc()); w++) await sleep(500);
         V.mode = 'fast';
         let ok = await pass(0.6, 500);
-        if (!ok) {
+        if (!ok && !V.stalled) {
+          /* a slower pass helps when Messenger skipped content, not when it stopped loading */
           V.mode = 'slow';
           ok = await pass(0.35, 900);
         }
         V.ok = ok;
-        if (!ok && V.stalled) V.err = 'stalled';
+        if (!ok && V.stalled) V.err = V.spinner ? 'top-spinner' : 'stalled';
         else if (!ok && anchor !== '__top__' && !V.order.includes(anchor)) V.err = 'anchor not found';
       } catch (e) {
         V.err = String(e);
@@ -1103,6 +1144,7 @@
       var wantReply = !/noreply/.test(location.hash);
       if (window.__mcJumping === mid) return;
       window.__mcJumping = mid;
+      window.__mcJumpAt = Date.now();
       window.__mcJumpRes = { mid: mid, state: 'running' };
       var sleep = function (ms) {
         return new Promise(function (r) {
@@ -1136,13 +1178,16 @@
         window.__mcJumping = null;
         return;
       }
-      /* The scrolling list: the nearest scrollable ancestor of a message, else the first scrollable element in the log. */
+      /* The scrolling list: the nearest scrollable ancestor of a message that holds (nearly) all of the log's messages,
+         else the first scrollable element in the log. */
       var sc = function () {
         var can = function (x) {
           return /(auto|scroll)/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight;
         };
+        var all = log().querySelectorAll('[data-message-id]').length;
         var m = log().querySelector('[data-message-id]');
-        for (var x = m && m.parentElement; x && x !== document.body; x = x.parentElement) if (can(x)) return x;
+        for (var x = m && m.parentElement; x && x !== document.body; x = x.parentElement)
+          if (can(x) && x.querySelectorAll('[data-message-id]').length >= Math.max(1, all * 0.9)) return x;
         return Array.prototype.find.call(log().querySelectorAll('div'), can);
       };
       var find = function () {
@@ -1211,18 +1256,36 @@
           var more = own.querySelector('[aria-label="More actions"]');
           if (more) {
             via = 'menu';
+            /* Only the menu this click opens counts: a menu left open elsewhere must never be used. */
+            var before = Array.prototype.slice.call(document.querySelectorAll('[role="menu"]'));
+            var menu = null;
             more.click();
             for (var j = 0; j < 14 && !b; j++) {
               await sleep(150);
-              b =
-                Array.prototype.find.call(document.querySelectorAll('[role="menuitem"]'), function (x) {
-                  return (x.innerText || '').trim() === 'Reply' && x.getBoundingClientRect().height > 0;
-                }) || null;
+              menu =
+                menu ||
+                Array.prototype.find.call(document.querySelectorAll('[role="menu"]'), function (x) {
+                  return before.indexOf(x) < 0;
+                }) ||
+                null;
+              if (menu)
+                b =
+                  Array.prototype.find.call(menu.querySelectorAll('[role="menuitem"]'), function (x) {
+                    return (x.innerText || '').trim() === 'Reply' && x.getBoundingClientRect().height > 0;
+                  }) || null;
             }
-            if (!b)
-              document.dispatchEvent(
-                new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }),
-              );
+            if (!b) {
+              /* No Reply in it: close the menu (Escape, then a click outside it) */
+              var esc = { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true };
+              if (menu) menu.dispatchEvent(new KeyboardEvent('keydown', esc));
+              document.dispatchEvent(new KeyboardEvent('keydown', esc));
+              await sleep(200);
+              if (menu && menu.isConnected && menu.getBoundingClientRect().height > 0) {
+                document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, view: window }));
+                document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
+                await sleep(200);
+              }
+            }
           }
         }
         if (b) {
@@ -1247,10 +1310,14 @@
   /* post{mid,to,snip,text,helperPost}: sends one approved reply, and only when the user turned helper posting on
      (meta/chat.helperPost, which Claude passes as helperPost:true). Only this bridge command reaches it: no link, URL hash
      or page can. It opens Reply on the message (jump, with the More actions fallback), checks that the "Replying to" bar
-     names `to` and shows `snip`, checks that the box is empty, types the text (shift+Enter between lines), presses Enter,
-     and waits up to 15 s for the message to appear. Returns {sent:true, mid, at} or {sent:false, err, stage, entered,
-     detail}; entered:false means nothing can have been sent. */
-  async function mcPost(a) {
+     names `to` and shows `snip`, checks that the box is empty, types the text (shift+Enter between lines), checks the bar
+     again, presses Enter, and waits up to 15 s for the message to appear.
+     Returns {sent:true, mid, at}, or {sent:false, err, stage, entered, detail}. err "unconfirmed" means some or all of the
+     reply may have gone out, so the row must stay sending. Every other err means the helper checked that nothing was sent:
+     no new message from you appeared and the box still held what was typed. entered: an Enter or shift+Enter was pressed.
+     Before each key it records its stage in the command's result ({running:true, stage}) and in sessionStorage mc_post,
+     so a result that never arrives can be told apart. After a refusal it cancels the reply bar it opened (barClosed). */
+  async function mcPost(a, id) {
     a = a || {};
     const t0 = Date.now();
     const out = o => Object.assign({ sent: false, entered: false, ms: Date.now() - t0 }, o);
@@ -1262,22 +1329,31 @@
       });
     if (![a.mid, a.to, a.text].every(x => typeof x === 'string' && x.trim()) || (a.snip && typeof a.snip !== 'string'))
       return out({ err: 'bad-args', stage: 'args', detail: 'post needs mid, to and text (strings), and snip' });
-    if (window.__mcPosting || (window.__rf && !window.__rf.done))
-      return out({ err: 'busy', stage: 'args', detail: 'a scan or another post is running in this tab' });
-    window.__mcPosting = true;
+    if (window.__mcPosting)
+      return out({
+        err: 'post-running',
+        stage: 'args',
+        detail: 'another post (' + window.__mcPosting + ') is still running in this tab: never start a second one',
+      });
+    if (window.__rf && !window.__rf.done)
+      return out({ err: 'scan-running', stage: 'args', detail: 'a scan is running in this tab' });
+    if (window.__mcJumping && Date.now() - (window.__mcJumpAt || 0) < 300000)
+      return out({ err: 'jump-running', stage: 'args', detail: 'a jump (a Reply link) is running in this tab' });
+    window.__mcPosting = a.mid;
     try {
-      return await postOne(a, out, t0);
+      return await postOne(a, out, t0, id);
     } finally {
-      window.__mcPosting = false;
+      window.__mcPosting = null;
     }
   }
-  async function postOne(a, out, t0) {
+  async function postOne(a, out, t0, id) {
     const box = () => document.querySelector('[role="textbox"][contenteditable="true"]');
     const lines = s =>
       String(s || '')
         .split('\n')
         .map(N)
         .filter(Boolean);
+    const same = (x, y) => JSON.stringify(lines(x)) === JSON.stringify(lines(y));
     const press = (el, o) => {
       o = Object.assign({ bubbles: true, cancelable: true }, o);
       el.dispatchEvent(new KeyboardEvent('keydown', o));
@@ -1294,6 +1370,57 @@
       press(el, { key: 'Backspace', code: 'Backspace', keyCode: 8 });
       await sleep(150);
     };
+    const mark = stage => {
+      const st = { running: true, stage, entered: stage === 'typing' || stage === 'enter', mid: a.mid };
+      if (id) sessionStorage.setItem('mc_res_' + id, JSON.stringify(st));
+      sessionStorage.setItem('mc_post', JSON.stringify({ mid: a.mid, stage, at: Date.now() }));
+    };
+    /* The "Replying to …" bar: it must name `to` (the first name; "yourself" for You) and show the start of `snip`. */
+    const who = a.to === 'You' ? 'yourself' : a.to.split(' ')[0];
+    const snip = N(a.snip);
+    const barOk = () => {
+      const t = document.body.innerText;
+      const k = t.lastIndexOf('Replying to ' + who);
+      return k >= 0 && (!snip || snip === '[photo]' || N(t.slice(k, k + 300)).indexOf(snip.slice(0, 20)) >= 0);
+    };
+    const barEl = () => {
+      const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let n,
+        found = null;
+      while ((n = w.nextNode()))
+        if (
+          /^\s*Replying to /.test(n.nodeValue) &&
+          !n.parentElement.closest('[role="log"]') &&
+          n.parentElement.getClientRects().length
+        )
+          found = n.parentElement;
+      return found;
+    };
+    /* Cancel the reply bar this post opened: its own cancel button (a label about the reply), else Escape in the box. */
+    const closeBar = async () => {
+      const b = barEl();
+      if (!b) return true;
+      for (
+        let x = b, up = 0;
+        x && up < 4 && x !== document.body && !x.closest('[role="log"]');
+        x = x.parentElement, up++
+      ) {
+        const c = Array.from(x.querySelectorAll('[aria-label]')).find(e =>
+          /^(cancel|close|remove|stop)\b.*\brepl/i.test(e.getAttribute('aria-label')),
+        );
+        if (c) {
+          c.click();
+          break;
+        }
+      }
+      await sleep(250);
+      if (barEl() && box()) {
+        press(box(), { key: 'Escape', code: 'Escape', keyCode: 27 });
+        await sleep(250);
+      }
+      return !barEl();
+    };
+    const refuse = async o => out(Object.assign({ barClosed: await closeBar() }, o));
     const ids = () =>
       Array.from(document.querySelectorAll('[role="log"] [data-message-id]')).map(e =>
         e.getAttribute('data-message-id'),
@@ -1301,7 +1428,12 @@
     if (!box())
       return out({ err: 'no-box', stage: 'check', detail: 'no message box ([role="textbox"][contenteditable])' });
     if (N(box().innerText))
-      return out({ err: 'box-not-empty', stage: 'check', detail: 'the message box already has text' });
+      return out({
+        err: 'box-not-empty',
+        stage: 'check',
+        detail: "the message box already holds text (the user's draft), left as it is",
+      });
+    mark('jump');
     window.__mcJumpRes = null;
     history.replaceState(null, '', location.pathname + location.search + '#mcjump=' + encodeURIComponent(a.mid));
     jump();
@@ -1312,59 +1444,93 @@
       if (j && j.mid === a.mid && j.state !== 'running') break;
     }
     if (!j || j.state !== 'ready')
-      return out({ err: 'jump-failed', stage: 'jump', detail: (j && j.tip) || 'the jump did not finish' });
+      return refuse({ err: 'jump-failed', stage: 'jump', detail: (j && j.tip) || 'the jump did not finish' });
     await sleep(300);
-    const who = a.to === 'You' ? 'yourself' : a.to.split(' ')[0];
-    const t = document.body.innerText;
-    const k = t.lastIndexOf('Replying to ' + who);
-    const snip = N(a.snip);
-    if (k < 0 || (snip && snip !== '[photo]' && N(t.slice(k, k + 300)).indexOf(snip.slice(0, 20)) < 0))
-      return out({
+    if (!barOk())
+      return refuse({
         err: 'wrong-reply-target',
         stage: 'check',
         via: j.via,
-        detail: k < 0 ? 'no "Replying to ' + who + '" bar' : 'the reply bar does not show the queued message',
+        detail: 'the "Replying to ' + who + '" bar is missing or shows another message',
       });
     if (!box() || N(box().innerText))
-      return out({ err: 'box-not-empty', stage: 'check', detail: 'the message box already has text' });
+      return refuse({ err: 'box-not-empty', stage: 'check', detail: 'the message box already holds text' });
+    /* From here on, anything new from you in the chat means some of the reply went out. */
+    const before = new Set(ids());
+    const mine = () =>
+      Array.from(document.querySelectorAll('[role="log"] [data-message-id]')).filter(e => {
+        if (before.has(e.getAttribute('data-message-id'))) return false;
+        return nameOf(e.getAttribute('aria-label')) === 'You' || /^You replied to /.test(e.innerText || '');
+      });
+    const match = () => {
+      const want = lines(a.text);
+      return mine()
+        .reverse()
+        .find(e => {
+          const body = N((e.innerText || '') + ' ' + (e.getAttribute('aria-label') || ''));
+          return want.every(x => body.includes(x));
+        });
+    };
+    const maybeSent = (stage, entered, detail) =>
+      out({ err: 'unconfirmed', stage, entered, partial: true, detail: detail + ': leave the row sending' });
     box().focus();
     await sleep(120);
     const parts = a.text.replace(/\r\n?/g, '\n').split('\n');
+    let entered = false,
+      typed = '';
     for (let p = 0; p < parts.length; p++) {
-      if (p) key(box(), true);
+      if (p) {
+        mark('typing');
+        entered = true;
+        key(box(), true);
+        await sleep(150);
+        /* If Messenger took this shift+Enter as Enter, it sent what was typed: the box lost the text, or a new message
+           from you shows up. Stop typing; part of the reply may be out. */
+        if (mine().length || !box() || !same(box().innerText, typed))
+          return maybeSent('typing', true, 'a scripted shift+Enter may have sent the first line(s)');
+      }
       if (parts[p]) document.execCommand('insertText', false, parts[p]);
+      typed += (p ? '\n' : '') + parts[p];
       await sleep(40);
     }
     await sleep(200);
-    const typed = box() ? box().innerText : '';
-    if (JSON.stringify(lines(typed)) !== JSON.stringify(lines(a.text))) {
+    /* Before reporting "nothing sent", wait a moment and make sure nothing new from you appeared. */
+    const quiet = async () => {
+      await sleep(1200);
+      return !mine().length;
+    };
+    if (!box() || !same(box().innerText, a.text)) {
+      const now = box() ? box().innerText : '';
+      if (!(await quiet())) return maybeSent('type', entered, 'a message from you appeared while typing');
       const bare = s => String(s || '').replace(/\s+/g, '');
-      const err = bare(typed) === bare(a.text) ? 'linebreak-not-accepted' : 'type-mismatch';
+      const err = bare(now) === bare(a.text) ? 'linebreak-not-accepted' : 'type-mismatch';
       if (box()) await clear(box());
-      return out({
+      return refuse({
         err,
         stage: 'type',
+        entered,
         cleared: !box() || !N(box().innerText),
-        detail: 'the box did not hold the text as queued, so nothing was sent',
+        detail: 'the box did not hold the reply as queued; nothing was sent',
       });
     }
-    const before = new Set(ids());
+    /* Just before Enter: the bar must still point at this message (a Reply link followed meanwhile moves it). */
+    if (!barOk()) {
+      if (!(await quiet())) return maybeSent('type', entered, 'a message from you appeared while typing');
+      if (box()) await clear(box());
+      return refuse({
+        err: 'wrong-reply-target',
+        stage: 'enter',
+        entered,
+        cleared: !box() || !N(box().innerText),
+        detail: 'the reply bar moved to another message while typing; nothing was sent',
+      });
+    }
+    mark('enter');
     key(box(), false);
     for (let w = 0; w < 60; w++) {
       await sleep(250);
-      const empty = !box() || !N(box().innerText);
-      const want = lines(a.text);
-      const el = Array.from(document.querySelectorAll('[role="log"] [data-message-id]'))
-        .reverse()
-        .find(e => {
-          if (before.has(e.getAttribute('data-message-id'))) return false;
-          const l = e.getAttribute('aria-label') || '';
-          const body = N((e.innerText || '') + ' ' + l);
-          return (
-            (nameOf(l) === 'You' || /^You replied to /.test(e.innerText || '')) && want.every(x => body.includes(x))
-          );
-        });
-      if (empty && el)
+      const el = match();
+      if (el && (!box() || !N(box().innerText)))
         return {
           sent: true,
           mid: el.getAttribute('data-message-id'),
@@ -1374,19 +1540,31 @@
           ms: Date.now() - t0,
         };
     }
-    if (box() && N(box().innerText))
+    const el = match();
+    if (el)
+      return {
+        sent: true,
+        mid: el.getAttribute('data-message-id'),
+        at: new Date().toISOString(),
+        entered: true,
+        via: j.via,
+        boxLeft: true,
+        ms: Date.now() - t0,
+      };
+    if (box() && same(box().innerText, a.text) && !mine().length)
       return out({
         err: 'enter-not-accepted',
         stage: 'enter',
         entered: true,
+        held: true,
         detail:
-          'the text is still in the box with Reply open, so it was not sent: press Enter with the computer tool, then confirm as references/outbox.md says',
+          'the box still holds the whole reply with Reply open, and no new message from you appeared: Enter was not accepted',
       });
     return out({
       err: 'unconfirmed',
       stage: 'confirm',
       entered: true,
-      detail: 'the box emptied but the message did not show up within 15 s: leave the row sending',
+      detail: 'the reply may have been sent but did not show up within 15 s: leave the row sending',
     });
   }
   async function probe(anchor) {
@@ -1463,7 +1641,7 @@
       jump();
       return { started: true };
     },
-    post: a => mcPost(a),
+    post: (a, id) => mcPost(a, id),
     ping: () => ({ v: '2.0' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
@@ -1478,7 +1656,7 @@
     sessionStorage.setItem('mc_res_' + d.id, JSON.stringify({ running: true }));
     let res;
     try {
-      res = await CMDS[d.cmd](d.args || {});
+      res = await CMDS[d.cmd](d.args || {}, d.id);
     } catch (x) {
       res = { err: String((x && x.stack) || x) };
     }
