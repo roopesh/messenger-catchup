@@ -1,0 +1,149 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Mock Messenger composer</title>
+    <style>
+      body {
+        margin: 0;
+        font: 14px system-ui;
+      }
+      #log {
+        width: 700px;
+        height: 400px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+      }
+      .m {
+        padding: 6px 10px;
+        margin: 4px;
+        border-radius: 8px;
+        background: #eef;
+      }
+      #bar {
+        width: 700px;
+        padding: 4px 10px;
+        background: #f4f4f4;
+      }
+      #box {
+        width: 700px;
+        min-height: 40px;
+        border: 1px solid #999;
+      }
+      #box p {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div role="log" id="log"></div>
+    <div id="bar" hidden></div>
+    <div id="box" role="textbox" contenteditable="true"></div>
+    <script>
+      /* A stand-in for Messenger's reply composer (Lexical), for the outbox steps in references/outbox.md:
+   - each message has a "Reply to this message" button that opens a "Replying to <name>" bar above the box
+   - the box is a list of paragraphs; execCommand('insertText') adds to the current one and drops line breaks, as Lexical does
+   - shift+Enter starts a new paragraph; Enter sends the box as "You replied to <name>" and empties it
+   window.__sent records each sent message's paragraphs. */
+      const MSGS = [
+        { id: "mid.$c1", f: "Ana", b: "Is the blue tent still available? I could come by this week." },
+        { id: "mid.$c2", f: "Ben", b: "Anyone free to help move on Saturday?" },
+        { id: "mid.$c3", f: "You", b: "Yes, still here.", r: "Ben" },
+      ];
+      const log = document.getElementById("log"),
+        bar = document.getElementById("bar"),
+        box = document.getElementById("box");
+      let paras = [""],
+        replyTo = null,
+        sent = 0;
+      window.__sent = [];
+      function add(m) {
+        const d = document.createElement("div");
+        d.className = "m";
+        d.setAttribute("data-message-id", m.id);
+        const lines = m.r ? ["You replied to " + m.r] : [m.f];
+        if (m.q) lines.push(m.q);
+        lines.forEach(t => {
+          const x = document.createElement("div");
+          x.textContent = t;
+          d.append(x);
+        });
+        (m.paras || [m.b]).forEach(t => {
+          const x = document.createElement("div");
+          if (t) x.textContent = t;
+          else x.append(document.createElement("br"));
+          d.append(x);
+        });
+        if (m.f !== "You") {
+          const btn = document.createElement("button");
+          btn.setAttribute("aria-label", "Reply to this message");
+          btn.style.display = "none";
+          btn.onclick = () => {
+            replyTo = m;
+            bar.textContent = "";
+            const a = document.createElement("div");
+            a.textContent = "Replying to " + m.f;
+            const q = document.createElement("div");
+            q.textContent = m.b;
+            bar.append(a, q);
+            bar.hidden = false;
+            box.focus();
+          };
+          d.append(btn);
+        }
+        log.append(d);
+      }
+      MSGS.forEach(add);
+      function render() {
+        box.textContent = "";
+        paras.forEach(t => {
+          const p = document.createElement("p");
+          if (t) p.textContent = t;
+          else p.append(document.createElement("br"));
+          box.append(p);
+        });
+        const s = getSelection(),
+          r = document.createRange();
+        r.selectNodeContents(box.lastChild);
+        r.collapse(false);
+        s.removeAllRanges();
+        s.addRange(r);
+      }
+      render();
+      const exec = document.execCommand.bind(document);
+      document.execCommand = function (cmd, ui, val) {
+        if (cmd === "insertText" && box.contains(document.activeElement || null)) {
+          paras[paras.length - 1] += String(val).replace(/[\r\n]+/g, "");
+          render();
+          return true;
+        }
+        return exec(cmd, ui, val);
+      };
+      box.addEventListener("beforeinput", e => e.preventDefault());
+      box.addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (e.shiftKey) {
+            paras.push("");
+            render();
+            return;
+          }
+          if (!paras.join("").trim() || !replyTo) return;
+          const m = { id: "mid.$sent" + ++sent, f: "You", r: replyTo.f, q: replyTo.b, paras: paras.slice() };
+          window.__sent.push(m.paras);
+          paras = [""];
+          bar.hidden = true;
+          replyTo = null;
+          render();
+          setTimeout(() => add(m), 300);
+        } else if (e.key === "Delete" || e.key === "Backspace") {
+          e.preventDefault();
+          if (!getSelection().isCollapsed) paras = [""];
+          else if (paras[paras.length - 1]) paras[paras.length - 1] = paras[paras.length - 1].slice(0, -1);
+          else if (paras.length > 1) paras.pop();
+          render();
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,4 +1,4 @@
-/* Test runner: serves tests/ (the simulated Messenger) on a free local port, runs sim.js against it, exits with its code.
+/* Test runner: serves tests/ (the simulated Messenger) on a free local port, runs sim.js and composer.sim.js against it, exits non-zero if either fails.
    Run from the repo root: npm install && npm run setup (once), then npm test. */
 const http = require('http');
 const fs = require('fs');
@@ -28,13 +28,19 @@ const server = http.createServer((req, res) => {
   });
 });
 server.listen(0, '127.0.0.1', () => {
-  const url = 'http://127.0.0.1:' + server.address().port + '/mock/messenger.html';
-  const child = spawn(process.execPath, [path.join(ROOT, 'sim.js')], {
-    stdio: 'inherit',
-    env: Object.assign({}, process.env, { MOCK_URL: url }),
+  const base = 'http://127.0.0.1:' + server.address().port + '/mock/';
+  const env = Object.assign({}, process.env, {
+    MOCK_URL: base + 'messenger.html',
+    COMPOSER_URL: base + 'composer.html',
   });
-  child.on('exit', code => {
-    server.close();
-    process.exit(code == null ? 1 : code);
-  });
+  /* sim.js (the helper on the simulated thread), then composer.sim.js (the outbox's posting steps) */
+  const run = (files, worst) => {
+    if (!files.length) {
+      server.close();
+      return process.exit(worst);
+    }
+    const child = spawn(process.execPath, [path.join(ROOT, files[0])], { stdio: 'inherit', env });
+    child.on('exit', code => run(files.slice(1), worst || (code == null ? 1 : code)));
+  };
+  run(['sim.js', 'composer.sim.js'], 0);
 });

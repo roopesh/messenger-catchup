@@ -2168,7 +2168,7 @@ class TestRestoreSummary(unittest.TestCase):
             self.restore(live, work, run, bk, dry=True)
 
     def test_a_build_adds_bullets_to_an_old_string_synopsis(self):
-        """B45: a build that gave a conversation with an old string synopsis a bullet crashed (str has no append)."""
+        """B47: a build that gave a conversation with an old string synopsis a bullet crashed (str has no append)."""
         msgs, th, sm = small(20)
         sm["convs"][0]["synopsis"] = OLD_SYN
         live = Live(self.d, msgs, th, sm)
