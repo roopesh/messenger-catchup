@@ -17,6 +17,16 @@
                                      holds the whole threading collection (list); SPEC holds only "relink". Writes
                                      RUNDIR/out/manifest.json and the threading documents it names, then advances WORK's
                                      threading, keeping the previous WORK in WORK/prev.
+  catchup.py restore-summary WORK RUNDIR BACKUPDIR [DECISIONS] [--dry-run] [--backup=NAME]
+                                     Put back what sessions before v1.17 dropped from the summary, from the copy they saved
+                                     in the page's `backups` collection (BACKUPDIR = out_dir with backups/*.json; its parts,
+                                     {part:"a"|"b"…, of}, are joined and must all be there). RUNDIR holds the whole threading
+                                     and summary collections (list). --dry-run prints only counts. Without DECISIONS, the
+                                     backup's open questions that would come back are written to RUNDIR/out/restore-open.json
+                                     with the later messages in their conversations, and nothing else is written. With
+                                     DECISIONS ({"<ask>": "open" | {"answer", "refs"}}), it writes the summary documents and
+                                     RUNDIR/out/manifest.json as a build does and advances WORK's summary (`restore` undoes it).
+                                     The refresh skill's references/restoring-a-summary.md has the whole procedure.
 LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summary are collections of documents:
   threading/current {layout:2, block, blocks:[ids], to, note, builtAt, convs:[conversations with no messages yet]}
   threading/b<start>-<hash> {start, convs:[{id,title}] starting in the block, members:{conv:[i...]}, links:{i:[p,t]}}
@@ -32,7 +42,8 @@ LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summ
   document each without `layout`, is still read, and the first build converts it. Nothing is ever dropped: the
   cleanup deletes only blocks the replaced `current` named and the new one doesn't, never blocks no `current` names.
   summary.fromI (optional, pages from before v1.17): the first message the stored summary covers. Earlier sessions
-  dropped older conversations and moved it; the page offers to summarize spans before it. catchup.py keeps it as is.
+  dropped older conversations and moved it; the page offers to summarize spans before it. A build keeps it as is;
+  restore-summary moves it back to what the backup covered (or removes it when the summary covers everything).
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
   "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs}],
@@ -47,7 +58,7 @@ else 'c' if same author as the previous member of its conversation, otherwise 'i
 for review; none if that member is over 3 h older -> ROOT). Override any GUESS in "links" and rebuild.
 A link whose parent sits in another conversation prints a WARN (the page would show it as a new thread)."""
 
-import json, sys, re, os, glob, collections, shutil, datetime, hashlib
+import json, sys, re, os, glob, collections, shutil, datetime, hashlib, copy
 
 
 def _n(s):
@@ -843,8 +854,11 @@ def build(work, run, specp):
             SC[cid] = {"id": cid, "tag": "", "synopsis": [], "outcome": "", "key": []}
             s["convs"].append(SC[cid])
     for cid, bs in sp.get("bullets", {}).items():
+        if not isinstance(SC[cid]["synopsis"], list):  # an old string synopsis: bullets as the page reads it
+            SC[cid]["synopsis"] = _syn_items(SC[cid]["synopsis"])
         for tx, refs in bs:
             assert len(tx.split()) <= 15, ("bullet over 15 words", tx)
+            assert refs, ("bullet ref not in conv: a new bullet needs refs", cid, tx)
             SC[cid]["synopsis"].append({"t": tx, "refs": refs})
     for cid, o in sp.get("outcome", {}).items():
         assert len(o.split()) <= 12, ("outcome over 12 words", o)
@@ -893,8 +907,9 @@ def build(work, run, specp):
     for cv in s["convs"]:
         for k in cv.get("key", []):
             assert k in cm[cv["id"]], ("key not in conv", cv["id"], k)
-        for b in cv["synopsis"] if isinstance(cv["synopsis"], list) else []:
-            assert b["refs"] and all(r in cm[cv["id"]] for r in b["refs"]), ("bullet ref not in conv", cv["id"], b)
+        for b in cv["synopsis"] if isinstance(cv["synopsis"], list) else []:  # bullets from old strings have no refs
+            refs = (b.get("refs") or []) if isinstance(b, dict) else []
+            assert all(r in cm[cv["id"]] for r in refs), ("bullet ref not in conv", cv["id"], b)
     for o in s["open"] + s["answered"]:
         assert all(r in cm[o["conv"]] for r in [o["ask"]] + o.get("refs", [])), ("ref not in conv", o)
     for d in s["deals"]:
@@ -929,6 +944,379 @@ def build(work, run, specp):
     print("write: " + told)
 
 
+# restore-summary: put back what sessions before v1.17 dropped from the summary, from their copy in `backups`
+
+PART_META = ("part", "of", "what", "savedAt")
+AFTER_MAX = 60  # later messages per open question in restore-open.json (WORK/all.json has the rest)
+
+
+def _syn_items(syn):
+    """A synopsis as a list of bullets, the way the page reads it (synItems): an old string synopsis becomes one bullet
+    per sentence, with no refs; a string inside a list becomes a bullet with no refs."""
+    if isinstance(syn, list):
+        return [{"t": x, "refs": []} if isinstance(x, str) else x for x in syn]
+    parts = re.split(r'(?:(?<=[.!?])|(?<=[.!?]["”)]))\s+(?=["“(]?[A-Z#])', str(syn or ""))
+    return [{"t": p.strip(), "refs": []} for p in parts if p.strip()]
+
+
+def _same(a, b):
+    return json.dumps(a, sort_keys=True, ensure_ascii=False) == json.dumps(b, sort_keys=True, ensure_ascii=False)
+
+
+def _anchor_merge(cur, bak, same, oldest_first, take=lambda x: True, loose=None):
+    """cur plus the items of bak it lacks, in bak's order: each missing item goes right after the bak item before it
+    (where that one now is), or, for the first ones, right before the first later bak item cur holds; with none, at the
+    old end of the list (the start when oldest_first, else the end). Each cur item stands for at most one bak item:
+    exact matches (same) first, then loose ones for what's left. take(x) says whether a missing item may come back.
+    -> (merged list, added, present, refused)"""
+    used, pos = set(), [None] * len(bak)
+    for test in (same, loose) if loose else (same,):
+        for n, b in enumerate(bak):
+            if pos[n] is None:
+                pos[n] = next((j for j, c in enumerate(cur) if j not in used and test(b, c)), None)
+                if pos[n] is not None:
+                    used.add(pos[n])
+    out = [("c", j) for j in range(len(cur))]
+    anchor, added, present, refused = None, 0, 0, 0
+    for n, b in enumerate(bak):
+        if pos[n] is not None:
+            anchor = out.index(("c", pos[n]))
+            present += 1
+            continue
+        if not take(b):
+            refused += 1
+            continue
+        if anchor is None:
+            later = [p for p in pos[n + 1 :] if p is not None]
+            k = out.index(("c", later[0])) if later else (0 if oldest_first else len(out))
+        else:
+            k = anchor + 1
+        out.insert(k, ("b", n))
+        anchor = k
+        added += 1
+    return [cur[j] if w == "c" else bak[j] for w, j in out], added, present, refused
+
+
+def _load_backup(bdir, name=None):
+    """The backup's parts ({part, of, what, savedAt, ...} in BACKUPDIR or BACKUPDIR/backups) joined into one summary:
+    part a's fields, with each list made of every part's, in part order. Incomplete or mismatched parts are refused."""
+    d = os.path.join(bdir, "backups") if os.path.isdir(os.path.join(bdir, "backups")) else bdir
+    groups = {}
+    for did, doc in sorted(_docs(d).items()):
+        if isinstance(doc, dict) and "part" in doc and "of" in doc:  # ids <name>-a, <name>-b, …
+            groups.setdefault(re.sub(r"-[a-z]$", "", did), []).append((did, doc))
+    assert groups, (
+        "no backup parts ({part, of}) in %s: list the whole backups collection into it (list, limit 1000)" % d
+    )
+    if name is None:
+        assert len(groups) == 1, "%s holds several backups (%s): name one with --backup=NAME" % (d, ", ".join(groups))
+        name = next(iter(groups))
+    assert name in groups, "no backup named %s in %s (there: %s)" % (name, d, ", ".join(groups))
+    parts = groups[name]
+    stop = "Write nothing, and tell the user (references/restoring-a-summary.md › Refusals)"
+    ofs = sorted({json.dumps(doc["of"]) for _, doc in parts})
+    assert len(ofs) == 1 and isinstance(parts[0][1]["of"], int) and parts[0][1]["of"] >= 1, (
+        "backup %s's parts disagree on how many parts there are (of: %s). %s" % (name, ", ".join(ofs), stop)
+    )
+    n = parts[0][1]["of"]
+    want = [chr(ord("a") + k) for k in range(n)]
+    got = sorted(str(doc["part"]) for _, doc in parts)
+    wrong = [did for did, doc in parts if re.search(r"-[a-z]$", did) and did[-1] != str(doc["part"])]
+    assert not wrong, "backup %s is mismatched: %s say(s) another part than its name. %s" % (
+        name,
+        ", ".join(wrong),
+        stop,
+    )
+    assert got == want, (
+        "backup %s is incomplete or mismatched: it has part(s) %s of %d, and needs %s. List the whole backups collection "
+        "again (list, limit 1000). If that doesn't bring them, %s%s"
+        % (name, ", ".join(got), n, ", ".join(want), stop[0].lower(), stop[1:])
+    )
+    for f in ("what", "savedAt"):
+        vals = {json.dumps(doc.get(f), sort_keys=True) for _, doc in parts}
+        assert len(vals) == 1, "backup %s's parts disagree on %s: they come from different saves. %s" % (name, f, stop)
+    by = {str(doc["part"]): doc for _, doc in parts}
+    s = {k: v for k, v in by["a"].items() if k not in PART_META}
+    for p in want[1:]:
+        extra = sorted(set(by[p]) - set(PART_META) - set(SUMMARY_LISTS))
+        assert not extra, "backup %s part %s holds %s, which only part a may hold. %s" % (
+            name,
+            p,
+            ", ".join(extra),
+            stop,
+        )
+        for k in SUMMARY_LISTS:
+            if k in by[p]:
+                s[k] = list(s.get(k) or []) + list(by[p][k])
+    for k in SUMMARY_LISTS:
+        s[k] = list(s.get(k) or [])
+    assert s.get("version") == 2 and isinstance(s.get("toI"), int), (
+        "backup %s isn't a version 2 summary with toI: joined, it has version %s, toI %s. %s"
+        % (name, s.get("version"), s.get("toI"), stop)
+    )
+    ids = [c.get("id") for c in s["convs"]]
+    dup = sorted({i for i in ids if ids.count(i) > 1})
+    assert not dup, "backup %s has more than one conversation with id %s. %s" % (name, ", ".join(dup), stop)
+    return name, n, s
+
+
+def _merge_backup(B, s0, t, base, dec):
+    """What restore-summary changes: s0 (WORK's merged summary) plus what the backup B has that it lacks.
+    -> (new summary, counts, open questions to decide, skipped items)"""
+    s = copy.deepcopy(s0)
+    cm = {c["id"]: set(c["members"]) for c in t["convs"]}
+    last = {c: max(m) for c, m in cm.items() if m}
+    stored = lambda refs: all(isinstance(r, int) and not isinstance(r, bool) and 0 <= r <= base for r in refs)
+    inconv = lambda cid, refs: cid in cm and stored(refs) and all(r in cm[cid] for r in refs)
+    skipped = []
+    C = {k: collections.Counter() for k in ("convs", "bullets", "open", "answered", "deals", "mentions")}
+
+    def skip(kind, why, **ids):
+        skipped.append(dict(ids, kind=kind, why=why))
+        return False
+
+    # conversations: missing ones come back (old string synopses as bullets); present ones get the bullets and empty
+    # fields they lack
+    cur = {c["id"]: c for c in s["convs"]}
+    back = []
+    for b in B["convs"]:
+        cid = b.get("id")
+        items = _syn_items(b.get("synopsis"))
+        if cid not in cm or not inconv(cid, b.get("key") or []):
+            C["convs"]["skipped"] += 1
+            C["bullets"]["skipped"] += len(items)
+            skip("conv", "not in threading" if cid not in cm else "key refs not in its conversation", conv=cid)
+            continue
+        good = []
+        for x in items:
+            if inconv(cid, (x.get("refs") or []) if isinstance(x, dict) else [None]):
+                good.append(x)
+            else:
+                C["bullets"]["skipped"] += 1
+                skip("bullet", "refs not in its conversation", conv=cid, refs=x.get("refs"))
+        if cid not in cur:
+            back.append(dict(b, synopsis=good))
+            C["convs"]["restored"] += 1
+            C["bullets"]["restored"] += len(good)
+            continue
+        c, changed = cur[cid], False
+        back.append(c)
+        if _same(b.get("synopsis"), c.get("synopsis")):
+            C["bullets"]["present"] += len(good)
+        else:
+            syn, add, have, _ = _anchor_merge(_syn_items(c.get("synopsis")), good, _same, True)
+            C["bullets"]["restored"] += add
+            C["bullets"]["present"] += have
+            if add:
+                c["synopsis"], changed = syn, True
+        for k, v in b.items():
+            if k not in ("id", "synopsis") and v not in ("", [], None) and c.get(k) in ("", [], None):
+                c[k], changed = v, True
+        C["convs"]["merged" if changed else "present"] += 1
+    if C["convs"]["restored"]:  # newest first by their last message, as a build sorts them
+        s["convs"] = _anchor_merge(s["convs"], back, lambda x, y: x["id"] == y["id"], False)[0]
+        s["convs"].sort(key=lambda c: -last.get(c["id"], 0))
+
+    # open questions: one missing from open, and answered in neither summary, comes back only as DECISIONS says
+    key = lambda o: (o.get("conv"), o.get("ask"))
+    is_open, is_answered = {key(o) for o in s["open"]}, {key(a) for a in s["answered"] + B["answered"]}
+    todo = []
+    for o in B["open"]:
+        if key(o) in is_open:
+            C["open"]["present"] += 1
+        elif key(o) in is_answered:
+            C["open"]["already answered"] += 1
+        elif not inconv(o.get("conv"), [o.get("ask")]):
+            C["open"]["skipped"] += 1
+            skip("open", "ask not in its conversation", conv=o.get("conv"), ask=o.get("ask"))
+        else:
+            todo.append(o)
+    reopen, answers = set(), []
+    if dec is not None:
+        asks = {str(o["ask"]): o for o in todo}
+        assert isinstance(dec, dict), 'DECISIONS must be {"<ask>": "open" | {"answer": "...", "refs": [...]}}'
+        extra = sorted(set(dec) - set(asks), key=lambda k: int(k) if k.isdigit() else -1)
+        assert not extra, "DECISIONS names #%s, which isn't an open question to restore (see restore-open.json)" % (
+            ", #".join(extra)
+        )
+        missing = sorted((k for k in asks if k not in dec), key=int)
+        assert not missing, "DECISIONS has no decision for #%s: every question in restore-open.json needs one" % (
+            ", #".join(missing)
+        )
+        for o in todo:
+            d = dec[str(o["ask"])]
+            if d == "open":
+                reopen.add(key(o))
+                continue
+            assert isinstance(d, dict) and set(d) == {"answer", "refs"}, (
+                'DECISIONS #%s: "open", or {"answer": "one line", "refs": [...]}' % o["ask"]
+            )
+            a, refs = d["answer"], d["refs"]
+            assert isinstance(a, str) and a.strip() and "\n" not in a and len(a.split()) <= 30, (
+                "DECISIONS #%s: the answer is one line of at most 30 words" % o["ask"]
+            )
+            assert isinstance(refs, list) and inconv(o["conv"], refs) and all(r > o["ask"] for r in refs), (
+                "DECISIONS #%s: refs are the answering messages: stored, after the ask, in its conversation (%s); "
+                "[] only when the answer is in another conversation, named in the answer" % (o["ask"], o["conv"])
+            )
+            answers.append({"conv": o["conv"], "ask": o["ask"], "answer": a.strip(), "refs": refs})
+        C["open"]["restored"] = len(reopen)
+        C["open"]["answered (DECISIONS)"] = len(answers)
+    else:
+        C["open"]["to decide"] = len(todo)
+    s["open"] = _anchor_merge(s["open"], B["open"], lambda x, y: key(x) == key(y), False, lambda o: key(o) in reopen)[0]
+
+    # answered, deals, mentions: the items missing come back where they were; ones that don't fit threading are listed
+    def merge(name, same, oldest_first, ok, ids, loose=None):
+        def take(x):
+            return ok(x) or skip(name, "refs not in threading", **ids(x))
+
+        out, add, have, bad = _anchor_merge(s[name], B[name], same, oldest_first, take, loose)
+        C[name].update({"restored": add, "present": have, "skipped": bad})
+        return out
+
+    s["answered"] = answers + merge(
+        "answered",
+        _same,
+        False,
+        lambda a: inconv(a.get("conv"), [a.get("ask")] + list(a.get("refs") or [])),
+        lambda a: {"conv": a.get("conv"), "ask": a.get("ask")},
+    )
+    edited = lambda b, c: (  # dealEdit changes the text and adds refs, never removes one
+        b.get("conv") == c.get("conv") and bool(b.get("refs")) and set(b["refs"]) <= set(c.get("refs") or [])
+    )
+    s["deals"] = merge(
+        "deals",
+        _same,
+        True,
+        lambda d: bool(d.get("refs")) and inconv(d.get("conv"), d["refs"]),
+        lambda d: {"conv": d.get("conv"), "refs": d.get("refs")},
+        edited,
+    )
+    s["mentions"] = merge(
+        "mentions", _same, False, lambda x: stored(_nums(x.get("refs") or [])), lambda x: {"refs": x.get("refs")}
+    )
+
+    # fromI: the first message either summary covers (none: everything from #0)
+    num = lambda v: v if isinstance(v, int) and not isinstance(v, bool) else 0
+    bf, cf = num(B.get("fromI")), num(s0.get("fromI"))
+    assert cf <= B["toI"] + 1, (
+        "the backup ends at #%d, but the stored summary starts at #%d: the messages between are in neither, so "
+        "restoring would claim they're summarized. Write nothing, and tell the user" % (B["toI"], cf)
+    )
+    s.pop("fromI", None)
+    if min(bf, cf):
+        s["fromI"] = min(bf, cf)
+    return s, C, todo, skipped
+
+
+def _restore_open(t, al, todo, name):  # RUN/out/restore-open.json: each question, its conversation's later messages
+    links = t.get("links", {})
+    title = {c["id"]: c.get("title", "") for c in t["convs"]}
+    mem = {c["id"]: sorted(c["members"]) for c in t["convs"]}
+
+    def brief(i):
+        m = al[i]
+        o = {k: m[k] for k in ("i", "f", "fn", "d", "t", "b", "r", "q", "p", "a") if m.get(k) not in (None, "")}
+        if str(i) in links:
+            o["link"] = links[str(i)]
+        return o
+
+    qs = []
+    for o in todo:
+        after = [i for i in mem[o["conv"]] if i > o["ask"]]
+        replies = sorted(int(k) for k, v in links.items() if v[0] == o["ask"] and int(k) not in mem[o["conv"]])
+        q = dict(o, title=title[o["conv"]], message=brief(o["ask"]), after=[brief(i) for i in after[:AFTER_MAX]])
+        if len(after) > AFTER_MAX:
+            q["moreAfter"] = "%d more later messages in this conversation (WORK/all.json)" % (len(after) - AFTER_MAX)
+        if replies:
+            q["repliesElsewhere"] = [brief(i) for i in replies]
+        qs.append(q)
+    return {
+        "backup": name,
+        "how": 'For each question, read the messages after it. Set DECISIONS["<ask>"] to "open" if nobody answered it, '
+        'or to {"answer": "<one line>", "refs": [<the answering messages: after the ask, in its conversation>]}. Then run '
+        "restore-summary again with DECISIONS (references/restoring-a-summary.md).",
+        "questions": qs,
+        "template": {str(o["ask"]): "open" for o in todo},
+    }
+
+
+def restore_summary(work, run, bdir, decp=None, dry=False, name=None):
+    global TZ
+    st = _load(work + "/state.json")
+    TZ = st.get("tz") or TZ
+    lay = _layout(work)
+    listing = {
+        c: _listing(run, c) for c in ("threading", "summary")
+    }  # a fresh read: what exists, and that WORK is current
+    _fresh(listing, lay)
+    t = _load(work + "/base/threading.json")
+    s = _load(work + "/base/summary.json")
+    al = _load(work + "/all.json")
+    name, nparts, B = _load_backup(bdir, name)
+    base = st["base"]
+    assert B["toI"] <= min(base, s.get("toI") if isinstance(s.get("toI"), int) else -1), (
+        "backup %s ends at #%d, past what the stored summary covers (#%s): it isn't an older copy of it"
+        % (name, B["toI"], s.get("toI"))
+    )
+    dec = _load(decp) if decp else None
+    new, C, todo, skipped = _merge_backup(B, s, t, base, dec)
+    out = os.path.join(run, "out")
+    print(
+        "restore-summary%s: backup %s (%d part%s, through #%d) into the summary through #%s"
+        % (" (dry run)" if dry else "", name, nparts, "" if nparts == 1 else "s", B["toI"], s.get("toI"))
+    )
+    order = {
+        "convs": ("restored", "merged", "present", "skipped"),
+        "open": ("to decide",) if dec is None else ("restored", "answered (DECISIONS)"),
+    }
+    for k in ("convs", "bullets", "open", "answered", "deals", "mentions"):
+        fs = order.get(k, ("restored",)) + (
+            () if k == "convs" else ("present",) + (("already answered",) if k == "open" else ()) + ("skipped",)
+        )
+        print("  %s: %s" % (k, ", ".join("%d %s" % (C[k][f], "already present" if f == "present" else f) for f in fs)))
+    print("  fromI: %s -> %s" % (s.get("fromI", "none"), new.get("fromI", "none")))
+    restored = sum(C[k]["restored"] for k in C) + C["open"]["answered (DECISIONS)"]
+    if todo and dec is None:
+        if dry:
+            print("dry run: nothing written. %d open question(s) need a decision before they come back" % len(todo))
+            return
+        for x in ("threading", "summary", "merged"):  # nothing stale here can be taken for this run's output
+            shutil.rmtree(os.path.join(out, x), ignore_errors=True)
+        if os.path.exists(os.path.join(out, "manifest.json")):
+            os.remove(os.path.join(out, "manifest.json"))
+        _dump(_restore_open(t, al, todo, name), os.path.join(out, "restore-open.json"))
+        print(
+            "Nothing written. %d open question(s) to decide: read %s/restore-open.json, write DECISIONS, and run "
+            "restore-summary again with it" % (len(todo), out)
+        )
+        return
+    if new == s:
+        print("nothing to restore: 0 restored; nothing written, WORK unchanged")
+        return
+    if dry:
+        print("dry run: %d restored; nothing written" % restored)
+        return
+    new["generatedAt"] = _ts()  # so a WORK bootstrapped before this write sees that summary/current changed
+    scur = listing["summary"]["current"]
+    af = scur.get("activeFrom", 0) if scur.get("layout") == 2 else 0
+    docs = {p: d for p, d in layout_docs(t, new, af).items() if p.startswith("summary/")}
+    _roundtrip(docs, None, new)
+    batches, cleanup = _plan(docs, listing)  # fails here, before anything is written, if a document is too big
+    told = _write_out(out, docs, batches, cleanup, {"summary": new})
+    if skipped:
+        _dump(skipped, os.path.join(out, "restore-skipped.json"))
+    _snapshot(work)
+    _dump(new, work + "/base/summary.json")
+    _dump(_record(lay, docs), work + "/base/layout.json")
+    print(
+        "restore ok: %d restored%s"
+        % (restored, "; %d skipped, listed in %s/restore-skipped.json" % (len(skipped), out) if skipped else "")
+    )
+    print("write: " + told)
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "bootstrap":
@@ -939,5 +1327,18 @@ if __name__ == "__main__":
         restore(sys.argv[2].rstrip("/"))
     elif cmd == "relink":
         relink(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4])
+    elif cmd == "restore-summary":
+        a = [x for x in sys.argv[2:] if not x.startswith("--")]
+        bk = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--backup=")]
+        if len(a) not in (3, 4):
+            sys.exit(__doc__)
+        restore_summary(
+            a[0].rstrip("/"),
+            a[1].rstrip("/"),
+            a[2].rstrip("/"),
+            a[3] if len(a) == 4 else None,
+            "--dry-run" in sys.argv[2:],
+            bk[0] if bk else None,
+        )
     else:
         sys.exit(__doc__)

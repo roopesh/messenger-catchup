@@ -2,6 +2,23 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.18.1] - 2026-11-12
+**Restore what pre-1.17 refreshes dropped from the summary** (BACKLOG F10, GitHub issue #32 §4). PATCH: a tool and a reference file; a normal refresh is unchanged. Page and helper unchanged.
+
+### Added
+- **`catchup.py restore-summary WORK RUN BACKUPDIR [DECISIONS] [--dry-run]`** joins the summary copy a session saved in the page's `backups` collection (refusing missing or mismatched parts) and adds back what the stored summary lacks:
+  - missing conversations; old string synopses become one bullet per sentence, as the page shows them
+  - a conversation that's still there, or was started again because it continued, gets the backup's bullets in front of its own (no duplicates) and its empty tag, outcome or key filled in
+  - missing answers, deals and mentions, each back where it was in its list (a deal edited since counts as present)
+  - `summary.fromI` moved back to the backup's, or removed when the summary then covers everything
+  - `--dry-run` prints only counts. The backup's open questions come back only as DECISIONS says: without it, they're written to `RUN/out/restore-open.json` with the later messages in their conversations, and nothing else is written.
+  - it writes through the block layout like a build: manifest, pins, cleanup, size check, WORK advanced and `restore WORK` to undo it. A second run restores nothing.
+- **`references/restoring-a-summary.md`** (named from `troubleshooting.md`): the run lock, the fetch, the dry run the user confirms, the open-question decisions, the pinned write, the check afterwards, what to tell the user, and the backup kept until the user decides.
+- `references/database.md` documents `backups/*` and what `fromI` means.
+
+### Fixed
+- **A build that gave bullets to a conversation with an old string synopsis crashed** (BACKLOG B47): the string is now split into bullets as the page shows it first. Older bullets with no refs (from such strings) no longer fail a build's checks; a new bullet still needs refs.
+
 ## [1.18.0] - 2026-11-12
 **Queued replies post in about 3 calls instead of 6, multi-line replies post, and `sentAt` is the real time** (issue #32 §1, §3 and §5; BACKLOG F11, B45, B46, and G6). MINOR: Claude follows a new posting procedure. Skill text and tests only: no page or helper change (`PAGE_VERSION` 2.3, helper 1.9).
 

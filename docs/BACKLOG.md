@@ -66,6 +66,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B44 | P1 | bug | 1.17.0's first refresh: conversation ids used twice stop the conversion; chunk names worked out by arithmetic; the refresh skill's description cut at `#` · **done** (v1.17.1) |
 | B45 | P2 | bug | Multi-line replies can't post: `insertText` drops line breaks and the exact-match check fails (issue #32 §3) · **done** (v1.18.0) |
 | B46 | P3 | bug | An outbox row's `sentAt` was an estimate, not the real time at confirm (issue #32 §5) · **done** (v1.18.0) |
+| B47 | P2 | bug | A build that gives bullets to a conversation with an old string synopsis crashes (`str` has no `append`) · **done** (v1.18.1) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -93,6 +94,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
+| F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection · **done** (v1.18.1; run on the live page still to do) |
 | F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection |
 | F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.0) |
 
@@ -262,6 +264,11 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Found:** in issue #32 §5: several rows had `sentAt` rounded to the minute and later than the row's own last write. The page shows `sentAt`.
 - **Fix:** the confirm returns the clock time (`at`), which becomes `sentAt`; a row settled on a later refresh takes the saved message's time (`d` and `t`, in `meta/chat.tz`). Every `sent` write sets both `sentAt` and `sentMid`, including when the user says it went out (`sentMid:null` only if it isn't in the saved messages).
 - **Tests:** `TestOutboxPosting.test_sent_always_has_a_real_sent_at_and_sent_mid`; the sim checks the confirm's `at` against the clock.
+### B47 · P2 · A build can't add bullets to a conversation with an old string synopsis · done (v1.18.1)
+- **Where:** `catchup.py build`, the `bullets` loop: `SC[cid]["synopsis"].append(...)`.
+- **What:** pages from before the bullet format still hold some conversations whose `synopsis` is one string (62 of the 91 the trim dropped on the owner's page, issue #32 §4; some kept ones too). A spec giving such a conversation a bullet crashed the build with `AttributeError`. Found while writing F10's restore, which brings those conversations back.
+- **Fix:** the build first splits the string into bullets the way the page shows it (`synItems`: one per sentence, no refs). Older bullets with no refs no longer fail the build's ref check; a new bullet still needs refs.
+- **Test:** `TestRestoreSummary.test_a_build_adds_bullets_to_an_old_string_synopsis` (fails on 1.17.1); `test_old_string_synopses_split_as_the_page_splits_them` runs the page's `synItems` in node and compares.
 
 ## Risks
 
@@ -490,9 +497,16 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Still to see live:** the scan on the real chat (about 4,000 messages; it may stop at the 8-minute cap first, and later messages fill in the rest).
 
 
-### F10 · P2 · Restore the summary items pre-1.17 refreshes dropped
+### F10 · P2 · Restore the summary items pre-1.17 refreshes dropped · done (v1.18.1)
 - **Why:** before v1.17.0, a refresh on the owner's page hit the 256 KiB cap and dropped 91 conversations, 14 open questions, 34 answered, 31 deals, 9 mentions and 132 bullets (GitHub issue #32 §4). That session saved the full summary from before the drop in the page's `backups` collection (two parts; read back and checked).
 - **Owner's call (Nov 12):** restore everything into the block layout, with a dry-run count first; the 14 open questions are checked against later messages before they show as open again.
+- **Done in v1.18.1:** `catchup.py restore-summary WORK RUN BACKUPDIR [DECISIONS] [--dry-run]` and the procedure in the refresh skill's `references/restoring-a-summary.md` (named from `troubleshooting.md`; SKILL.md has no room).
+  - **Identity:** conversations by id; bullets, answers and mentions by their whole content; open questions by conversation and ask (one in `answered` since is left alone); deals by content, or the same conversation with all the old refs (a `dealEdit` since). Each stored item stands for one backup item, so nothing comes back twice.
+  - **Placement:** a missing item goes right after the backup item before it, so lists keep the order they'd have had without the trim; restored bullets of a conversation continued since go in front of its new ones.
+  - **Open questions:** without DECISIONS, the command writes `restore-open.json` (each question and its conversation's later messages) and nothing else; Claude decides `open` or answered (refs, one line) per question.
+  - **fromI** goes back to the backup's (1654 on the owner's page), or is removed when the summary then covers everything.
+  - **Tests:** `TestRestoreSummary`: a trimmed page and an untrimmed twin given the same later builds; restored, the trimmed one equals the twin (plus the decisions), with exact dry-run counts, every document at most half the cap, a second run restoring nothing, refusals, pins and undo.
+- **Still to do:** run it on the owner's page with their go-ahead. Keep the backup until they decide.
 
 ### F11 · P2 · perf · Outbox: fewer round trips per reply · done (v1.18.0)
 - **Found:** in issue #32 §1: about 1 minute per reply (gaps of 42–109 s between `sent` writes over 10 replies), because `outbox.md` took about 6 tool calls per reply and each is a full model round trip. The browser work itself takes a few seconds.

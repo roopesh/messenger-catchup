@@ -2,7 +2,7 @@
 Known bugs from docs/BACKLOG.md are marked expectedFailure; when one starts passing, unittest reports
 "unexpected success": remove the marker and close the backlog item."""
 
-import contextlib, copy, importlib.util, io, json, os, random, shutil, sys, tempfile, unittest
+import contextlib, copy, importlib.util, io, json, os, random, re, shutil, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location(
@@ -1774,6 +1774,452 @@ class TestIssue33(unittest.TestCase):
         self.assertEqual(r(os.path.join(live.work, "state.json"))["chunks"], [0, 49])
         self.assertEqual(catchup._chunk_names(40, 60, [0, 49], 82), ["chunks/c0000", "chunks/c0049"])
         self.assertEqual(catchup._chunk_names(90, 95, None, 82), ["chunks/c0082"], "an older WORK falls back")
+
+
+CUT, FROM = 1200, 500  # the trim's cutoff (the live page: 2797) and the backup's fromI (1654)
+OLD_SYN = "Ana asked about the tent. Ben said it sold."  # an old string synopsis: two sentences, so two bullets
+OLD_BULLETS = [{"t": "Ana asked about the tent.", "refs": []}, {"t": "Ben said it sold.", "refs": []}]
+
+
+def backup_parts(sm):
+    """The full summary saved as the live session saved it: part a holds every field and half the conversations."""
+    meta = {"what": "summary/current before a refresh dropped items to fit", "savedAt": "2026-11-12T01:00:00.000Z"}
+    half = len(sm["convs"]) // 2
+    a = dict({k: v for k, v in sm.items() if k != "convs"}, part="a", of=2, convs=sm["convs"][:half], **meta)
+    return a, dict(part="b", of=2, convs=sm["convs"][half:], **meta)
+
+
+def fetch_backups(db, into):
+    """`list backups` into an out_dir."""
+    for p, d in db.docs.items():
+        if p.startswith("backups/"):
+            w(os.path.join(into, p + ".json"), d)
+    return into
+
+
+class TestRestoreSummary(unittest.TestCase):
+    """F10 (issue #32 §4): put back what a pre-1.17 refresh dropped from the summary, from the page's `backups`.
+
+    Two pages start from the same 3,000-message history and get the same two later builds. One (U) was never trimmed;
+    the other (T) was trimmed the way the live session trimmed it, saved its backup first, then converted to the block
+    layout and continued two of the conversations it had dropped. Restored, T must equal U: nothing lost, nothing twice,
+    every item in its place."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.d = self.t.name
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def restore(self, live, work, run, bk, dec=None, dry=False):
+        if dec is not None:
+            p = os.path.join(self.d, "decisions%d.json" % live.n)
+            w(p, dec)
+            dec = p
+        return quiet(catchup.restore_summary, work, run, bk, dec, dry)
+
+    def world(self):
+        """-> (T, U, facts): both pages after their later builds, and what the trim did."""
+        msgs, th, sm = synth.chat(3000, seed=41)
+        sm["fromI"] = FROM
+        last = {c["id"]: max(c["members"]) for c in th["convs"]}
+        mem = {c["id"]: c["members"] for c in th["convs"]}
+        dropped = [c["id"] for c in sm["convs"] if last[c["id"]] < CUT]
+        kept = [c["id"] for c in sm["convs"] if last[c["id"]] >= CUT]
+        for k, cid in enumerate(dropped):  # a third of the dropped conversations, and one kept one, in the old format
+            if k % 3 == 0:
+                next(c for c in sm["convs"] if c["id"] == cid)["synopsis"] = OLD_SYN
+        sc = {c["id"]: c for c in sm["convs"]}
+        sc[kept[5]]["synopsis"] = OLD_SYN
+        X = next(c for c in dropped if sc[c]["synopsis"] == OLD_SYN)  # continued later: an old string synopsis
+        lists = [c for c in dropped if isinstance(sc[c]["synopsis"], list) and len(mem[c]) >= 3]
+        Y, A, O = lists[0], lists[1], lists[2]  # Y continued later; A's and O's questions still open
+        asks = {o["ask"] for o in sm["open"]}
+        oY, oA, oO = ({"conv": c, "ask": mem[c][0], "to": "anyone", "note": "Still around?"} for c in (Y, A, O))
+        assert not {oY["ask"], oA["ask"], oO["ask"]} & asks
+        sm["open"][1:1] = [oA]
+        sm["open"][4:4] = [oY, oO]
+        deal_conv = next(c for c in kept if [d["conv"] for d in sm["deals"]].count(c) == 1 and c != kept[5])
+        K = next(c for c in kept if isinstance(sc[c]["synopsis"], list) and len(sc[c]["synopsis"]) >= 4)
+        full = copy.deepcopy(sm)
+        # the trim: conversations that ended before CUT and their items, then a few items of kept conversations
+        trim = synth.drop_before(sm, th, CUT)
+        next(c for c in trim["convs"] if c["id"] == K)["synopsis"] = sc[K]["synopsis"][2:]
+        gone = {
+            "answered": trim["answered"].pop(3),
+            "deals": next(x for x in trim["deals"] if x["conv"] != deal_conv),
+            "mentions": trim["mentions"].pop(6),
+        }
+        trim["deals"].remove(gone["deals"])
+        T = Live(os.path.join(self.d, "t"), msgs, th, trim, "old")
+        for p, x in zip(("a", "b"), backup_parts(full)):
+            T.db.put("backups/summary-pre-prune-" + p, x)
+        U = Live(os.path.join(self.d, "u"), msgs, th, full, "old")
+        # two later builds on both pages; the first converts them to the block layout
+        new1, new2 = synth.more(3000, 20, seed=3), synth.more(3020, 20, seed=4)
+        ids1, ids2 = [m["i"] for m in new1], [m["i"] for m in new2]
+        you = [m["i"] for m in new1 if m["f"] != "You"]
+        spec1 = {
+            "newconvs": [{"id": "tail1112", "title": "Pack", "tag": "Question", "outcome": "Open", "key": ids1[4:6]}],
+            "join": {X: ids1[:2], Y: ids1[2:4], "tail1112": ids1[4:]},
+            "bullets": {
+                X: [["Came back to the tent", ids1[:1]]],
+                Y: [["Ben answered at last", ids1[3:4]]],
+                "tail1112": [["Ana asked about a pack", ids1[4:5]]],
+            },
+            "answered": [{"conv": Y, "ask": oY["ask"], "answer": "Yes, it fits", "refs": ids1[3:4]}],
+            "mentions": [{"note": "Named you", "refs": [[you[-1]]]}],
+        }
+        spec2 = {
+            "join": {deal_conv: ids2[:1], "tail1112": ids2[1:]},
+            "dealEdit": {deal_conv: {"text": "Price dropped", "addRefs": ids2[:1]}},
+            "deals": [{"kind": "sale", "tag": "For sale", "conv": "tail1112", "text": "Pack, $80", "refs": ids2[1:2]}],
+            "open": [{"conv": "tail1112", "ask": ids2[2], "to": "anyone", "note": "Price?"}],
+            "bullets": {"tail1112": [["Price dropped to $80", ids2[1:2]]]},
+        }
+        for live, close in ((T, []), (U, [oY["ask"]])):  # only U still had oY open to close
+            live.bootstrap()
+            for new, spec in ((new1, dict(spec1, closeOpen=close)), (new2, spec2)):
+                run = live.run(new)
+                self.assertIn("build ok", live.build(run, spec))
+                live.write(run)
+        facts = dict(
+            full=full, trim=trim, dropped=dropped, kept=kept, X=X, Y=Y, K=K, oA=oA, oO=oO, oY=oY, mem=mem, gone=gone
+        )
+        return T, U, facts
+
+    def ready(self, T, tag):
+        """The procedure's reads: fetch everything and bootstrap a fresh WORK, list the collections, list backups."""
+        work = os.path.join(self.d, "work-" + tag)
+        T.bootstrap(work)
+        run = T.listing(os.path.join(self.d, "run-" + tag))
+        return work, run, fetch_backups(T.db, os.path.join(self.d, "bk-" + tag))
+
+    def snapshot(self, work):
+        return {f: r(os.path.join(work, f)) for f in catchup.WFILES}
+
+    def test_restore_puts_back_everything_the_trim_dropped(self):
+        T, U, f = self.world()
+        full, trim = f["full"], f["trim"]
+        work, run, bk = self.ready(T, "1")
+        n_syn = lambda c: 2 if c["synopsis"] == OLD_SYN else len(c["synopsis"])
+        sc = {c["id"]: c for c in full["convs"]}
+        qkey = lambda o: (o["conv"], o["ask"])
+        answered = {qkey(a) for a in full["answered"]} | {qkey(f["oY"])}  # in the backup's answers, or answered since
+        dropped_open = [o for o in full["open"] if o["conv"] in f["dropped"]]
+        cands = [o for o in dropped_open if qkey(o) not in answered]
+        self.assertIn(f["oA"], cands)
+        self.assertIn(f["oO"], cands)
+        self.assertNotEqual(T.db.docs["summary/current"].get("layout"), None, "converted to the block layout")
+        self.assertEqual(T.db.merged()[1]["fromI"], CUT)
+        counts = lambda opened: [
+            "  convs: %d restored, 3 merged, %d already present, 0 skipped"
+            % (len(f["dropped"]) - 2, len(f["kept"]) - 1),
+            "  bullets: %d restored, %d already present, 0 skipped"
+            % (sum(n_syn(sc[c]) for c in f["dropped"]) + 2, sum(n_syn(sc[c]) for c in f["kept"]) - 2),
+            opened
+            + ", %d already present, %d already answered, 0 skipped"
+            % (len([o for o in full["open"] if o["conv"] in f["kept"]]), len(dropped_open) - len(cands)),
+            "  answered: %d restored, %d already present, 0 skipped"
+            % (len(full["answered"]) - len(trim["answered"]), len(trim["answered"])),
+            "  deals: %d restored, %d already present, 0 skipped"
+            % (len(full["deals"]) - len(trim["deals"]), len(trim["deals"])),
+            "  mentions: %d restored, %d already present, 0 skipped"
+            % (len(full["mentions"]) - len(trim["mentions"]), len(trim["mentions"])),
+            "  fromI: %d -> %d" % (CUT, FROM),
+        ]
+        before_db, before_work = copy.deepcopy(T.db.docs), self.snapshot(work)
+        # the dry run: counts only, nothing written
+        out = self.restore(T, work, run, bk, dry=True)
+        self.assertEqual(out.splitlines()[1:8], counts("  open: %d to decide" % len(cands)), out)
+        self.assertIn("dry run: nothing written. %d open question(s) need a decision" % len(cands), out)
+        for x in [OLD_SYN, "Ben", "Ana"] + [
+            c["synopsis"][0]["t"] for c in full["convs"] if isinstance(c["synopsis"], list) and c["synopsis"]
+        ][:20]:
+            self.assertNotIn(x, out, "the dry run never prints text")
+        self.assertFalse(os.path.exists(os.path.join(run, "out")))
+        # without DECISIONS: the open questions to check, and nothing else
+        out = self.restore(T, work, run, bk)
+        self.assertIn("Nothing written. %d open question(s) to decide" % len(cands), out)
+        self.assertEqual(os.listdir(os.path.join(run, "out")), ["restore-open.json"])
+        self.assertEqual(self.snapshot(work), before_work, "WORK unchanged")
+        self.assertFalse(os.path.exists(os.path.join(work, "prev")))
+        self.assertEqual(T.db.docs, before_db, "database unchanged")
+        ro = r(os.path.join(run, "out", "restore-open.json"))
+        self.assertEqual([q["ask"] for q in ro["questions"]], [o["ask"] for o in cands])
+        self.assertEqual(ro["template"], {str(o["ask"]): "open" for o in cands})
+        qa = next(q for q in ro["questions"] if q["ask"] == f["oA"]["ask"])
+        self.assertEqual(qa["message"]["i"], f["oA"]["ask"])
+        self.assertEqual([m["i"] for m in qa["after"]], [i for i in f["mem"][f["oA"]["conv"]] if i > f["oA"]["ask"]])
+        self.assertTrue(all(m["b"] == T.msgs[m["i"]]["b"] for m in qa["after"]))
+        # the decisions: A's question was answered by the next message in its conversation; the rest stay open
+        refs = [f["mem"][f["oA"]["conv"]][1]]
+        dec = {str(o["ask"]): "open" for o in cands}
+        dec[str(f["oA"]["ask"])] = {"answer": "Ben has one", "refs": refs}
+        out = self.restore(T, work, run, bk, dec, dry=True)
+        self.assertEqual(
+            out.splitlines()[1:8], counts("  open: %d restored, 1 answered (DECISIONS)" % (len(cands) - 1))
+        )
+        self.assertEqual(self.snapshot(work), before_work)
+        out = self.restore(T, work, run, bk, dec)
+        self.assertEqual(
+            out.splitlines()[1:8], counts("  open: %d restored, 1 answered (DECISIONS)" % (len(cands) - 1))
+        )
+        self.assertIn("restore ok", out)
+        man = T.write(run)  # pinned from the listing; refresh/status (the lock) in the last batch
+        self.assertTrue(man["batches"][-1][-1]["pin"] and man["batches"][-1][-1]["doc_id"] == "current")
+        self.assertTrue(all(e["collection"] == "summary" for bt in man["batches"] for e in bt), "threading untouched")
+        # restored, T is U: the backup plus everything built after it
+        t_t, t_s = T.db.merged()
+        u_t, u_s = U.db.merged()
+        want = copy.deepcopy(u_s)
+        for c in want["convs"]:
+            if c["id"] in f["dropped"] and c["synopsis"] == OLD_SYN:
+                c["synopsis"] = OLD_BULLETS
+        self.assertEqual(next(c for c in want["convs"] if c["id"] == f["X"])["synopsis"][:2], OLD_BULLETS)
+        want["open"].remove(f["oA"])
+        want["open"] = [o for o in want["open"] if o in cands or o not in dropped_open]  # already answered: left out
+        want["answered"].insert(
+            0, {"conv": f["oA"]["conv"], "ask": f["oA"]["ask"], "answer": "Ben has one", "refs": refs}
+        )
+        self.assertEqual(without_times(t_s), without_times(want))
+        self.assertEqual(without_times(t_t), without_times(u_t))
+        self.assertEqual(t_s["fromI"], FROM)
+        # no duplicates anywhere, and every document at most half the cap
+        self.assertEqual(len({c["id"] for c in t_s["convs"]}), len(t_s["convs"]))
+        for k in ("open", "answered", "deals", "mentions"):
+            self.assertEqual(len({json.dumps(x, sort_keys=True) for x in t_s[k]}), len(t_s[k]), k)
+        sz = T.db.layout_sizes()
+        self.assertLessEqual(max(sz.values()), FakeDB.DOC // 2, sz)
+        self.assertEqual(t_s, r(os.path.join(work, "base", "summary.json")), "WORK advanced like a build")
+        # the verification: a fresh bootstrap reads it back, and a second run restores nothing
+        work2, run2, bk2 = self.ready(T, "2")
+        self.assertEqual(r(os.path.join(work2, "base", "summary.json")), t_s)
+        out = self.restore(T, work2, run2, bk2, dry=True)
+        self.assertIn("nothing to restore: 0 restored", out)
+        self.assertIn(
+            "  open: 0 to decide, %d already present"
+            % (len(cands) - 1 + len([o for o in full["open"] if o["conv"] in f["kept"]])),
+            out,
+        )
+        out = self.restore(T, work2, run2, bk2)
+        self.assertIn("nothing to restore: 0 restored; nothing written", out)
+        self.assertFalse(os.path.exists(os.path.join(run2, "out")))
+        # and refreshes carry on: a restored conversation with old string bullets takes a new message
+        R = next(c for c in f["dropped"] if c not in (f["X"], f["Y"]) and sc[c]["synopsis"] == OLD_SYN)
+        new3 = synth.more(3040, 3, seed=5)
+        run3 = T.run(new3)
+        self.assertIn(
+            "build ok",
+            T.build(run3, {"join": {R: [m["i"] for m in new3]}, "bullets": {R: [["More on it", [3040]]]}}, work2),
+        )
+        T.write(run3)
+        syn = next(c for c in T.db.merged()[1]["convs"] if c["id"] == R)["synopsis"]
+        self.assertEqual(syn, OLD_BULLETS + [{"t": "More on it", "refs": [3040]}])
+
+    def test_refusals_leave_everything_as_it_was(self):
+        T, U, f = self.world()
+        work, run, bk = self.ready(T, "1")
+        before = self.snapshot(work)
+        parts = os.path.join(bk, "backups")
+        pa, pb = (os.path.join(parts, "summary-pre-prune-%s.json" % p) for p in "ab")
+        a, b = r(pa), r(pb)
+        for broken, pattern in (
+            ({"b": None}, r"incomplete or mismatched: it has part\(s\) a of 2, and needs a, b"),
+            ({"b": dict(b, of=3)}, "disagree on how many parts there are"),
+            ({"b": dict(b, savedAt="2026-11-12T02:00:00.000Z")}, "disagree on savedAt: they come from different saves"),
+            ({"b": dict(b, part="c")}, "summary-pre-prune-b say\\(s\\) another part than its name"),
+            ({"b": dict(b, toI=1)}, "part b holds toI, which only part a may hold"),
+        ):
+            with self.subTest(pattern=pattern):
+                for p, x in (("a", a), ("b", b)):
+                    x = broken.get(p, x)
+                    path = os.path.join(parts, "summary-pre-prune-%s.json" % p)
+                    if x is None:
+                        os.remove(path)
+                    else:
+                        w(path, x)
+                with self.assertRaisesRegex(AssertionError, pattern):
+                    self.restore(T, work, run, bk, dry=True)
+                with self.assertRaisesRegex(AssertionError, pattern):
+                    self.restore(T, work, run, bk)
+                self.assertFalse(os.path.exists(os.path.join(run, "out")))
+                self.assertEqual(self.snapshot(work), before)
+        w(pa, a)
+        w(pb, b)
+        # DECISIONS must cover exactly the questions in restore-open.json
+        self.restore(T, work, run, bk)
+        asks = [str(q["ask"]) for q in r(os.path.join(run, "out", "restore-open.json"))["questions"]]
+        for dec, pattern in (
+            ({k: "open" for k in asks[1:]}, "no decision for #%s" % asks[0]),
+            (dict({k: "open" for k in asks}, **{"7": "open"}), "names #7, which isn't an open question to restore"),
+            (
+                dict({k: "open" for k in asks}, **{asks[0]: {"answer": "x", "refs": [int(asks[0]) - 1]}}),
+                "after the ask",
+            ),
+            (dict({k: "open" for k in asks}, **{asks[0]: {"answer": "a\nb", "refs": []}}), "one line"),
+        ):
+            with self.subTest(dec=pattern), self.assertRaisesRegex(AssertionError, pattern):
+                self.restore(T, work, run, bk, dec)
+        self.assertEqual(self.snapshot(work), before)
+        # another session built after this WORK was bootstrapped: refused before anything is written
+        T.db.put("summary/current", dict(T.db.docs["summary/current"], generatedAt="Thu Nov 12, 9:05 AM"))
+        run2 = T.listing(os.path.join(self.d, "run-stale"))
+        with self.assertRaisesRegex(AssertionError, "summary/current changed since WORK was bootstrapped"):
+            self.restore(T, work, run2, bk, {k: "open" for k in asks})
+        self.assertFalse(os.path.exists(os.path.join(run2, "out")))
+
+    def test_a_stale_current_is_refused_by_the_pins_and_restore_undoes_it(self):
+        T, U, f = self.world()
+        work, run, bk = self.ready(T, "1")
+        before = self.snapshot(work)
+        self.restore(T, work, run, bk)
+        asks = r(os.path.join(run, "out", "restore-open.json"))["template"]
+        self.assertIn("restore ok", self.restore(T, work, run, bk, asks))
+        self.assertNotEqual(self.snapshot(work), before)
+        # the page or another session writes summary/current between the listing and the write
+        T.db.put("summary/current", dict(T.db.docs["summary/current"], mentionsNote="changed"))
+        docs = copy.deepcopy(T.db.docs)
+        with self.assertRaisesRegex(Refused, "summary/current changed"):
+            T.write(run)
+        self.assertEqual(T.db.docs, docs, "a refused batch writes nothing")
+        quiet(catchup.restore, work)
+        self.assertEqual(self.snapshot(work), before, "restore WORK undoes it")
+        self.assertFalse(os.path.exists(os.path.join(work, "prev")))
+
+    def small_world(self, backup, current, fromI=None):
+        msgs = [msg(i, "Ana" if i % 2 else "Ben", "m%d" % i, mi=i % 60) for i in range(100)]
+        th = {
+            "convs": [
+                {"id": "a", "title": "A", "members": list(range(50))},
+                {"id": "b", "title": "B", "members": list(range(50, 100))},
+            ],
+            "links": {},
+            "to": 99,
+            "note": "",
+        }
+        live = Live(self.d, msgs, th, dict(EMPTY_SM, toI=99, **current), "new")
+        for p, x in zip("ab", backup_parts(dict(EMPTY_SM, toI=90, **backup))):
+            live.db.put("backups/summary-pre-prune-" + p, x)
+        return live
+
+    def test_items_that_dont_fit_threading_are_skipped_and_listed(self):
+        conv = lambda cid, syn: {"id": cid, "tag": "Trip", "synopsis": syn, "outcome": "Done", "key": []}
+        live = self.small_world(
+            {
+                "convs": [
+                    conv("b", [{"t": "B1", "refs": [60]}]),
+                    conv("ghost", "Gone. Long gone."),
+                    conv("a", [{"t": "A1", "refs": [3]}, {"t": "A2", "refs": [70]}]),
+                ],
+                "answered": [
+                    {"conv": "ghost", "ask": 5, "answer": "x", "refs": []},
+                    {"conv": "a", "ask": 5, "answer": "y", "refs": [6]},
+                ],
+                "open": [{"conv": "a", "ask": 5, "to": "anyone", "note": "also in answered"}],
+                "deals": [{"kind": "sale", "tag": "", "conv": "a", "text": "d", "refs": [55]}],
+                "mentions": [{"note": "n", "refs": [[150]]}],
+                "fromI": 0,
+            },
+            {"convs": [conv("b", [{"t": "B1", "refs": [60]}])], "fromI": 50},
+        )
+        work, run, bk = self.ready(live, "1")
+        out = self.restore(live, work, run, bk)
+        for line in (
+            "  convs: 1 restored, 0 merged, 1 already present, 1 skipped",
+            "  bullets: 1 restored, 1 already present, 3 skipped",
+            "  open: 0 to decide, 0 already present, 1 already answered, 0 skipped",
+            "  answered: 1 restored, 0 already present, 1 skipped",
+            "  deals: 0 restored, 0 already present, 1 skipped",
+            "  mentions: 0 restored, 0 already present, 1 skipped",
+            "  fromI: 50 -> none",
+        ):
+            self.assertIn(line, out)
+        self.assertIn("5 skipped, listed in", out)  # a skipped conversation takes its bullets with it
+        sk = r(os.path.join(run, "out", "restore-skipped.json"))
+        self.assertEqual(
+            sorted((x["kind"], x.get("conv")) for x in sk),
+            [("answered", "ghost"), ("bullet", "a"), ("conv", "ghost"), ("deals", "a"), ("mentions", None)],
+        )
+        self.assertNotIn("Gone", json.dumps(sk), "ids and refs only")
+        live.write(run)
+        s = live.db.merged()[1]
+        self.assertEqual([c["id"] for c in s["convs"]], ["b", "a"])
+        self.assertEqual(s["convs"][1]["synopsis"], [{"t": "A1", "refs": [3]}])
+        self.assertNotIn("fromI", s, "the summary now covers everything from #0")
+
+    def test_coverage_refusals(self):
+        live = self.small_world({"fromI": 10}, {"fromI": 95})
+        work, run, bk = self.ready(live, "1")
+        with self.assertRaisesRegex(AssertionError, "the backup ends at #90, but the stored summary starts at #95"):
+            self.restore(live, work, run, bk, dry=True)
+        live = self.small_world({}, {})
+        b = live.db.docs["backups/summary-pre-prune-a"]
+        live.db.put("backups/summary-pre-prune-a", dict(b, toI=120))
+        work, run, bk = self.ready(live, "2")
+        with self.assertRaisesRegex(AssertionError, r"ends at #120, past what the stored summary covers \(#99\)"):
+            self.restore(live, work, run, bk, dry=True)
+        live.db.put("backups/other-a", dict(b, of=1))
+        work, run, bk = self.ready(live, "3")
+        with self.assertRaisesRegex(
+            AssertionError, r"holds several backups \(other, summary-pre-prune\): name one with --backup=NAME"
+        ):
+            self.restore(live, work, run, bk, dry=True)
+
+    def test_a_build_adds_bullets_to_an_old_string_synopsis(self):
+        """B47: a build that gave a conversation with an old string synopsis a bullet crashed (str has no append)."""
+        msgs, th, sm = small(20)
+        sm["convs"][0]["synopsis"] = OLD_SYN
+        live = Live(self.d, msgs, th, sm)
+        live.bootstrap()
+        run = live.run([msg(20, "Ben", "x", mi=20)])
+        self.assertIn("build ok", live.build(run, {"join": {"a": [20]}, "bullets": {"a": [["Ben came back", [20]]]}}))
+        live.write(run)
+        self.assertEqual(
+            live.db.merged()[1]["convs"][0]["synopsis"], OLD_BULLETS + [{"t": "Ben came back", "refs": [20]}]
+        )
+
+    def test_old_string_synopses_split_as_the_page_splits_them(self):
+        page = read_page()
+        fn = re.search(r"^  function synItems\(syn\) \{.*?^  \}$", page, re.M | re.S).group(0)
+        cases = [
+            OLD_SYN,
+            'Is it gone? #3 says yes. ok then. He said "Sold." Then left.',
+            "One sentence only",
+            "",
+            "Prices: $40 (firm). Ships Monday! (Maybe.) “Quote” here.",
+            ["a string bullet", {"t": "a bullet", "refs": [3]}],
+        ]
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
+        import subprocess
+
+        js = fn + "\nconsole.log(JSON.stringify(%s.map(synItems)));" % json.dumps(cases)
+        got = json.loads(subprocess.run([node, "-e", js], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual([catchup._syn_items(c) for c in cases], got)
+
+    def test_cli(self):
+        import subprocess
+
+        p = subprocess.run(
+            [
+                sys.executable,
+                os.path.join(ROOT, "plugin", "skills", "refresh", "scripts", "catchup.py"),
+                "restore-summary",
+                "w",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("catchup.py restore-summary WORK RUNDIR BACKUPDIR [DECISIONS] [--dry-run]", p.stderr)
+
+
+def read_page():
+    with open(os.path.join(ROOT, "plugin", "skills", "refresh", "assets", "page.html"), encoding="utf-8") as fh:
+        return fh.read()
 
 
 class TestCli(unittest.TestCase):
