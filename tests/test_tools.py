@@ -39,6 +39,8 @@ REFERENCES = [
 SHIPPED = ["SKILL.md", "assets/page.html", "assets/helper.user.js", "scripts/catchup.py"] + [
     "references/" + f for f in REFERENCES
 ]
+# keys of a JS object literal, shorthand ones included ({text, state: "x"})
+OBJ_KEYS = r"(?:^|[{,])\s*(\w+)\s*(?=[:,}])"
 SETUP_SHIPPED = ["SKILL.md", "assets/page.html", "references/database.md"]
 
 
@@ -191,15 +193,37 @@ class TestSkillReferences(unittest.TestCase):
             self.assertTrue(("`%s`" % p in skill) or ("`%s/" % top in skill), "SKILL.md never mentions " + p)
 
     def test_every_meta_chat_field_the_page_writes_is_documented(self):
+        """Anchored on each doc("meta/chat").update(...): an object literal, or a variable traced back to its literal,
+        the fields assigned to it before the write, and (for setMarker's Object.assign) what its callers pass."""
         page, skill = in_skill("assets", "page.html"), in_skill("references", "database.md")
-        lits = (
-            re.findall(r"const upd\s*=\s*\{([^{}]*)\}", page)
-            + re.findall(r'doc\("meta/chat"\)\s*\.update\(\{([^{}]*)\}', page)
-            + re.findall(r"Object\.assign\(\{\s*(markerMode[^{}]*)\}", page)
-            + re.findall(r'setMarker\("time",\s*\{([^{}]*)\}', page)
+        fields = set()
+
+        def keys(lit):
+            return set(re.findall(OBJ_KEYS, lit))
+
+        def resolve(name, pos):
+            defs = list(re.finditer(r"const %s\s*=\s*(Object\.assign\()?(\{[^{}]*\})" % name, page[:pos]))
+            if not defs:
+                alias = list(re.finditer(r"\b%s\s*=\s*(\w+);" % name, page[:pos]))
+                self.assertTrue(alias, "can't trace the meta/chat write of " + name)
+                return resolve(alias[-1].group(1), alias[-1].start())
+            d = defs[-1]
+            fields.update(keys(d.group(2)))
+            fields.update(re.findall(r"\b%s\.(\w+)\s*=" % name, page[d.end() : pos]))
+            if d.group(1):
+                for lit in re.findall(r"setMarker\(\"\w+\",\s*(\{[^{}]*\})", page):
+                    fields.update(keys(lit))
+
+        writes = list(re.finditer(r'doc\("meta/chat"\)\s*\.update\((\{[^{}]*\}|\w+)\)', page))
+        self.assertGreaterEqual(len(writes), 4, "the page's meta/chat writes moved; update this test")
+        for w in writes:
+            if w.group(1).startswith("{"):
+                fields.update(keys(w.group(1)))
+            else:
+                resolve(w.group(1), w.start())
+        self.assertTrue(
+            {"lastI", "ownLastMid", "markerTo", "caughtUpAt", "markerSetAt", "anchorMids"} <= fields, fields
         )
-        fields = set(k for l in lits for k in re.findall(r"(\w+):", l)) | set(re.findall(r"\bupd\.(\w+)\s*=", page))
-        self.assertTrue({"lastI", "ownLastMid", "markerTo", "caughtUpAt"} <= fields, fields)
         meta = re.search(r"^- `meta/chat`:(.*)$", skill, re.M).group(1)
         for f in fields:
             self.assertIn("`%s`" % f, meta, "meta/chat field not documented in SKILL.md: " + f)
@@ -477,6 +501,137 @@ class TestOutboxStates(unittest.TestCase):
         labels = re.search(r'\{\s*queued:\s*"queued",[^}]*\}', page).group(0)
         for st in states - {"cancelled"}:
             self.assertIn(st + ":", labels, "page has no label for outbox state " + st)
+
+    ALL_STATES = ("queued", "sending", "sent", "failed", "unconfirmed", "cancelled", "dismissed")
+
+    def page_writes(self):
+        """The page's three outbox writes: Queue reply (set), Cancel and Dismiss (update)."""
+        page = in_skill("assets", "page.html")
+        writes = re.findall(r'doc\("outbox/"\s*\+\s*[\w.]+\)\s*\.(set|update)\(\s*(\{[^{}]*\})\s*\)', page)
+        self.assertEqual(len(writes), 3, "expected exactly 3 outbox writes in page.html; the regex or the page changed")
+        return writes
+
+    def outbox_line(self):
+        return re.search(r"^- `outbox/r<ms>`.*$", in_skill("references", "database.md"), re.M).group(0)
+
+    def test_database_md_documents_every_outbox_field_and_state(self):
+        """G6: every field and state the page writes, every state outbox.md uses, and Claude's own fields are on
+        database.md's outbox line."""
+        writes, line = self.page_writes(), self.outbox_line()
+        fields = {k for _, lit in writes for k in re.findall(OBJ_KEYS, lit)}
+        states = {s for _, lit in writes for s in re.findall(r'state:\s*"(\w+)"', lit)}
+        self.assertEqual(states, {"queued", "cancelled", "dismissed"})
+        self.assertTrue({"i", "mid", "to", "snip", "text", "queuedAt", "cancelledAt", "dismissedAt"} <= fields, fields)
+        out = in_skill("references", "outbox.md")
+        states |= {st for st in self.ALL_STATES if "`%s`" % st in out or 'state:"%s"' % st in out}
+        self.assertEqual(states, set(self.ALL_STATES))
+        for name in fields | states | {"sentAt", "sentMid", "error"}:
+            self.assertIn("`%s`" % name, line, "outbox field or state missing from database.md: " + name)
+        self.assertIn('"no Messenger id"', line)
+        self.assertIn("120 characters", line)
+        self.assertIn('"[photo]"', line)
+
+    def test_database_md_defines_coverage(self):
+        meta = re.search(r"^- `meta/chat`:(.*)$", in_skill("references", "database.md"), re.M).group(1)
+        self.assertIn('`coverage` (one short sentence the page shows after "Stored: N messages, #a to #b."', meta)
+        self.assertIn('(mt.coverage ? ". " + mt.coverage : ".")', in_skill("assets", "page.html"))
+
+    def test_open_message_queues_with_the_pages_fields(self):
+        _, lit = [w for w in self.page_writes() if w[0] == "set"][0]
+        fields = re.findall(OBJ_KEYS, lit)
+        step = re.search(r"^5\. To queue it.*$", in_skill("references", "open-message.md"), re.M).group(0)
+        self.assertIn('state:"queued"', step)
+        self.assertIn("`outbox/r<ms>`", step)
+        for f in fields:
+            self.assertRegex(step, r"[{ ]%s[:,}]" % f, "open-message.md doesn't queue field " + f)
+
+
+class TestOutboxPosting(unittest.TestCase):
+    """Issue #32: about 3 calls per reply (§1), multi-line replies (§3), real sentAt (§5), and G6's rules."""
+
+    def setUp(self):
+        self.out = in_skill("references", "outbox.md")
+        self.post = re.search(r"^## Posting\n.*", self.out, re.M | re.S).group(0)
+        self.code = re.findall(r"```js\n(.*?)```", self.post, re.S)
+
+    def section(self, start, end):
+        return re.search(
+            r"^- \*\*%s.*?(?=^- (?:\*\*)?%s)" % (re.escape(start), re.escape(end)), self.post, re.M | re.S
+        ).group(0)
+
+    def test_three_calls_per_reply(self):
+        self.assertIn("About 3 calls per reply", self.post)
+        self.assertEqual(len(self.code), 3, "call 1, the check, the confirm")
+        c1 = self.section("Call 1, javascript_tool", "Call 2")
+        c2 = self.section("Call 2, ArtifactData `batch`", "Call 3")
+        c3 = self.section("Call 3, `browser_batch`", "After the last row")
+        # call 1: jump, wait for the tip, the bar and the snip, the empty box, then insertText, in that order
+        js = self.code[0]
+        order = [
+            "cmd: 'jump'",
+            "{ wait: tip }",
+            "'Replying to '",
+            "sq(R.snip).slice(0, 20)",
+            "if (sq(box.innerText)) return { fail:",
+            "document.execCommand('insertText', false, first)",
+        ]
+        at = [js.find(s) for s in order]
+        self.assertTrue(all(a >= 0 for a in at), list(zip(order, at)))
+        self.assertEqual(at, sorted(at), "call 1 does its checks before it types")
+        self.assertIn("{ wait: tip }", js)
+        # call 2: the previous row's outcome and this row's sending, in one pinned batch
+        self.assertIn('the pending outcomes, plus this row updated to `{state:"sending"}`', c2)
+        self.assertIn("so a row's `sent` lands with the next row's `sending`", self.post)
+        # call 3: later lines, the check, Return, the confirm
+        steps = ["`shift+Return`", "the check", "`computer` key `Return`", "the confirm"]
+        at = [c3.find(s) for s in steps]
+        self.assertTrue(all(a >= 0 for a in at) and at == sorted(at), list(zip(steps, at)))
+        self.assertIn("throws, which stops the batch, so Return never reaches the box", c3)
+        self.assertIn("box?.blur()", self.code[1])
+        self.assertIn("if (ab !== null) return { abort:", self.code[2])
+        # a crash between rows leaves at most one row in sending
+        self.assertIn("at most one row is ever in `sending`", self.post)
+        self.assertIn("**stop posting** for this run, so a second row is never left in `sending`", c3)
+        self.assertIn("at most one row is left in `sending`, and the settle check above finds it", self.post)
+        self.assertIn("Never mark a reply that may have been sent as `failed`", c3)
+        self.assertNotIn('Write `state:"sending"`, then press Enter', self.out)
+        self.assertTrue(c1)
+
+    def test_multi_line_replies(self):
+        c3 = self.section("Call 3, `browser_batch`", "After the last row")
+        self.assertIn("`text.split('\\n')`", c3)
+        self.assertIn("never insert a `\\n`", c3)
+        self.assertIn("skip the insert for an empty line", c3)
+        self.assertIn("R.text.split('\\n')[0]", self.code[0])
+        self.assertIn("sq(box.innerText) === sq(R.text)", self.code[1])
+        self.assertIn("sq(m.innerText).includes(sq(R.text))", self.code[2])
+        self.assertNotIn("innerText.trim()===text.trim()", self.out, "the exact match fails every multi-line reply")
+
+    def test_sent_always_has_a_real_sent_at_and_sent_mid(self):
+        self.assertIn("**`sent` always gets both `sentAt` and `sentMid`**", self.out)
+        self.assertIn("never an estimate", self.out)
+        self.assertIn("at: new Date().toISOString()", self.code[2])
+        self.assertIn("add `sent` with `sentAt` = its `at` and `sentMid` = its `mid`", self.post)
+        settle = re.search(r"^  - Found: mark it `sent`.*$", self.out, re.M).group(0)
+        self.assertIn("`sentAt` set to that message's time (its `d` and `t`", settle)
+        self.assertIn("When the user says it went out, look for it in the saved messages", self.out)
+
+    def test_row_without_mid_fails(self):
+        rule = re.search(r"^- \*\*No `mid`\*\*.*$", self.post, re.M).group(0)
+        self.assertIn("don't open Messenger", rule)
+        self.assertIn('`failed` with `error:"no Messenger id"`', rule)
+
+    def test_sending_write_is_pinned_and_cancel_wins(self):
+        c2 = self.section("Call 2, ArtifactData `batch`", "Call 3")
+        self.assertIn("every write pinned with `if_version`", c2)
+        self.assertIn("If this row's `state` is no longer `queued`, the user cancelled it on the page", c2)
+        self.assertIn("their Cancel wins: clear the box, don't post it", c2)
+        self.assertIn("Every write to a row is pinned with `if_version`", self.out)
+
+    def test_failed_rows_are_never_retried(self):
+        self.assertIn(
+            "Failed rows are never retried, by you or by the page. To try again, the user queues a new reply.", self.out
+        )
 
 
 class TestReleaseScript(unittest.TestCase):

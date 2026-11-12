@@ -63,6 +63,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B41 | P2 | bug | Full names are missing on a live page, so people who share a first name aren't told apart |
 | B42 | P3 | bug | A person's text and the photo they sent right after show as two separate messages instead of one |
 | B43 | P1 | bug | Threading and summary outgrow the database's 256 KiB per-document cap; sessions started dropping summaries · **done** (v1.17.0) |
+| B44 | P2 | bug | Multi-line replies can't post: `insertText` drops line breaks and the exact-match check fails (issue #32 §3) · **done** (v1.18.1) |
+| B45 | P3 | bug | An outbox row's `sentAt` was an estimate, not the real time at confirm (issue #32 §5) · **done** (v1.18.1) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -71,7 +73,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B10 | P3 | bug | `make-zip.sh` only works when the repo folder is named `messenger-catchup` · **done** (v1.4.1) |
 | G4 | P3 | doc gap | Page text refers to a Refresh button that is hidden · **done** (v1.2.2) |
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
-| G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads |
+| G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads · **done** (v1.18.1) |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) |
 | R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
@@ -90,6 +92,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
+| F10 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.1) |
 
 ---
 
@@ -241,6 +244,16 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Review of the PR** found five more, all fixed before merging, each with a test that failed first: the cleanup could delete blocks no `current` named (after an older skill wrote back its single documents); a relink after a cleanup could name a deleted block; a build accepted a listing without the blocks; the page silently skipped a missing block; and a batch that stopped partway wasn't covered (bootstrap now stops on it, and `--rollback` recovers).
   - **Tests:** a fake database that refuses what the real one refuses (documents over 262,144 bytes; batches over 50 writes or 1 MiB; unpinned writes to existing documents); migration with `fromI`; builds at 6.4k, 25k and 50k messages; a link correction in its block; interrupted migrations and retries; the size check; bootstrap from either layout; the page rendering both layouts the same, and the old layout as v1.16.2 rendered it.
 
+### B44 · P2 · Multi-line replies can't post · done (v1.18.1)
+- **Found:** in the owner's field report (issue #32 §3). Messenger's editor (Lexical) doesn't turn the line breaks inside `execCommand('insertText')` into breaks, so a reply with `\n\n` came out as one line, and `outbox.md`'s check `box.innerText.trim()===text.trim()` failed every multi-line reply.
+- **Fix (owner's option A):** type the first line in call 1; in call 3, for each later line press shift+Return and insert that line (an empty line gets only the shift+Return, so blank lines stay). The check compares the box with the reply with whitespace collapsed. The page keeps what the user wrote.
+- **Tests:** `tests/composer.sim.js` runs `outbox.md`'s code blocks word for word on a stand-in composer that drops line breaks the way Lexical does (`tests/mock/composer.html`), with the real helper's `jump`: the reply goes out with its paragraphs, blank line included; inserting the whole text at once gives one line; a box that doesn't match makes the check throw and Return sends nothing. `TestOutboxPosting.test_multi_line_replies` checks the text.
+
+### B45 · P3 · `sentAt` was estimated · done (v1.18.1)
+- **Found:** in issue #32 §5: several rows had `sentAt` rounded to the minute and later than the row's own last write. The page shows `sentAt`.
+- **Fix:** the confirm returns the clock time (`at`), which becomes `sentAt`; a row settled on a later refresh takes the saved message's time (`d` and `t`, in `meta/chat.tz`). Every `sent` write sets both `sentAt` and `sentMid`, including when the user says it went out (`sentMid:null` only if it isn't in the saved messages).
+- **Tests:** `TestOutboxPosting.test_sent_always_has_a_real_sent_at_and_sent_mid`; the sim checks the confirm's `at` against the clock.
+
 ## Risks
 
 ### R1 · P1 · Unpinned page writes; half-finished imports · done
@@ -318,9 +331,10 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Where:** `page.html:304-305` vs SKILL.md › Helper
 - **What:** the page's steps name only Violentmonkey; SKILL.md recommends Tampermonkey (both tested).
 
-### G6 · P3 · `outbox/*` fields and `coverage` undefined
+### G6 · P3 · `outbox/*` fields and `coverage` undefined · done (v1.18.1)
 - **Found:** by the v1.9.0 split review. The fields of an `outbox/*` row as the page writes it (`i`, `mid`, `to`, `snip`, `text`, `state`, `queuedAt`, …) aren't listed anywhere, though `references/open-message.md` tells Claude to queue a reply. `meta/chat.coverage` is written every refresh but never defined.
 - **Fix:** list both in `references/database.md`, and derive the outbox fields from the page source in a test, as is done for `meta/chat`.
+- **Done (v1.18.1):** `references/database.md` has an `outbox/r<ms>` line (every field, who writes it, and the state transitions) and defines `coverage`. `outbox.md` adds the rules that were missing: a row with a null `mid` is marked `failed` ("no Messenger id"), the `sending` write is pinned so a Cancel on the page wins, and failed rows aren't retried. `open-message.md` says how to queue a reply with the page's fields. `test_database_md_documents_every_outbox_field_and_state` reads the page's three outbox writes (it fails if it finds a different number) and checks every field and state, plus every state `outbox.md` uses. The `meta/chat` fields test now starts from each `doc("meta/chat")` write and traces variables back to their literals.
 
 ## Cleanup
 
@@ -465,3 +479,12 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
     - asks the user once (never during a scheduled run) which aliases count as them, setting `meta/chat.aliasesAskedAt`
   - **Page 2.2:** accepts people entries without positions.
 - **Still to see live:** the scan on the real chat (about 4,000 messages; it may stop at the 8-minute cap first, and later messages fill in the rest).
+
+### F10 · P2 · perf · Outbox: fewer round trips per reply · done (v1.18.1)
+- **Found:** in issue #32 §1: about 1 minute per reply (gaps of 42–109 s between `sent` writes over 10 replies), because `outbox.md` took about 6 tool calls per reply and each is a full model round trip. The browser work itself takes a few seconds.
+- **Fix (owner's option A, every check kept):** about 3 calls per reply.
+  1. One JS call starts `jump`, waits for the tip, checks the "Replying to …" bar and the snip, checks the box is empty, and types the first line.
+  2. One DB batch writes the earlier rows' outcomes (`sent` or `failed`) and this row's `sending`, all pinned.
+  3. One browser batch types any later lines (B44), runs the check (it throws and leaves the box if the box doesn't match, so Return never sends), presses Return, and runs the confirm (up to 15 s).
+  - A row's `sent` lands with the next row's `sending`, and a confirm that can't see the message stops posting for the run, so at most one row is ever in `sending`; the existing settle check handles it on the next run. The confirm only accepts a message that wasn't on screen before Return.
+- **Tests:** `TestOutboxPosting.test_three_calls_per_reply` (the order of the steps in each call), `test_row_without_mid_fails`, `test_sending_write_is_pinned_and_cancel_wins`, `test_failed_rows_are_never_retried`; `tests/composer.sim.js` runs the three calls end to end.
