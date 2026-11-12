@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <title>Mock Messenger</title>
@@ -10,12 +10,16 @@
       }
       #log {
         width: 700px;
-        height: 600px;
         border: 1px solid #ccc;
       }
       #sc {
         height: 600px;
         overflow-y: auto;
+      }
+      #pinned {
+        height: 40px;
+        overflow-y: auto;
+        background: #ffd;
       }
       .m {
         padding: 6px 10px;
@@ -26,13 +30,65 @@
       .m:focus {
         outline: 2px solid orange;
       }
+      .tb {
+        display: inline-flex;
+        gap: 4px;
+      }
+      .tb [role="button"] {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        background: #ccd;
+      }
+      [role="menu"] {
+        position: fixed;
+        left: 300px;
+        top: 200px;
+        background: #fff;
+        border: 1px solid #999;
+      }
+      [role="menuitem"] {
+        padding: 4px 12px;
+      }
+      #composer {
+        width: 700px;
+        padding: 4px;
+      }
+      #box {
+        min-height: 24px;
+        border: 1px solid #aaa;
+        padding: 4px;
+      }
+      #box p {
+        margin: 0;
+      }
     </style>
   </head>
   <body>
     <div role="log" id="log"><div id="sc"></div></div>
+    <div id="composer">
+      <div id="replybar" hidden><span id="replytxt"></span><span id="replyx"></span></div>
+      <div id="box" role="textbox" contenteditable="true" aria-label="Message"></div>
+    </div>
     <script>
       /* Simulated Messenger thread: lazy-loads older messages when scrolled to the top, persists the total across reloads,
-   English labels like the real UI ("X replied to Y", "Original message:", aria-label "At 5:52 PM, Name: text"). */
+   English labels like the real UI ("X replied to Y", "Original message:", aria-label "At 5:52 PM, Name: text").
+   Hovering a message shows its toolbar ("Reply to this message", or for a photo-only message just "More actions",
+   whose menu has "Reply"); Reply opens the "Replying to …" bar over the composer, and Enter in the composer posts.
+   Modes (localStorage, set before loading): mock_lang (the page's lang), mock_h24 (24-hour times), mock_midnight
+   (time-only labels across midnight), mock_stall (older history never loads; a spinner stays at the top),
+   mock_inner (a scrollable pinned bar before the list), mock_noimg (the photo link holds no Facebook image),
+   mock_reword ("X answered Y" instead of "X replied to Y"), mock_group (runs of three messages per sender, with the
+   name on the first and the avatar on the last), mock_wrongav (one of Ben's messages carries Dee's avatar),
+   mock_trusted (the composer ignores Enter and shift+Enter that a script sends), mock_shiftsends (it reads a scripted
+   shift+Enter as Enter, so it sends), mock_nested (the first message sits in its own small scrolling box),
+   mock_msgbar (a progress bar inside message 0, a poll or voice clip, and a hidden one at the top of the list),
+   mock_stall=stuck (the list snaps back to the bottom, no spinner), mock_noreplymenu (a photo's More actions menu has
+   no Reply), mock_stalemenu (an open menu stays open when another opens), mock_retarget (the reply bar moves to #105 on
+   the first keystroke), mock_twobens (grouped: Ben Brooks posts #105-#107, then Ben Ortiz #108-#110), mock_nofocus
+   (Reply doesn't focus the composer). */
+      const MODE = k => localStorage.getItem("mock_" + k);
+      document.documentElement.lang = MODE("lang") || "en";
       const NAMES = ["Ana", "Ben", "You", "Cy", "Dee"];
       /* full names, carried as the alt text of each sender's 28 px avatar, as in Messenger */
       const FULL = { Ana: "Ana Alvarez", Ben: "Ben Brooks", Cy: "Cy Chen", Dee: "Dee Diaz" };
@@ -42,18 +98,25 @@
       function txt(i) {
         return "Message number " + i + " about trail shoes and packs";
       }
+      function clock(tm) {
+        if (MODE("h24")) return String(tm.getHours()).padStart(2, "0") + ":" + String(tm.getMinutes()).padStart(2, "0");
+        const h = tm.getHours() % 12 || 12;
+        return h + ":" + String(tm.getMinutes()).padStart(2, "0") + " " + (tm.getHours() < 12 ? "AM" : "PM");
+      }
       function spec(i) {
-        const f = NAMES[i % 5];
-        const tm = new Date(2026, 10, 6, 9, 0 + i);
-        let h = tm.getHours() % 12 || 12;
-        const t = h + ":" + String(tm.getMinutes()).padStart(2, "0") + " " + (tm.getHours() < 12 ? "AM" : "PM");
-        /* label forms: full date, short month (5-6), year-less date (8), unreadable (9), weekday, short weekday (15-16), Yesterday, time only */
+        const group = !!MODE("group");
+        const f = group ? NAMES[Math.floor(i / 3) % 5] : NAMES[i % 5];
+        let tm = new Date(2026, 10, 6, 9, 0 + i);
+        const late = MODE("midnight") && i >= total() - 8; /* the newest 8: 11:56 PM .. 12:03 AM, time only */
+        if (late) tm = new Date(2026, 10, 5, 23, 56 + i - (total() - 8));
+        const t = clock(tm);
+        /* label forms: full date, short month (5-7), year-less date (8), unreadable (9), weekday, short weekday (15-16), Yesterday, time only */
         const tl =
           i === 8
             ? "December 28 " + t
             : i === 9
               ? "Someday " + t
-              : i === 5 || i === 6
+              : i >= 5 && i <= 7
                 ? "Oct 13, 2025 " + t
                 : i < 10
                   ? "October 12, 2025 " + t
@@ -63,10 +126,25 @@
                       ? "Thursday " + t
                       : i < 25
                         ? "Yesterday " + t
-                        : t;
+                        : MODE("midnight") && !late
+                          ? "Yesterday " + t
+                          : t;
         const o = { i, id: "mid.$mock" + i, f, t: tl, b: txt(i), full: FULL[f] };
-        if (i === 101) o.full = "Ben Ortiz"; /* a second Ben: same first name, another person */
-        if (i === 108) o.f = "Captain Cy"; /* a nickname: shown instead of the name; the avatar still says Cy Chen */
+        if (group) {
+          o.follow = i % 3 !== 0; /* the name shows on a run's first message */
+          if (i % 3 !== 2 && i !== total() - 1) delete o.full; /* the avatar on its last */
+        } else {
+          if (i === 101) o.full = "Ben Ortiz"; /* a second Ben: same first name, another person */
+          if (i === 108) o.f = "Captain Cy"; /* a nickname: shown instead of the name; the avatar still says Cy Chen */
+        }
+        if (MODE("wrongav") && i === 111) o.full = "Dee Diaz"; /* the wrong avatar read for one of Ben's messages */
+        if (group && MODE("twobens") && i >= 105 && i <= 110) {
+          /* two people shown as "Ben", one group each, back to back; each group's avatar on its last message */
+          o.f = "Ben";
+          o.follow = i !== 105 && i !== 108;
+          o.full = i === 107 ? "Ben Brooks" : i === 110 ? "Ben Ortiz" : undefined;
+          if (!o.full) delete o.full;
+        }
         if (i === 26) {
           o.follow = true;
           o.b = "Mike replied to my email yesterday";
@@ -98,19 +176,80 @@
         }
         return o;
       }
+      const btn = (label, onclick) => {
+        const b = document.createElement("div");
+        b.setAttribute("role", "button");
+        b.setAttribute("aria-label", label);
+        b.onclick = onclick;
+        return b;
+      };
+      /* the "Replying to …" bar over the composer, as Messenger shows it after Reply */
+      let replyTo = null;
+      const bar = document.getElementById("replybar");
+      function openReply(o) {
+        replyTo = o;
+        document.getElementById("replytxt").innerText =
+          "Replying to " + (o.f === "You" ? "yourself" : o.f) + "\n" + (o.photo && !o.b ? "Photo" : o.b.slice(0, 80));
+        bar.hidden = false;
+        if (!MODE("nofocus")) document.getElementById("box").focus();
+      }
+      /* the bar's cancel button, an icon with no text, as in Messenger */
+      document.getElementById("replyx").replaceWith(
+        btn("Cancel reply", () => {
+          replyTo = null;
+          bar.hidden = true;
+        }),
+      );
+      function closeMenu() {
+        document.querySelectorAll('[role="menu"]').forEach(m => m.remove());
+      }
+      document.addEventListener("keydown", e => {
+        if (e.key === "Escape") closeMenu();
+      });
+      /* a click outside a menu closes it */
+      document.addEventListener("mousedown", e => {
+        if (!e.target.closest || !e.target.closest('[role="menu"]')) closeMenu();
+      });
+      function toolbar(d, o) {
+        if (d.querySelector(".tb")) return;
+        const tb = document.createElement("div");
+        tb.className = "tb";
+        tb.append(btn("React", () => {}));
+        if (!(o.photo && !o.b)) tb.append(btn("Reply to this message", () => openReply(o)));
+        tb.append(
+          btn("More actions", () => {
+            if (!MODE("stalemenu")) closeMenu();
+            const m = document.createElement("div");
+            m.setAttribute("role", "menu");
+            const items = MODE("noreplymenu") && o.photo && !o.b ? ["Forward", "Pin"] : ["Forward", "Reply", "Pin"];
+            items.forEach(x => {
+              const it = document.createElement("div");
+              it.setAttribute("role", "menuitem");
+              it.textContent = x;
+              it.onclick = () => {
+                closeMenu();
+                if (x === "Reply") openReply(o);
+              };
+              m.append(it);
+            });
+            document.body.append(m);
+          }),
+        );
+        d.append(tb);
+      }
       function el(o) {
         const d = document.createElement("div");
         d.className = "m";
         d.tabIndex = 0;
         d.setAttribute("data-message-id", o.id);
         const who = o.f;
-        const p = o.reply != null ? spec(o.reply) : null;
+        const p = o.to || (o.reply != null ? spec(o.reply) : null);
         d.setAttribute("aria-label", "At " + o.t + ", " + who + ": " + (o.b || ""));
         let lines = [];
         if (p) {
-          lines.push(who + " replied to " + (p.f === "You" ? "you" : p.f));
+          lines.push(who + (MODE("reword") ? " answered " : " replied to ") + (p.f === "You" ? "you" : p.f));
           lines.push("Original message:");
-          lines.push(o.photoReply ? "Photo" : p.b.length > 30 ? p.b.slice(0, 30) + "…" : p.b);
+          lines.push(o.photoReply || (p.photo && !p.b) ? "Photo" : p.b.length > 30 ? p.b.slice(0, 30) + "…" : p.b);
         } else if (who !== "You" && !o.follow) lines.push(who);
         if (o.b) lines.push(o.b);
         if (o.full) {
@@ -131,11 +270,13 @@
             "&message_id=" +
             encodeURIComponent(o.id);
           const im = document.createElement("img");
-          im.src = "/mock/fbcdn/p" + o.i + ".jpg";
+          im.src = MODE("noimg")
+            ? "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='200'/%3E"
+            : "/mock/fbcdn/p" + o.i + ".jpg";
           a.append(im);
           d.append(a);
         }
-        if (p) {
+        if (p && !o.to) {
           const g = document.createElement("div");
           g.setAttribute("aria-label", "Go to replied message");
           g.textContent = "↩";
@@ -153,16 +294,62 @@
           };
           d.append(g);
         }
+        if (MODE("msgbar") && o.i === 0) {
+          const pb = document.createElement("div");
+          pb.setAttribute("role", "progressbar");
+          pb.style.height = "6px";
+          d.append(pb);
+        }
+        d.addEventListener("mouseover", () => toolbar(d, o));
+        d.addEventListener("mouseleave", () => {
+          const tb = d.querySelector(".tb");
+          if (tb) tb.remove();
+        });
         return d;
       }
       const sc = document.getElementById("sc");
+      if (MODE("inner")) {
+        /* a pinned-messages bar that scrolls on its own, before the message list in the log */
+        const pin = document.createElement("div");
+        pin.id = "pinned";
+        pin.innerHTML = "<div style='height:200px'>Pinned: meetup Saturday</div>";
+        sc.before(pin);
+      }
       let lo;
+      function spinner() {
+        if (!MODE("stall") || document.getElementById("spin")) return;
+        const s = document.createElement("div");
+        s.id = "spin";
+        s.setAttribute("role", "progressbar");
+        s.setAttribute("aria-label", "Loading...");
+        s.style.height = "20px";
+        sc.prepend(s);
+      }
       function render() {
         sc.innerHTML = "";
         const n = total(),
           sk = skip();
         lo = Math.max(0, n - 25);
         for (let i = lo; i < n; i++) if (!sk.has(i)) sc.append(el(spec(i)));
+        if (MODE("stall") !== "stuck") spinner();
+        if (MODE("nested")) {
+          /* the first loaded message in its own small scrolling box (2 px of overflow) */
+          const m = sc.querySelector("[data-message-id]");
+          const w = document.createElement("div");
+          m.before(w);
+          w.append(m);
+          w.style.overflowY = "auto";
+          w.style.height = m.getBoundingClientRect().height + 6 + "px";
+          const pad = document.createElement("div");
+          pad.style.height = "10px";
+          w.append(pad);
+        }
+        if (MODE("msgbar")) {
+          const hid = document.createElement("div");
+          hid.setAttribute("role", "progressbar");
+          hid.style.cssText = "height:20px;visibility:hidden";
+          sc.prepend(hid);
+        }
         sc.scrollTop = sc.scrollHeight;
       }
       render();
@@ -173,12 +360,19 @@
         const frag = document.createDocumentFragment();
         const sk = skip();
         for (let i = nlo; i < lo; i++) if (!sk.has(i)) frag.append(el(spec(i)));
-        sc.prepend(frag);
+        const s = document.getElementById("spin");
+        if (s) s.after(frag);
+        else sc.prepend(frag);
         lo = nlo;
         sc.scrollTop += sc.scrollHeight - h0;
       }
       sc.addEventListener("scroll", () => {
-        if (sc.scrollTop < 40 && lo > 0 && !loading) {
+        if (MODE("stall") === "stuck") {
+          /* a list that keeps snapping back to the newest message: nothing older ever loads */
+          if (sc.scrollTop < sc.scrollHeight - sc.clientHeight - 2) sc.scrollTop = sc.scrollHeight;
+          return;
+        }
+        if (sc.scrollTop < 40 && lo > 0 && !loading && !MODE("stall")) {
           loading = true;
           setTimeout(() => {
             loadOlder(lo - 20);
@@ -186,11 +380,151 @@
           }, 250);
         }
       });
+      window.mockRetarget = () => openReply(spec(105));
       window.addMsgs = n => {
         const a = total();
         localStorage.setItem("mock_total", a + n);
         for (let i = a; i < a + n; i++) sc.append(el(spec(i)));
       };
+      /* Posting: Enter in the composer sends the text (as a reply when the bar is open); it shows up 300 ms later. */
+      let sentN = 0;
+      window.mockSent = [];
+      window.mockSend = text => {
+        const to = replyTo;
+        replyTo = null;
+        bar.hidden = true;
+        window.mockSent.push({ text, to: to && to.id });
+        setTimeout(() => {
+          const o = { i: -1, id: "mid.$sent" + ++sentN, f: "You", t: clock(new Date()), b: text, to };
+          sc.append(el(o));
+          sc.scrollTop = sc.scrollHeight;
+        }, 300);
+      };
+    </script>
+    <script type="module">
+      /* The composer runs Lexical (the editor Messenger uses), core only, with the commands @lexical/plain-text
+         registers, plus Messenger's rule on top: Enter sends, shift+Enter starts a new line. Served by tests/run.js. */
+      import * as L from "/node_modules/lexical/dist/Lexical.prod.js";
+      const box = document.getElementById("box");
+      const editor = L.createEditor({ namespace: "mock-messenger", onError: e => console.error(e) });
+      editor.setRootElement(box);
+      const empty = () => {
+        const root = L.$getRoot();
+        root.clear();
+        root.append(L.$createParagraphNode());
+      };
+      const reset = () => {
+        empty();
+        L.$getRoot().selectEnd();
+      };
+      editor.update(empty);
+      const sel = () => {
+        const s = L.$getSelection();
+        return L.$isRangeSelection(s) ? s : null;
+      };
+      const P = L.COMMAND_PRIORITY_EDITOR;
+      editor.registerCommand(
+        L.CONTROLLED_TEXT_INSERTION_COMMAND,
+        x => {
+          const s = sel();
+          if (!s) return false;
+          if (typeof x === "string") s.insertText(x);
+          else if (x.data) s.insertText(x.data);
+          return true;
+        },
+        P,
+      );
+      editor.registerCommand(
+        L.DELETE_CHARACTER_COMMAND,
+        back => {
+          const s = sel();
+          if (!s) return false;
+          s.deleteCharacter(back);
+          return true;
+        },
+        P,
+      );
+      editor.registerCommand(
+        L.REMOVE_TEXT_COMMAND,
+        () => {
+          const s = sel();
+          if (!s) return false;
+          s.removeText();
+          return true;
+        },
+        P,
+      );
+      editor.registerCommand(
+        L.INSERT_LINE_BREAK_COMMAND,
+        start => {
+          const s = sel();
+          if (!s) return false;
+          s.insertLineBreak(start);
+          return true;
+        },
+        P,
+      );
+      editor.registerCommand(
+        L.INSERT_PARAGRAPH_COMMAND,
+        () => {
+          const s = sel();
+          if (!s) return false;
+          s.insertLineBreak();
+          return true;
+        },
+        P,
+      );
+      editor.registerCommand(
+        L.KEY_BACKSPACE_COMMAND,
+        e => {
+          if (!sel()) return false;
+          e.preventDefault();
+          return editor.dispatchCommand(L.DELETE_CHARACTER_COMMAND, true);
+        },
+        P,
+      );
+      editor.registerCommand(
+        L.KEY_ENTER_COMMAND,
+        e => {
+          if (!sel()) return false;
+          if (e) e.preventDefault();
+          return editor.dispatchCommand(L.INSERT_LINE_BREAK_COMMAND, false);
+        },
+        P,
+      );
+      editor.registerCommand(
+        L.SELECT_ALL_COMMAND,
+        () => {
+          L.$selectAll();
+          return true;
+        },
+        P,
+      );
+      /* mock_trusted: Messenger takes only real key presses (Enter and shift+Enter from a script do nothing) */
+      const TRUSTED = !!localStorage.getItem("mock_trusted");
+      /* mock_shiftsends: Messenger reads Shift from its own key state, so a scripted shift+Enter counts as Enter */
+      const SHIFTSENDS = !!localStorage.getItem("mock_shiftsends");
+      /* mock_retarget: the first keystroke in the box moves the reply bar to #105 (a Reply link followed meanwhile) */
+      if (localStorage.getItem("mock_retarget"))
+        box.addEventListener("input", () => window.mockRetarget && window.mockRetarget(), { once: true });
+      editor.registerCommand(
+        L.KEY_ENTER_COMMAND,
+        e => {
+          if (e && TRUSTED && !e.isTrusted) {
+            e.preventDefault();
+            return true;
+          }
+          if (!e || (e.shiftKey && !(SHIFTSENDS && !e.isTrusted))) return false;
+          e.preventDefault();
+          const text = editor.getEditorState().read(() => L.$getRoot().getTextContent());
+          if (!text.trim()) return true;
+          window.mockSend(text);
+          editor.update(reset);
+          return true;
+        },
+        L.COMMAND_PRIORITY_HIGH,
+      );
+      window.mockEditorText = () => editor.getEditorState().read(() => L.$getRoot().getTextContent());
     </script>
   </body>
 </html>

@@ -633,6 +633,16 @@ class TestBugFixes(unittest.TestCase):
         self.assertIn("WARN reply parent not found 1 - left unlinked", out)
         self.assertNotIn("GUESS 1", out)
 
+    def test_noreplyline_is_a_check_not_a_guess(self):
+        """Helper 2.0: a Messenger reply whose "X replied to Y" line couldn't be read (perr noreplyline, no r) is a CHECK
+        and stays unlinked, never a GUESS of the previous message."""
+        run = self.e.run([msg(0, "Ana", "Selling my tent"), msg(1, "Ben", "how much?", perr="noreplyline")])
+        out = self.e.build(run, {"newconvs": [{"id": "a", "title": "A"}], "join": {"a": [0, 1]}})
+        self.assertIn("CHECK reply with no readable reply line 1", out)
+        self.assertNotIn("GUESS 1", out)
+        t = r(os.path.join(self.e.work, "base", "threading.json"))
+        self.assertNotIn("1", t["links"])
+
     def test_C5_timestamp_format(self):
         self.assertRegex(catchup._ts(), r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d\d [AP]M$")
 

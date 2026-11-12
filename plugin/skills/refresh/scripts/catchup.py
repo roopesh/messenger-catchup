@@ -819,6 +819,14 @@ def build(work, run, specp):
                 else:
                     print("WARN reply parent not found", i, '- left unlinked; set "links" by hand if you know it')
                     unfound = True
+            elif m.get("perr") == "noreplyline":
+                # helper 2.0: a Messenger reply whose "X replied to Y" line couldn't be read: who it answers is unknown
+                print(
+                    "CHECK reply with no readable reply line",
+                    i,
+                    '- a Messenger reply, left unlinked; read it in context and set "links"',
+                )
+                unfound = True
             if not L and prev and not unfound:  # a reply whose parent wasn't found is not guessed as an answer
                 p = max(prev)
                 P = byi.get(p) or N.get(p)

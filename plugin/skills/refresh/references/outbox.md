@@ -15,10 +15,12 @@ Read this in full before handling any outbox row. The bridge commands (`jump`) a
 - Every write to a row is pinned with `if_version`. The page's Cancel and Dismiss change a row's version, so a refused write means the user acted: `get` the row and go by its new `state`.
 
 ## Posting
+When `meta/chat.helperPost` is true and the helper is 2.0 or later, post with `references/posting-with-helper.md` instead: it keeps this section's bookkeeping and replaces calls 1 and 3 with the helper's `post`.
+
 About 3 calls per reply: one JS call types it, one DB batch records it, one browser batch sends and confirms it. Work through the approved rows one at a time, oldest `queuedAt` first. Keep a list of **pending outcomes**: `sent` or `failed` writes not made yet. Each DB batch carries them, so a row's `sent` lands with the next row's `sending`, and at most one row is ever in `sending`.
 
 - **No `mid`** (the row's `mid` is null): don't open Messenger. Add `failed` with `error:"no Messenger id"` to the pending outcomes and go on to the next row.
-- **Call 1, javascript_tool on the Messenger tab:** the code below, with `ROW` replaced by the row's `{mid,to,snip,text}` as JSON (copy the values as they are: `text` may hold line breaks). It starts `jump{mid,reply:true}`, waits for `#mcjump-tip`, checks that the "Replying to …" bar names `to` (the first name, since Messenger may shorten it; "yourself" for "You") and shows the start of `snip` (not for "[photo]"), checks the reply box is empty, and types the first line of `text`. Without the helper, inject it and start `jump` in one call first (SKILL.md › Helper), then run this with `START = false`.
+- **Call 1, javascript_tool on the Messenger tab:** the code below, with `ROW` replaced by the row's `{mid,to,snip,text}` as JSON (copy the values as they are: `text` may hold line breaks). It starts `jump{mid,reply:true}`, waits for `#mcjump-tip`, checks that the "Replying to …" bar names `to` (the first name, since Messenger may shorten it; "yourself" for "You") and shows the start of `snip` (not for "[photo]"), checks the reply box is empty, and types the first line of `text` (it waits a moment after focusing the box, and again before checking it: Messenger's editor drops text typed the instant the box gets focus, and shows inserted text a moment later). Without the helper, inject it and start `jump` in one call first (SKILL.md › Helper), then run this with `START = false`.
 ```js
 await (async () => {
   const R = ROW, START = true;
@@ -47,7 +49,9 @@ await (async () => {
   if (sq(box.innerText)) return { fail: 'the reply box already had text in it' };
   const first = R.text.split('\n')[0];
   box.focus();
+  await z(150);
   document.execCommand('insertText', false, first);
+  await z(100);
   if (sq(box.innerText) !== sq(first)) return { fail: 'the reply box did not take the text', clear: true };
   return { typed: true, lines: R.text.split('\n').length };
 })()
