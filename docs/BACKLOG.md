@@ -106,7 +106,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
-| F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection · **done** (v1.18.1; run on the live page still to do) |
+| F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection · **done** (v1.18.1; run on the owner's page Nov 13) |
 | F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.0) |
 | F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.20.0) |
 | F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
@@ -115,6 +115,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
 | F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
 | F18 | P3 | feature | Range summaries longer than one request: split into parts and merge |
+| F19 | P2 | feature | Short claims ("In", "dibs", "in for 2") in buy/sell chats thread to the latest open offer, not to whatever came before (issue #41) |
+| F20 | P2 | feature | A `move` spec key: put an already-built message into another conversation (`relink` can only change its link) (issue #41) |
 
 ---
 
@@ -729,3 +731,19 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### F18 · P3 · Split long range summaries
 - **What:** a span before `summary.fromI` too long for one request (about 1,990 live-sized messages, 4.3 days) is refused since v1.22.0. Splitting it into parts and merging (conversations joined by id, bullets concatenated, lists joined) would let any span work, at k× the usage and time, with a merge to test.
 - **Trigger:** the owner wants long spans summarized and `catchup.py restore-summary` (which moves `fromI` back on the owner's page) hasn't removed the need.
+
+### F19 · P2 · Short claims thread to the latest open offer
+- **Found:** GitHub issue #41, a field report from a buy/sell/trade chat. A short message is often a claim on an item just offered ("In", "I'm in", "in for 1", "Dibs", "Mine", "I'll take it", "PM'd", "Interested", a raffle spot like "In for 2" or "#7"). These are rarely sent as Messenger replies, so the build links them by position (usually `i` to the message before), or Claude files them as a new conversation. Either way the page shows them with no context.
+- **Proposed rule** (SKILL.md step 6's GUESS review and `writing-the-spec.md`):
+  - In a chat whose `meta/chat.topic` suggests buying, selling or trading, a short claim-type message (any case, optionally with a count) is a claim on the most recent open offer by someone else.
+  - An open offer is a for-sale post, a raffle, a group buy or an "anyone want…" offer not yet marked sold or closed.
+  - Join the claim to that offer's conversation, linked `i` to the offer, and mention it in the bullets ("Ben is in"). On a deal it's deal activity.
+  - If there's no open offer in about the last day, or two are equally likely, keep the build's guess and list it in the report as a possible claim. Never invent an offer.
+- **Meanwhile:** the owner's scheduled refresh prompt carries the rule.
+- **Design questions:** the word list (fixed list, or Claude's judgment with examples); how "open" is decided (deals' state, or "sold" in later messages); whether the page shows claims on a deal.
+
+### F20 · P2 · `move` an already-built message to another conversation
+- **Found:** GitHub issue #41. `relink` (F3) changes a built message's link, but its conversation stays the same, so fixing a misfiled claim gives `WARN link … crosses conversations` and the page still shows the message as its own thread.
+- **Proposed:** a spec key `{"move": {"i": "convId"}}` for messages already built. It updates membership in the threading blocks, keeps summary refs valid (a conversation left empty is dropped or merged, its summary items moved), lands through the manifest like any build, and `restore` can undo it.
+- **Pairs with F19:** F19 stops new misfiles; `move` fixes the ones already on pages.
+
