@@ -124,8 +124,15 @@ Every outcome goes to `refresh/lastImport`. A dry run reports what it would do, 
 ### Outbox
 "Reply here" writes `outbox/r<timestamp>` `{i, mid, to, snip, text, state:"queued", queuedAt}`; Cancel sets `state:"cancelled"`. Claude moves rows to `sending` → `sent` (`sentAt`, `sentMid`), `failed` (`error`) or `unconfirmed` (sent but never found in the chat; never reposted). Failed and unconfirmed rows have a Dismiss button (`state:"dismissed"`), and they stay listed until resolved.
 
+### Prompt budget (Ask, Views; v1.22.0, BACKLOG F6 and R4)
+`sample()` refuses a prompt over `sample.limits().maxPromptBytes`: every turn's content together, in UTF-8 bytes. The page reads the cap at load (`sampleCap`; 262,144 when `limits` is missing, rejects, or answers 8 KiB or less or not a number) and keeps a 4 KiB margin (`MARGIN`).
+- **`packHistory`** (scope, the window's newest `fHi`, the fixed bytes, the summaries' share): word for word from `fHi` back, one run `#rawLo..#rawHi`, until the budget less the summaries' share (35% with "include older", 20% otherwise) is used; what the summaries don't need goes back to messages. Messages after the window (a date range with an end, older ones included) are one line per day. `lineFor` runs only for lines that go in, plus one; the pass is linear and only runs on Ask or Build view.
+- **The digest** of what's older than `#rawLo`: level 1, one line per conversation (newest last message first; text from `S.summary`'s outcome or last bullet or plain-text synopsis, else a range summary with the same id, else "no summary; N messages from …"; range-summary conversations threading lacks are placed by the numbers they cite; runs of ungrouped messages get "N messages, not grouped"), added while they plus day lines for everything older fit; level 2, one line per day (`[#a–#b, Oct 3] N messages. Busiest: …`) back to the first stored message. If even the day lines don't fit, the oldest go and the prompt says "Nothing before #N is included." Lines print oldest first, each starting with the stored messages it covers, so a citation of any number jumps to a real message.
+- **Ask** (`askPrompt`): "What you have" says which numbers are word for word and which are summaries; the rules ask Claude to say when a point comes from a summary. Chat turns: the last 9 at most, oldest pairs dropped while they're over a quarter of the cap; a question over half the cap isn't sent. **Views** (`viewPrompt`) use the same builder with the window as scope. `fitPrompt` measures the final prompt and drops the oldest lines if an estimate was off. On `prompt_too_large` (nothing was sent), `sendFitted` retries once at 80%.
+- **The note** under an answer or built view says what was read ("Read #a–#b word for word. Older than #a: summaries only.", or "Your window has N messages: read the newest M …"), and `qa/*` and `views/*` save it as `sent: {from, to, sumFrom}`.
+
 ### Range summaries (pages carried over from the original chat)
-- `renderRangeSummary` / `writeRangeSummary`: when the catch-up window is set by date (`markerMode:"time"`) and starts before the summary's `fromI`, the page offers to have Claude (through the page's `sample`) summarize exactly that span, and saves it in `rangeSummaries/r<lo>_<hi>`.
+- `renderRangeSummary` / `writeRangeSummary`: when the catch-up window is set by date (`markerMode:"time"`) and starts before the summary's `fromI`, the page offers to have Claude (through the page's `sample`) summarize exactly that span, and saves it in `rangeSummaries/r<lo>_<hi>`. A summary has to read every message in its span, so a span whose prompt is over the cap (`rangeFit`) gets no button: the box says how many of its newest messages fit and the start time that fits (v1.22.0, F6).
 - `fromI` is the first message the stored summary covers. Only pages from before v1.17.0 have it: the original page's summary started there (checked live Nov 7: `fromI` 1654, two saved spans), and by Nov 11 refresh sessions had moved it to 2797 while dropping older conversations to stay under the document cap (BACKLOG B43). A build keeps it and never moves it; nothing is dropped any more. `restore-summary` (below) moves it back to what a saved backup covers. New pages never show range summaries.
 - The removed legacy code (C1, v1.7.3): the in-page Refresh trigger (`REFRESH_TASK`, `startRefresh`, `fire_trigger`), the summary v1 renderer, and `dayMap`/`meta.dates`. Every stored message carries `d`; checked live: 3,992 of 3,992.
 
@@ -172,8 +179,8 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `refresh/lastImport` | Page importer | `at`, `src`, `ok`, `msg`, `dry`, `sha`, `count`, `fresh`, `chunks`, `uploaded`, `lock`, `repaired` |
 | `refresh/importLock` | Page importer (lease only) | the platform's lease state; holds no data |
 | `outbox/*` | Page, then Claude | see Outbox above |
-| `qa/*` | Page (Ask) | `q`, `a`, `at`, `scope`, `toI` |
-| `views/*` | Page (Views) | `kind:"view"` (title, intro, sections, prompt, at, toI) or `kind:"idea"` (prompt, at) |
+| `qa/*` | Page (Ask) | `q`, `a`, `at`, `scope`, `toI`, `sent` (`{from, to, sumFrom}`: read word for word and where summaries start; optional) |
+| `views/*` | Page (Views) | `kind:"view"` (title, intro, sections, prompt, at, toI, `sent`) or `kind:"idea"` (prompt, at) |
 | `rangeSummaries/*` | Page (only when the summary has `fromI`) | same shape as summary plus `by:"page"`, `fromI` |
 | `notes/*` | Claude (SKILL.md › What the page saves for Claude) | `title`, `when`, `at`, `intro`, `table`, `sections`, `footer` |
 
