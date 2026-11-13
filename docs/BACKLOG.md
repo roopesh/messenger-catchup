@@ -30,6 +30,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up |
 | R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 715 and adds about 55 a day (to design) |
 | R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
+| R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
@@ -361,6 +362,12 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### R15 · P3 · Photos the helper couldn't fetch aren't recorded as owed
 - **What:** when the helper can't fetch a photo (`FAILED #…` in the capture summary), the capture has no slot for it, so the page never marks it owed and no backfill retries it.
 - **Fix:** the helper lists them (`phfail:[{i,k}]`, helper 2.1) and the page records them as owed `null` slots, so the next run's backfill retries them like any other owed photo.
+
+### R16 · P3 · Backfill captures can misplace a photo's slot, and fetch every photo again
+- **Found:** the review of PR #42 (v1.22.0).
+- **Slot shift:** the helper numbers a message's photos `k` = 0, 1, … in the order of the images it finds loaded. On a backfill scan (messages already stored, scrolled past quickly), an image that hasn't loaded yet is skipped, so the photos after it take a lower `k`. The page then stores a photo in another photo's slot: the owed slot stays owed and a stored slot is skipped as "already stored", or a photo lands under the wrong `k`.
+- **Refetching:** a backfill window of up to 300 messages fetches and base64-encodes every photo in it, stored ones included, only for the page to skip them. The paste grows with every stored photo in the window.
+- **Fix (to design):** key slots by something stable (the photo's Messenger attachment id from its link) instead of position, and let the helper skip photos the page says are stored (for example a `skip:[{i,k}]` or attachment-id list passed to `full`); helper 2.1 with R15.
 
 ### R3 · P3 · Messenger markup dependency (known) · done (v1.20.0, option B)
 - English UI labels, `[role="log"]`, `data-message-id`, "Go to replied message", "Reply to this message", the `At <time>, <name>: ` aria-label shape. See F4.
