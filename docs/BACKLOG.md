@@ -26,7 +26,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment · **done** (v1.21.0) |
 | R10 | P3 | risk | The page's requirements text doesn't say the Claude Desktop app must be open |
 | R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
-| R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks |
+| R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
+| R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
@@ -372,8 +373,16 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **L3:** every arm sets `misses`, a lock skip counts as reaching Chrome, and a report clears it.
   - **L4:** no `schedule` counts as manual.
   - The reference's cap rose to 8,000 bytes (7,906). Refresh `SKILL.md` stays at 19,755.
-- **Tests:** `test_tools.TestScheduling` (29 tests; the first 20 each failed before the change).
-- **Still to check live** (none could be run from the repo): the owner's `meta/chat.schedule` and which tool armed their loop; `send_later` in a Desktop chat with a 2-minute delay, with Desktop open and quit; the longest `delay_minutes` it takes (an overnight arm needs 8 h or more; if it's shorter, arm in steps); whether `send_later` from inside a follow-up asks for approval; `create_trigger`'s exact result text under each approval mode; claude.ai in a browser with Desktop closed (settles the Desktop requirement's wording); a `CronCreate` chain in the CLI firing twice; a second delivery taking the stale path; and an end-to-end run on a scratch page, including a `mode:"loop"` page converting on an old-format follow-up.
+- **Second review of PR #39** (no High). Each fix has a test, and the mutation check (now 72 rules, including three edits the first tests let through) fails a named test every time:
+  - **M-a:** a message that names the page URL, `chatUrl` or thread id, or asks to schedule a run, is scheduled (a typed request never contains those). The "typed by the user" guard covers the whole After section, "Chain stopped" included. `switchAskedAt` is written once the user answers, so a misfire doesn't use up the question.
+  - **M-b:** Arm step 6 converts only older or missing modes, never `"manual"` or `"recurring"`, and only while `armId` is still the token just written, so it can't undo a stop or change.
+  - **M-c:** an old chain with no stored `schedule` (the first setups stored none) keeps running as its prompt says; only an explicit `"manual"` makes older messages stale, and a refresh the user asks for checks the schedule even when `schedule` is missing.
+  - **M-d:** switching waits for a delete only for a recurring task (`"B"`) or recurring cron that can't be cancelled; an old chain switches at once and ends at its next follow-up. Setup's Stop or change follows the same rules.
+  - **M-e:** re-running setup on a page with a schedule set does Stop or change first.
+  - **Lows:** a refused `lastRunAt` write redoes the stale check; Arm step 5's failure write needs `armId` still to be this run's token, and only covers a tool that returns; outside-hours runs keep `misses`; a refused lock write still reschedules a scheduled run (SKILL.md step 1); for an older message "reschedule" means what that message says; "the start of the current window"; no `hours` means all day; R12 notes the conversation length limit; R14 filed. Setup's choice 2 clears a `problem` left by choice 1. The refresh SKILL.md Database section names `refresh/schedule`.
+  - Sizes: the reference's cap is 8,500 bytes (8,444); refresh `SKILL.md` is 19,771 (budget 19,780).
+- **Tests:** `test_tools.TestScheduling` (34 tests; the first 20 each failed before the change).
+- **Still to check live** (none could be run from the repo): the owner's `meta/chat.schedule` and which tool armed their loop; `send_later` in a Desktop chat with a 2-minute delay, with Desktop open and quit; the longest `delay_minutes` it takes (an overnight arm needs 8 h or more; if it's shorter, arm in steps); whether `send_later` from inside a follow-up asks for approval; `create_trigger`'s exact result text under each approval mode; claude.ai in a browser with Desktop closed (settles the Desktop requirement's wording); a `CronCreate` chain in the CLI firing twice; a second delivery taking the stale path; and an end-to-end run on a scratch page, including a `mode:"loop"` page whose old follow-ups keep running as they say until the user types a refresh and switches (an old chain then ends at its next follow-up; a recurring task or cron is cancelled or deleted first).
 
 ### R8 · P2 · PR rule not enforced · done (v1.7.2)
 - **What:** from v1.1.1 every change must go through a PR with a version bump (CLAUDE.md), but `main` still accepts direct pushes, and nothing runs `npm test` on a PR. The version-consistency tests only catch a missing bump when someone runs them.
@@ -399,7 +408,12 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 
 ### R12 · P3 · A chain conversation keeps growing
 - **What:** every hourly run adds tool output to the same conversation, so each run costs more over weeks. Predates v1.21.0. Arming at `every` minus 5 minutes keeps runs inside the prompt cache, but the context still grows.
-- **Fix:** measure a chain's cost per run after a week or two; if it climbs, have a run move the chain to a fresh conversation now and then (setup's Stop or change, then arm from the new one).
+- **Also:** a claude.ai conversation has a hard length limit. Once a chain's conversation reaches it, follow-ups can't be delivered and the chain stops (a refresh the user asks for then finds it stopped).
+- **Fix:** measure a chain's cost per run after a week or two; if it climbs, or the conversation nears its limit, have a run move the chain to a fresh conversation now and then (setup's Stop or change, then arm from the new one).
+
+### R14 · P3 · Arming at the end of a run
+- **What:** a chain run arms the next one after the refresh steps, however they end. A run that dies mid-refresh (the session is cut off, a tool call never returns) arms nothing, and the chain stops until a refresh the user asks for offers to restart it.
+- **Option:** arm early, right after the stale and hours checks, so the next run is already pending; the run would then only update `misses` at the end. Kept at the end for v1.21.0 (owner's call after the second PR #39 review: less churn).
 
 ## Doc and instruction gaps (SKILL.md / page text vs code)
 
