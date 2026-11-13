@@ -19,7 +19,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G1 | P2 | doc gap | `meta/chat` fields written by the page are missing from SKILL.md; `pageVersion` never updated on republish · **done** (v1.2.0, v1.4.0) |
 | G2 | P2 | doc gap | Page says Claude reads `views`, ideas and `qa`; SKILL.md never tells it to · **done** (v1.4.0) |
 | G3 | P2 | doc gap | Page offers "say reply 3232 to Claude"; SKILL.md has no procedure for it · **done** (v1.4.0) |
-| R2 | P2 | risk | Capture size is unbounded (photos travel inline as base64) |
+| R2 | P2 | risk | Photos lost when the page tab closes mid-upload (capture size measured: not the limit) · **done** (v1.22.0) |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
 | R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **done** (v1.7.2: repo public, branch protection) |
 | R9 | P3 | risk | Outbox name matching assumes Messenger's "Replying to …" and stored sender names agree. Live (Nov 7): labels are the nickname or the first name, and `to` uses the same; the reply bar itself is still unverified |
@@ -28,6 +28,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
 | R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up |
+| R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 715 and adds about 55 a day (to design) |
+| R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
@@ -329,10 +331,26 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Tests:** 17 page checks, shown to fail against the v1.1.2 page (EXPERIMENTS.md §12).
 - **Still true:** a page and Claude can both write `meta/chat`. Claude's writes are pinned, and the page only merges its own fields (`update`), so neither side clobbers the other's fields.
 
-### R2 · P2 · Capture size is unbounded
-- **Where:** `helper.user.js:103-105`
-- **What:** every photo in the window travels base64-encoded inside the clipboard text. A first run of 1,000 messages, or a long gap, can mean many MB on the clipboard and in one paste event. The real limits of clipboard, paste and upload haven't been measured.
-- **Fix:** measure; cap photos per capture (send the rest on the next run, or split into several pastes).
+### R2 · P2 · Photos lost when the page tab closes mid-upload · done (v1.22.0)
+- **Where:** `helper.user.js:103-105`, the page's importer
+- **What (first filed):** every photo in the window travels base64-encoded inside the clipboard text, and the real limits of clipboard, paste and upload hadn't been measured.
+- **Measured (Nov 12, EXPERIMENTS.md §14):** not the limit. Captures up to 400 MB copy, paste and import locally in under 3 s; the helper fails only at about 512 MB (JavaScript's longest string). Live: about 0.5 s per upload and about 54 KB per photo on the owner's page.
+- **The real loss:** the page wrote `photos/index` only after every upload finished, and step 5 closed the page tab 8–10 s after the paste. A tab closed mid-upload left the photos that had landed unindexed (lost), and a re-paste uploaded them again as duplicates. A quota failure said "paste again", which could never work, and `photos/index` would have hit the 256 KiB cap at about 2,500 photos.
+- **Done in v1.22.0 (owner's decisions, Nov 12):**
+  - The page indexes each photo as it lands, in 500-message block documents `photos/b<start>`; `photos/index` is read, never written. Owed slots are `null` and counted in `meta/chat.photosOwed`.
+  - `refresh/lastImport` says `uploading` with a 10 s heartbeat that also renews a 60 s import lease, then `done` or `partial` with a `stop` code; each upload error code has its own handling (retry once, wait and retry, give the photo up, or stop with the right advice).
+  - `references/photos.md`: Claude waits while the heartbeat moves, at most 10 minutes (stall: two of its reads at least 60 s apart with the same beat), never closes the page tab while uploads run, and the next run backfills owed photos by scanning from just before them, up to 300 messages behind the newest; older ones are given up and reported. Every new photo is still opened (no cap). No capture splitting.
+  - Photos stay the original files. Asset usage is recorded with each import (`meta/chat.assetUsage`), the page warns at 80% of either limit, and `photos.md` › Cleanup removes duplicates and unused files, only when the user asks and confirms (R13 is the long-term fix).
+- **Tests:** page section `photos` (P1–P23 and the usage checks; the key ones fail on 2.6), `standIn` (scripted uploads, quota, `list`, `steal`, paste waits), sim section G (the backfill scan and multi-photo captures), `TestPhotos` in `tests/test_tools.py`.
+
+### R13 · P2 · A page holds at most 5,000 photo files
+- **Found (Nov 12, live, read only):** the owner's page has 715 asset files against claude.ai's 5,000-file limit per artifact (bytes: 38.8 MB of 1 GiB), growing about 55 files a day, so it reaches the limit in roughly 11 weeks. There are also more files than indexed photos (715 against 549 in the old `byI`), probably copies from re-pastes before v1.22.
+- **Now (v1.22.0):** the page records usage with each import and warns at 80%; `references/photos.md` › Cleanup removes copies and unused files on the user's say-so. That buys time, not a fix.
+- **To design:** for example keep older photos as links only (Messenger's own, which expire), move older photos to an archive page with its own quota, or store a smaller copy of old photos. Each has costs (lost photos, a second page to maintain, re-encoding the owner ruled out for now).
+
+### R15 · P3 · Photos the helper couldn't fetch aren't recorded as owed
+- **What:** when the helper can't fetch a photo (`FAILED #…` in the capture summary), the capture has no slot for it, so the page never marks it owed and no backfill retries it.
+- **Fix:** the helper lists them (`phfail:[{i,k}]`, helper 2.1) and the page records them as owed `null` slots, so the next run's backfill retries them like any other owed photo.
 
 ### R3 · P3 · Messenger markup dependency (known) · done (v1.20.0, option B)
 - English UI labels, `[role="log"]`, `data-message-id`, "Go to replied message", "Reply to this message", the `At <time>, <name>: ` aria-label shape. See F4.

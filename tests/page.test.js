@@ -19,6 +19,7 @@ const PAGE = /^<!doctype/i.test(SRC) ? SRC : SKELETON + SRC + '</body></html>';
 const URL = 'http://localhost:9917/catchup';
 const CATCHUP = path.join(ROOT, 'plugin/skills/refresh/scripts/catchup.py');
 const CAPS = path.join(__dirname, 'out/sim_caps.json');
+const BACKFILL = path.join(__dirname, 'out/sim_cap_photos.json'); /* sim section G: {first, backfill, multi} */
 const ok = (c, msg) => {
   console.log((c ? 'PASS ' : 'FAIL ') + msg);
   if (!c) process.exitCode = 1;
@@ -195,17 +196,63 @@ function runtime(seed) {
         return { id };
       },
     });
+  /* Assets (assets.d.ts, contract 0.2.92). window.__up = {delayMs, script:{<call>: code | {hang: ms} | {delayMs: ms}},
+     quota:{maxFiles, maxBytes}} scripts uploads by call number (0 = the first upload() call; retries count): a code
+     rejects with {code}, {hang} answers only after ms (a late answer the page must ignore), {delayMs} slows that one.
+     Over the quota (default 5,000 files, 1 GiB, as on claude.ai) an upload rejects quota_or_state. Ids are 32 hex
+     characters; each upload is logged as {id, size, type, hash} (SHA-256 of the bytes), so a duplicate shows by hash.
+     opts.assetUse {files, bytes} counts files stored before the test. __failUploadAt (older tests) fails the upload
+     whose number of stored uploads equals it, with "unavailable". */
+  let calls = 0;
+  const pause = ms => new Promise(r => setTimeout(r, ms));
+  const quota = () => Object.assign({ maxFiles: 5000, maxBytes: 1 << 30 }, (window.__up || {}).quota);
+  const usage = () => {
+    const live = uploads.filter(u => !u.deleted);
+    const pre = opts.assetUse || {};
+    const q = quota();
+    return {
+      files: live.length + (pre.files || 0),
+      bytes: live.reduce((n, u) => n + u.size, pre.bytes || 0),
+      maxFiles: q.maxFiles,
+      maxBytes: q.maxBytes,
+    };
+  };
   const assets = {
     upload: async (blob, o) => {
+      const n = calls++;
+      const U = window.__up || {};
+      const s = (U.script || {})[n];
       if (window.__failUploadAt === uploads.length) {
         window.__failUploadAt = null;
         throw Object.assign(new Error('injected upload failure'), { code: 'unavailable' });
       }
-      const id = 'blob' + (uploads.length + 1);
-      uploads.push({ id, size: blob.size, type: o.type });
-      return { id, sizeBytes: blob.size, contentType: o.type };
+      await pause(s && s.hang != null ? s.hang : s && s.delayMs != null ? s.delayMs : U.delayMs || 0);
+      if (typeof s === 'string') throw Object.assign(new Error('scripted ' + s), { code: s });
+      const u = usage();
+      if (u.files + 1 > u.maxFiles || u.bytes + blob.size > u.maxBytes)
+        throw Object.assign(new Error('quota'), { code: 'quota_or_state' });
+      const d = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+      const hash = [...new Uint8Array(d)].map(x => x.toString(16).padStart(2, '0')).join('');
+      const id = 'b10b' + String(uploads.length + 1).padStart(28, '0');
+      uploads.push({ id, size: blob.size, type: o.type, hash, call: n });
+      return { id, url: '/_blob/' + id, sizeBytes: blob.size, contentType: o.type };
+    },
+    list: async () => {
+      if (opts.listReject) throw Object.assign(new Error('list unavailable'), { code: 'store_unavailable' });
+      const live = uploads.filter(u => !u.deleted);
+      return {
+        assets: live.map(u => ({ id: u.id, url: '/_blob/' + u.id, contentType: u.type, sizeBytes: u.size })),
+        usage: usage(),
+      };
+    },
+    delete: async id => {
+      const u = uploads.find(x => x.id === id && !x.deleted);
+      if (u) u.deleted = true;
+      return { deleted: !!u };
     },
   };
+  if (opts.tune) window.__mcImportTune = opts.tune; /* the page's photo timings, shortened (R2 tests) */
+  Object.entries(opts.leases || {}).forEach(([p, l]) => leases.set(p, l)); /* a lease another tab left behind */
   /* The real cap (sample.d.ts, SampleLimits.maxPromptBytes): every turn's content together, in UTF-8 bytes; over it the
      call rejects with prompt_too_large and nothing is sent. opts.promptMax is what limits() reports, opts.enforce what
      is enforced (lower = the runtime counts more strictly than it says); noLimits, limitsReject and limitsBogus break
@@ -296,6 +343,10 @@ function runtime(seed) {
     },
     get: p => clone(store.get(p)),
     all: () => Object.fromEntries([...store].map(([k, v]) => [k, clone(v)])),
+    /* another tab takes a lease (only possible once the holder's has lapsed, but tests take it outright) */
+    steal: (p, holder, ms) => leases.set(p, { holder, exp: Date.now() + ms }),
+    calls: () => calls,
+    usage,
   };
   window.claude = {
     use: async n => ({ db: { doc, collection }, assets: opts.noAssets ? null : assets, sample })[n] || null,
@@ -352,6 +403,48 @@ async function open(seed, page = PAGE, ctxOpts) {
   return p;
 }
 const get = (p, k) => p.evaluate(k => __rt.get(k) ?? null, k);
+/* The stored photo slots, merged here (independently of the page) from photos/index and the photos/b<start> blocks:
+   byK[i][k] = "/_blob/<id>" | null (owed) | {e} (given up); stored(i) = message i's stored photos in slot order. */
+async function photoState(p) {
+  const all = await p.evaluate(() =>
+    Object.fromEntries([...__rt.store].filter(([k]) => /^photos\//.test(k)).map(([k, v]) => [k.slice(7), v])),
+  );
+  const byK = {};
+  const ix = all.index || {};
+  const at = i => (byK[i] = byK[i] || {});
+  Object.entries(ix.byI || {}).forEach(([i, l]) => !(ix.byK || {})[i] && l.forEach((v, k) => (at(i)[k] = v)));
+  Object.entries(ix.byK || {}).forEach(([i, m]) => Object.assign(at(i), m));
+  Object.keys(all)
+    .filter(id => /^b\d+$/.test(id))
+    .forEach(id =>
+      Object.entries(all[id].byK || {}).forEach(([i, m]) =>
+        Object.entries(m).forEach(([k, v]) => {
+          if (typeof v === 'string' || !(k in at(i))) at(i)[k] = v;
+        }),
+      ),
+    );
+  const stored = i =>
+    Object.keys(byK[i] || {})
+      .sort((a, b) => a - b)
+      .map(k => byK[i][k])
+      .filter(v => typeof v === 'string');
+  const owed = Object.entries(byK).flatMap(([i, m]) =>
+    Object.entries(m)
+      .filter(([, v]) => v === null)
+      .map(([k]) => +i + '.' + k),
+  );
+  const gifs = new Set([].concat(...Object.values(all).map(d => d.gifs || [])));
+  return { all, byK, stored, owed, gifs };
+}
+/* Fail the upload calls at these offsets from the next one (0 = the next call) with code */
+const failCalls = (p, offs, code = 'store_unavailable') =>
+  p.evaluate(
+    ([o, c]) => {
+      const n = __rt.calls();
+      window.__up = Object.assign({}, window.__up, { script: Object.fromEntries(o.map(k => [n + k, c])) });
+    },
+    [offs, code],
+  );
 const nWrites = (p, re) => p.evaluate(src => __rt.writes.filter(w => new RegExp(src).test(w.p)).length, re);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function until(p, fn, arg, ms = 10000) {
@@ -363,8 +456,16 @@ async function until(p, fn, arg, ms = 10000) {
     await sleep(100);
   }
 }
-/* Paste like Claude does: a paste event on the page body (or another target). Returns the new refresh/lastImport, or null if the page ignored it. */
+/* Paste like Claude does: a paste event on the page body (or another target). Returns the new refresh/lastImport once
+   the import has finished (a record whose state isn't "uploading"), or null if the page ignored it. pasteFirst returns
+   the first new record, whatever its state. */
+const finished = v => v && v.state !== 'uploading';
 async function paste(p, text, sel = 'body', ms = 10000) {
+  const first = await pasteFirst(p, text, sel, ms);
+  if (!first || finished(first)) return first;
+  return until(p, () => (v => (v && v.state !== 'uploading' ? v : null))(__rt.get('refresh/lastImport')), null, ms);
+}
+async function pasteFirst(p, text, sel = 'body', ms = 10000) {
   const before = JSON.stringify(await get(p, 'refresh/lastImport'));
   await p.evaluate(
     ([t, s]) => {
@@ -397,7 +498,7 @@ async function viaButton(p, text) {
     p,
     b => {
       const v = __rt.get('refresh/lastImport');
-      return v && JSON.stringify(v) !== b ? v : null;
+      return v && JSON.stringify(v) !== b && v.state !== 'uploading' ? v : null;
     },
     before,
   );
@@ -451,16 +552,18 @@ async function importer() {
     'meta/chat: lastI, lastMid, lastT, anchorMids updated',
   );
   ok(m.ownLastI === 117 && m.ownLastMid === 'mid.117', 'meta/chat: ownLastI = your newest message');
-  const ph = await get(p, 'photos/index');
+  const ph = await get(p, 'photos/b0');
   const up = await p.evaluate(() => __rt.uploads);
   ok(
     ph &&
-      JSON.stringify(ph.byI['10']) === '["/_blob/blob1"]' &&
+      JSON.stringify(ph.byK['10']) === JSON.stringify({ 0: '/_blob/' + up[0].id }) &&
       JSON.stringify(ph.gifs) === '[5]' &&
       up.length === 1 &&
       up[0].size === Buffer.from(PNG, 'base64').length &&
-      up[0].type === 'image/png',
-    'photos: uploaded byte-identical size, photos/index and gifs updated',
+      up[0].type === 'image/png' &&
+      JSON.stringify(r.stored) === JSON.stringify([{ i: 10, k: 0, id: up[0].id }]) &&
+      r.state === 'done',
+    'photos: uploaded byte-identical size, photos/b0 holds the photo and the GIF, lastImport lists it in stored',
   );
   // same capture again
   let w0 = await nWrites(p, '^chunks/');
@@ -724,34 +827,33 @@ async function robustness() {
   // B17: GIFs recorded without photos; a failed upload keeps what landed, and a re-paste finishes without duplicates
   r = await paste(p, JSON.stringify(cap(range(200, 202), { gifs: [201] })));
   ok(
-    r && r.ok && JSON.stringify((await get(p, 'photos/index')).gifs) === '[201]',
+    r && r.ok && [...(await photoState(p)).gifs].join() === '201',
     'a capture with GIFs and no photos records the GIFs',
   );
   const P3 = [203, 204, 205].map(i => ({ i, k: 0, type: 'image/png', b64: PNG }));
-  await p.evaluate(() => {
-    window.__failUploadAt = __rt.uploads.length + 1;
-  });
+  await failCalls(p, [1, 2]); /* the 2nd photo fails, and so does its one retry */
   r = await paste(p, JSON.stringify(cap(range(203, 205), { photos: P3 })));
-  let ix = (await get(p, 'photos/index')).byI;
+  let ix = await photoState(p);
   ok(
     r &&
       r.fresh === 3 &&
-      /1 photo stored\. Photos: upload failed at #204 .*paste again/.test(r.msg) &&
-      ix['203'] &&
-      !ix['204'],
+      r.state === 'partial' &&
+      /1 photo stored\. Photos: 1 of 3 stored; stopped at #204 \(store_unavailable\)\. Paste again/.test(r.msg) &&
+      ix.stored(203).length === 1 &&
+      !ix.stored(204).length,
     'upload fails at the 2nd photo: messages saved, the 1st photo indexed, told to paste again (' +
       (r && r.msg.slice(-90)) +
       ')',
   );
   const n0 = await p.evaluate(() => __rt.uploads.length);
   r = await paste(p, JSON.stringify(cap(range(203, 205), { photos: P3 })));
-  ix = (await get(p, 'photos/index')).byI;
+  ix = await photoState(p);
   ok(
     r &&
       r.ok &&
       /2 photos stored \(1 already stored\)/.test(r.msg) &&
-      ix['204'] &&
-      ix['205'] &&
+      ix.stored(204).length === 1 &&
+      ix.stored(205).length === 1 &&
       (await p.evaluate(() => __rt.uploads.length)) - n0 === 2,
     'paste again: only the 2 missing photos upload, all 3 indexed',
   );
@@ -761,21 +863,19 @@ async function robustness() {
     { i: 206, k: 2, type: 'image/png', b64: PNG },
     { i: 207, k: 0, type: 'image/png', b64: PNG },
   ];
-  await p.evaluate(() => {
-    window.__failUploadAt = __rt.uploads.length + 2;
-  });
+  await failCalls(p, [2, 3]);
   r = await paste(p, JSON.stringify(cap(range(206, 207), { photos: PK })));
   let n1 = await p.evaluate(() => __rt.uploads.length);
   r = await paste(p, JSON.stringify(cap(range(206, 207), { photos: PK })));
-  ix = await get(p, 'photos/index');
+  ix = await photoState(p);
   ok(
     r &&
       r.ok &&
       (await p.evaluate(() => __rt.uploads.length)) - n1 === 1 &&
-      ix.byI['206'].length === 2 &&
-      ix.byI['207'].length === 1 &&
-      ix.byK['206']['1'] &&
-      ix.byK['206']['2'],
+      ix.stored(206).length === 2 &&
+      ix.stored(207).length === 1 &&
+      typeof ix.byK['206']['1'] === 'string' &&
+      typeof ix.byK['206']['2'] === 'string',
     'B28: slot 0 missing, upload fails, paste again: only #207 uploads, #206 keeps 2 photos (no duplicate)',
   );
   // B25 groundwork: unconfirmed and sending replies stay listed until resolved
@@ -1093,8 +1193,10 @@ async function pipeline() {
     'messages: #33 nested under its parent with "reply to #30"',
   );
   ok(
-    (await p.$eval('#m30 .pics img', i => i.getAttribute('src'))) === '/_blob/blob1',
-    'messages: photo #30 shown from its uploaded blob',
+    (await p.$eval('#m30 .pics img', i => i.getAttribute('src'))) ===
+      '/_blob/' + (await p.evaluate(() => __rt.uploads[0].id)) &&
+      typeof ((await get(p, 'photos/b0')) || { byK: {} }).byK['30']?.['0'] === 'string',
+    'messages: photo #30 shown from its uploaded blob, indexed in photos/b0 (P22)',
   );
   const href = await p.$eval('#m40 a.replylink', a => a.href);
   ok(
@@ -3235,6 +3337,665 @@ async function history() {
       await p.close();
     }
   });
+
+/* ---------- R2: photos stored as they upload ----------
+   Each photo is indexed (photos/b<start>) the moment it lands, refresh/lastImport says "uploading" with a heartbeat
+   while they store, owed slots are on record (null, and meta/chat.photosOwed), every upload error code has its own
+   handling, and asset usage is recorded with each import. Timings are shortened with __mcImportTune. */
+const TUNE = { beatMs: 200, leaseMs: 1500, uploadTimeoutMs: 1500, retryMs: 100, rateWaitMs: 300 };
+/* distinct bytes per slot, so a photo uploaded twice shows up as two uploads with the same hash */
+const phB64 = (i, k, pad = 0) =>
+  Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from(' #' + i + '.' + k + ' '), Buffer.alloc(pad, 0x2e)]).toString(
+    'base64',
+  );
+const PH = (i, k = 0, pad = 0) => ({ i, k, type: 'image/png', b64: phB64(i, k, pad) });
+const openR2 = (extra = {}, opts = {}) =>
+  open(Object.assign(SEED(), extra, { __opts: Object.assign({ tune: TUNE }, opts) }));
+const setUp = (p, up) => p.evaluate(u => (window.__up = u), up);
+const uploads = p => p.evaluate(() => __rt.uploads);
+const writesTo = (p, re) => p.evaluate(src => __rt.writes.filter(w => new RegExp(src).test(w.p)).map(w => w.p), re);
+const imports = p => p.evaluate(() => __rt.writes.filter(w => w.p === 'refresh/lastImport').map(w => w.v));
+const toastText = p => p.evaluate(() => (document.getElementById('toast') || {}).textContent || '');
+const SIX = [PH(2), PH(3), PH(5), PH(5, 1), PH(7), PH(8)];
+const capSix = () => JSON.stringify(cap(range(0, 9), { photos: SIX }));
+async function photos() {
+  // P1, P2, P4: six photos at 300 ms each
+  let p = await openR2();
+  await setUp(p, { delayMs: 300 });
+  let r = await pasteFirst(p, capSix());
+  ok(
+    r &&
+      r.state === 'uploading' &&
+      r.ok &&
+      r.fresh === 10 &&
+      JSON.stringify(r.chunks) === '["c0000"]' &&
+      r.photos &&
+      r.photos.total === 6 &&
+      r.photos.done === 0 &&
+      (await get(p, 'meta/chat')).lastI === 9 &&
+      /IMPORT OK: 10 new messages.*Storing photos \d\/6… keep this tab open/.test(await toastText(p)),
+    'P1: the first lastImport after a paste with photos is "uploading" (messages saved, photos 0/6), the toast says ' +
+      'keep this tab open (' +
+      JSON.stringify(r && { state: r.state, photos: r.photos }) +
+      ')',
+  );
+  await until(p, () => __rt.uploads.length >= 3);
+  let st = await photoState(p);
+  let up = await uploads(p);
+  const owedMid = (await get(p, 'meta/chat')).photosOwed;
+  ok(
+    up.length >= 3 &&
+      up.every(u => Object.values(st.byK).some(m => Object.values(m).includes('/_blob/' + u.id))) &&
+      st.owed.length +
+        up.filter(u => Object.values(st.byK).some(m => Object.values(m).includes('/_blob/' + u.id))).length ===
+        6 &&
+      owedMid &&
+      owedMid.fromI === 2 &&
+      owedMid.toI === 8,
+    'P2: mid-upload, every photo that landed is already indexed in photos/b0, the rest are owed (null), and ' +
+      'meta/chat.photosOwed covers them (' +
+      up.length +
+      ' landed, owed ' +
+      st.owed +
+      ')',
+  );
+  r = await until(p, () => (v => (v && v.state !== 'uploading' ? v : null))(__rt.get('refresh/lastImport')));
+  up = await uploads(p);
+  st = await photoState(p);
+  ok(
+    r &&
+      r.state === 'done' &&
+      r.stored.length === 6 &&
+      r.stored.every(s => up.some(u => u.id === s.id) && st.byK[s.i][s.k] === '/_blob/' + s.id) &&
+      /6 photos stored\./.test(r.msg) &&
+      (await get(p, 'meta/chat')).photosOwed === null &&
+      !st.owed.length &&
+      (await writesTo(p, '^photos/index$')).length === 0 &&
+      (await p.evaluate(() => __rt.leases.get('refresh/importLock').exp - Date.now() <= 1100)),
+    'P4: done: stored lists the 6 {i,k,id}, photosOwed cleared, lease let go, photos/index never written (' +
+      (r && r.msg) +
+      ')',
+  );
+  ok(
+    (await imports(p)).filter(v => v.state === 'uploading').every((v, k, a) => !k || v.beat >= a[k - 1].beat) &&
+      (await imports(p)).filter(v => v.state !== 'uploading').length === 1,
+    'P4: lastImport goes uploading (heartbeats) then one closing record',
+  );
+  await p.close();
+  // P3: one slow upload still beats, and the lease moves forward
+  p = await openR2();
+  await setUp(p, { script: { 0: { delayMs: 1200 } } });
+  await pasteFirst(p, JSON.stringify(cap(range(0, 2), { photos: [PH(1)] })));
+  const l0 = await p.evaluate(() => __rt.leases.get('refresh/importLock').exp);
+  await sleep(700);
+  const l1 = await p.evaluate(() => __rt.leases.get('refresh/importLock').exp);
+  await until(p, () => (__rt.get('refresh/lastImport') || {}).state === 'done');
+  const beats = (await imports(p)).filter(v => v.state === 'uploading').map(v => v.beat);
+  ok(
+    beats.length >= 4 && beats.every((b, k) => !k || b > beats[k - 1]) && l1 > l0,
+    'P3: during one 1.2 s upload the heartbeat wrote ' +
+      beats.length +
+      ' rising beats and the import lease moved forward',
+  );
+  await p.close();
+  // P5: the tab closes after 4 uploads; a new tab on the same store finishes the job with no duplicate
+  const TEN = range(0, 9, i => PH(i));
+  const capTen = JSON.stringify(cap(range(0, 9), { photos: TEN }));
+  p = await openR2();
+  await setUp(p, { delayMs: 50, script: { 4: { hang: 1e9 } } });
+  pasteFirst(p, capTen).catch(() => {});
+  await until(p, () => Object.values((__rt.get('photos/b0') || { byK: {} }).byK).filter(m => m[0]).length === 4);
+  const snap = await p.evaluate(() => ({ all: __rt.all(), leases: Object.fromEntries(__rt.leases) }));
+  const hashesA = (await uploads(p)).map(u => u.hash);
+  await p.context().close();
+  const p2 = await openR2(Object.assign({}, snap.all), { leases: snap.leases });
+  st = await photoState(p2);
+  ok(
+    st.owed.length === 6 &&
+      [0, 1, 2, 3].every(i => st.stored(i).length === 1) &&
+      snap.all['refresh/lastImport'].state === 'uploading' &&
+      snap.all['meta/chat'].photosOwed.n === 10,
+    'P5: after the tab closed: the 4 photos that landed are indexed, 6 owed, lastImport stuck at uploading',
+  );
+  const w5 = (await writesTo(p2, '^(photos|chunks|meta)/')).length;
+  r = await paste(p2, capTen);
+  ok(
+    r &&
+      !r.ok &&
+      /Another import is running/.test(r.msg) &&
+      (await writesTo(p2, '^(photos|chunks|meta)/')).length === w5,
+    'P5: pasting before the closed tab’s lease lapses: "Another import is running", nothing written',
+  );
+  await sleep(1600);
+  r = await paste(p2, capTen);
+  up = await uploads(p2);
+  st = await photoState(p2);
+  ok(
+    r &&
+      r.state === 'done' &&
+      up.length === 6 &&
+      new Set(up.map(u => u.hash).concat(hashesA)).size === 10 &&
+      range(0, 9, i => i).every(i => st.stored(i).length === 1) &&
+      /Nothing new.*6 photos stored \(4 already stored\)/.test(r.msg),
+    'P5: once it lapses, the same paste in the new tab uploads exactly the 6 owed photos, no duplicate hash, all 10 ' +
+      'indexed (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p2.close();
+  // P6: a second paste in the same tab while photos upload changes nothing
+  p = await openR2();
+  await setUp(p, { delayMs: 300 });
+  await pasteFirst(p, capSix());
+  await p.evaluate(t => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, capSix());
+  const t6 = await toastText(p);
+  await until(p, () => (__rt.get('refresh/lastImport') || {}).state === 'done');
+  await sleep(500);
+  ok(
+    /Still storing photos from the last paste \(\d\/6\)… keep this tab open/.test(t6) &&
+      (await uploads(p)).length === 6 &&
+      (await imports(p)).filter(v => v.state !== 'uploading').length === 1,
+    'P6: a second paste while uploading: toast "Still storing photos from the last paste (n/6)", no second import, ' +
+      '6 uploads (' +
+      t6 +
+      ')',
+  );
+  await p.close();
+  // P7: a capture with no photos: one record, as before
+  p = await openR2();
+  r = await paste(p, JSON.stringify(cap(range(0, 2))));
+  ok(
+    r &&
+      r.state === 'done' &&
+      /^IMPORT OK: 3 new messages, #0–#2 \(chunks c0000\)\. Checksum and read-back OK\.$/.test(r.msg) &&
+      (await imports(p)).length === 1 &&
+      (await writesTo(p, '^photos/')).length === 0,
+    'P7: messages only: a single "done" record with the same message as before, no photo writes (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P8: another tab takes the lease mid-upload (ours lapsed): nothing more is written
+  p = await openR2();
+  await setUp(p, { delayMs: 400 });
+  await pasteFirst(p, capSix());
+  await until(p, () => __rt.uploads.length >= 2);
+  const before8 = await p.evaluate(() => {
+    __rt.steal('refresh/importLock', 'other', 60000);
+    return __rt.writes.filter(w => /^(photos|meta)\//.test(w.p)).length;
+  });
+  r = await until(p, () => (v => (v && v.state !== 'uploading' ? v : null))(__rt.get('refresh/lastImport')));
+  const after8 = (await writesTo(p, '^(photos|meta)/')).length;
+  st = await photoState(p);
+  up = await uploads(p);
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r.stop === 'lease' &&
+      after8 === before8 &&
+      up.length > st.stored(2).length + st.stored(3).length + st.stored(5).length + st.stored(7).length &&
+      /another open copy of this page took over the import\. Paste again/.test(r.msg),
+    'P8: lease taken mid-upload: partial, stop "lease", no block or meta/chat write after it, the photo in flight ' +
+      'not indexed (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p.close();
+  // P9: rate_limited once (waits, retries, done) and twice (partial)
+  p = await openR2();
+  await setUp(p, { script: { 1: 'rate_limited' } });
+  r = await paste(p, capSix());
+  ok(
+    r && r.state === 'done' && (await uploads(p)).length === 6 && /6 photos stored\./.test(r.msg),
+    'P9a: one rate_limited: waits, retries that photo, done with 6 uploads',
+  );
+  await p.close();
+  p = await openR2();
+  await setUp(p, { script: { 1: 'rate_limited', 2: 'rate_limited' } });
+  r = await paste(p, capSix());
+  st = await photoState(p);
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r.stop === 'rate_limited' &&
+      /Too many uploads right now: wait 2 minutes, then paste again/.test(r.msg) &&
+      st.stored(2).length === 1 &&
+      st.owed.length === 5 &&
+      (await get(p, 'meta/chat')).photosOwed.n === 5,
+    'P9b: rate_limited twice: partial, "wait 2 minutes", the first photo indexed, 5 owed (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P10: store_unavailable once (retried) and twice (partial; a re-paste finishes, no duplicate)
+  p = await openR2();
+  await setUp(p, { script: { 1: 'store_unavailable' } });
+  r = await paste(p, capSix());
+  ok(r && r.state === 'done' && (await uploads(p)).length === 6, 'P10a: one store_unavailable: retried once, done');
+  await p.close();
+  p = await openR2();
+  await setUp(p, { script: { 1: 'store_unavailable', 2: 'store_unavailable' } });
+  r = await paste(p, capSix());
+  const r10 = r;
+  r = await paste(p, capSix());
+  up = await uploads(p);
+  ok(
+    r10 &&
+      r10.state === 'partial' &&
+      r10.stop === 'unavailable' &&
+      /stopped at #3 \(store_unavailable\)\. Paste again to store the rest\./.test(r10.msg) &&
+      r &&
+      r.state === 'done' &&
+      up.length === 6 &&
+      new Set(up.map(u => u.hash)).size === 6,
+    'P10b: store_unavailable twice: partial, "paste again"; the re-paste stores the rest with no duplicate (' +
+      (r10 && r10.msg) +
+      ')',
+  );
+  await p.close();
+  // P11: storage full (the stand-in's file limit set to 3)
+  p = await openR2();
+  await setUp(p, { quota: { maxFiles: 3 } });
+  r = await paste(p, capSix());
+  st = await photoState(p);
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r.stop === 'quota' &&
+      r.usage &&
+      r.usage.files === 3 &&
+      r.usage.maxFiles === 3 &&
+      /Photo storage for this page is full \(3 files, .*\): 3 photos not stored\. Messages are saved\. Pasting again won't help; tell Claude\./.test(
+        r.msg,
+      ) &&
+      !/paste again/i.test(r.msg) &&
+      st.owed.length === 3,
+    'P11: storage full: partial, stop "quota", usage recorded, the message says so and never "paste again" (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p.close();
+  // P12: too_large: given up for good, never retried
+  p = await openR2();
+  await setUp(p, { script: { 1: 'too_large' } });
+  r = await paste(p, capSix());
+  st = await photoState(p);
+  const n12 = (await uploads(p)).length;
+  const r12 = await paste(p, capSix());
+  ok(
+    r &&
+      r.state === 'done' &&
+      JSON.stringify(st.byK['3']) === '{"0":{"e":"too_large"}}' &&
+      JSON.stringify(r.gaveUp) === '[{"i":3,"k":0,"e":"too_large"}]' &&
+      /5 photos stored\. 1 photo couldn't be stored \(#3, too large\)\./.test(r.msg) &&
+      n12 === 5 &&
+      (await uploads(p)).length === 5 &&
+      r12 &&
+      /6 already stored/.test(r12.msg),
+    'P12: too_large on #3: slot given up ({e}), the rest stored, done; a re-paste uploads nothing (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p.close();
+  // P13: an upload that hangs: the page's timeout stops it; the late answer is never indexed
+  p = await openR2();
+  await setUp(p, { script: { 1: { hang: 2500 } } });
+  r = await paste(p, capSix());
+  const w13 = (await writesTo(p, '^photos/')).length;
+  await sleep(1500);
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r.stop === 'timeout' &&
+      /stopped at #3 \(timeout\)\. Paste again/.test(r.msg) &&
+      (await uploads(p)).length === 2 &&
+      (await writesTo(p, '^photos/')).length === w13 &&
+      (await photoState(p)).owed.length === 5,
+    'P13: a hung upload times out: partial, stop "timeout"; its late answer leaves one unindexed asset and no write (' +
+      (r && r.msg) +
+      ')',
+  );
+  r = await paste(p, capSix());
+  st = await photoState(p);
+  ok(
+    r && r.state === 'done' && !st.owed.length && (await uploads(p)).length === 7,
+    'P13: the re-paste stores the rest (one asset duplicated: the late one)',
+  );
+  await p.close();
+  // P14: messages #499 and #500 fall in two blocks; the page shows both and picks up a live block change
+  p = await openR2();
+  r = await paste(p, JSON.stringify(cap(range(0, 502), { photos: [PH(499), PH(500)] })));
+  const b0 = await get(p, 'photos/b0');
+  const b500 = await get(p, 'photos/b500');
+  await p.evaluate(() => (location.hash = '#messages'));
+  await p.evaluate(() => {
+    document.getElementById('lay-flat') && document.getElementById('lay-flat').click();
+  });
+  const shown = await until(
+    p,
+    () => document.querySelector('#m499 .pics img') && document.querySelector('#m500 .pics img'),
+  );
+  ok(
+    r &&
+      r.state === 'done' &&
+      b0 &&
+      b0.start === 0 &&
+      Object.keys(b0.byK).join() === '499' &&
+      b500 &&
+      b500.start === 500 &&
+      Object.keys(b500.byK).join() === '500' &&
+      !!shown,
+    'P14: #499 lands in photos/b0 and #500 in photos/b500, and the Messages view shows both',
+  );
+  await p.evaluate(() => {
+    const b = __rt.get('photos/b500') || { start: 500, byK: {}, gifs: [] };
+    b.byK['501'] = { 0: '/_blob/' + 'f'.repeat(32) };
+    __rt.write('photos/b500', b);
+  });
+  ok(
+    !!(await until(p, () => document.querySelector('#m501 .pics img[src="/_blob/' + 'f'.repeat(32) + '"]'))),
+    'P14: a live change to a block shows the new photo without a reload',
+  );
+  await p.close();
+  // P15: an old photos/index is read (byI+byK, byI only), never written; a new slot goes to the block
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 9))));
+  await p.evaluate(() =>
+    __rt.write('photos/index', {
+      byI: { 2: ['/_blob/old2'], 3: ['/_blob/old3'] },
+      byK: { 2: { 0: '/_blob/old2' } },
+      gifs: [4],
+    }),
+  );
+  const wIdx = (await writesTo(p, '^photos/index$')).length;
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(2), PH(3)] })));
+  ok(
+    r && /Nothing new.*0 photos stored \(2 already stored\)/.test(r.msg) && (await uploads(p)).length === 0,
+    'P15a/b: photos in an old index (byI+byK, and byI only) count as stored: a re-paste uploads nothing (' +
+      (r && r.msg) +
+      ')',
+  );
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(2), PH(2, 1)] })));
+  st = await photoState(p);
+  await p.evaluate(() => (location.hash = '#messages'));
+  const pics2 = await until(p, () => {
+    const l = [...document.querySelectorAll('#m2 .pics img')].map(i => i.getAttribute('src'));
+    return l.length === 2 ? l : null;
+  });
+  ok(
+    r &&
+      r.state === 'done' &&
+      typeof (await get(p, 'photos/b0')).byK['2']['1'] === 'string' &&
+      st.stored(2).length === 2 &&
+      pics2 &&
+      pics2[0] === '/_blob/old2' &&
+      (await writesTo(p, '^photos/index$')).length === wIdx &&
+      !!(await p.$('#m3 .pics img[src="/_blob/old3"]')),
+    'P15c: slot 1 of a message whose slot 0 is in the old index goes to photos/b0, both show in slot order, and ' +
+      'photos/index is never written',
+  );
+  await p.close();
+  // P16a: a block of 500 messages with 4 photos each, at real id length, fits the 256 KiB cap
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 505))));
+  await p.evaluate(() => {
+    const byK = {};
+    for (let i = 0; i < 499; i++) byK[i] = { 0: 0, 1: 1, 2: 2, 3: 3 };
+    Object.values(byK).forEach(m => Object.keys(m).forEach(k => (m[k] = '/_blob/' + 'a'.repeat(32))));
+    byK[499] = { 0: null, 1: null, 2: null, 3: null };
+    __rt.write('photos/b0', { start: 0, byK, gifs: [] });
+    return __rt.batch([
+      {
+        op: 'update',
+        p: 'meta/chat',
+        v: { photosOwed: { n: 4, fromI: 499, toI: 499, at: 'x' } },
+        if_version: __rt.version('meta/chat'),
+      },
+    ]);
+  });
+  r = await paste(p, JSON.stringify(cap(range(495, 505), { photos: [0, 1, 2, 3].map(k => PH(499, k)) })));
+  const size16 = await p.evaluate(() => new TextEncoder().encode(JSON.stringify(__rt.get('photos/b0'))).length);
+  ok(
+    r &&
+      r.state === 'done' &&
+      r.stored.length === 4 &&
+      size16 < 262144 &&
+      (await get(p, 'meta/chat')).photosOwed === null,
+    'P16a: 500 messages × 4 photos in one block is ' + size16 + ' bytes, under the 256 KiB cap (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P16b: an old index near the cap doesn't stop an import with photos (2.6 rewrote it and went over)
+  const big = { byI: {}, byK: {}, gifs: [] };
+  for (let i = 0; JSON.stringify(big).length < 262000; i++) {
+    big.byI[i + 1000] = ['/_blob/' + 'c'.repeat(32)];
+    big.byK[i + 1000] = { 0: '/_blob/' + 'c'.repeat(32) };
+  }
+  p = await openR2({ 'photos/index': big });
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(4)] })));
+  ok(
+    r && r.state === 'done' && r.stored.length === 1 && (await photoState(p)).stored(4).length === 1,
+    'P16b: a photos/index within 150 bytes of the cap doesn’t stop an import with photos (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P17: an owed slot more than 300 messages behind the newest is given up and reported
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 20))));
+  await p.evaluate(() => {
+    __rt.write('photos/b0', { start: 0, byK: { 10: { 0: null } }, gifs: [] });
+    __rt.batch([
+      {
+        op: 'update',
+        p: 'meta/chat',
+        v: { photosOwed: { n: 1, fromI: 10, toI: 10, at: 'x' } },
+        if_version: __rt.version('meta/chat'),
+      },
+    ]);
+  });
+  r = await paste(p, JSON.stringify(cap(range(21, 500))));
+  ok(
+    r &&
+      r.state === 'done' &&
+      JSON.stringify((await get(p, 'photos/b0')).byK['10']) === '{"0":{"e":"gave-up"}}' &&
+      JSON.stringify(r.gaveUp) === '[{"i":10,"k":0,"e":"gave-up"}]' &&
+      (await get(p, 'meta/chat')).photosOwed === null &&
+      /1 photo owed from earlier imports given up \(#10\): more than 300 messages old/.test(r.msg),
+    'P17: an owed photo 490 messages behind is given up, listed in gaveUp, photosOwed cleared (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P18: backfill with the real helper's captures (sim: a first run with a photo on #30, then a scan from before it)
+  if (!fs.existsSync(BACKFILL)) ok(false, 'P18: ' + path.relative(ROOT, BACKFILL) + ' missing: run tests/sim.js first');
+  else {
+    const B = JSON.parse(fs.readFileSync(BACKFILL, 'utf8'));
+    p = await openR2();
+    await failCalls(p, [0, 1]);
+    r = await paste(p, JSON.stringify(B.first));
+    const owed18 = (await get(p, 'meta/chat')).photosOwed;
+    const n18 = (await uploads(p)).length;
+    const r18 = await paste(p, JSON.stringify(B.backfill));
+    st = await photoState(p);
+    ok(
+      r &&
+        r.state === 'partial' &&
+        owed18 &&
+        owed18.n === 1 &&
+        owed18.fromI === 30 &&
+        r18 &&
+        r18.state === 'done' &&
+        r18.fresh === B.backfill.msgs.filter(m => m.i > B.first.msgs.length - 1).length &&
+        r18.backfill === true &&
+        (await uploads(p)).length - n18 === 1 &&
+        st.stored(30).length === 1 &&
+        (await get(p, 'meta/chat')).photosOwed === null,
+      'P18: the backfill capture (from #30) imports the new messages and stores the owed photo once, backfill true (' +
+        (r18 && r18.msg) +
+        ')',
+    );
+    const drift = JSON.parse(JSON.stringify(B.backfill));
+    drift.msgs = drift.msgs.slice(1).map((m, k) => Object.assign(m, { i: drift.msgs[0].i + k }));
+    drift.sha = sha(JSON.stringify(drift.msgs));
+    drift.photos = [];
+    drift.phsha = sha('[]');
+    const w18 = (await writesTo(p, '^(photos|chunks|meta)/')).length;
+    r = await paste(p, JSON.stringify(drift));
+    ok(
+      r &&
+        r.state === 'refused' &&
+        /doesn't match the stored message/.test(r.msg) &&
+        (await writesTo(p, '^(photos|chunks|meta)/')).length === w18,
+      'P18: a backfill whose numbering drifted (a message deleted since) is refused, nothing written',
+    );
+    await p.close();
+    // the multi-photo mock capture (a first run): every slot lands where the helper put it
+    const M = B.multi;
+    p = await openR2();
+    r = await paste(p, JSON.stringify(M));
+    st = await photoState(p);
+    ok(
+      r &&
+        M.photos.length >= 6 &&
+        M.photos.every(ph => typeof st.byK[ph.i][ph.k] === 'string') &&
+        (r.photos || {}).total === M.photos.length,
+      'P18: a sim capture with several photos per message stores every slot (' + M.photos.length + ' photos)',
+    );
+    await p.close();
+  }
+  // P19: a dry run reports what it would store, and writes nothing
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(2), PH(3)] })));
+  const w19 = (await writesTo(p, '^(photos|chunks|meta)/')).length;
+  const n19 = (await uploads(p)).length;
+  r = await paste(p, JSON.stringify(cap(range(0, 11), { photos: SIX.concat([PH(11)]), dry: true })));
+  ok(
+    r &&
+      r.dry &&
+      /DRY RUN OK: 2 new messages.*7 photos verified, 5 to store \(2 already stored\), \d+ KB\. Nothing written\./.test(
+        r.msg,
+      ) &&
+      (await writesTo(p, '^(photos|chunks|meta)/')).length === w19 &&
+      (await uploads(p)).length === n19,
+    'P19: a dry run says how many photos it would store, and writes and uploads nothing (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P20: a view that can't upload: messages saved, owed photos on record for a view that can
+  p = await openR2({}, { noAssets: true });
+  r = await paste(p, JSON.stringify(cap(range(0, 3), { photos: [PH(1), PH(2)] })));
+  st = await photoState(p);
+  ok(
+    r &&
+      r.ok &&
+      r.state === 'partial' &&
+      r.stop === 'no_assets' &&
+      /Photos not stored: this view can't upload them/.test(r.msg) &&
+      !/paste again/i.test(r.msg) &&
+      st.owed.length === 2 &&
+      (await get(p, 'meta/chat')).photosOwed.n === 2,
+    'P20: no assets: partial, stop "no_assets", today’s text with no "paste again", both photos owed (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p.close();
+  // a block write refused once is retried; refused twice, the import stops ("index") and the messages stay saved
+  p = await openR2();
+  await p.evaluate(() => __rt.fails.push({ p: 'photos/b0', op: 'set' }));
+  r = await paste(p, JSON.stringify(cap(range(0, 3), { photos: [PH(1)] })));
+  ok(r && r.state === 'done' && r.stored.length === 1, 'a block write refused once is retried: done');
+  await p.evaluate(() => __rt.fails.push({ p: 'photos/b0', op: 'set' }, { p: 'photos/b0', op: 'set' }));
+  r = await paste(p, JSON.stringify(cap(range(0, 5), { photos: [PH(4)] })));
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r.stop === 'index' &&
+      r.ok &&
+      r.fresh === 2 &&
+      /Photos: 0 of 1 stored; stopped \(index write\)\. Paste again/.test(r.msg) &&
+      (await uploads(p)).length === 1,
+    'a block write refused twice: partial, stop "index", nothing uploaded, "paste again" (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // a lab capture uploads its photos and indexes nothing
+  p = await openR2();
+  const lab = cap(range(0, 3), { photos: [PH(1), PH(2)] });
+  lab.lab = true;
+  r = await paste(p, JSON.stringify(lab));
+  ok(
+    r &&
+      r.state === 'done' &&
+      (await uploads(p)).length === 2 &&
+      (await writesTo(p, '^photos/')).length === 0 &&
+      /2 photos stored \(lab test, not linked\)/.test(r.msg),
+    'a lab capture uploads its 2 photos and writes no photos/ document',
+  );
+  await p.close();
+  // asset usage: recorded with each import, a calm warning from 80% of either limit
+  p = await openR2({}, { assetUse: { files: 3997, bytes: 1000 } });
+  await sleep(300);
+  ok(
+    await p.evaluate(() => (document.getElementById('storage-st') || { hidden: true }).hidden),
+    'usage: 3,997 of 5,000 files (79.9%): no warning',
+  );
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(1), PH(2), PH(3)] })));
+  const m21 = await get(p, 'meta/chat');
+  const warn = await until(p, () => {
+    const s = document.getElementById('storage-st');
+    return s && !s.hidden && s.textContent;
+  });
+  ok(
+    r &&
+      r.usage &&
+      r.usage.files === 4000 &&
+      r.usage.maxFiles === 5000 &&
+      m21.assetUsage &&
+      m21.assetUsage.files === 4000 &&
+      m21.assetUsage.maxBytes === 1 << 30 &&
+      /3 photos stored\. Photo storage is 80% full \(4,000 of 5,000 files\)\.$/.test(r.msg) &&
+      /Photo storage is 80% full \(4,000 of 5,000 files\)\..*ask Claude to tidy up photo storage/.test(warn || ''),
+    'usage: recorded in lastImport and meta/chat.assetUsage; at 80% the page shows a calm warning (' + warn + ')',
+  );
+  await p.close();
+  p = await openR2({}, { assetUse: { files: 10, bytes: 900 * 1048576 } });
+  ok(
+    !!(await until(p, () =>
+      /Photo storage is 87% full \(900\.0 MB of 1024\.0 MB\)/.test(
+        (document.getElementById('storage-st') || {}).textContent,
+      ),
+    )),
+    'usage: the byte limit counts too, and the warning shows on load from a fresh listing',
+  );
+  r = await paste(p, JSON.stringify(cap(range(0, 2))));
+  ok(
+    r && r.usage && r.usage.files === 10 && /Photo storage is 87% full/.test(r.msg),
+    'usage: an import with no photos records it as well, and its message repeats the warning',
+  );
+  ok(p.errors.length === 0, 'photos: no page errors ' + JSON.stringify(p.errors));
+  await p.close();
+}
+/* P23: a 20 MB capture through a real clipboard and a real paste keystroke */
+async function bigPaste() {
+  const many = range(0, 199, i => i).map(i => PH(i, 0, 100 * 1024));
+  const text = JSON.stringify(cap(range(0, 199), { photos: many }));
+  const p = await openR2({}, {});
+  await p.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:9917' });
+  await p.evaluate(t => navigator.clipboard.writeText(t), text);
+  await p.click('#h1');
+  const t0 = Date.now();
+  await p.keyboard.press('ControlOrMeta+V');
+  const r = await until(
+    p,
+    () => (v => (v && v.state !== 'uploading' ? v : null))(__rt.get('refresh/lastImport')),
+    null,
+    60000,
+  );
+  const st = await photoState(p);
+  ok(
+    r && r.state === 'done' && r.photos.done === 200 && range(0, 199, i => i).every(i => st.stored(i).length === 1),
+    'P23: a ' +
+      (text.length / 1048576).toFixed(1) +
+      ' MB capture pasted with a real keystroke: 200 messages and 200 photos stored in ' +
+      ((Date.now() - t0) / 1000).toFixed(1) +
+      ' s' +
+      (r && r.state !== 'done' ? ' ' + r.msg : ''),
+  );
+  await p.close();
 }
 
 /* The stand-in itself: the runtime behaviors later tests rely on, checked once so a fixture change can't quietly make
@@ -3274,6 +4035,59 @@ async function standIn() {
     'stand-in: sample.limits() reports the cap, and a prompt over it in UTF-8 bytes (not characters) is refused',
   );
   await p.close();
+  // assets: scripted codes by call number, a hung call that answers late, the quota, list() and delete()
+  const q = await openR2({}, { assetUse: { files: 1, bytes: 10 } });
+  const a = await q.evaluate(async () => {
+    const as = await claude.use('assets');
+    const blob = t => new Blob([t], { type: 'image/png' });
+    window.__up = { script: { 1: 'rate_limited', 2: { hang: 300 } }, quota: { maxFiles: 4 } };
+    const out = [];
+    const t0 = Date.now();
+    for (const t of ['a', 'b', 'c', 'a', 'd'])
+      out.push(
+        await as.upload(blob(t), { type: 'image/png' }).then(
+          r => r.id,
+          e => e.code,
+        ),
+      );
+    const slow = Date.now() - t0 >= 300;
+    const l = await as.list();
+    const del = [await as.delete(out[0]), await as.delete(out[0])].map(d => d.deleted);
+    const steal = (__rt.steal('refresh/importLock', 'other', 5000), __rt.leases.get('refresh/importLock').holder);
+    return { out, slow, l, del, after: (await as.list()).usage, ups: __rt.uploads, steal };
+  });
+  ok(
+    /^[0-9a-f]{32}$/.test(a.out[0]) &&
+      a.out[1] === 'rate_limited' &&
+      a.slow &&
+      a.out[4] === 'quota_or_state' &&
+      a.ups[0].hash === a.ups[2].hash &&
+      a.ups[0].hash !== a.ups[1].hash &&
+      a.l.usage.files === 4 &&
+      a.l.usage.bytes === 13 &&
+      a.l.usage.maxFiles === 4 &&
+      a.l.usage.maxBytes === 1 << 30 &&
+      a.l.assets.length === 3 &&
+      a.del.join() === 'true,false' &&
+      a.after.files === 3 &&
+      a.steal === 'other',
+    'stand-in: uploads follow __up (a code, a late answer, the file limit), ids are 32 hex, duplicates share a hash, ' +
+      'list() reports usage with files stored before, delete() works once, steal() takes the lease (' +
+      JSON.stringify(a.out) +
+      ')',
+  );
+  await q.close();
+  // the paste helpers: paste() waits for the import to finish, pasteFirst() returns its first record
+  const w = await openR2();
+  await setUp(w, { delayMs: 400 });
+  const f = await pasteFirst(w, JSON.stringify(cap(range(0, 3), { photos: [PH(1)] })));
+  await until(w, () => (__rt.get('refresh/lastImport') || {}).state === 'done');
+  const g = await paste(w, JSON.stringify(cap(range(0, 4), { photos: [PH(4)] })));
+  ok(
+    f && f.state === 'uploading' && g && g.state === 'done' && /1 photo stored/.test(g.msg),
+    'stand-in: pasteFirst() returns the "uploading" record, paste() the finished one',
+  );
+  await w.close();
 }
 
 const SECTIONS = {
@@ -3286,6 +4100,8 @@ const SECTIONS = {
   names,
   messagesView,
   speed,
+  photos,
+  bigPaste,
   standIn,
   history,
 };
