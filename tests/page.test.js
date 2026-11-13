@@ -88,6 +88,17 @@ function runtime(seed) {
     if (bytes(o) > DOC_MAX)
       throw Object.assign(new Error(p + ' is ' + bytes(o) + ' bytes, over 256 KiB'), { code: 'invalid_argument' });
   };
+  /* update merges nested objects field by field and replaces arrays, as the real one does; {__delete__: true} at any
+     depth removes that field */
+  const plain = v => v != null && typeof v === 'object' && !Array.isArray(v);
+  const merge = (a, b) => {
+    const out = plain(a) ? clone(a) : {};
+    Object.entries(b).forEach(([k, v]) => {
+      if (plain(v) && v.__delete__ === true) delete out[k];
+      else out[k] = plain(v) ? merge(out[k], v) : clone(v);
+    });
+    return out;
+  };
   const bump = p => vers.set(p, (vers.get(p) || 0) + 1);
   const sub = (k, cb) => {
     if (!subs.has(k)) subs.set(k, []);
@@ -130,8 +141,8 @@ function runtime(seed) {
       update: async o => {
         failIf(p, 'update');
         if (!store.has(p)) throw Object.assign(new Error('missing ' + p), { code: 'invalid_argument' });
-        tooBig(p, Object.assign(clone(store.get(p)), clone(o)));
-        store.set(p, Object.assign(clone(store.get(p)), clone(o)));
+        tooBig(p, merge(store.get(p), o));
+        store.set(p, merge(store.get(p), o));
         bump(p);
         writes.push({ p, op: 'update', v: clone(o) });
         notify(p);
@@ -195,14 +206,37 @@ function runtime(seed) {
       return { id, sizeBytes: blob.size, contentType: o.type };
     },
   };
+  /* The real cap (sample.d.ts, SampleLimits.maxPromptBytes): every turn's content together, in UTF-8 bytes; over it the
+     call rejects with prompt_too_large and nothing is sent. opts.promptMax is what limits() reports, opts.enforce what
+     is enforced (lower = the runtime counts more strictly than it says); noLimits, limitsReject and limitsBogus break
+     limits() the ways a page must survive. Each call is logged in __rt.sampleLog as {bytes, code}. */
+  const PROMPT_MAX = opts.promptMax ?? 262144;
+  const promptBytes = m =>
+    typeof m === 'string'
+      ? new TextEncoder().encode(m).length
+      : m.reduce((n, t) => n + promptBytes(typeof t.content === 'string' ? t.content : JSON.stringify(t.content)), 0);
+  const sampleLog = [];
+  const capCheck = input => {
+    const b = promptBytes(input);
+    const over = b > (opts.enforce ?? PROMPT_MAX);
+    sampleLog.push({ bytes: b, code: over ? 'prompt_too_large' : null });
+    if (over) throw Object.assign(new Error('prompt too large: ' + b + ' bytes'), { code: 'prompt_too_large' });
+  };
   async function sample(msgs, o) {
     samples.push(msgs);
-    const text = 'Ben offered one [#1]. Ana asked [#0, #2].';
+    capCheck(msgs);
+    const text = opts.answer || 'Ben offered one [#1]. Ana asked [#0, #2].';
     if (o && o.onText) o.onText({ text });
     return { text };
   }
+  if (!opts.noLimits)
+    sample.limits = async () => {
+      if (opts.limitsReject) throw Object.assign(new Error('limits unavailable'), { code: 'unavailable' });
+      return { maxPromptBytes: opts.limitsBogus ? 'x' : PROMPT_MAX };
+    };
   sample.json = async prompt => {
     samples.push(prompt);
+    capCheck(prompt);
     return {
       title: 'By person',
       intro: 'Grouped by who posted.',
@@ -226,7 +260,7 @@ function runtime(seed) {
       if (store.has(w.p) && w.if_version == null) no(w.p + ' exists: needs if_version');
       if (w.if_version != null && (!store.has(w.p) || vers.get(w.p) !== w.if_version)) no(w.p + ' changed');
       if (w.op === 'delete') return null;
-      const v = w.op === 'update' ? Object.assign(clone(store.get(w.p)), clone(w.v)) : clone(w.v);
+      const v = w.op === 'update' ? merge(store.get(w.p), w.v) : clone(w.v);
       if (bytes(v) > DOC_MAX) no(w.p + ' is ' + bytes(v) + ' bytes, over 256 KiB');
       return v;
     });
@@ -243,6 +277,7 @@ function runtime(seed) {
     writes,
     uploads,
     samples,
+    sampleLog,
     leases,
     fails,
     batch,
@@ -2283,7 +2318,102 @@ async function messagesView() {
   await p.context().close();
 }
 
-const SECTIONS = { importer, robustness, pipeline, variants, ranges, layouts, names, messagesView };
+/* R4: date-range mode worked the window out again for every message and citation (5-6 s per update at 6,400 messages).
+   Counted, not timed: how often the window is worked out per full render, at two sizes. On a page without the cache
+   (no winRange0) every winRange() call counts. */
+async function speed() {
+  const counts = [];
+  for (const n of [1500, 6000]) {
+    const S0 = JSON.parse(
+      execFileSync('python3', [SYNTH, 'page', String(n), '1000'], { encoding: 'utf8', maxBuffer: 1 << 27 }),
+    );
+    const msgs = Object.values(S0.chunks).flatMap(c => c.msgs);
+    const meta = Object.assign({}, META, {
+      lastI: S0.last,
+      lastMid: msgs[msgs.length - 1].m,
+      anchorMids: msgs.slice(-3).map(m => m.m),
+      markerMode: 'time',
+      markerFrom: msgs[Math.floor(msgs.length / 2)].d + 'T00:00',
+      lastRefresh: 'Wed Nov 11, 9:00 PM',
+    });
+    const seed = Object.assign(SEED(), { 'meta/chat': meta }, S0.new);
+    Object.entries(S0.chunks).forEach(([k, v]) => (seed['chunks/' + k] = v));
+    const p = await open(seed);
+    await until(p, n => S.msgs && S.msgs.length === n && S.threading, n);
+    const r = await p.evaluate(() => {
+      let k = 0;
+      const name = typeof window.winRange0 === 'function' ? 'winRange0' : 'winRange';
+      const orig = window[name];
+      window[name] = function () {
+        k++;
+        return orig.apply(this, arguments);
+      };
+      rerenderAll();
+      const steady = k;
+      const lo0 = windowStart();
+      S.meta = Object.assign({}, S.meta, { markerFrom: S.msgs[S.msgs.length - 10].d + 'T00:00' });
+      rerenderAll();
+      return { steady, afterMeta: k - steady, lo0, lo1: windowStart(), last: S.msgs[S.msgs.length - 1].i };
+    });
+    counts.push(r.steady);
+    ok(
+      r.steady <= 2 && r.afterMeta <= 2,
+      'R4: date-range mode at ' +
+        n +
+        ' messages works the window out ' +
+        r.steady +
+        ' time(s) per full render, ' +
+        r.afterMeta +
+        ' after the marker moves (was once per message and citation)',
+    );
+    ok(
+      r.lo1 > r.lo0 && r.lo1 < r.last,
+      'R4: moving the marker still moves the window (#' + r.lo0 + ' → #' + r.lo1 + ')',
+    );
+    await p.close();
+  }
+}
+
+/* The stand-in itself: the runtime behaviors later tests rely on, checked once so a fixture change can't quietly make
+   them pass */
+async function standIn() {
+  const p = await open(
+    Object.assign(SEED(), {
+      'x/doc': { a: 1, nest: { keep: 1, both: { k: 1 } }, arr: [1, 2, 3], gone: 1 },
+      __opts: { promptMax: 1000 },
+    }),
+  );
+  const r = await p.evaluate(async () => {
+    const db = await claude.use('db');
+    await db.doc('x/doc').update({ nest: { add: 2, both: { j: 2 } }, arr: [9], gone: { __delete__: true } });
+    __rt.batch([{ op: 'update', p: 'x/doc', v: { nest: { viaBatch: 3 } }, if_version: __rt.version('x/doc') }]);
+    const s = await claude.use('sample');
+    const lim = await s.limits();
+    const small = await s([{ role: 'user', content: 'é'.repeat(400) }]).then(
+      () => 'ok',
+      e => e.code,
+    );
+    const big = await s([{ role: 'user', content: 'é'.repeat(501) }]).then(
+      () => 'ok',
+      e => e.code,
+    );
+    return { doc: __rt.get('x/doc'), lim, small, big, log: __rt.sampleLog };
+  });
+  ok(
+    JSON.stringify(r.doc) ===
+      JSON.stringify({ a: 1, nest: { keep: 1, both: { k: 1, j: 2 }, add: 2, viaBatch: 3 }, arr: [9] }),
+    'stand-in: update merges nested objects, replaces arrays and removes __delete__ fields, in page writes and in batches (' +
+      JSON.stringify(r.doc) +
+      ')',
+  );
+  ok(
+    r.lim.maxPromptBytes === 1000 && r.small === 'ok' && r.big === 'prompt_too_large' && r.log[1].bytes === 1002,
+    'stand-in: sample.limits() reports the cap, and a prompt over it in UTF-8 bytes (not characters) is refused',
+  );
+  await p.close();
+}
+
+const SECTIONS = { importer, robustness, pipeline, variants, ranges, layouts, names, messagesView, speed, standIn };
 (async () => {
   browser = await chromium.launch();
   try {

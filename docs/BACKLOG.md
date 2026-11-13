@@ -79,7 +79,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
 | G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads · **done** (v1.18.0) |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) · **done** (v1.20.0, option B: silent failures warn; English labels remain) |
-| R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt |
+| R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt · date-range speed **done** (v1.20.1); prompt size with F6 |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
 | C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) · **done** (v1.7.3; range summaries kept, they're live) |
 | C3 | P3 | cleanup | Leftover `cc*` names and chat-specific comments · **done** |
@@ -336,6 +336,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### R4 · P3 · Whole history in memory and in one prompt
 - **What:** the page rebuilds the full list on every chunk change; Ask Claude with "include older messages" sends every stored message (~3,900 and growing). `prompt_too_large` is handled but makes the option useless.
 - **Fix:** see F6.
+- **Date-range mode fixed in v1.20.1:** `inWin()` worked the window out once per message and citation (5–6 s per update at 6,400 messages). It's now worked out once per message list and marker; the page section `speed` counts it.
 - **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0): each is a collection of block documents, so no document grows with the history. The page still holds every chunk and block in memory, and Ask Claude's prompt still grows.
 
 ### R5 · P2 · E2EE and messenger.com
