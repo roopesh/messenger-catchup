@@ -13,6 +13,7 @@
     "test:py": "python3 -W error::ResourceWarning -m unittest discover -s tests",
     "test:sim": "node tests/run.js",
     "test:page": "node tests/page.test.js",
+    "test:perf": "node tests/perf.js",
     "sync": "python3 tools/sync.py"
   },
   "devDependencies": {

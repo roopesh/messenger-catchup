@@ -79,7 +79,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
 | G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads · **done** (v1.18.0) |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) · **done** (v1.20.0, option B: silent failures warn; English labels remain) |
-| R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt · date-range speed **done** (v1.20.1); prompt size with F6 |
+| R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt · **done** (v1.20.1 date-range speed; v1.22.0 prompt size, with F6). Show older paging is F15 |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
 | C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) · **done** (v1.7.3; range summaries kept, they're live) |
 | C3 | P3 | cleanup | Leftover `cc*` names and chat-specific comments · **done** |
@@ -92,7 +92,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F1 | P3 | feature | More than one chat per page |
 | F2 | P3 | feature | Faster distant photo-reply parents · **done** (v1.14.0) |
 | F5 | P3 | feature | Page shows "update available" when its version is behind |
-| F6 | P3 | feature | Ask Claude over long histories |
+| F6 | P3 | feature | Ask Claude over long histories · **done** (v1.22.0: one prompt budget; older history as conversation and day lines) |
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
@@ -100,6 +100,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.0) |
 | F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.20.0) |
 | F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
+| F15 | P3 | perf | "Show older messages" renders the whole history at once; page it by day (R4's remainder) |
+| F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
+| F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
+| F18 | P3 | feature | Range summaries longer than one request: split into parts and merge |
 
 ---
 
@@ -337,7 +341,9 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **What:** the page rebuilds the full list on every chunk change; Ask Claude with "include older messages" sends every stored message (~3,900 and growing). `prompt_too_large` is handled but makes the option useless.
 - **Fix:** see F6.
 - **Date-range mode fixed in v1.20.1:** `inWin()` worked the window out once per message and citation (5–6 s per update at 6,400 messages). It's now worked out once per message list and marker; the page section `speed` counts it.
-- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0): each is a collection of block documents, so no document grows with the history. The page still holds every chunk and block in memory, and Ask Claude's prompt still grows.
+- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0): each is a collection of block documents, so no document grows with the history. The page still holds every chunk and block in memory.
+- **Prompt size done in v1.22.0** (F6): Ask, Views and range summaries measure their prompt in UTF-8 bytes against `sample.limits()`; "include older" works at any size. The page section `history` counts it (H1–H16).
+- **What remains is F15:** "Show older messages" still renders every stored message (0.5 s and 79k elements at 6,400 messages in an earlier bench). The default view is the window only.
 
 ### R5 · P2 · E2EE and messenger.com
 - **What:** `/messages/e2ee/t/` URLs are stored and used but untested against a live E2EE chat. The userscript `@match` covers only `www.facebook.com/messages/*`, so `messenger.com` isn't supported.
@@ -488,9 +494,18 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### F5 · P3 · "Update available" on the page
 - The page could compare its `PAGE_VERSION` with `meta/chat.pageVersion` and the helper's `data-mc-helper` version, and say when either is behind.
 
-### F6 · P3 · Ask Claude over long histories
+### F6 · P3 · Ask Claude over long histories · done (v1.22.0)
 - Send summaries for older stretches plus the raw window, or pick messages by keyword first, instead of all stored messages.
-- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0), so older summaries are kept and could feed this. The prompt size itself is still open.
+- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0), so older summaries are kept and could feed this.
+- **Owner's calls (Nov 12, on the R4/F6 design):** summaries take up to 35% of an "include older" prompt; a range summary too long for one call is refused, saying how much fits; `qa` and `views` save `sent`; performance tests count operations in `npm test`, with timings only in `npm run test:perf`; day lines are built on the page now, refresh-written digests later (F16).
+- **Done in v1.22.0:**
+  - **One budget** for Ask, Views and range summaries: UTF-8 bytes against `sample.limits().maxPromptBytes` (262,144 when it's missing, rejects or answers nonsense), less a 4 KiB margin. `packHistory` sends the newest messages word for word as one run, and the rest as OLDER HISTORY: one line per conversation (newest first: the summary's outcome, a range summary's, or "no summary; N messages from …"), then one line per day back to the first stored message. "Nothing before #N is included" when even the day lines don't fit.
+  - **Ask:** "What you have" says which numbers are word for word and which are summaries, and Claude is asked to say when a point comes from a summary. Earlier turns are trimmed oldest pair first past a quarter of the cap; a question over half the cap isn't sent; one free retry at 80% on `prompt_too_large`.
+  - **The note** under each answer and built view says what was read, and `qa/*` and `views/*` save it as `sent: {from, to, sumFrom}` (`references/database.md`).
+  - **Range summaries** over the cap get no button: the box says how many of the span's newest messages fit and from when.
+  - **Tests:** the page section `history` (H1–H16). The key cases fail on page 2.6. `npm run test:perf` prints timings at 6,400, 25,000 and 50,000 messages (EXPERIMENTS.md §14).
+- **Still to see live** (the design's L2–L7): "include older" answers with a note like "Read #… word for word. Older than #…: summaries only." and no "(sent a smaller set…)"; answers about things 1 to 3 weeks old cite numbers and say when they rest on summaries (L4, which decides F16 and F17); Views on a 5-day window; a long span before `fromI` refused with a start time; what `sample.limits()` returns in the real runtime.
+- **Deferred:** F15 (Show older paging), F16 (refresh-written digests), F17 (a two-step or tool ask), F18 (splitting range summaries).
 
 ### F7 · P3 · Ship as a plugin · done (v1.15.0, v1.16.0)
 - **What:** plugins (Customize › Plugins, or a marketplace added from a git repo) load their skills in web and Desktop chat, Cowork and Claude Code, and follow the user's account. This replaces "re-upload the ZIP". Plugins need a paid plan, as Claude in Chrome already does.
@@ -576,3 +591,24 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - `post` refuses while a page Reply link is jumping, and checks the reply bar again just before Enter (`F: a page Reply link still jumping …`, `F: a reply bar that moves while typing …`).
   - Full names: each avatar names only its own group, so two people shown as "Ben" back to back keep their own names (`E: two people shown as "Ben" back to back …`).
   - Also: outbox.md's call 1 now waits after focusing the box and before checking it. With Lexical, text typed the instant the box gets focus is dropped, and inserted text shows a moment later, so the old same-instant check would fail (`F: outbox.md's call 1 types the first line even when Reply leaves the composer unfocused`).
+
+### F15 · P3 · perf · Page "Show older messages" by day
+- **What:** with "Show older messages" on, the Messages tab renders every stored message. An earlier bench: 0.5 s and 79k elements at 6,400 messages, 2.0 s and 307k at 25,000, 4.2 s and 2.9 GB at 50,000. The default view (the window only) is unaffected. This is what remains of R4.
+- **Fix:** load the previous day on demand ("Load the previous day"), the smaller change. Virtualizing threaded rows of varying height isn't worth it.
+- **Trigger:** about 15,000 stored messages (roughly 17 days after 6,933 at 460 a day), or Show older taking over 1 s on the owner's machine.
+
+### F16 · P3 · Per-day digests written during refresh
+- **What:** older than the conversation lines reach (2–3 weeks at every size), F6's prompt has one line per day built on the page from threading titles. A refresh could write a real digest per day (`digests/dYYYY-MM-DD`) for those lines to use.
+- **Cost:** a spec key, `catchup.py` checks, a new collection and a backfill: a MINOR with a skill change.
+- **Also here:** older open questions, answers and deals as their own lines (the design's "level 1b"); they're mostly in conversation outcomes today.
+- **Trigger:** live answers about things older than 3 weeks turn out poor (F6's live check L4), or the owner asks.
+
+### F17 · P3 · A two-step or tool-using Ask
+- **What:** Claude first sees the digest, names the stretch it needs, and the page sends that stretch word for word in a second call (or a tool call does it).
+- **Cost:** about twice the time and usage (30–90 s on the default model); `limits().tools` isn't guaranteed; more ways to fail. Today the manual version works: pick the stretch as a date range and ask with it as the window.
+- **Also considered:** a keyword prefilter (an earlier live sample: common words matched 30–93 KB, "?" 480 KB); it still needs the budget and misses synonyms.
+- **Trigger:** L4 shows answers saying "only summarized" often for questions people care about.
+
+### F18 · P3 · Split long range summaries
+- **What:** a span before `summary.fromI` too long for one request (about 1,990 live-sized messages, 4.3 days) is refused since v1.22.0. Splitting it into parts and merging (conversations joined by id, bullets concatenated, lists joined) would let any span work, at k× the usage and time, with a merge to test.
+- **Trigger:** the owner wants long spans summarized and `catchup.py restore-summary` (which moves `fromI` back on the owner's page) hasn't removed the need.

@@ -7,6 +7,8 @@ threading about 27 bytes per message and a full summary about 50 bytes per messa
 1.6 times denser (more and longer bullets), for headroom.
 
   python3 tests/synth.py page N BLOCK   JSON for the page test: chunks, meta, the old layout and the block layout
+      [--from-i K]                      the summary trimmed before K, as pre-1.17 sessions left it
+      [--range-summary LO HI]           plus rangeSummaries/r<LO>_<HI>, as the page writes for a past span
 """
 
 import datetime, json, os, random, sys
@@ -207,11 +209,80 @@ def _catchup():
     return c
 
 
+def range_summary(th, lo, hi):
+    """What the page writes for a past span (rangeSummaries/r<lo>_<hi>): a line for each threading conversation with
+    messages in it, one conversation threading doesn't know and a "loose" one, both placed only by the numbers they
+    cite."""
+    convs = []
+    for c in th["convs"]:
+        mem = [i for i in c["members"] if lo <= i <= hi]
+        if mem:
+            convs.append(
+                {
+                    "id": c["id"],
+                    "tag": "Trip",
+                    "synopsis": [{"t": "Range bullet for " + c["id"], "refs": mem[:2]}],
+                    "outcome": "Range outcome for " + c["id"],
+                    "key": mem[:2],
+                }
+            )
+    a, b = lo + (hi - lo) // 10, hi - (hi - lo) // 6
+    convs.append(
+        {
+            "id": "orphan%d" % lo,
+            "tag": "Group buy",
+            "synopsis": [{"t": "Ben collected strap orders", "refs": [a, b]}],
+            "outcome": "Orphan outcome: straps ordered",
+            "key": [a, b],
+        }
+    )
+    convs.append(
+        {
+            "id": "loose",
+            "tag": "",
+            "synopsis": [{"t": "Odds and ends", "refs": [lo + 5, lo + (hi - lo) // 4]}],
+            "outcome": "Loose outcome: nothing settled",
+            "key": [],
+        }
+    )
+    return {
+        "version": 2,
+        "by": "page",
+        "generatedAt": "Wed Nov 11, 9:00 AM",
+        "fromI": lo,
+        "toI": hi,
+        "mentions": [],
+        "mentionsNote": "",
+        "open": [],
+        "answered": [],
+        "deals": [],
+        "convs": convs,
+    }
+
+
 if __name__ == "__main__" and sys.argv[1:2] == ["page"]:
-    n, block = int(sys.argv[2]), int(sys.argv[3])
+    """page N BLOCK [--from-i K] [--range-summary LO HI]: --from-i drops the summary before K as pre-1.17 sessions did;
+    --range-summary adds rangeSummaries/r<LO>_<HI> to both layouts."""
+    args = sys.argv[2:]
+    from_i = rs = None
+    if "--from-i" in args:
+        k = args.index("--from-i")
+        from_i = int(args[k + 1])
+        del args[k : k + 2]
+    if "--range-summary" in args:
+        k = args.index("--range-summary")
+        rs = (int(args[k + 1]), int(args[k + 2]))
+        del args[k : k + 3]
+    n, block = int(args[0]), int(args[1])
     c = _catchup()
     c.BLOCK = block
     msgs, th, sm = chat(n, seed=7, per_build=10)
+    if from_i is not None:
+        sm = drop_before(sm, th, from_i)
     old = {"threading/current": json.loads(json.dumps(th)), "summary/current": json.loads(json.dumps(sm))}
     new = c.layout_docs(c._canon_threading(json.loads(json.dumps(th))), json.loads(json.dumps(sm)))
+    if rs:
+        doc = range_summary(th, *rs)
+        old["rangeSummaries/r%d_%d" % rs] = doc
+        new["rangeSummaries/r%d_%d" % rs] = json.loads(json.dumps(doc))
     json.dump({"chunks": chunks(msgs), "old": old, "new": new, "last": n - 1}, sys.stdout)

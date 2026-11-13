@@ -209,3 +209,16 @@ print(us == open('assets/helper.user.js').read())
 - **Why bullets are split too:** with each conversation kept whole in the block of its last message, a long-running conversation (up to 500 messages over many days in the model) carried all its bullets with it: summary blocks reached 124 KB at 50,000 messages, and `summary/current` 174 KB with the heavy summary (1.5× headroom). Putting a conversation's bullets in the blocks they cite brought the worst case to 85 KB (3×).
 - **A build** writes the newest threading block and both `current` documents, plus a summary block when conversations are archived (once per 1,000 messages) or come back. The test builds at 6,400, 25,000 and 50,000 messages each wrote 4 documents in one batch: the newest threading block, the summary block a returning conversation left, and both `current` documents.
 - **Tests:** `TestLayout` in `tests/test_catchup.py` (a fake database with the real limits) and `layouts()` in `tests/page.test.js` (the same synthetic history in both layouts renders the same text: 24,234 characters of summary and 16,686 of threads with every thread open; the old layout renders exactly as v1.16.2's page did).
+
+## 14. Prompt budget for Ask and Views (v1.22.0, Nov 12)
+- **The cap:** `sample()` refuses a prompt over `sample.limits().maxPromptBytes` (262,144 in the runtime contract), counted over every turn's content in UTF-8 bytes. Before v1.22.0, "include older" sent every stored message (about 822 KB at 7,000 messages) and failed past about 2,100 messages, as did a window of 3 or more days and Views on it.
+- **Synthetic chats calibrated to the owner's page** (design experiments, mock cast): a prompt line averages 120 bytes, a conversation line 115–120, a day line 160 (17 KB for the whole history at 50,000 messages). With the summaries' share at 35% of an "include older" prompt, about 1,330 messages (about 3 days) go word for word, conversation lines reach 2–3 weeks back, and day lines reach #0 at every size up to 100,000.
+- **`npm run test:perf`** (`tests/perf.js`, synth.py data with shorter lines than live; Nov 12, on the owner's laptop): a full render reads `S.msgs` about 6× per message in date-range mode and 5× in caught mode; an "include older" Ask packs in under 25 ms.
+
+| Messages | Render, date range / caught | Ask with older: bytes | Word for word | Summary lines | `lineFor` calls | Pack and send |
+|---|---|---|---|---|---|---|
+| 6,400 | 63 / 13 ms | 257,304 | 2,540 | 292 | 2,541 | 16 ms |
+| 25,000 | 87 / 30 ms | 257,459 | 1,942 | 674 | 1,943 | 17 ms |
+| 50,000 | 100 / 45 ms | 257,441 | 1,895 | 666 | 1,896 | 24 ms |
+
+- **Tests:** the page section `history` (H1–H16): counted reads and conversation scans per render, the cut named the same in the prompt, the note and `qa.sent`, every older message inside some summary line, day lines that count their day, the fallbacks for `limits()`, the one retry, UTF-8 not characters, turns trimmed, range summaries refused with a start that fits, and 25,000 messages packed with `lineFor` called once per line sent plus one and about 1.1 reads per message. The key cases fail on page 2.6.

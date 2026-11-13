@@ -195,6 +195,17 @@ class TestSkillReferences(unittest.TestCase):
             top = p.split("/")[0]
             self.assertTrue(("`%s`" % p in skill) or ("`%s/" % top in skill), "SKILL.md never mentions " + p)
 
+    def test_database_md_documents_sent(self):
+        """The page saves what each answer and view read (F6); a later Claude reading qa/* has to know an answer rested
+        on summaries, so the field and its parts are documented on their own line."""
+        page, db = in_skill("assets", "page.html"), in_skill("references", "database.md")
+        self.assertIn("row.sent = sent", page)
+        self.assertIn("v.sent = sent", page)
+        line = re.search(r"^- `sent` on `qa/\*` and `views/\*`.*$", db, re.M)
+        self.assertTrue(line, "database.md has no line for sent")
+        for part in ("`from`", "`to`", "`sumFrom`"):
+            self.assertIn(part.strip("`"), line.group(0))
+
     def test_every_meta_chat_field_the_page_writes_is_documented(self):
         """Anchored on each doc("meta/chat").update(...): an object literal, or a variable traced back to its literal,
         the fields assigned to it before the write, and (for setMarker's Object.assign) what its callers pass."""
