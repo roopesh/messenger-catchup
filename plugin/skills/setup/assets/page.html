@@ -1865,6 +1865,13 @@
     const r = winRange();
     return i > r.lo && i <= r.hi;
   }
+  /* a lease's end, to the second: "wait until then" must never be early */
+  function fmtTime(v) {
+    const d = new Date(v);
+    return isNaN(d)
+      ? String(v)
+      : d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  }
   function fmtTs(v) {
     if (!v) return "";
     const d = new Date(v);
@@ -4846,16 +4853,21 @@
     if (ow && ow.n)
       for (let s = Math.floor(ow.fromI / PHOTO_BLOCK) * PHOTO_BLOCK; s <= ow.toI; s += PHOTO_BLOCK) ids.add("b" + s);
     const blocks = {};
+    const exists = {};
     for (const id of [...ids].sort()) {
       const g = await S.db.doc("photos/" + id).get();
+      exists[id] = g.exists;
       blocks[id] = g.exists ? g.data() : { start: +id.slice(1), byK: {}, gifs: [] };
       if (!blocks[id].byK) blocks[id].byK = {};
     }
     const M = mergePhotos(Object.assign({ index: idx }, blocks));
     const val = ph => (M.byK[ph.i] || {})[ph.k];
-    const todo = P.lab ? P.photos : P.photos.filter(ph => val(ph) == null);
+    /* oldest first, so an interrupted run leaves the newest owed, nearest the next run's backfill */
+    const todo = (P.lab ? P.photos : P.photos.filter(ph => val(ph) == null))
+      .slice()
+      .sort((a, b) => a.i - b.i || a.k - b.k);
     const bytes = todo.reduce((n, ph) => n + Math.floor((ph.b64.length * 3) / 4), 0);
-    return { idx, blocks, todo, skipped: P.photos.length - todo.length, bytes };
+    return { idx, blocks, exists, todo, skipped: P.photos.length - todo.length, bytes };
   }
   const GIVE_UP = ["too_large", "unsupported_type", "invalid_request"];
   const NO_ASSETS = ["not_granted", "capability_disabled", "capability_removed"];
@@ -4894,42 +4906,65 @@
     R.photos = { total: P.photos.length, todo: todo.length, done: 0, skipped: L.skipped, failed: 0, bytes: L.bytes };
     R.stored = [];
     R.gaveUp = [];
-    const dirty = new Set();
+    /* Writes go slot by slot (update merges nested objects), never the whole block: another tab that took the lease
+       after ours lapsed may have indexed other slots of the same block since we read it. pend[id] holds what's still
+       to write; gifs are merged with a fresh read, since update replaces an array whole. */
+    const pend = {};
+    const known = new Set(Object.keys(blocks).filter(id => L.exists[id]));
+    const pendOf = id => pend[id] || (pend[id] = { byK: {}, gifs: [] });
     const slot = (i, k, v) => {
-      const b = blocks[photoBlock(i)];
-      (b.byK[i] || (b.byK[i] = {}))[k] = v;
-      dirty.add(photoBlock(i));
+      const id = photoBlock(i);
+      (blocks[id].byK[i] || (blocks[id].byK[i] = {}))[k] = v;
+      const p = pendOf(id);
+      (p.byK[i] || (p.byK[i] = {}))[k] = v;
     };
-    /* one write at a time per document; a refused write is retried once, one over 256 KiB never */
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    /* one write at a time per document; a refused write is retried once, after renewing the lease (a tab that lost it
+       writes nothing more), and one over 256 KiB never */
     const writeBlock = async id => {
+      const p = pend[id];
+      if (!p) return null;
+      const ref = S.db.doc("photos/" + id);
       for (let t = 0; ; t++) {
         try {
-          await S.db.doc("photos/" + id).set(blocks[id]);
-          dirty.delete(id);
+          const g = !known.has(id) || p.gifs.length ? await ref.get() : null;
+          if (g && !g.exists) await ref.set({ start: +id.slice(1), byK: p.byK, gifs: p.gifs.sort((x, y) => x - y) });
+          else {
+            const up = {};
+            if (Object.keys(p.byK).length) up.byK = p.byK;
+            if (p.gifs.length)
+              up.gifs = [...new Set([...((g && g.data().gifs) || []), ...p.gifs])].sort((x, y) => x - y);
+            await ref.update(up);
+          }
+          known.add(id);
+          delete pend[id];
           return null;
         } catch (e) {
           const big = e && e.code === "invalid_argument";
           if (big || t) return big ? "index-full" : "index";
-          await new Promise(r => setTimeout(r, T.retryMs));
+          await wait(T.retryMs);
+          if (!(await renewLease())) return "lease";
         }
       }
     };
     const flush = async () => {
-      for (const id of [...dirty].sort()) {
+      for (const id of Object.keys(pend).sort()) {
         const e = await writeBlock(id);
         if (e) return e;
       }
       return null;
     };
+    /* a failed photosOwed write only leaves the count stale (the slots themselves are on record): never fail the import */
     const writeOwed = async () => {
       remerge();
       const o = owedSummary(owedOf(M));
       const was = P.meta.photosOwed || null;
       const key = x => (x && x.n ? [x.n, x.fromI, x.toI].join() : "");
-      if (key(o) !== key(was)) {
-        await S.db.doc("meta/chat").update({ photosOwed: o });
-        P.meta.photosOwed = o;
-      }
+      if (key(o) !== key(was))
+        try {
+          await S.db.doc("meta/chat").update({ photosOwed: o });
+          P.meta.photosOwed = o;
+        } catch (e) {}
     };
     let stop = null,
       at = null;
@@ -4941,7 +4976,7 @@
         const b = blocks[photoBlock(i)];
         if (!M.gifs.has(i)) {
           b.gifs = [...(b.gifs || []), i].sort((x, y) => x - y);
-          dirty.add(photoBlock(i));
+          pendOf(photoBlock(i)).gifs.push(i);
         }
       });
       stop = await flush();
@@ -4966,10 +5001,15 @@
       /* the heartbeat runs on a timer, so a slow but live upload still beats; it also renews the import lease */
       const beat = () =>
         (beatP = beatP.then(async () => {
+          if (ended || lost) return;
+          /* renew first: a tab that lost the lease writes no heartbeat */
+          if (!(await renewLease())) {
+            lost = true;
+            return;
+          }
           if (ended) return;
           R.beat = new Date().toISOString();
           await logImport(R);
-          if (!(await renewLease())) lost = true;
         }));
       if (!(await renewLease())) lost = true;
       const timer = setInterval(beat, T.beatMs);
@@ -4987,7 +5027,6 @@
             },
           ); /* a late answer after the timeout is ignored: at most one unindexed asset */
         });
-      const wait = ms => new Promise(r => setTimeout(r, ms));
       try {
         for (const ph of todo) {
           if (lost) {
@@ -5003,8 +5042,8 @@
               R.photos.waiting = c;
               await wait(T.rateWaitMs);
               delete R.photos.waiting;
-            } else if (stopOf(c) === "unavailable") await wait(T.retryMs);
-            else break;
+            } else if (c === "store_unavailable") await wait(T.retryMs);
+            else break; /* only store_unavailable is retry-once: upstream_error includes an unanswered call */
           }
           if (res.code && !GIVE_UP.includes(res.code)) {
             stop = stopOf(res.code);
@@ -5036,6 +5075,7 @@
           const we = await writeBlock(photoBlock(ph.i));
           if (we) {
             slot(ph.i, ph.k, null);
+            if (we === "lease") lost = true;
             stop = we;
             at = ph;
             break;
@@ -5054,13 +5094,17 @@
         R.msg = base;
       }
     }
+    if (stop !== "lease" && !P.lab && !(await renewLease())) stop = "lease";
     if (stop !== "lease" && !P.lab) {
       remerge();
+      /* given up: owed slots this capture doesn't hold that no refresh can scan back to: more than owedWindow messages
+         behind lastI, or among the first 3 messages (a backfill scan needs the 3 stored messages before it) */
       owedOf(M)
-        .filter(o => o.i < P.lastI - T.owedWindow && !P.inCap.has(o.i))
+        .filter(o => !P.inCap.has(o.i) && (o.i < P.lastI - T.owedWindow || o.i < 3))
         .forEach(o => {
-          slot(o.i, o.k, { e: "gave-up" });
-          R.gaveUp.push({ i: o.i, k: o.k, e: "gave-up" });
+          const e = o.i < P.lastI - T.owedWindow ? "gave-up" : "no-backfill";
+          slot(o.i, o.k, { e });
+          R.gaveUp.push({ i: o.i, k: o.k, e });
         });
       const fe = await flush();
       stop = stop || fe;
@@ -5081,6 +5125,7 @@
     unsupported_type: "type not accepted",
     invalid_request: "rejected",
     "gave-up": "too old to fetch again",
+    "no-backfill": "too early in the chat to fetch again",
   };
   function photoNote(R, P, { stop, at, code }) {
     const ph = R.photos;
@@ -5120,9 +5165,9 @@
     else if (stop === "quota") {
       const u = R.usage;
       s +=
-        " Photo storage for this page is full" +
+        " Photo uploads refused (quota_or_state): this page's photo storage is full" +
         (u ? " (" + u.files + " files, " + fmtBytes(u.bytes) + " of " + fmtBytes(u.maxBytes) + ")" : "") +
-        ": " +
+        ", or the page is unpublished or being deleted: " +
         plural(left, "photo") +
         " not stored. Messages are saved. Pasting again won't help; tell Claude.";
     } else if (stop === "rate_limited") s += part + ". Too many uploads right now: wait 2 minutes, then paste again.";
@@ -5225,7 +5270,7 @@
       if (!L.ok)
         return done(
           "Another import is running in another open copy of this page. Nothing saved. Try again in a minute" +
-            (L.until ? " (after " + fmtTs(L.until) + ")" : "") +
+            (L.until ? " (after " + fmtTime(L.until) + ")" : "") +
             ".",
         );
     }
@@ -5446,6 +5491,12 @@
         toast([el("b", null, R.msg)], sticky);
       }
     };
+    /* one import at a time per tab, whether it came from a paste or the Import button */
+    if (S.importing) {
+      busyNote(pasted);
+      return null;
+    }
+    S.importing = true;
     btn.disabled = true;
     let R;
     try {
@@ -5471,6 +5522,7 @@
     } finally {
       btn.disabled = false;
       S.photoProgress = null;
+      S.importing = false;
       /* let the import lease lapse now (renew it for the 1 s minimum) so another tab, or this one after a reload, needn't wait 2 minutes */
       if (S.db) {
         const ref = S.db.doc("refresh/importLock");
@@ -5483,8 +5535,17 @@
     if (!R.state) R.state = R.ok ? "done" : "refused";
     if (R.ok && !R.dry && !pasted) $("#imp-in").value = "";
     show(R);
-    await logImport(R);
+    /* a tab that lost its lease to another tab leaves refresh/lastImport to that tab */
+    if (R.stop !== "lease") await logImport(R);
     return R;
+  }
+  function busyNote(pasted) {
+    const pr = S.photoProgress;
+    const t = pr
+      ? "Still storing photos from the last paste (" + pr.done + "/" + pr.todo + ")… keep this tab open."
+      : "Still importing the last paste…";
+    if (pasted) toast([el("b", null, t)], !!pr);
+    else $("#imp-note").textContent = t;
   }
   $("#imp-go").onclick = () => importCapture($("#imp-in").value, { src: "button" });
   /* Paste anywhere on the page (outside a text box) with a catch-up capture on the clipboard imports it. A paste while
@@ -5495,18 +5556,7 @@
     const txt = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
     if (!/^\s*\{"kind":"mc-capture"/.test(txt)) return;
     e.preventDefault();
-    if (S.pasting) {
-      const pr = S.photoProgress;
-      const t = pr
-        ? "Still storing photos from the last paste (" + pr.done + "/" + pr.todo + ")… keep this tab open."
-        : "Still importing the last paste…";
-      toast([el("b", null, t)], !!pr);
-      return;
-    }
-    S.pasting = true;
-    importCapture(txt, { src: "paste" }).finally(() => {
-      S.pasting = false;
-    });
+    importCapture(txt, { src: "paste" });
   });
   /* Status line: refreshes are asked for in chat (the page can't reach the Messenger tab); while Claude runs one, say so. */
   function renderRefresh() {
@@ -5583,7 +5633,7 @@
     const c2 = !!V.refresh && !!meta.lastRefresh && meta.lastRefresh !== V.refresh;
     if ((c1 || c2) && !running)
       add("C:" + (M || P), [
-        "The last refresh ran an older copy of the Messenger Catch-up skill than this page was made for. Update the plugin wherever Claude runs your refreshes (claude.ai or Claude Desktop: Customize › Plugins; Claude Code: /plugin), and remove any copy of the skill you uploaded yourself. ",
+        "The last refresh ran an older copy of the Messenger Catch-up skill than this page was made for. Until it's updated, new photos may not be stored or shown. Update the plugin wherever Claude runs your refreshes (claude.ai or Claude Desktop: Customize › Plugins; Claude Code: /plugin), and remove any copy of the skill you uploaded yourself. ",
         { t: "How to install ↗", href: INSTALL_DOCS },
       ]);
     /* D and E: a Chrome whose helper is behind the one the last refresh's skill ships. Below 1.5 it can't update

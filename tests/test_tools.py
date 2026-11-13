@@ -521,10 +521,61 @@ class TestPhotos(unittest.TestCase):
     def test_backfill_matches_the_pages_give_up_window(self):
         backfill = self.section("Backfill")
         window = self.tune("owedWindow")
-        self.assertIn("`S = max(fromI, meta.lastI − %d)`" % window, backfill)
+        self.assertIn("`S = max(fromI, meta.lastI − %d, 3)`" % window, backfill)
         self.assertIn("`BASE = S−1`", backfill)
         self.assertIn("more than %d messages behind the newest" % window, self.doc)
-        self.assertIn("!P.inCap.has(o.i)", self.page, "a capture's own owed photos are never given up by it")
+        # photos owed on #0-#2 can't be backfilled: the page gives them up, and the procedure says so
+        self.assertIn('`e:"no-backfill"`', backfill)
+        self.assertIn('"no-backfill"', self.page)
+        # (that a capture's own owed photos are never given up by it is the page test "review 12")
+
+    def test_only_store_unavailable_is_retried(self):
+        """assets.d.ts: store_unavailable is the only retry-once code; upstream_error includes an unanswered call."""
+        loop = self.page[self.page.index("res = await upload(ph);") : self.page.index("if (res.code && !GIVE_UP")]
+        self.assertIn('c === "rate_limited"', loop)
+        self.assertIn('c === "store_unavailable"', loop)
+        self.assertNotIn('stopOf(c) === "unavailable"', loop)
+        self.assertIn("unpublished or being deleted", self.page, "quota_or_state is also an unpublished page")
+        self.assertIn("unpublished or being deleted", self.section("Waiting"))
+
+    def test_waiting_and_cleanup_never_trust_a_dead_tabs_record(self):
+        """Review of #42: a paste is matched by sha and at; a record stuck at uploading with a frozen beat doesn't
+        block Cleanup; step 5 leaves the page tab open when Waiting says so; the lease's time is to the second."""
+        waiting = self.section("Waiting")
+        self.assertIn("**and** its `at` differs from the one you noted", waiting)
+        cleanup = self.section("Cleanup")
+        self.assertIn("`get` it again at least 60 s later. If `beat` changed", cleanup)
+        self.assertIn("If it didn't, the tab that wrote it is gone: carry on", cleanup)
+        step5 = re.search(r"^5\. .*$", self.skill, re.M).group(0)
+        self.assertTrue(step5.startswith("5. Close the page tab (unless photos.md › Waiting says to leave it open)"))
+        self.assertIn("fmtTime(L.until)", self.page)
+        self.assertIn('second: "2-digit"', self.page)
+
+    def test_every_import_toast_has_a_rule(self):
+        """Waiting sends refused and failed to troubleshooting › Import toasts, which must cover them."""
+        toasts = re.search(
+            r"^## Import toasts.*?(?=^## )", in_skill("references", "troubleshooting.md"), re.M | re.S
+        ).group(0)
+        for s in ('ending "Nothing saved."', '"Import failed: …"', '"Saved, but the read-back of c…', "`refused`"):
+            self.assertIn(s, toasts)
+        self.assertIn("Saved, but the read-back of ", self.page)
+        self.assertIn('msg: "Import failed: "', self.page)
+
+    def test_an_older_skill_says_photos_wont_be_stored(self):
+        """A pre-1.22 SKILL.md closes the page tab right after IMPORT OK and reads photos/index: on a 2.7 page photos
+        are neither stored nor seen until the plugin is updated. The page's notice and the older-copy section say so."""
+        newer = re.search(
+            r"^## `pageVersion` is newer.*?(?=^## |\Z)", in_skill("references", "updating-the-page.md"), re.M | re.S
+        ).group(0)
+        self.assertIn("new photos aren't stored or seen until the plugin is updated", newer)
+        self.assertIn("so new photos aren't stored or seen until it's updated", newer)
+        self.assertIn("**Never republish**", newer, "F5's rule stays")
+        self.assertIn("Until it's updated, new photos may not be stored or shown.", self.page)
+
+    def test_setup_seeds_no_photo_index(self):
+        """photos/index is never written again; older pages read a missing one as empty."""
+        seed = re.search(r"^4\. \*\*Seed the database\*\*.*$", in_setup("SKILL.md"), re.M).group(0)
+        self.assertNotIn("photos/", seed)
 
     def test_every_new_photo_is_looked_at(self):
         """The owner kept today's behavior: no cap on the photos Claude opens."""
