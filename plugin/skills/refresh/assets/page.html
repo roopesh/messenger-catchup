@@ -1493,7 +1493,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.5";
+  const PAGE_VERSION = "2.6";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -1792,7 +1792,16 @@
     if (/p/i.test(t[4])) h += 12;
     return d + "T" + String(h).padStart(2, "0") + ":" + t[3];
   }
+  /* inWin() runs for every message and citation, so the window is worked out once per S.msgs and S.meta (both are only
+     ever replaced, never changed in place) */
+  let WR = null;
   function winRange() {
+    if (WR && WR.msgs === S.msgs && WR.meta === S.meta) return WR.r;
+    const r = winRange0();
+    WR = { msgs: S.msgs, meta: S.meta, r };
+    return r;
+  }
+  function winRange0() {
     const mt = S.meta || {};
     const mode = mt.markerMode;
     const first = S.msgs[0],
@@ -2338,11 +2347,20 @@
   }
   function convTitle(id) {
     if (id === "loose") return "Not grouped";
-    const c = S.threading && (S.threading.convs || []).find(x => x.id === id);
+    const c = convById(id);
     return c ? c.title : id;
   }
+  function convById(id) {
+    const T = S.threading;
+    if (!T) return null;
+    if (convById.T !== T) {
+      convById.T = T;
+      convById.map = new Map((T.convs || []).map(c => [c.id, c]));
+    }
+    return convById.map.get(id) || null;
+  }
   function convMembers(id) {
-    const c = S.threading && (S.threading.convs || []).find(x => x.id === id);
+    const c = convById(id);
     return c ? c.members.filter(i => S.byI.get(i)) : [];
   }
   function convBtn(id, label) {

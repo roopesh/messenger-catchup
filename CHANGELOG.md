@@ -33,6 +33,15 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 ### Tests
 - `test_tools.TestScheduling` (29 tests). Each asserts the specific rule in its step: tool names only in the reference; the reference shared with setup and every file a setup copy names present there; tokens in both templates; the stale conditions; the re-read in Arm step 1; the pinned write and the refusal re-read; the mode write after the tool call; failed arms visible; outside hours and the longest delay; no backoff; misses counted, reported and cleared; older runs following their prompt; the older-schedule switch; the dead-chain question; a missing `refresh/schedule`; unique tokens; hours, time formats and the quiet check; Stop or change; the CLI; the Desktop requirement; the reference under 8,000 bytes.
 - **Mutation check:** each of 49 key rules was removed or broken, one at a time, in both copies of the reference. In every case a named `TestScheduling` test failed. The list is in PR #39.
+## [1.20.1] - 2026-11-12
+**Date-range mode no longer stalls the page** (BACKLOG R4, first part). PATCH: a fix with no new behavior. Page **`PAGE_VERSION` 2.6** (from 2.5); the helper stays 2.0.
+
+### Fixed
+- **Date-range catch-up mode was quadratic.** `inWin()` worked the window out again for every message and every citation, each time looping over every stored message: 5–6 s per update and about 20 s to load at 6,400 messages, and growing with the square of the history. The window is now worked out once per message list and marker (both are only ever replaced, never changed in place), and conversation lookups by id use a map instead of scanning the list.
+
+### Tests
+- New page section `speed`: in date-range mode at 1,500 and 6,000 synthetic messages, a full render works the window out at most twice, and moving the marker still moves the window. Counted, not timed, so it can't flake. On 1.20.0's page the same render worked it out 7,292 and 30,817 times.
+- New page section `standIn` checks the test runtime itself. Its `update` now merges nested objects and replaces arrays (and drops `{__delete__: true}` fields), in page writes and in Claude's batches, as the real runtime does; it was a shallow merge. Its `sample` gains `limits()` and enforces the prompt cap in UTF-8 bytes (`prompt_too_large`), with switches for a missing, failing or nonsense `limits()`. The whole suite passes on both.
 
 ## [1.20.0] - 2026-11-12
 **Helper 2.0: Reply on photo-only messages, warnings instead of silent misreads, full names on every message, and an opt-in `post`** (GitHub issue #32 §1, §2 and §5; BACKLOG R3, B41, B48, B49, F12, F13). MINOR: new helper behavior and skill procedure changes. Helper **2.0** (from 1.9), page **`PAGE_VERSION` 2.5** (its jump bookmarklet is generated from the helper). No re-setup; installed helpers (1.5+) update themselves from this release.
