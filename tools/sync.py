@@ -16,7 +16,11 @@ SKILL = os.path.join(ROOT, "plugin", "skills", "refresh")
 SETUP = os.path.join(ROOT, "plugin", "skills", "setup")
 HELPER = os.path.join(SKILL, "assets", "helper.user.js")
 PAGE = os.path.join(SKILL, "assets", "page.html")
-SHARED = [os.path.join("assets", "page.html"), os.path.join("references", "database.md")]
+SHARED = [
+    os.path.join("assets", "page.html"),
+    os.path.join("references", "database.md"),
+    os.path.join("references", "scheduling.md"),
+]
 
 
 def bookmarklet(src):

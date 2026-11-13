@@ -23,7 +23,11 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
 | R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **done** (v1.7.2: repo public, branch protection) |
 | R9 | P3 | risk | Outbox name matching assumes Messenger's "Replying to …" and stored sender names agree. Live (Nov 7): labels are the nickname or the first name, and `to` uses the same; the reply bar itself is still unverified |
-| R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment |
+| R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment · **done** (v1.21.0) |
+| R10 | P3 | risk | The page's requirements text doesn't say the Claude Desktop app must be open |
+| R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
+| R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
+| R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
@@ -100,6 +104,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.0) |
 | F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.20.0) |
 | F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
+| F14 | P3 | feature | The page shows when the next scheduled refresh is due (`refresh/schedule.nextAt`) |
 
 ---
 
@@ -342,9 +347,42 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### R5 · P2 · E2EE and messenger.com
 - **What:** `/messages/e2ee/t/` URLs are stored and used but untested against a live E2EE chat. The userscript `@match` covers only `www.facebook.com/messages/*`, so `messenger.com` isn't supported.
 
-### R6 · P2 · Scheduling tool names
+### R6 · P2 · Scheduling tool names · done (v1.21.0)
 - **Where:** SKILL.md › Scheduling
 - **What:** Options A and B name `send_later`, `create_trigger` and `requires_local_device: true`. These come from the environment the skill was built in. Check that they still exist under those names wherever the skill is installed, and give a fallback if they don't.
+- **Found (Nov 12, web):** the names exist only in user bug reports, never in Anthropic's docs, and differ by app (`CronCreate` in Claude Code). `create_trigger` with `requires_local_device:true` can come back "cloud only" without failing; a device-bound task is paused the first time it fires on a sleeping computer; one-shots can be delivered twice or fire again; `ScheduleWakeup` outside `/loop` never fires (LEARNINGS › Scheduling tools).
+- **Done in v1.21.0:** new `references/scheduling.md` (refresh skill; setup's copy kept by `npm run sync`), the only file in the plugin that names a tool, each by what it does; Claude uses only a tool it can see. Setup's Scheduling is a ladder (chain, recurring task kept only if bound, manual) plus Stop or change. Live state in a new `refresh/schedule` `{armId, nextAt, tool, lastRunAt, misses, problem, switchAskedAt}`. Every chain follow-up and recurring prompt carries a token (`armId`); only the matching one runs, and arming is a pinned write before the tool call, so there's only ever one schedule. A refresh the user asks for reports `problem` and `misses`, asks before restarting a dead chain, checks a quiet recurring task, and offers once to switch an older schedule.
+- **Owner's calls (Nov 12):**
+  1. Keep the recurring task as step 2, kept only if the tool's result confirms it's tied to this computer; otherwise the user creates it in the app with "Require this computer" on.
+  2. A refresh the user asked for that finds the chain dead (`nextAt` more than 30 minutes past, inside the chosen hours) asks before re-arming. A scheduled run never asks: that it runs shows the chain is alive.
+  3. No backoff: runs that can't reach Chrome keep the chosen interval. `misses` and `problem` are still recorded for the next refresh the user asks for.
+  4. The Claude Code CLI is supported (one-time `CronCreate`), with a warning that the session must stay open.
+  5. The page's own Desktop wording waits (R10); `PAGE_VERSION` stays 2.5.
+  6. Older modes (`"A"`, `"loop"` or anything unknown, and `"B"`, which is a recurring task): see the review's H1 below. (The first version converted them on the first arm.)
+- **Review of PR #39** (an independent review before merging). Each fix has a test, and a mutation check (each of 49 rules removed one at a time) failed a named test every time:
+  - **H1, old schedules that weren't chains** (owner's calls): `"B"` is a recurring task, and `"A"`, `"loop"` or anything else a chain or loop. Their scheduled runs do exactly what their own message says: no conversion and no question. No restart is ever offered from `lastRefresh`. The first time the user types a refresh request, Claude explains once (`switchAskedAt`) that scheduling moved to a new scheme and asks whether to switch. On yes, Claude cancels the old follow-up, task or cron with a visible tool, or the user deletes it in the app and says so. Only then does Claude arm the new chain. Setup's Stop or change cancels an older mode's task before setting up a new one. Two schedules are never left alive.
+  - **H2:** recurring prompts carry the token too (`(recurring <armId>)`). Stop or change clears it, so leftover tasks go stale, and a recurring task Claude can't cancel is deleted by the user. An unbound task gets a new token before the user creates theirs.
+  - **H3:** an overnight arm is capped at the tool's longest delay; the run it starts lands outside the hours and arms again.
+  - **M1:** SKILL.md reads the reference before anything else, Before each run included, so a stale message never bootstraps or republishes.
+  - **M2:** a chain isn't dead while a run is going (`refresh/status` running in the last 20 minutes, or `lastRunAt` in the last 30). The check is skipped when the user's refresh lost the lock.
+  - **M3:** a refused arm write is read again, and arming stops only if another session's token is there; otherwise it retries. The mode write comes after the tool call, is retried once, and never holds the call up.
+  - **M4:** `refresh/schedule` may be missing: writes create it, and a missing `nextAt` means no chain. Setup creates it for every choice and seeds `schedule` as manual until its last step. `first-run.md` skips the schedule check.
+  - **M5:** a failed arm sets `nextAt:null` and says so in that run's report, so the next refresh the user asks for offers the restart right away.
+  - **L1:** `hours` is `{from, to}` (`"HH:MM"` in `tz`), start included and end excluded, wrapping past midnight, with 5 minutes' early tolerance. Times are ISO, UTC. A recurring task counts as quiet from the window's start.
+  - **L2:** tokens get 4 random characters.
+  - **L3:** every arm sets `misses`, a lock skip counts as reaching Chrome, and a report clears it.
+  - **L4:** no `schedule` counts as manual.
+  - The reference's cap rose to 8,000 bytes (7,906). Refresh `SKILL.md` stays at 19,755.
+- **Second review of PR #39** (no High). Each fix has a test, and the mutation check (now 72 rules, including three edits the first tests let through) fails a named test every time:
+  - **M-a:** a message that names the page URL, `chatUrl` or thread id, or asks to schedule a run, is scheduled (a typed request never contains those). The "typed by the user" guard covers the whole After section, "Chain stopped" included. `switchAskedAt` is written once the user answers, so a misfire doesn't use up the question.
+  - **M-b:** Arm step 6 converts only older or missing modes, never `"manual"` or `"recurring"`, and only while `armId` is still the token just written, so it can't undo a stop or change.
+  - **M-c:** an old chain with no stored `schedule` (the first setups stored none) keeps running as its prompt says; only an explicit `"manual"` makes older messages stale, and a refresh the user asks for checks the schedule even when `schedule` is missing.
+  - **M-d:** switching waits for a delete only for a recurring task (`"B"`) or recurring cron that can't be cancelled; an old chain switches at once and ends at its next follow-up. Setup's Stop or change follows the same rules.
+  - **M-e:** re-running setup on a page with a schedule set does Stop or change first.
+  - **Lows:** a refused `lastRunAt` write redoes the stale check; Arm step 5's failure write needs `armId` still to be this run's token, and only covers a tool that returns; outside-hours runs keep `misses`; a refused lock write still reschedules a scheduled run (SKILL.md step 1); for an older message "reschedule" means what that message says; "the start of the current window"; no `hours` means all day; R12 notes the conversation length limit; R14 filed. Setup's choice 2 clears a `problem` left by choice 1. The refresh SKILL.md Database section names `refresh/schedule`.
+  - Sizes: the reference's cap is 8,500 bytes (8,444); refresh `SKILL.md` is 19,771 (budget 19,780).
+- **Tests:** `test_tools.TestScheduling` (34 tests; the first 20 each failed before the change).
+- **Still to check live** (none could be run from the repo): the owner's `meta/chat.schedule` and which tool armed their loop; `send_later` in a Desktop chat with a 2-minute delay, with Desktop open and quit; the longest `delay_minutes` it takes (an overnight arm needs 8 h or more; if it's shorter, arm in steps); whether `send_later` from inside a follow-up asks for approval; `create_trigger`'s exact result text under each approval mode; claude.ai in a browser with Desktop closed (settles the Desktop requirement's wording); a `CronCreate` chain in the CLI firing twice; a second delivery taking the stale path; and an end-to-end run on a scratch page, including a `mode:"loop"` page whose old follow-ups keep running as they say until the user types a refresh and switches (an old chain then ends at its next follow-up; a recurring task or cron is cancelled or deleted first).
 
 ### R8 · P2 · PR rule not enforced · done (v1.7.2)
 - **What:** from v1.1.1 every change must go through a PR with a version bump (CLAUDE.md), but `main` still accepts direct pushes, and nothing runs `npm test` on a PR. The version-consistency tests only catch a missing bump when someone runs them.
@@ -358,6 +396,24 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Where:** `helper.user.js:16`, `helper.user.js:162`
 - **What:** each `mcScan` adds a capture-phase click listener that is never removed. It goes inert after a scan, but turns on again during the next one. A `setInterval` polls `location.href` every 800 ms for as long as the tab is open. Both are harmless today.
 - **Done in v1.3.0:** the listener is registered once per page load. The 800 ms URL poll stays on purpose: Messenger navigates with `pushState`, which fires no `hashchange`, and the poll is what notices a `#mcjump=` URL arriving that way. It costs one string compare.
+
+### R10 · P3 · The page doesn't mention the Claude Desktop app
+- **Where:** `page.html` › "Your computer has to be online…" (about line 1388)
+- **What:** v1.21.0 added "the Claude Desktop app is open" to the requirements in the setup skill and README: Claude in Chrome needs it when Claude runs from claude.ai, the phone, Cowork or a scheduled run. The page's own requirements text doesn't say so.
+- **Fix:** add the line with the next page change (it bumps `PAGE_VERSION` and republishes every page, too much for one sentence). Check first whether claude.ai in the same Chrome needs Desktop open (R6's live checks); if not, drop that case from the wording everywhere.
+
+### R11 · P3 · Desktop local scheduled tasks
+- **What:** the Desktop app's local scheduled tasks run on the computer while the app is open, with one catch-up run after waking. If such a task's session has Claude in Chrome, it would be a sturdier recurring option than a device-bound cloud task. Unchecked, so `references/scheduling.md` doesn't list it.
+- **Fix:** create one in a Desktop Code-tab session and look for the Claude in Chrome tools in its run; if they're there, add the tool to `references/scheduling.md` › Tools.
+
+### R12 · P3 · A chain conversation keeps growing
+- **What:** every hourly run adds tool output to the same conversation, so each run costs more over weeks. Predates v1.21.0. Arming at `every` minus 5 minutes keeps runs inside the prompt cache, but the context still grows.
+- **Also:** a claude.ai conversation has a hard length limit. Once a chain's conversation reaches it, follow-ups can't be delivered and the chain stops (a refresh the user asks for then finds it stopped).
+- **Fix:** measure a chain's cost per run after a week or two; if it climbs, or the conversation nears its limit, have a run move the chain to a fresh conversation now and then (setup's Stop or change, then arm from the new one).
+
+### R14 · P3 · Arming at the end of a run
+- **What:** a chain run arms the next one after the refresh steps, however they end. A run that dies mid-refresh (the session is cut off, a tool call never returns) arms nothing, and the chain stops until a refresh the user asks for offers to restart it.
+- **Option:** arm early, right after the stale and hours checks, so the next run is already pending; the run would then only update `misses` at the end. Kept at the end for v1.21.0 (owner's call after the second PR #39 review: less churn).
 
 ## Doc and instruction gaps (SKILL.md / page text vs code)
 
@@ -576,3 +632,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - `post` refuses while a page Reply link is jumping, and checks the reply bar again just before Enter (`F: a page Reply link still jumping …`, `F: a reply bar that moves while typing …`).
   - Full names: each avatar names only its own group, so two people shown as "Ben" back to back keep their own names (`E: two people shown as "Ben" back to back …`).
   - Also: outbox.md's call 1 now waits after focusing the box and before checking it. With Lexical, text typed the instant the box gets focus is dropped, and inserted text shows a moment later, so the old same-instant check would fail (`F: outbox.md's call 1 types the first line even when Reply leaves the composer unfocused`).
+
+### F14 · P3 · Show the next scheduled refresh on the page
+- **What:** `refresh/schedule.nextAt` (v1.21.0) says when the next scheduled run is due, and `problem` why the schedule stopped. The page could show both next to the status line, so a dead schedule is visible without asking Claude.
+- **Fix:** read `refresh/schedule` by name (the page lists no `refresh` collection today); ship with the next page change.
