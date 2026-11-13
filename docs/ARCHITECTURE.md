@@ -167,7 +167,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `people/index` | Page importer; Claude's one-time scan (`scannedAt`, `scanned`; entries without positions) | `people{"<full name>":{shown:[names Messenger showed],firstI,lastI}}`. The page names people from it: the first name, the full name when two share a first name, and a nickname as "nickname (first or full name)". Real names live only in each user's page database, never in the repo |
 | `photos/index` | Page importer | `byI{i:["/_blob/<id>",…]}` (what the page shows), `byK{i:{k:"/_blob/<id>"}}` (which capture slot each came from, so a re-paste skips the right ones), `gifs[i]` |
 | `refresh/status` | Claude | `state` (idle/running/done/error), `startedAt`, `step`, `by`, `finishedAt`, `added`, `message` |
-| `refresh/schedule` | Claude (scheduling, v1.21.0) | `armId` (the only follow-up allowed to continue the chain), `nextAt`, `tool`, `lastRunAt`, `misses`, `problem`. The page never reads it |
+| `refresh/schedule` | Claude (scheduling, v1.21.0) | `armId` (the token of the only follow-up or recurring task allowed to run), `nextAt`, `tool`, `lastRunAt`, `misses`, `problem`, `switchAskedAt`. The page never reads it |
 | `backups/*` | A pre-1.17 session (the owner's page, Nov 11) | `<name>-a`, `-b`, …: `{part, of, what, savedAt}` plus a summary's fields; joined in part order, the single `summary/current` from before a trim. The page ignores it; `catchup.py restore-summary` reads it; kept until the user decides |
 | `refresh/lastImport` | Page importer | `at`, `src`, `ok`, `msg`, `dry`, `sha`, `count`, `fresh`, `chunks`, `uploaded`, `lock`, `repaired` |
 | `refresh/importLock` | Page importer (lease only) | the platform's lease state; holds no data |

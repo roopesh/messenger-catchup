@@ -655,9 +655,24 @@ def section(text, heading):
     return m.group(0)
 
 
+def step(text, n):
+    """Numbered step n of a markdown list (one line)."""
+    m = re.search(r"^%d\. .*$" % n, text, re.M)
+    assert m, "no step %d" % n
+    return m.group(0)
+
+
+def bullet(text, label):
+    """The one-line bullet (or numbered item) that starts with **<label>."""
+    m = re.search(r"^ *(?:- |\d\. )\*\*%s.*$" % re.escape(label), text, re.M)
+    assert m, "no bullet " + label
+    return m.group(0)
+
+
 class TestScheduling(unittest.TestCase):
     """R6 (v1.21.0): scheduling tools are named only in references/scheduling.md, which says to use only a visible
-    tool; every follow-up carries an armId and arming is a pinned write, so there's only ever one chain."""
+    tool. Every follow-up and recurring prompt carries a token (armId); arming is a pinned write before the tool call,
+    so there's only ever one schedule. Each test names the rule it guards; the PR lists the mutation check."""
 
     NAMES = [
         "send_later",
@@ -673,6 +688,15 @@ class TestScheduling(unittest.TestCase):
 
     def ref(self):
         return in_skill("references", "scheduling.md")
+
+    def run_steps(self):
+        return section(self.ref(), "A scheduled run")
+
+    def arm(self):
+        return section(self.ref(), "Arm")
+
+    def after(self):
+        return section(self.ref(), "After a refresh the user asked for")
 
     def setup_scheduling(self):
         return section(in_setup("SKILL.md"), "Scheduling")
@@ -712,133 +736,287 @@ class TestScheduling(unittest.TestCase):
                     self.assertTrue(os.path.exists(os.path.join(ROOT, SETUP, r)), "setup's %s names %s" % (f, r))
 
     def test_both_skills_send_claude_to_the_reference(self):
+        """M1: read before Before each run (it bootstraps and can republish); L4: no schedule counts as manual."""
         runs = section(in_skill("SKILL.md"), "Scheduled runs")
-        for must in ("`references/scheduling.md`", '"Scheduled catch-up run"', 'that is what "reschedule" means'):
+        for must in (
+            "`references/scheduling.md` before anything else, Before each run included",
+            '"Scheduled catch-up run"',
+            "or an older scheduled one",
+            'unless `schedule` is missing or `"manual"`',
+        ):
             self.assertIn(must, runs)
+        self.assertIn("Do this before anything else, Before each run included.", self.run_steps())
         self.assertIn("`references/scheduling.md`", self.setup_scheduling())
-        which = re.search(r"^- \*\*Change or stop the schedule:\*\*.*$", in_setup("SKILL.md"), re.M)
-        self.assertTrue(which, "setup's Which part to follow has no line for changing or stopping the schedule")
-        self.assertIn("Scheduling › Stop or change", which.group(0))
+        which = bullet(in_setup("SKILL.md"), "Change or stop the schedule:")
+        self.assertIn("Scheduling › Stop or change", which)
 
     def test_every_reschedule_is_defined(self):
+        """Every "reschedule" in the refresh steps is defined by the Scheduled runs section below them, and the reference
+        says every ending arms, the lock skip and errors included."""
         skill = in_skill("SKILL.md")
-        steps = section(skill, "Refresh steps")
-        self.assertGreaterEqual(steps.count("reschedule"), 1)
-        self.assertIn('that is what "reschedule" means', section(skill, "Scheduled runs"))
-        self.assertIn('that\'s what "reschedule" means', section(self.ref(), "A scheduled run"))
+        runs_at = skill.index("## Scheduled runs")
+        uses = re.findall(r"reschedule", skill[:runs_at])
+        self.assertGreaterEqual(len(uses), 3, "Before each run and step 2 reschedule")
+        self.assertIn('that is what "reschedule" means above', skill[runs_at:])
+        ends = step(self.run_steps(), 5)
+        for must in (
+            "done, nothing new, skipped because another run holds the lock, an error, Chrome unreachable",
+            "a chain run then Arms",
+            'that\'s what "reschedule" means in the refresh steps',
+        ):
+            self.assertIn(must, ends)
 
     def test_follow_up_messages_match(self):
+        """H2: the recurring prompt carries a token too, so stopping or changing the schedule makes old tasks stale."""
         templates = re.findall(r"`(Scheduled catch-up run[^`]*)`", self.ref())
         self.assertEqual(len(templates), 2, templates)
         chain, recurring = templates
         self.assertIn("(chain <armId>)", chain)
         self.assertIn("messenger-catchup:refresh", chain)
-        # a recurring run is a fresh session: its prompt must say which page and chat
-        for must in ("(recurring)", "messenger-catchup:refresh", "<page url>", "<chatUrl>", "<thread>"):
+        for must in ("(recurring <armId>)", "messenger-catchup:refresh", "<page url>", "<chatUrl>", "<thread>"):
             self.assertIn(must, recurring)
         self.assertIn('"Scheduled catch-up run"', in_skill("SKILL.md"))
+        self.assertIn("carrying that token", bullet(self.setup_scheduling(), "A recurring task tied to this computer"))
 
     def test_schedule_fields_documented(self):
+        """L1: the shape of hours and the time format are written down."""
         db = in_skill("references", "database.md")
         meta = re.search(r"^- `meta/chat`:(.*)$", db, re.M).group(1)
         self.assertIn("`schedule` (`{mode, every, hours, tz}`", meta)
-        live = re.search(r"`refresh/schedule` \(([^)]*)\)", db)
+        live = re.search(r"^- `refresh/schedule`:.*$", db, re.M)
         self.assertTrue(live, "database.md doesn't document refresh/schedule")
         stored = section(self.ref(), "Where it's stored")
-        for field in ("armId", "nextAt", "tool", "lastRunAt", "misses", "problem"):
-            self.assertIn("`%s`" % field, live.group(1), field)
+        for field in ("armId", "nextAt", "tool", "lastRunAt", "misses", "problem", "switchAskedAt"):
+            self.assertIn("`%s`" % field, live.group(0), field)
             self.assertIn("`%s`" % field, stored, field)
-        for mode in ("chain", "recurring", "manual", "A", "loop"):
+        for mode in ("chain", "recurring", "manual", "A", "B", "loop"):
             self.assertIn('`"%s"`' % mode, stored, mode)
+        for must in (
+            '`hours`: `{from, to}` as `"HH:MM"` in `tz`',
+            "`from` included, `to` excluded",
+            "a `to` before `from` wraps past midnight",
+            "up to 5 minutes early counts as inside",
+            "`nextAt`: when the follow-up is due (ISO, UTC)",
+            "`lastRunAt`: when a scheduled run last started (ISO, UTC)",
+        ):
+            self.assertIn(must, stored)
 
     def test_setup_writes_only_documented_modes(self):
+        """M4: setup seeds the schedule as manual until step 6 sets it up, so the first refresh doesn't check it."""
         setup = in_setup("SKILL.md")
         modes = set(re.findall(r'mode:"(\w+)"', setup + self.ref()))
         self.assertLessEqual(modes, {"chain", "recurring", "manual"}, modes)
         self.assertEqual(set(re.findall(r'mode:"(\w+)"', setup)), {"chain", "recurring", "manual"})
+        seed = re.search(r"^4\. \*\*Seed the database\*\*.*$", setup, re.M).group(0)
+        self.assertIn('`schedule:{mode:"manual"}` (step 6 sets the real one', seed)
         self.assertNotRegex(in_skill("SKILL.md"), r'`?mode`? "A"', 'refresh still treats mode "A" as current')
 
+    def test_arm_rereads_and_stops_when_superseded(self):
+        one = step(self.arm(), 1)
+        for must in (
+            "Get `refresh/schedule` and keep its version.",
+            "From a chain run: if `armId` isn't this run's token, another session has armed: stop.",
+            "if `nextAt` is in the future, the chain is alive: stop",
+        ):
+            self.assertIn(must, one)
+
     def test_arming_is_a_compare_and_swap(self):
-        arm = section(self.ref(), "Arm")
-        self.assertIn("only ever one", arm)
-        self.assertIn("`if_version`", arm)
-        self.assertIn("refused, another session armed first", arm)
-        self.assertLess(arm.index("Write `refresh/schedule`"), arm.index("Call the tool"), "armId first, then the call")
+        """M3a: a refused write means someone wrote; only a changed armId means someone armed."""
+        arm = self.arm()
+        self.assertIn("only ever one", arm.split("\n")[0])
+        write = step(arm, 4)
+        for must in (
+            "with `if_version` from step 1, with a new `armId`",
+            "If the write is refused, get it again: if `armId` changed",
+            "`nextAt` is now in the future), another session armed first: stop",
+            "Otherwise something else wrote it: start again at step 1.",
+        ):
+            self.assertIn(must, write)
+        self.assertTrue(step(arm, 5).startswith("5. Call the tool"), "the tool is called after the pinned write")
+
+    def test_mode_conversion_never_blocks_the_tool_call(self):
+        """M3b: the meta/chat mode write comes after the tool call and is retried; it can't strand an armId."""
+        self.assertNotIn("meta/chat", step(self.arm(), 4))
+        six = step(self.arm(), 6)
+        for must in (
+            '6. Then, if `meta/chat.schedule.mode` isn\'t `"chain"`, set it',
+            "retry once",
+            "never holds up step 5",
+        ):
+            self.assertIn(must, six)
+
+    def test_arm_failures_are_visible(self):
+        """M5: a failed arm clears nextAt and says so, and a missing nextAt reads as a stopped chain."""
+        self.assertIn('None: write `problem` ("no scheduling tool in this app") and `nextAt:null`', step(self.arm(), 2))
+        five = step(self.arm(), 5)
+        self.assertIn("write `problem` (what happened) and `nextAt:null`", five)
+        self.assertIn("say it in this run's report", five)
+        self.assertIn("`nextAt` missing or over 30 minutes past", bullet(self.after(), "Chain stopped:"))
+
+    def test_outside_hours_and_the_longest_delay(self):
+        """H3: an overnight arm is capped at the tool's longest delay; the outside-hours rule re-arms."""
+        outside = step(self.run_steps(), 4)
+        for must in ("**Outside the chosen hours:** don't refresh.", "Chain: Arm", "Recurring: stop."):
+            self.assertIn(must, outside)
+        delay = step(self.arm(), 3)
+        self.assertIn("If it would end outside the window: the start of the next window.", delay)
+        self.assertIn("If that's longer than the tool allows, arm for the longest it allows", delay)
+
+    def test_no_backoff_when_chrome_is_unreachable(self):
+        """Owner's call (Nov 12): runs that can't reach Chrome keep the chosen interval; misses are only reported."""
+        for where, text in (("scheduling.md", self.ref()), ("setup's Scheduling", self.setup_scheduling())):
+            self.assertNotRegex(text, r"(?i)\bdoubl(e|es|ed|ing)\b(?!-)|\bback ?off\b|\bexponential", where)
+        delay = step(self.arm(), 3)
+        self.assertIn("`every` minus 5 minutes", delay)
+        self.assertIn("whatever `misses` says: no waiting longer", delay)
+
+    def test_misses_are_counted_reported_and_cleared(self):
+        """L3: every arm sets misses; a lock skip reached Chrome; a report clears it."""
+        write = step(self.arm(), 4)
+        for must in (
+            "from a chain run, its value plus 1 if this run couldn't reach Chrome, otherwise 0",
+            "a run skipped for the lock counts as reaching it",
+            "from setup or a refresh the user asked for, 0",
+        ):
+            self.assertIn(must, write)
+        self.assertTrue(bullet(self.after(), "`misses` above 0").endswith("then set it to 0."))
+
+    def test_stale_runs_do_nothing(self):
+        """H2 and stop/change: a token that isn't armId, or a mode that no longer matches the message, is stale."""
+        stale = step(self.run_steps(), 3)
+        for must in (
+            "the token isn't `refresh/schedule.armId`",
+            'a chain run while `mode` is `"recurring"` or `"manual"`',
+            'a recurring run while `mode` isn\'t `"recurring"`',
+            'an older message while `mode` is `"chain"`, `"recurring"` or `"manual"`',
+            "Stop without refreshing, arming or writing anything, and say nothing.",
+        ):
+            self.assertIn(must, stale)
+        self.assertIn("{lastRunAt}", step(self.run_steps(), 5), "lastRunAt is written only after the stale check")
+
+    def test_older_scheduled_runs_follow_their_prompt(self):
+        """H1: until the user switches, a scheduled run under an older mode does what its message says, converts
+        nothing and asks nothing; no scheduled run ever asks."""
+        older = step(self.run_steps(), 2)
+        for must in (
+            "**Older message** (no token",
+            "while `mode` is an older value: do what the message says, the old way",
+            "(no conversion, no question)",
+        ):
+            self.assertIn(must, older)
+        self.assertIn("Never ask the user anything about the schedule during a scheduled run", self.run_steps())
+
+    def test_older_schedule_switch(self):
+        """H1: an older schedule is switched only from a refresh the user typed, once, after the old task is cancelled
+        or deleted; never a restart offer from lastRefresh; "B" is a recurring task."""
+        older = bullet(self.after(), "Older schedule")
+        for must in (
+            "and no `switchAskedAt`, only when the user typed the request in this conversation",
+            "explain once",
+            "Write `switchAskedAt` either way.",
+            "**On yes:**",
+            "with a listing tool you can see and cancel it",
+            "ask the user to delete it in the app",
+            "wait until they say it's gone. Only then Arm",
+            "Without a yes, change nothing.",
+            "Never offer a restart from `lastRefresh` while `mode` is an older value.",
+        ):
+            self.assertIn(must, older)
+        self.assertEqual(self.ref().count("lastRefresh"), 1, "no other check may use lastRefresh")
+        self.assertIn('`"B"` is a recurring task', section(self.ref(), "Where it's stored"))
+
+    def test_dead_chain_asks_before_rearming(self):
+        """Owner's call (Nov 12) and M2: a refresh the user asked for asks before restarting a dead chain, and a chain
+        with a run going isn't dead; skipped on a first run and when the user's refresh lost the lock."""
+        dead = bullet(self.after(), "Chain stopped:")
+        for must in (
+            '`mode` `"chain"`, now inside the chosen hours',
+            "over 30 minutes past",
+            "no run going (`refresh/status` isn't `\"running\"` from the last 20 minutes, and `lastRunAt` isn't from the last 30)",
+            "**Ask first:**",
+            "**On yes:** Arm from this conversation",
+            "Without a yes, arm nothing",
+        ):
+            self.assertIn(must, dead)
+        intro = self.after().split("\n")[1]
+        self.assertIn(
+            "Skip this on a first run, and when the refresh was skipped because another run holds the lock.", intro
+        )
+        self.assertIn("the schedule check (SKILL.md › Scheduled runs)", in_skill("references", "first-run.md"))
 
     def test_recurring_task_kept_only_when_bound(self):
         tools = section(self.ref(), "Tools")
         self.assertIn('"cloud only"', tools)
         self.assertIn('"not bound"', tools)
-        setup = self.setup_scheduling()
-        self.assertIn("Keep it only if the result says it's tied to this computer.", setup)
-        self.assertIn("disable it", setup)
-        self.assertIn('"Require this computer"', setup)
+        rec = bullet(self.setup_scheduling(), "A recurring task tied to this computer")
+        for must in (
+            "Keep it only if the result says it's tied to this computer.",
+            "disable it (without a cancelling tool, ask the user to delete it on the app's Scheduled page), store a new token",
+            '"Require this computer"',
+            "find their token stale",
+        ):
+            self.assertIn(must, rec)
 
     def test_only_visible_tools(self):
         self.assertIn("Use only a tool you can see", self.ref())
         self.assertIn("Never call a name from this file that you can't see", self.ref())
 
     def test_no_scheduler_path(self):
-        setup = self.setup_scheduling()
-        none = re.search(r"^  3\. \*\*No scheduling tool here:\*\*.*$", setup, re.M)
-        self.assertTrue(none, "setup's ladder has no step for an app without scheduling")
-        self.assertIn('mode:"manual"', none.group(0))
-        self.assertIn("<refreshPhrase>", none.group(0))
-        pick = re.search(r"^2\. .*$", section(self.ref(), "Arm"), re.M).group(0)
-        self.assertIn("None:", pick)
-        self.assertIn("`refresh/schedule.problem`", pick)
-
-    def test_stale_runs_do_nothing(self):
-        stale = re.search(r"^2\. \*\*Stale run:\*\*.*$", section(self.ref(), "A scheduled run"), re.M)
-        self.assertTrue(stale)
-        self.assertIn("Stop without refreshing, arming or writing anything", stale.group(0))
+        none = bullet(self.setup_scheduling(), "No scheduling tool here:")
+        self.assertIn('mode:"manual"', none)
+        self.assertIn("`refresh/schedule.armId` to null", none)
+        self.assertIn("<refreshPhrase>", none)
 
     def test_scheduling_reference_stays_small(self):
         """Read on every scheduled run (hourly)."""
-        self.assertLess(len(self.ref().encode()), 7000)
+        self.assertLess(len(self.ref().encode()), 8000)
 
     def test_desktop_requirement(self):
         self.assertIn("**The Claude Desktop app is open**", section(in_setup("SKILL.md"), "Requirements"))
         self.assertIn("**Claude Desktop app**", section(read("README.md"), "Requirements"))
 
-    def test_stop_and_change_replace(self):
-        stop = re.search(r"^- \*\*Stop or change:\*\*.*$", self.setup_scheduling(), re.M)
-        self.assertTrue(stop)
-        self.assertIn("`refresh/schedule.armId` to null", stop.group(0))
-        self.assertIn("only ever one", stop.group(0))
-
-    def test_dead_chain_asks_before_rearming(self):
-        """Owner's call (Nov 12): a refresh the user asked for asks before restarting a dead chain; a scheduled run
-        never asks (that it runs shows the chain is alive)."""
-        after = section(self.ref(), "After a refresh the user asked for")
-        dead = re.search(r"^- \*\*Chain stopped:\*\*.*$", after, re.M)
-        self.assertTrue(dead)
-        for must in ("over 30 minutes past", "inside the chosen hours", "**Ask first:**", "Without a yes, arm nothing"):
-            self.assertIn(must, dead.group(0))
-        self.assertIn("Never ask the user anything about the schedule", section(self.ref(), "A scheduled run"))
-
-    def test_no_backoff_when_chrome_is_unreachable(self):
-        """Owner's call (Nov 12): runs that can't reach Chrome keep the chosen interval; misses are only reported."""
-        for where, text in (("scheduling.md", self.ref()), ("setup's Scheduling", self.setup_scheduling())):
-            self.assertNotRegex(text, r"(?i)doubl|back ?off", where)
-        delay = re.search(r"^3\. .*$", section(self.ref(), "Arm"), re.M).group(0)
-        self.assertIn("`every` minus 5 minutes", delay)
-        self.assertIn("whatever `misses` says", delay)
-        self.assertRegex(section(self.ref(), "After a refresh the user asked for"), r"(?m)^- \*\*`misses` above 0")
+    def test_stop_and_change_leave_one_schedule(self):
+        """H1 and H2: stopping clears the token, so every old follow-up and task goes stale; a recurring task that
+        can't be cancelled is deleted by the user; an older mode's task is cancelled before the new one starts."""
+        stop = bullet(self.setup_scheduling(), "Stop or change:")
+        for must in (
+            "`refresh/schedule` `{armId:null, nextAt:null}` (create it if it doesn't exist)",
+            "finds its token stale",
+            "a recurring task keeps firing",
+            "ask the user to delete it on the app's Scheduled page",
+            "With an older `mode`",
+            "before setting up the new choice, so two schedules never run",
+            "only ever one",
+        ):
+            self.assertIn(must, stop)
 
     def test_claude_code_cli_is_a_chain_tool(self):
         """Owner's call (Nov 12): the Claude Code CLI is supported, with a warning that the session must stay open."""
-        chain = re.search(r"^- \*\*One-time follow-up into this conversation\*\*.*$", self.ref(), re.M).group(0)
+        chain = bullet(self.ref(), "One-time follow-up into this conversation")
         for must in ("`CronCreate` with `recurring:false`", "Claude Code CLI", "stays open"):
             self.assertIn(must, chain)
         self.assertIn("in Claude Code the session must stay open", self.setup_scheduling())
 
-    def test_older_modes_convert_on_first_arm(self):
-        """Owner's call (Nov 12): "loop", "A" and anything unknown are an old-style chain, converted by the first Arm."""
-        self.assertIn("any other value", section(self.ref(), "Where it's stored"))
-        write = re.search(r"^4\. .*$", section(self.ref(), "Arm"), re.M).group(0)
-        self.assertIn('If `schedule.mode` is an older value, then also set it to `"chain"`', write)
-        self.assertIn("keeping `every`, `hours` and `tz`", write)
+    def test_a_missing_schedule_document(self):
+        """M4: refresh/schedule may not exist (older pages, recurring setups): writes create it, and no nextAt means no
+        chain is armed; setup creates it for every choice."""
+        stored = section(self.ref(), "Where it's stored")
+        self.assertIn("Get it before each write and pin the write (`set` it if it doesn't exist).", stored)
+        self.assertIn("null or missing means no chain is armed", stored)
+        self.assertIn(
+            "Each choice also sets `refresh/schedule` (create it if it doesn't exist)", self.setup_scheduling()
+        )
+
+    def test_arm_ids_are_unique(self):
+        """L2: two first arms in the same second can't share a token."""
+        stored = section(self.ref(), "Where it's stored")
+        self.assertIn("UTC time plus 4 random characters", stored)
+        self.assertRegex(stored, r"`\d{8}T\d{6}Z-[a-z0-9]{4}`")
+
+    def test_recurring_quiet_counts_from_the_window_start(self):
+        """L1: a recurring task isn't called quiet just because the night had no runs."""
+        quiet = bullet(self.after(), "Recurring task quiet:")
+        self.assertIn("since the later of `lastRunAt` and the start of today's window", quiet)
 
 
 class TestPrePushHook(unittest.TestCase):
