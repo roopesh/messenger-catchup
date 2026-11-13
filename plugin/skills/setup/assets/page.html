@@ -843,6 +843,29 @@
   .refresh .st.err {
     color: var(--warn);
   }
+  /* Update notices (F5): calm, one line each, under the status line */
+  .upd {
+    display: grid;
+    gap: 6px;
+  }
+  .upd[hidden] {
+    display: none;
+  }
+  .upd p {
+    margin: 0;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--accent-soft);
+    color: var(--fg);
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;
+  }
+  .upd p a {
+    color: var(--accent);
+  }
+  .upd p button.link {
+    margin-left: 4px;
+  }
   .marker {
     display: flex;
     flex-wrap: wrap;
@@ -947,6 +970,9 @@
   .turn .txt {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  .turn .sent {
+    font-size: 0.78rem;
   }
   .turn.user .txt {
     background: var(--accent-soft);
@@ -1280,7 +1306,10 @@
     <h1 id="h1">Messenger Catch-up</h1>
     <div class="window muted" id="window">Loading the chat…</div>
     <div class="marker" id="marker" role="radiogroup" aria-label="Catch up from"></div>
-    <div class="refresh"><span class="st" id="refresh-st" role="status"></span></div>
+    <div class="refresh">
+      <span class="st" id="refresh-st" role="status"></span><span class="st" id="storage-st" hidden></span>
+    </div>
+    <div class="upd" id="upd" role="status" hidden></div>
     <p class="note" id="layout-st" role="status" hidden></p>
     <div class="strip" id="strip"></div>
   </header>
@@ -1298,7 +1327,10 @@
     <div class="block">
       <div class="sec-head">
         <h2>Ask about the chat</h2>
-        <p>Claude reads every message in the catch-up window and cites them as [#n].</p>
+        <p>
+          Claude reads the catch-up window, as much as fits in one request (newest first, older parts as summaries), and
+          cites messages as [#n].
+        </p>
       </div>
       <div class="chat" id="chat"></div>
       <div class="composer">
@@ -1310,7 +1342,10 @@
         <div class="btns">
           <button class="primary" id="ask-go">Ask</button>
           <button class="secondary" id="ask-stop" hidden>Stop</button>
-          <label class="note"><input type="checkbox" id="ask-all" /> Include messages before the catch-up window</label>
+          <label class="note"
+            ><input type="checkbox" id="ask-all" /> Include messages before the catch-up window
+            <small>(newest word for word, older as summaries)</small></label
+          >
           <span class="note" id="ask-note"></span>
         </div>
       </div>
@@ -1493,7 +1528,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.6";
+  const PAGE_VERSION = "2.7";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -1830,6 +1865,13 @@
     const r = winRange();
     return i > r.lo && i <= r.hi;
   }
+  /* a lease's end, to the second: "wait until then" must never be early */
+  function fmtTime(v) {
+    const d = new Date(v);
+    return isNaN(d)
+      ? String(v)
+      : d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  }
   function fmtTs(v) {
     if (!v) return "";
     const d = new Date(v);
@@ -2026,14 +2068,20 @@
     const nick = !(full === m.f || full.startsWith(m.f + " "));
     return nick ? m.f + " (" + base + ")" : base;
   }
+  /* s's first n characters, counted by code point, so an emoji is never cut in half */
+  function cutCp(s, n) {
+    if (s.length <= n) return s;
+    const a = Array.from(s);
+    return a.length <= n ? s : a.slice(0, n).join("");
+  }
   function lineFor(m) {
     let s = "#" + m.i + " [" + m.t + "] " + nameOf(m);
-    if (m.r) s += " (replying to " + m.r + (m.q ? ': "' + m.q.replace(/\s+/g, " ").slice(0, 120) + '"' : "") + ")";
+    if (m.r) s += " (replying to " + m.r + (m.q ? ': "' + cutCp(m.q.replace(/\s+/g, " "), 120) + '"' : "") + ")";
     s +=
       ": " +
       (m.b || "") +
       (m.p ? " [photo]" : "") +
-      (m.a ? " [link preview: " + m.a.replace(/\s+/g, " ").slice(0, 240) + "]" : "") +
+      (m.a ? " [link preview: " + cutCp(m.a.replace(/\s+/g, " "), 240) + "]" : "") +
       (m.l ? " " + m.l.join(" ") : "") +
       (m.x ? " {reactions: " + m.x + "}" : "");
     return s;
@@ -2261,7 +2309,7 @@
   /* Summary v2: built on the conversation threading. Messages are shown as their own words, never as labels. */
   function trunc(s, n) {
     s = (s || "").replace(/\s+/g, " ").trim();
-    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+    return s.length > n ? cutCp(s, n - 1) + "…" : s;
   }
   function snip(i, { quote = false, len = 200 } = {}) {
     const m = S.byI.get(i);
@@ -3215,6 +3263,31 @@
     }
     const ids = S.msgs.filter(inWindow);
     const box = el("div", "rangebox");
+    const fit = rangeFit(k, ids);
+    if (!fit.ok) {
+      /* F6: a summary has to read every message in its span, so a span too long for one request is refused, saying
+         how much fits (counted from the span's newest message back) */
+      box.append(
+        el(
+          "b",
+          null,
+          "This span has " +
+            ids.length.toLocaleString("en-US") +
+            " messages, more than Claude can read at once (about " +
+            fit.n.toLocaleString("en-US") +
+            " fit).",
+        ),
+        el(
+          "span",
+          "note",
+          (fit.from
+            ? "Pick a shorter span: from " + (fmtTs(fit.from.ts) || fit.from.t) + " through the same end fits. "
+            : "Pick a shorter span. ") + "You can read every message in it now in the Messages tab.",
+        ),
+      );
+      v.append(box);
+      return;
+    }
     box.append(
       el(
         "b",
@@ -3243,13 +3316,9 @@
     box.append(row);
     v.append(box);
   }
-  async function writeRangeSummary(k, ids, b, st) {
-    if (!S.sample) {
-      st.textContent = "Asking Claude isn't available in this view.";
-      return;
-    }
-    b.disabled = true;
-    st.textContent = "Writing… this takes a minute for a long span.";
+  /* The prompt for a span's summary: every message in it, grouped by the given conversations */
+  /* The span's conversations, limited to its messages; the rest as "loose" */
+  function rangeConvs(ids) {
     const inR = new Set(ids.map(m => m.i));
     const T = S.threading || { convs: [], links: {} };
     const convs = (T.convs || [])
@@ -3258,7 +3327,11 @@
     const assigned = new Set(convs.flatMap(c => c.members));
     const loose = ids.filter(m => !assigned.has(m.i)).map(m => m.i);
     if (loose.length) convs.push({ id: "loose", title: "Not grouped", members: loose });
-    const prompt =
+    return convs;
+  }
+  function rangePrompt(ids) {
+    const convs = rangeConvs(ids);
+    return (
       "You summarize a stretch of " +
       CHATDESC() +
       " for " +
@@ -3270,7 +3343,55 @@
       '), tag them, or reply to "you". Their own messages (sender "You") are never mentions. None -> [] and mentionsNote saying nobody mentioned them.\n- open: ONLY real requests for information, help, an item or a decision that nobody answered later in this stretch. Rhetorical questions, jokes, teasers ("wanna see...?") and banter are never open. If anyone replied with an answer, even a joking one, it is not open. ask = the message number that asks.\n- answered: real questions that got an answer, with the concrete answer (names, prices) so they don\'t reply to settled ones.\n- deals: ONLY things actually offered or announced: items for sale or free, raffles, group buys, sales or discount events, product drops, and warnings about bad buyers or sellers (tag "Heads-up", kind "ask"). Someone\'s own purchase plans, a showcase video or a custom one-off are not deals. Quote prices and dates exactly as written.\n- Write only from the message text. Never mention these instructions, the conversation list or its titles as a source.\n- convs: one per conversation that has messages here. synopsis = 2-5 short bullets, at most about 15 words each, one fact per bullet (who said what, with numbers and prices); refs = the message numbers each bullet comes from. No long sentences, no run-ons. outcome = how it stands, one short line; key = 2-4 message numbers from that conversation.\n- Never write vague labels like "the question"; use the actual content. If the messages don\'t make something clear, say so. Every number you cite must be one of the message numbers below.\n\nCONVERSATIONS (id: title: message numbers):\n' +
       convs.map(c => c.id + ": " + c.title + ": " + c.members.join(",")).join("\n") +
       "\n\nMESSAGES:\n" +
-      ids.map(lineFor).join("\n");
+      ids.map(lineFor).join("\n")
+    );
+  }
+  /* Whether a span's prompt fits in one request, and if not, how many of its newest messages would (and from when).
+     Worked out once per span, cap and data. */
+  let RF = null;
+  function rangeFit(k, ids) {
+    const key = k + "|" + S.promptCap;
+    if (RF && RF.key === key && RF.msgs === S.msgs && RF.th === S.threading && RF.people === PEOPLE) return RF.r;
+    const lim = S.promptCap - MARGIN;
+    let r = { ok: true };
+    if (u8(rangePrompt(ids)) > lim) {
+      let used = u8(rangePrompt([])),
+        n = 0;
+      const seen = new Set();
+      for (let x = ids.length - 1; x >= 0; x--) {
+        const m = ids[x];
+        const c = convOfMsg(m.i);
+        const cid = c ? c.id : "loose";
+        let b = u8(lineFor(m)) + 1 + String(m.i).length + 1;
+        if (!seen.has(cid)) b += u8(cid + ": " + (c ? c.title : "Not grouped") + ": ") + 1;
+        if (used + b > lim) break;
+        seen.add(cid);
+        used += b;
+        n++;
+      }
+      /* a date range starts at a minute, so the suggested start is the first message of its minute that fits whole */
+      let x = ids.length - n;
+      while (x < ids.length && x > 0 && ids[x].ts && ids[x].ts === ids[x - 1].ts) x++;
+      r = { ok: false, n: ids.length - x, from: x < ids.length ? ids[x] : null };
+    }
+    RF = { key, msgs: S.msgs, th: S.threading, people: PEOPLE, r };
+    return r;
+  }
+  async function writeRangeSummary(k, ids, b, st) {
+    if (!S.sample) {
+      st.textContent = "Asking Claude isn't available in this view.";
+      return;
+    }
+    const prompt = rangePrompt(ids);
+    if (u8(prompt) > S.promptCap - MARGIN) {
+      st.textContent = "This span is too long for one request. Pick a shorter span.";
+      return;
+    }
+    b.disabled = true;
+    st.textContent = "Writing… this takes a minute for a long span.";
+    const inR = new Set(ids.map(m => m.i));
+    const T = S.threading || { convs: [], links: {} };
+    const convs = rangeConvs(ids);
     try {
       const out = await S.sample.json(prompt, { modelTier: "default" });
       const answeredBy = new Set(
@@ -3564,7 +3685,9 @@
           " so you can see #" +
             S.autoOlder +
             (am ? " (" + nameOf(am) + ", " + am.t + ")" : "") +
-            ", which is before your catch-up window. ",
+            ", which is " +
+            (S.autoOlder > winRange().hi ? "after" : "before") +
+            " your catch-up window. ",
         ),
       );
       const bb = el("button", "link", "Back to my window");
@@ -3715,26 +3838,621 @@
     return true;
   }
 
+  /* ---------- prompt budget (R4, F6) ----------
+     sample() refuses a prompt over sample.limits().maxPromptBytes: every turn's content together, in UTF-8 bytes. Ask and
+     Views send what fits (packHistory): the newest messages word for word, older ones as one line per conversation, then
+     one line per day, back to the first stored message. A range summary has to read its whole span, so one that's too
+     long is refused instead (rangeFit). */
+  const ENC = new TextEncoder();
+  const u8 = s => ENC.encode(s).length;
+  const PROMPT_CAP = 262144; /* the runtime contract's cap, used when limits() is missing or answers nonsense */
+  const MARGIN = 4096; /* for anything the platform counts that the page doesn't */
+  S.promptCap = PROMPT_CAP;
+  async function sampleCap(sample) {
+    try {
+      const l = sample && sample.limits ? await sample.limits() : null;
+      const v = l && l.maxPromptBytes;
+      /* a cap larger than the contract's is never trusted: if limits() overstates it, every call would fail */
+      if (Number.isFinite(v) && v > 8192) S.promptCap = Math.min(v, PROMPT_CAP);
+    } catch (e) {}
+  }
+  /* s cut to at most n UTF-8 bytes, ending "… [cut]" */
+  function clipBytes(s, n) {
+    if (u8(s) <= n) return s;
+    const tail = "… [cut]";
+    let out = "",
+      b = u8(tail);
+    for (const ch of s) {
+      const c = u8(ch);
+      if (b + c > n) break;
+      out += ch;
+      b += c;
+    }
+    return out + tail;
+  }
+  /* The index in S.msgs of the first message numbered i or later (S.msgs is sorted by number) */
+  function idxOf(i) {
+    let a = 0,
+      b = S.msgs.length;
+    while (a < b) {
+      const m = (a + b) >> 1;
+      if (S.msgs[m].i < i) a = m + 1;
+      else b = m;
+    }
+    return a;
+  }
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const dayOf = d => (/^\d{4}-\d\d-\d\d/.test(d || "") ? MON[+d.slice(5, 7) - 1] + " " + +d.slice(8, 10) : "");
+  function daySpan(d1, d2) {
+    const a = dayOf(d1),
+      b = dayOf(d2);
+    if (!a || !b || a === b) return a || b;
+    return a.slice(0, 3) === b.slice(0, 3) ? a + "–" + b.slice(4) : a + "–" + b;
+  }
+  /* "[#a–#b, Oct 3] rest": every summary line starts with the stored messages it covers */
+  function digLine(a, b, d1, d2, rest) {
+    const ds = daySpan(d1, d2);
+    return "[#" + a + (b !== a ? "–#" + b : "") + (ds ? ", " + ds : "") + "] " + rest;
+  }
+  const plural = (n, w) => n.toLocaleString("en-US") + " " + w + (n === 1 ? "" : "s");
+  /* The days and the runs of ungrouped messages in x..y (indices in S.msgs), in one pass. A message without a date
+     belongs to the day before it. */
+  function dayScan(x, y, prevD = "") {
+    const days = [],
+      loose = [];
+    let cur = null,
+      run = null;
+    for (let j = x; j <= y; j++) {
+      const m = S.msgs[j];
+      const d = m.d || prevD;
+      prevD = d;
+      if (!cur || cur.d !== d) {
+        cur = { d, s: j, e: j, a: m.i, b: m.i, n: 0, by: new Map() };
+        days.push(cur);
+      }
+      cur.e = j;
+      cur.b = m.i;
+      cur.n++;
+      const c = convOfMsg(m.i);
+      if (c) {
+        cur.by.set(c, (cur.by.get(c) || 0) + 1);
+        run = null;
+      } else if (run) {
+        run.e = j;
+        run.b = m.i;
+        run.n++;
+        run.d2 = d;
+      } else {
+        run = { s: j, e: j, a: m.i, b: m.i, n: 1, d1: d, d2: d };
+        loose.push(run);
+      }
+    }
+    return { days, loose };
+  }
+  /* The same scan, ending at index k instead (k is never past its end) */
+  function clipScan(sc, k) {
+    const days = [],
+      loose = [];
+    for (const x of sc.days) {
+      if (x.e <= k) days.push(x);
+      else {
+        if (x.s <= k) days.push(dayScan(x.s, k, x.d).days[0]);
+        break;
+      }
+    }
+    for (const r of sc.loose) {
+      if (r.e <= k) loose.push(r);
+      else {
+        if (r.s <= k)
+          loose.push(Object.assign({}, r, { e: k, b: S.msgs[k].i, n: k - r.s + 1, d2: days[days.length - 1].d }));
+        break;
+      }
+    }
+    return { days, loose };
+  }
+  /* One line per day: its numbers, how many messages, and its 4 busiest conversations */
+  function dayText(x) {
+    const busy = [...x.by]
+      .sort((p, q) => q[1] - p[1])
+      .slice(0, 4)
+      .map(([c]) => trunc(c.title, 40));
+    const text = digLine(
+      x.a,
+      x.b,
+      x.d,
+      x.d,
+      plural(x.n, "message") + "." + (busy.length ? " Busiest: " + busy.join("; ") : " Not grouped."),
+    );
+    return { a: x.a, b: x.b, kind: "day", text, bytes: u8(text) + 1 };
+  }
+  /* What a conversation's line says: its outcome, else its last bullet, else an old plain-text synopsis */
+  function sumText(c) {
+    if (!c) return "";
+    if (c.outcome) return String(c.outcome);
+    if (Array.isArray(c.synopsis)) {
+      const l = c.synopsis[c.synopsis.length - 1];
+      return l ? String(l.t || (typeof l === "string" ? l : "")) : "";
+    }
+    return String(c.synopsis || "");
+  }
+  /* Where conversation lines come from: the saved summary (archived conversations included), then range summaries the
+     page wrote (by conversation id; the widest span wins), then range-summary conversations threading doesn't know,
+     such as "loose" (placed by the messages they cite) */
+  function digestSources() {
+    const sum = new Map();
+    ((S.summary && S.summary.convs) || []).forEach(c => {
+      if (c && !sum.has(c.id) && sumText(c)) sum.set(c.id, c);
+    });
+    const rs = new Map(),
+      orphans = [];
+    const width = r => (r.toI ?? 0) - (r.fromI ?? 0);
+    Object.values(S.rangeSums || {})
+      .filter(r => r && Array.isArray(r.convs))
+      .sort((p, q) => width(q) - width(p))
+      .forEach(r =>
+        r.convs.forEach(c => {
+          if (!c || !sumText(c)) return;
+          if (c.id !== "loose" && convById(c.id)) {
+            if (!rs.has(c.id)) rs.set(c.id, c);
+            return;
+          }
+          const refs = [
+            ...(c.key || []),
+            ...(Array.isArray(c.synopsis) ? c.synopsis.flatMap(x => (x && x.refs) || []) : []),
+          ].filter(i => S.byI.has(i));
+          if (!refs.length) return;
+          const a = Math.min(...refs),
+            b = Math.max(...refs);
+          /* the same conversation in two overlapping range summaries gets one line */
+          if (orphans.some(o => o.c.id === c.id && o.a <= b && a <= o.b)) return;
+          orphans.push({ c, a, b, refs });
+        }),
+      );
+    return { sum, rs, orphans };
+  }
+  /* Level 1 candidates for a digest of loI..hiI before rawLoI: a line per conversation (its members inside the scope
+     only), per orphan range-summary conversation, and per run of ungrouped messages; newest last message first */
+  function digestUnits(loI, hiI, rawLoI, loose) {
+    const src = digestSources();
+    const units = [];
+    const top = Math.min(hiI, rawLoI - 1); /* lines describe only what's older than the word-for-word part */
+    const keyText = c => {
+      const key = (c.key || []).filter(i => S.byI.has(i) && i >= loI && i <= top).slice(0, 3);
+      return key.length ? " Key: #" + key.join(", #") : "";
+    };
+    const add = (a, b, kind, rest) =>
+      units.push({ a, b, kind, text: digLine(a, b, S.byI.get(a).d, S.byI.get(b).d, rest) });
+    ((S.threading && S.threading.convs) || []).forEach(c => {
+      let a = Infinity,
+        b = -Infinity,
+        n = 0;
+      (c.members || []).forEach(i => {
+        if (i < loI || i > top || !S.byI.has(i)) return;
+        n++;
+        if (i < a) a = i;
+        if (i > b) b = i;
+      });
+      if (!n) return;
+      const pick = src.sum.get(c.id) || src.rs.get(c.id);
+      let rest = trunc(c.title, 80);
+      if (pick) rest += (pick.tag ? " (" + pick.tag + ")" : "") + ": " + trunc(sumText(pick), 160) + keyText(pick);
+      else {
+        const names = [];
+        for (const i of c.members) {
+          const m = i >= loI && i <= top && S.byI.get(i);
+          const nm = m && nameOf(m);
+          if (nm && !names.includes(nm)) names.push(nm);
+          if (names.length === 4) break;
+        }
+        rest += ": no summary; " + plural(n, "message") + " from " + names.join(", ");
+      }
+      add(a, b, "conv", rest);
+    });
+    src.orphans.forEach(o => {
+      const refs = o.refs.filter(i => i >= loI && i <= top);
+      if (!refs.length) return;
+      const label = o.c.id === "loose" ? "Not grouped" : o.c.tag || "Summary";
+      add(Math.min(...refs), Math.max(...refs), "conv", label + ": " + trunc(sumText(o.c), 160) + keyText(o.c));
+    });
+    loose.forEach(r => {
+      if (r.a < rawLoI)
+        units.push({
+          a: r.a,
+          b: r.b,
+          kind: "loose",
+          text: digLine(r.a, r.b, r.d1, r.d2, plural(r.n, "message") + ", not grouped."),
+        });
+    });
+    units.forEach(u => (u.bytes = u8(u.text) + 1));
+    return units.sort((p, q) => q.b - p.b);
+  }
+  /* The digest of indices a..k (sc: their scan) in at most D bytes, with the lines for messages after the verbatim part.
+     Conversation lines go in newest first while they, plus day lines for everything they leave out, fit; then the day
+     lines. Units come newest message first, so every one not taken ends at or before the first that didn't fit: day
+     lines run up to that one's newest message, and every older message is in some line (a day line, or the line of its
+     own conversation). If that's still over (the last day was estimated), the oldest lines go. */
+  function digest(sc, a, k, hiI, after, D) {
+    const out = { before: [], after: after.slice() };
+    let used = out.after.reduce((n, x) => n + x.bytes, 0);
+    while (used > D && out.after.length) used -= out.after.pop().bytes;
+    out.bytes = used;
+    if (k < a) return out;
+    const rawLoI = S.msgs[k + 1].i;
+    const days = sc.days.map(dayText);
+    const pre = [0];
+    days.forEach(x => pre.push(pre[pre.length - 1] + x.bytes));
+    const l2 = cut => {
+      let lo = 0,
+        hi = days.length;
+      while (lo < hi) {
+        const m = (lo + hi) >> 1;
+        if (days[m].b < cut) lo = m + 1;
+        else hi = m;
+      }
+      return pre[lo] + (lo < days.length && days[lo].a < cut ? days[lo].bytes : 0);
+    };
+    const units = digestUnits(S.msgs[a].i, hiI, rawLoI, sc.loose);
+    /* where day lines stop when units[0..j-1] are taken: everything taken covers its own members */
+    const edge = j => (j < units.length ? Math.min(rawLoI, units[j].b + 1) : S.msgs[a].i);
+    let l1 = 0,
+      j = 0;
+    const chosen = [];
+    for (; j < units.length; j++) {
+      const u = units[j];
+      if (used + l1 + u.bytes + l2(edge(j + 1)) > D) break;
+      chosen.push(u);
+      l1 += u.bytes;
+    }
+    const cut = edge(j);
+    const lines = [];
+    for (let d = 0; d < sc.days.length; d++) {
+      const x = sc.days[d];
+      if (x.b < cut) lines.push(days[d]);
+      else {
+        if (x.a < cut) {
+          let j = x.s;
+          while (S.msgs[j].i < cut) j++;
+          lines.push(dayText(dayScan(x.s, j - 1, x.d).days[0]));
+        }
+        break;
+      }
+    }
+    lines.push(...chosen);
+    lines.sort((p, q) => p.a - q.a || p.b - q.b);
+    let total = used + lines.reduce((n, x) => n + x.bytes, 0),
+      s = 0;
+    while (total > D && s < lines.length) total -= lines[s++].bytes;
+    out.before = lines.slice(s);
+    out.bytes = total;
+    return out;
+  }
+  /* packHistory: what of the stored messages one prompt carries.
+     o.lo..o.hi: the messages the request is about (numbers). o.fHi: the newest to send word for word (the window's
+     newest). o.fixed: bytes of everything else (instructions, task, chat turns). o.share: the part of the budget kept
+     for summaries when not everything fits; what they don't need goes back to messages. o.cap: the whole prompt's
+     budget in bytes (the cap, or less on the retry). Newer-day lines get at most AFTER_SHARE of it.
+     Word for word runs from fHi back, as one run #rawLo..#rawHi; what's older becomes OLDER HISTORY lines, and anything
+     after fHi (a date range with an end, older messages included) one line per day. lineFor is called only for the
+     lines that go in, plus one. */
+  const AFTER_SHARE = 0.1;
+  function packHistory(o) {
+    const R = Math.floor(o.cap) - MARGIN - o.fixed;
+    const a = idxOf(o.lo),
+      z = idxOf(o.hi + 1) - 1;
+    const fz = Math.min(z, idxOf(o.fHi + 1) - 1);
+    const P = { win: !!o.win, raw: [], before: [], after: [], n: Math.max(0, z - a + 1), loI: null, hiI: null };
+    if (z < a) return finish(P);
+    P.loI = S.msgs[a].i;
+    P.hiI = S.msgs[z].i;
+    const after = fz < z ? dayScan(Math.max(a, fz + 1), z).days.map(dayText) : [];
+    /* the newer-day lines never push the window out: past their share, the newest days go */
+    for (let n = after.reduce((t, x) => t + x.bytes, 0); after.length && n > Math.floor(R * AFTER_SHARE); )
+      n -= after.pop().bytes;
+    /* no room for even one line of a scope that has messages: the caller must not send a prompt without them */
+    P.noRoom = R <= 0;
+    if (fz < a || R <= 0) {
+      P.after = digest(null, a, a - 1, P.hiI, after, Math.max(0, R)).after;
+      return finish(P);
+    }
+    let k = fz,
+      used = 0,
+      pend = null;
+    const raw = [];
+    const walk = lim => {
+      while (k >= a) {
+        if (!pend) {
+          const s = lineFor(S.msgs[k]);
+          pend = { i: S.msgs[k].i, s, b: u8(s) + 1 };
+        }
+        if (used + pend.b > lim) {
+          if (raw.length) return;
+          /* the newest message alone is longer than the budget: cut it, so it's always there */
+          pend.s = clipBytes(pend.s, Math.max(0, lim - 1));
+          pend.b = u8(pend.s) + 1;
+        }
+        raw.push(pend);
+        used += pend.b;
+        pend = null;
+        k--;
+      }
+    };
+    const afterB = after.reduce((n, x) => n + x.bytes, 0);
+    walk(R - afterB - Math.floor(R * o.share));
+    let D = null,
+      sc = null;
+    for (let round = 0; round < 4; round++) {
+      if (k < a) {
+        D = digest(null, a, k, P.hiI, after, R - used);
+        break;
+      }
+      sc = sc ? clipScan(sc, k) : dayScan(a, k);
+      D = digest(sc, a, k, P.hiI, after, R - used);
+      const k0 = k;
+      if (round < 3) walk(R - D.bytes);
+      if (k === k0) break;
+    }
+    P.raw = raw.reverse();
+    P.before = D.before;
+    P.after = D.after;
+    return finish(P);
+  }
+  /* The numbers the prompt and the note quote, from what P holds */
+  function finish(P) {
+    const r = P.raw;
+    P.rawLo = r.length ? r[0].i : null;
+    P.rawHi = r.length ? r[r.length - 1].i : null;
+    P.hasBefore = P.before.length > 0;
+    P.hasAfter = P.after.length > 0;
+    P.beforeLo = P.hasBefore ? P.before[0].a : null;
+    const x = r.length ? idxOf(P.rawLo) : 0;
+    P.beforeHi = x > 0 ? S.msgs[x - 1].i : null;
+    P.afterLo = P.hasAfter ? P.after[0].a : null;
+    P.afterHi = P.hasAfter ? P.after[P.after.length - 1].b : null;
+    const first = P.hasBefore ? P.beforeLo : P.rawLo;
+    P.dropped = P.loI != null && first != null && first > P.loI ? first : null;
+    P.sumFrom = P.hasBefore ? P.beforeLo : null;
+    const conv = P.before.find(l => l.kind !== "day");
+    P.convFrom = conv ? conv.a : null;
+    P.convDay = conv ? dayOf((S.byI.get(conv.a) || {}).d) : "";
+    const days = P.before.filter(l => l.kind === "day");
+    P.hasDays = days.length > 0;
+    P.dayUntil = P.hasDays ? Math.max(...days.map(l => l.b)) + 1 : null;
+    P.rawDays = r.length ? daySpan((S.byI.get(P.rawLo) || {}).d, (S.byI.get(P.rawHi) || {}).d) : "";
+    P.cut = P.hasBefore || P.hasAfter || P.dropped != null;
+    return P;
+  }
+  /* A stand-in with every optional part, to measure a prompt's fixed text before packing */
+  const DUMMY = {
+    win: true,
+    raw: [],
+    before: [],
+    after: [],
+    n: 9999999,
+    loI: 0,
+    hiI: 9999999,
+    rawLo: 9999999,
+    rawHi: 9999999,
+    hasBefore: true,
+    hasAfter: true,
+    beforeLo: 9999999,
+    beforeHi: 9999999,
+    afterLo: 9999999,
+    afterHi: 9999998,
+    dayUntil: 9999999,
+    dropped: 9999999,
+    sumFrom: 9999999,
+    convFrom: 9999999,
+    convDay: "Sep 30",
+    hasDays: true,
+    rawDays: "Sep 30–Oct 31",
+    cut: true,
+  };
+  const LINE_FMT =
+    'one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo], link previews, links and {reactions}. Senders use group nicknames.';
+  /* "What you have": which messages are word for word, which are summaries, and what's left out */
+  function haveText(P) {
+    const none = "- MESSAGES: none" + (P.win ? " (the catch-up window is empty)" : "") + ".";
+    if (!P.raw.length && !P.cut) return none;
+    const span = "#" + P.rawLo + " to #" + P.rawHi;
+    if (!P.cut)
+      return (
+        "- MESSAGES: " +
+        (P.win ? "every message in the catch-up window" : "every stored message") +
+        ", " +
+        span +
+        ", word for word, " +
+        LINE_FMT
+      );
+    const winCut = P.win && P.rawLo > P.loI;
+    const L = [
+      !P.raw.length
+        ? none
+        : "- MESSAGES: " +
+          (winCut ? "the newest messages of the catch-up window, " : "every message from ") +
+          span +
+          (P.rawDays ? " (" + P.rawDays + ")" : "") +
+          ", word for word, " +
+          LINE_FMT,
+    ];
+    if (P.hasBefore) {
+      const back = P.hasDays
+        ? " back to #" +
+          P.convFrom +
+          (P.convDay ? " (" + P.convDay + ")" : "") +
+          ", and one line per day for everything before #" +
+          P.dayUntil
+        : "";
+      L.push(
+        "- OLDER HISTORY: " +
+          (winCut ? "the rest of the window, " : "") +
+          "#" +
+          P.beforeLo +
+          " to #" +
+          P.beforeHi +
+          (winCut ? "," : "") +
+          " as summaries, not messages: " +
+          (P.convFrom != null ? "one line per conversation" + back : "one line per day") +
+          ". Each line starts with its message numbers. You haven't seen those messages' words.",
+      );
+    }
+    if (P.hasAfter)
+      L.push(
+        "- NEWER HISTORY: #" +
+          P.afterLo +
+          " to #" +
+          P.afterHi +
+          ", after the catch-up window, as summaries, not messages: one line per day." +
+          (P.afterHi < P.hiI ? " Nothing after #" + P.afterHi + " is included." : ""),
+      );
+    if (P.dropped != null) L.push("- Nothing before #" + P.dropped + " is included.");
+    return L.join("\n");
+  }
+  function rulesText(P) {
+    return (
+      (P.hasBefore || P.hasAfter
+        ? "- Answer only from what's here. If it doesn't contain the answer, say so plainly.\n- Cite every claim with message numbers in square brackets, like [#123] or [#12, #15]. You may cite numbers from the summary lines; say when a point comes from a summary rather than the messages.\n- If the answer probably depends on messages you only see summarized, say so and give the numbers to open.\n"
+        : "- Answer only from these messages. If they don't contain the answer, say so plainly.\n- Cite every claim with message numbers in square brackets, like [#123] or [#12, #15].\n") +
+      "- When asked whether something needs a reply, check later messages for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble."
+    );
+  }
+  function sections(P) {
+    const s = [];
+    if (P.hasBefore) s.push("OLDER HISTORY (oldest first):\n" + P.before.map(x => x.text).join("\n"));
+    s.push("MESSAGES (oldest first):\n" + P.raw.map(x => x.s).join("\n"));
+    if (P.hasAfter) s.push("NEWER HISTORY (oldest first):\n" + P.after.map(x => x.text).join("\n"));
+    return s.join("\n\n");
+  }
+  const intro = () =>
+    "You are helping " + OWNER() + ' (shown as "You" in the data) catch up on ' + CHATDESC() + ".\n\nWhat you have:\n";
+  /* Packs and lays out a prompt in cap bytes; extra = the bytes sent beside it (chat turns). The result is measured
+     again and the oldest lines go until it fits, whatever the estimates did; fits is false when even the fixed text
+     doesn't, and then nothing may be sent. */
+  function fitPrompt(scope, build, extra, share, cap0) {
+    const fixed = u8(build(DUMMY)) + 256 + extra;
+    const P = packHistory(Object.assign({ fixed, share, cap: cap0 }, scope));
+    const cap = Math.floor(cap0) - MARGIN - extra;
+    let text = build(P);
+    for (let over = u8(text) - cap; over > 0; over = u8(text) - cap) {
+      let n = 0;
+      while (n < over && P.before.length) n += P.before.shift().bytes;
+      while (n < over && P.after.length) n += P.after.pop().bytes;
+      while (n < over && P.raw.length > 1) n += P.raw.shift().b;
+      if (!n) break;
+      finish(P);
+      text = build(P);
+    }
+    const bytes = u8(text);
+    return { text, P, bytes: bytes + extra, fits: bytes <= cap && !P.noRoom };
+  }
+  /* Calls sample (or sample.json) with what fits; on prompt_too_large, once more with 80% of the bytes just sent (that
+     code means nothing was sent, so the retry spends nothing). A prompt that can't fit is never sent. */
+  async function sendFitted(make, call) {
+    let cap = S.promptCap,
+      retried = false;
+    for (;;) {
+      const m = make(cap);
+      if (!m.fits) throw Object.assign(new Error("too long to send"), { code: "too_long" });
+      try {
+        return { res: await call(m), P: m.P, retried };
+      } catch (e) {
+        if (!(e && e.code === "prompt_too_large") || retried) throw e;
+        retried = true;
+        cap = Math.floor(m.bytes * 0.8);
+      }
+    }
+  }
+  /* limits() is local and quick; if it hangs, the contract's cap is used after a second */
+  const capWait = () => Promise.race([S.capReady, new Promise(r => setTimeout(r, 1000))]);
+  /* What was read word for word and what as summaries: the note under an answer or a built view */
+  function sentNote(P, view, retried) {
+    if (!P.raw.length) return "";
+    const span = "#" + P.rawLo + "–#" + P.rawHi;
+    const read = view ? "Built from " : "Read ";
+    let s;
+    if (!P.cut) s = read + span + " word for word.";
+    else if (P.win && P.rawLo > P.loI)
+      s =
+        "Your window has " +
+        plural(P.n, "message") +
+        ": read the newest " +
+        P.raw.length.toLocaleString("en-US") +
+        " word for word (" +
+        span +
+        "), the rest as summaries" +
+        (P.dropped != null ? " back to #" + P.dropped + "; nothing older" : "") +
+        ".";
+    else {
+      s = read + span + " word for word" + (P.rawDays ? " (" + P.rawDays + ")" : "") + ".";
+      if (P.rawLo > P.loI)
+        s +=
+          " Older than #" +
+          P.rawLo +
+          ": " +
+          (P.dropped == null
+            ? "summaries only."
+            : P.hasBefore
+              ? "summaries back to #" + P.dropped + "; nothing older."
+              : "nothing included.");
+    }
+    if (P.hasAfter)
+      s +=
+        " Newer than #" +
+        P.rawHi +
+        ": " +
+        (P.afterHi < P.hiI ? "summaries to #" + P.afterHi + "; nothing newer." : "summaries only.");
+    return s + (retried ? " (sent a smaller set: the first was too large)" : "");
+  }
+  /* Saved with each answer and view (qa/*, views/*): what Claude read */
+  const sentOf = P =>
+    P.raw.length ? { from: P.rawLo, to: P.rawHi, sumFrom: P.sumFrom, afterFrom: P.hasAfter ? P.afterLo : null } : null;
+  const sentShort = x =>
+    x && x.sent && x.sent.from != null
+      ? "#" +
+        x.sent.from +
+        "–#" +
+        x.sent.to +
+        " word for word" +
+        (x.sent.sumFrom != null ? ", older as summaries from #" + x.sent.sumFrom : "") +
+        (x.sent.afterFrom != null ? ", newer as summaries from #" + x.sent.afterFrom : "")
+      : "";
+
   /* ---------- ask ---------- */
   let turns = [],
     ctl = null;
-  function contextLines(useAll) {
-    return S.msgs
-      .filter(m => useAll || inWindow(m))
-      .map(lineFor)
-      .join("\n");
+  /* The window (or every stored message) as packHistory's scope */
+  function askScope(useAll) {
+    if (!S.msgs.length) return { lo: 0, hi: -1, fHi: -1, win: !useAll };
+    const W = winRange();
+    const last = S.msgs[S.msgs.length - 1].i;
+    const hi = Math.min(W.hi, last);
+    return useAll ? { lo: S.msgs[0].i, hi: last, fHi: hi, win: false } : { lo: W.lo + 1, hi, fHi: hi, win: true };
   }
-  function rules(useAll) {
-    return (
-      "You are helping " +
-      OWNER() +
-      ' (shown as "You" in the data) catch up on ' +
-      CHATDESC() +
-      ". Below are the chat messages" +
-      (useAll ? "" : " in their catch-up window") +
-      ', one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo], link previews, links and {reactions}. Senders use group nicknames.\n\nRules:\n- Answer only from these messages. If they don\'t contain the answer, say so plainly.\n- Cite every claim with message numbers in square brackets, like [#123] or [#12, #15].\n- When asked whether something needs a reply, check later messages for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble.\n\nMESSAGES:\n' +
-      contextLines(useAll)
-    );
+  function askPrompt(useAll, hist, cap) {
+    const extra = hist.reduce((n, t) => n + u8(t.content), 0);
+    const build = P => intro() + haveText(P) + "\n\nRules:\n" + rulesText(P) + "\n\n" + sections(P);
+    return fitPrompt(askScope(useAll), build, extra, useAll ? 0.35 : 0.2, cap);
+  }
+  function viewPrompt(p, cap) {
+    const build = P =>
+      intro() +
+      haveText(P) +
+      '\n\nTask: reorganize these messages as the reader asks: "' +
+      p +
+      '".\n\nRules:\n' +
+      rulesText(P) +
+      "\n\n" +
+      sections(P) +
+      '\n\nReply with only JSON: {"title": short name, "intro": one or two sentences, "sections": [{"heading": string, "tag": optional short status like "open" or "answered", "summary": 1-3 sentences citing [#n], "refs": [message numbers]}]}. Cover everything relevant; keep each summary short.';
+    return fitPrompt(askScope(false), build, 0, 0.2, cap);
+  }
+  /* The earlier chat turns sent with a question: at most the last 9 (starting and ending on a question), the oldest
+     pairs dropped while they take more than a quarter of the cap */
+  function chatTurns(cap) {
+    let h = turns.slice(-9);
+    if (h.length && h[0].role !== "user") h = h.slice(1);
+    const lim = cap * 0.25;
+    while (h.length > 2 && h.reduce((n, t) => n + u8(t.content), 0) > lim) h = h.slice(2);
+    return h;
   }
   function renderCites(container, text) {
     container.textContent = "";
@@ -3768,11 +4486,25 @@
     return t;
   }
   $("#ask-stop").onclick = () => ctl && ctl.abort();
+  let asking = false; /* one question at a time: a second click while one is on its way does nothing */
   $("#ask-go").onclick = async () => {
     const q = $("#ask-in").value.trim();
-    if (!q) return;
+    if (!q || asking) return;
     if (!S.sample) {
       $("#ask-note").textContent = "Asking Claude isn't available in this view.";
+      return;
+    }
+    asking = true;
+    try {
+      await ask(q);
+    } finally {
+      asking = false;
+    }
+  };
+  async function ask(q) {
+    await capWait();
+    if (u8(q) > S.promptCap / 2) {
+      $("#ask-note").textContent = "That question is too long to send. Shorten it.";
       return;
     }
     const useAll = $("#ask-all").checked;
@@ -3785,22 +4517,36 @@
     $("#ask-stop").hidden = false;
     $("#ask-note").textContent = "";
     try {
-      const { text } = await S.sample([{ role: "user", content: rules(useAll) }, ...turns.slice(-8)], {
-        cache: false,
-        signal: ctl.signal,
-        onText: ({ text }) => renderCites(out, text),
-      });
+      const sig = ctl.signal;
+      const { res, P, retried } = await sendFitted(
+        cap => {
+          const hist = chatTurns(cap);
+          return Object.assign(askPrompt(useAll, hist, cap), { hist });
+        },
+        m =>
+          S.sample([{ role: "user", content: m.text }, ...m.hist], {
+            cache: false,
+            signal: sig,
+            onText: ({ text }) => renderCites(out, text),
+          }),
+      );
+      const text = res.text;
       renderCites(out, text);
+      const note = sentNote(P, false, retried);
+      if (note) out.parentNode.append(el("div", "note sent", note));
       turns.push({ role: "assistant", content: text });
       if (S.db) {
         try {
-          await S.db.collection("qa").add({
+          const row = {
             q,
             a: text,
             at: new Date().toISOString(),
             scope: useAll ? "all" : "window",
             toI: S.msgs[S.msgs.length - 1]?.i ?? null,
-          });
+          };
+          const sent = sentOf(P);
+          if (sent) row.sent = sent;
+          await S.db.collection("qa").add(row);
         } catch (e) {
           $("#ask-note").textContent = "Answer shown but not saved.";
         }
@@ -3815,14 +4561,15 @@
       $("#ask-stop").hidden = true;
       ctl = null;
     }
-  };
+  }
   function errCopy(c) {
     return (
       {
         cancelled: "Stopped.",
         not_granted: "Claude wasn't allowed for this page.",
         rate_limited: "Too many requests right now. Try again in a minute.",
-        prompt_too_large: "Too much chat to send at once. Uncheck older messages.",
+        prompt_too_large: "Too much to send at once, even trimmed. Tell Claude in chat if this repeats.",
+        too_long: "That's too long to send, even with the chat trimmed. Shorten it.",
         refused: "Claude declined that one. Try rephrasing.",
         session_expired: "Sign in again, then retry.",
         invalid_json: "Claude's reply couldn't be read as a view. Try again or simplify the request.",
@@ -3849,7 +4596,8 @@
             "note",
             (x.at || "").replace("T", " ").slice(0, 16) +
               " · " +
-              (x.scope === "all" ? "all stored messages" : "catch-up window"),
+              (x.scope === "all" ? "all stored messages" : "catch-up window") +
+              (sentShort(x) ? " · " + sentShort(x) : ""),
           ),
         );
         const t = el("div", "txt");
@@ -3861,12 +4609,14 @@
   }
 
   /* ---------- views ---------- */
-  function renderViewDoc(v, into) {
+  function renderViewDoc(v, into, note) {
     into.textContent = "";
     const d = el("div", "block");
     const h = el("div", "sec-head");
     h.append(el("h2", null, v.title || "View"));
     if (v.prompt) h.append(el("p", null, "Asked for: " + v.prompt));
+    const read = note || (sentShort(v) ? "Built from " + sentShort(v) + "." : "");
+    if (read) h.append(el("p", "note sent", read));
     d.append(h);
     if (v.intro) d.append(el("p", null, v.intro));
     const l = el("div", "list");
@@ -3896,19 +4646,31 @@
     }
     $("#view-go").disabled = true;
     $("#view-note").textContent = "Building… this can take a minute.";
-    const prompt =
-      rules(false).replace("Rules:", 'Task: reorganize these messages as the reader asks: "' + p + '".\n\nRules:') +
-      '\n\nReply with only JSON: {"title": short name, "intro": one or two sentences, "sections": [{"heading": string, "tag": optional short status like "open" or "answered", "summary": 1-3 sentences citing [#n], "refs": [message numbers]}]}. Cover everything relevant; keep each summary short.';
     try {
-      const v = await S.sample.json(prompt);
+      await capWait();
+      if (u8(p) > S.promptCap / 2) {
+        $("#view-note").textContent = "That request is too long to send. Shorten it.";
+        return;
+      }
+      const {
+        res: v,
+        P,
+        retried,
+      } = await sendFitted(
+        cap => viewPrompt(p, cap),
+        m => S.sample.json(m.text),
+      );
       v.prompt = p;
       v.at = new Date().toISOString();
       v.toI = S.msgs[S.msgs.length - 1]?.i ?? null;
-      renderViewDoc(v, $("#view-out"));
+      const sent = sentOf(P);
+      if (sent) v.sent = sent;
+      renderViewDoc(v, $("#view-out"), sentNote(P, true, retried));
       $("#view-note").textContent = "";
       if (S.db) {
         try {
-          await S.db.collection("views").add({ kind: "view", ...v });
+          /* B51: kind last, so a reply that says kind "idea" can't pose as a method idea */
+          await S.db.collection("views").add({ ...v, kind: "view" });
         } catch (e) {
           $("#view-note").textContent = "Built, but not saved.";
         }
@@ -3977,8 +4739,10 @@
   }
   /* Import core, shared by the Import button (baseline) and paste-anywhere.
    opts.src: "button" | "paste". cap.dry: run every check, write nothing.
-   cap.photos (optional): [{i,k,type,b64}] with cap.phsha = SHA-256 of JSON.stringify(cap.photos); stored via assets after the messages.
-   cap.lab: photos go to a lab report only (photos/index untouched). Every run records its outcome in refresh/lastImport. */
+   cap.photos (optional): [{i,k,type,b64}] with cap.phsha = SHA-256 of JSON.stringify(cap.photos); stored via assets after the
+   messages, one at a time, each indexed as it lands (storePhotos). cap.lab: photos are uploaded but never indexed.
+   Every run records its outcome in refresh/lastImport: state "uploading" while photos store (with a heartbeat), then
+   "done", "partial" (with a stop code), "refused" (a check failed, nothing saved) or "failed". */
   function b64ToBlob(b64, type) {
     const bin = atob(b64);
     const u = new Uint8Array(bin.length);
@@ -4017,6 +4781,462 @@
       return g.exists ? Object.assign({ id }, g.data()) : null;
     }
   }
+
+  /* ---------- photos (R2) ----------
+     Photos store one at a time after the messages, and each is indexed the moment it lands, so a tab closed mid-upload
+     loses nothing: what landed is indexed, and what's left is owed (a null slot, counted in meta/chat.photosOwed) for a
+     re-paste or the next refresh's backfill to store. photos/b<start> holds the slots of messages start..start+499:
+     byK[i][k] = "/_blob/<id>" (stored) | null (owed) | {e:code} (given up). photos/index (pages up to 2.6) is read,
+     never written. Tests shorten the timings with window.__mcImportTune; nothing in production sets it. */
+  const PHOTO_BLOCK = 500;
+  const IMPORT_TUNE = Object.freeze(
+    Object.assign(
+      { beatMs: 10000, leaseMs: 60000, uploadTimeoutMs: 90000, retryMs: 2000, rateWaitMs: 30000, owedWindow: 300 },
+      window.__mcImportTune || {},
+    ),
+  );
+  const photoBlock = i => "b" + Math.floor(i / PHOTO_BLOCK) * PHOTO_BLOCK;
+  const isStored = v => typeof v === "string";
+  /* docs: {id: data} of the photos collection, or the part of it read fresh. The old index first (its byK, or for the
+     oldest indexes byI by position), then each block slot by slot; a stored photo wins over an owed or given-up slot,
+     and a block's over the old index's. byI (what the page shows) is derived: stored photos in slot order. */
+  function mergePhotos(docs) {
+    const byK = {};
+    const gifs = new Set();
+    const put = (i, k, v) => {
+      const m = byK[i] || (byK[i] = {});
+      if (isStored(v) || !(k in m)) m[k] = v;
+    };
+    const idx = docs.index;
+    if (idx) {
+      const ik = idx.byK || {};
+      Object.entries(idx.byI || {}).forEach(([i, l]) => {
+        if (!ik[i]) (l || []).forEach((p, k) => isStored(p) && put(i, String(k), p));
+      });
+      Object.entries(ik).forEach(([i, m]) => Object.entries(m || {}).forEach(([k, p]) => isStored(p) && put(i, k, p)));
+      (idx.gifs || []).forEach(g => gifs.add(+g));
+    }
+    Object.keys(docs)
+      .filter(id => /^b\d+$/.test(id))
+      .forEach(id => {
+        const d = docs[id] || {};
+        Object.entries(d.byK || {}).forEach(([i, m]) => Object.entries(m || {}).forEach(([k, v]) => put(i, k, v)));
+        (d.gifs || []).forEach(g => gifs.add(+g));
+      });
+    const byI = {};
+    Object.entries(byK).forEach(([i, m]) => {
+      const l = Object.keys(m)
+        .sort((a, b) => a - b)
+        .map(k => m[k])
+        .filter(isStored);
+      if (l.length) byI[i] = l;
+    });
+    return { byK, byI, gifs };
+  }
+  const owedOf = M => {
+    const o = [];
+    Object.entries(M.byK).forEach(([i, m]) =>
+      Object.entries(m).forEach(([k, v]) => v === null && o.push({ i: +i, k: +k })),
+    );
+    return o.sort((a, b) => a.i - b.i || a.k - b.k);
+  };
+  const owedSummary = o =>
+    o.length ? { n: o.length, fromI: o[0].i, toI: o[o.length - 1].i, at: new Date().toISOString() } : null;
+  const fmtBytes = b => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
+  /* Fresh reads under the lease: the old index, the blocks this capture's photos and GIFs fall in, and the blocks the
+     owed range covers. todo = the capture's slots not stored and not given up. */
+  async function planPhotos(P) {
+    const ig = await S.db.doc("photos/index").get();
+    const idx = ig.exists ? ig.data() : null;
+    const ids = new Set(P.photos.map(ph => photoBlock(ph.i)).concat(P.gifs.map(photoBlock)));
+    const ow = P.meta.photosOwed;
+    if (ow && ow.n)
+      for (let s = Math.floor(ow.fromI / PHOTO_BLOCK) * PHOTO_BLOCK; s <= ow.toI; s += PHOTO_BLOCK) ids.add("b" + s);
+    const blocks = {};
+    const exists = {};
+    for (const id of [...ids].sort()) {
+      const g = await S.db.doc("photos/" + id).get();
+      exists[id] = g.exists;
+      blocks[id] = g.exists ? g.data() : { start: +id.slice(1), byK: {}, gifs: [] };
+      if (!blocks[id].byK) blocks[id].byK = {};
+    }
+    const M = mergePhotos(Object.assign({ index: idx }, blocks));
+    const val = ph => (M.byK[ph.i] || {})[ph.k];
+    /* oldest first, so an interrupted run leaves the newest owed, nearest the next run's backfill */
+    const todo = (P.lab ? P.photos : P.photos.filter(ph => val(ph) == null))
+      .slice()
+      .sort((a, b) => a.i - b.i || a.k - b.k);
+    const bytes = todo.reduce((n, ph) => n + Math.floor((ph.b64.length * 3) / 4), 0);
+    return { idx, blocks, exists, todo, skipped: P.photos.length - todo.length, bytes };
+  }
+  const GIVE_UP = ["too_large", "unsupported_type", "invalid_request"];
+  const NO_ASSETS = ["not_granted", "capability_disabled", "capability_removed"];
+  const stopOf = c =>
+    c === "rate_limited"
+      ? "rate_limited"
+      : c === "timeout"
+        ? "timeout"
+        : c === "quota_or_state"
+          ? "quota"
+          : c === "upstream_auth"
+            ? "auth"
+            : NO_ASSETS.includes(c)
+              ? "no_assets"
+              : "unavailable";
+  async function renewLease() {
+    const ref = S.db.doc("refresh/importLock");
+    if (typeof ref.acquire !== "function") return true;
+    try {
+      return (await ref.acquire({ holder: TAB, ttlMs: IMPORT_TUNE.leaseMs })).acquired !== false;
+    } catch (e) {
+      return true;
+    }
+  }
+  /* Stores the capture's photos and GIFs (R.plan from importCore), then gives up owed slots more than owedWindow
+     messages behind lastI that this capture doesn't hold (the next refresh can't scan back that far). show(R, sticky)
+     puts progress in the toast. */
+  async function storePhotos(R, P, show) {
+    const T = IMPORT_TUNE;
+    const L = await planPhotos(P);
+    const { idx, blocks, todo } = L;
+    let M = null;
+    const remerge = () => (M = mergePhotos(Object.assign({ index: idx }, blocks)));
+    remerge();
+    const val = (i, k) => (M.byK[i] || {})[k];
+    R.photos = { total: P.photos.length, todo: todo.length, done: 0, skipped: L.skipped, failed: 0, bytes: L.bytes };
+    R.stored = [];
+    R.gaveUp = [];
+    /* Writes go slot by slot (update merges nested objects), never the whole block: another tab that took the lease
+       after ours lapsed may have indexed other slots of the same block since we read it. pend[id] holds what's still
+       to write; gifs are merged with a fresh read, since update replaces an array whole. */
+    const pend = {};
+    const known = new Set(Object.keys(blocks).filter(id => L.exists[id]));
+    const pendOf = id => pend[id] || (pend[id] = { byK: {}, gifs: [] });
+    const slot = (i, k, v) => {
+      const id = photoBlock(i);
+      (blocks[id].byK[i] || (blocks[id].byK[i] = {}))[k] = v;
+      const p = pendOf(id);
+      (p.byK[i] || (p.byK[i] = {}))[k] = v;
+    };
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    /* one write at a time per document; a refused write is retried once, after renewing the lease (a tab that lost it
+       writes nothing more), and one over 256 KiB never */
+    const writeBlock = async id => {
+      const p = pend[id];
+      if (!p) return null;
+      const ref = S.db.doc("photos/" + id);
+      for (let t = 0; ; t++) {
+        try {
+          const g = !known.has(id) || p.gifs.length ? await ref.get() : null;
+          if (g && !g.exists) await ref.set({ start: +id.slice(1), byK: p.byK, gifs: p.gifs.sort((x, y) => x - y) });
+          else {
+            const up = {};
+            if (Object.keys(p.byK).length) up.byK = p.byK;
+            if (p.gifs.length)
+              up.gifs = [...new Set([...((g && g.data().gifs) || []), ...p.gifs])].sort((x, y) => x - y);
+            await ref.update(up);
+          }
+          known.add(id);
+          delete pend[id];
+          return null;
+        } catch (e) {
+          const big = e && e.code === "invalid_argument";
+          if (big || t) return big ? "index-full" : "index";
+          await wait(T.retryMs);
+          if (!(await renewLease())) return "lease";
+        }
+      }
+    };
+    const flush = async () => {
+      for (const id of Object.keys(pend).sort()) {
+        const e = await writeBlock(id);
+        if (e) return e;
+      }
+      return null;
+    };
+    /* a failed photosOwed write only leaves the count stale (the slots themselves are on record): never fail the import */
+    const writeOwed = async () => {
+      remerge();
+      const o = owedSummary(owedOf(M));
+      const was = P.meta.photosOwed || null;
+      const key = x => (x && x.n ? [x.n, x.fromI, x.toI].join() : "");
+      if (key(o) !== key(was))
+        try {
+          await S.db.doc("meta/chat").update({ photosOwed: o });
+          P.meta.photosOwed = o;
+        } catch (e) {}
+    };
+    let stop = null,
+      at = null;
+    if (!P.lab) {
+      /* placeholders first, so the owed slots are on record even if the tab dies before the first upload */
+      todo.forEach(ph => val(ph.i, ph.k) !== null && slot(ph.i, ph.k, null));
+      remerge();
+      P.gifs.forEach(i => {
+        const b = blocks[photoBlock(i)];
+        if (!M.gifs.has(i)) {
+          b.gifs = [...(b.gifs || []), i].sort((x, y) => x - y);
+          pendOf(photoBlock(i)).gifs.push(i);
+        }
+      });
+      stop = await flush();
+      if (!stop) await writeOwed();
+    }
+    const assets = !stop && todo.length ? await claude.use("assets") : null;
+    if (!stop && todo.length && !assets) stop = "no_assets";
+    if (!stop && todo.length) {
+      const base = R.msg;
+      const progress = () => {
+        R.msg = base + " Storing photos " + R.photos.done + "/" + todo.length + "… keep this tab open.";
+        S.photoProgress = { done: R.photos.done, todo: todo.length };
+        show(R, true);
+      };
+      R.state = "uploading";
+      R.beat = new Date().toISOString();
+      progress();
+      await logImport(R);
+      let ended = false,
+        lost = false,
+        beatP = Promise.resolve();
+      /* the heartbeat runs on a timer, so a slow but live upload still beats; it also renews the import lease */
+      const beat = () =>
+        (beatP = beatP.then(async () => {
+          if (ended || lost) return;
+          /* renew first: a tab that lost the lease writes no heartbeat */
+          if (!(await renewLease())) {
+            lost = true;
+            return;
+          }
+          if (ended) return;
+          R.beat = new Date().toISOString();
+          await logImport(R);
+        }));
+      if (!(await renewLease())) lost = true;
+      const timer = setInterval(beat, T.beatMs);
+      const upload = ph =>
+        new Promise(res => {
+          const t = setTimeout(() => res({ code: "timeout" }), T.uploadTimeoutMs);
+          assets.upload(b64ToBlob(ph.b64, ph.type), { type: ph.type }).then(
+            r => {
+              clearTimeout(t);
+              res({ r });
+            },
+            e => {
+              clearTimeout(t);
+              res({ code: (e && e.code) || "upstream_error" });
+            },
+          ); /* a late answer after the timeout is ignored: at most one unindexed asset */
+        });
+      try {
+        for (const ph of todo) {
+          if (lost) {
+            stop = "lease";
+            break;
+          }
+          let res;
+          for (let t = 0; ; t++) {
+            res = await upload(ph);
+            const c = res.code;
+            if (!c || GIVE_UP.includes(c) || t) break;
+            if (c === "rate_limited") {
+              R.photos.waiting = c;
+              await wait(T.rateWaitMs);
+              delete R.photos.waiting;
+            } else if (c === "store_unavailable") await wait(T.retryMs);
+            else break; /* only store_unavailable is retry-once: upstream_error includes an unanswered call */
+          }
+          if (res.code && !GIVE_UP.includes(res.code)) {
+            stop = stopOf(res.code);
+            at = ph;
+            R.stopCode = res.code;
+            break;
+          }
+          if (P.lab) {
+            /* a lab test uploads without indexing anything */
+            if (res.code) R.photos.failed++;
+            else {
+              R.stored.push({ i: ph.i, k: ph.k, id: res.r.id });
+              R.photos.done++;
+            }
+            progress();
+            continue;
+          }
+          /* a tab whose lease lapsed (frozen past it) and was taken over writes nothing more */
+          if (lost || !(await renewLease())) {
+            lost = true;
+            stop = "lease";
+            break;
+          }
+          if (res.code) {
+            slot(ph.i, ph.k, { e: res.code });
+            R.gaveUp.push({ i: ph.i, k: ph.k, e: res.code });
+            R.photos.failed++;
+          } else slot(ph.i, ph.k, "/_blob/" + res.r.id);
+          const we = await writeBlock(photoBlock(ph.i));
+          if (we) {
+            slot(ph.i, ph.k, null);
+            if (we === "lease") lost = true;
+            stop = we;
+            at = ph;
+            break;
+          }
+          if (!res.code) {
+            R.stored.push({ i: ph.i, k: ph.k, id: res.r.id });
+            R.photos.done++;
+          }
+          progress();
+        }
+      } finally {
+        ended = true;
+        clearInterval(timer);
+        await beatP;
+        S.photoProgress = null;
+        R.msg = base;
+      }
+    }
+    if (stop !== "lease" && !P.lab && !(await renewLease())) stop = "lease";
+    if (stop !== "lease" && !P.lab) {
+      remerge();
+      /* given up: owed slots this capture doesn't hold that no refresh can scan back to: more than owedWindow messages
+         behind lastI, or among the first 3 messages (a backfill scan needs the 3 stored messages before it) */
+      owedOf(M)
+        .filter(o => !P.inCap.has(o.i) && (o.i < P.lastI - T.owedWindow || o.i < 3))
+        .forEach(o => {
+          const e = o.i < P.lastI - T.owedWindow ? "gave-up" : "no-backfill";
+          slot(o.i, o.k, { e });
+          R.gaveUp.push({ i: o.i, k: o.k, e });
+        });
+      const fe = await flush();
+      stop = stop || fe;
+      await writeOwed();
+    }
+    remerge();
+    R.owed = P.lab ? [] : P.photos.filter(ph => val(ph.i, ph.k) === null).map(ph => ({ i: ph.i, k: ph.k }));
+    R.backfill = P.firstI != null && P.firstI <= P.oldLastI && R.stored.some(s => s.i <= P.oldLastI);
+    if (stop) R.stop = stop === "index-full" ? "index" : stop;
+    R.state = stop ? "partial" : "done";
+    if (stop) R.ok = !!R.fresh;
+    const code = R.stopCode;
+    delete R.stopCode;
+    return { stop, at, code };
+  }
+  const GIVEN = {
+    too_large: "too large",
+    unsupported_type: "type not accepted",
+    invalid_request: "rejected",
+    "gave-up": "too old to fetch again",
+    "no-backfill": "too early in the chat to fetch again",
+  };
+  function photoNote(R, P, { stop, at, code }) {
+    const ph = R.photos;
+    const lab = P.lab ? " (lab test, not linked)" : "";
+    let s = "";
+    if (ph.done || ph.skipped)
+      s +=
+        " " +
+        plural(ph.done, "photo") +
+        " stored" +
+        (ph.skipped ? " (" + ph.skipped + " already stored)" : "") +
+        lab +
+        ".";
+    const now = R.gaveUp.filter(g => g.e !== "gave-up");
+    const old = R.gaveUp.filter(g => g.e === "gave-up");
+    if (now.length)
+      s +=
+        " " +
+        (now.length === 1 ? "1 photo" : now.length + " photos") +
+        " couldn't be stored (" +
+        now.map(g => "#" + g.i + ", " + GIVEN[g.e]).join("; ") +
+        ").";
+    if (old.length)
+      s +=
+        " " +
+        plural(old.length, "photo") +
+        " owed from earlier imports given up (" +
+        [...new Set(old.map(g => "#" + g.i))].join(", ") +
+        "): more than " +
+        IMPORT_TUNE.owedWindow +
+        " messages old, too old to fetch again.";
+    const left = ph.todo - ph.done - ph.failed;
+    const part = " Photos: " + ph.done + " of " + ph.todo + " stored";
+    const again = " Paste again to store the rest.";
+    if (stop === "no_assets")
+      s += " Photos not stored: this view can't upload them (open the page on claude.ai, signed in as its owner).";
+    else if (stop === "quota") {
+      const u = R.usage;
+      s +=
+        " Photo uploads refused (quota_or_state): this page's photo storage is full" +
+        (u ? " (" + u.files + " files, " + fmtBytes(u.bytes) + " of " + fmtBytes(u.maxBytes) + ")" : "") +
+        ", or the page is unpublished or being deleted: " +
+        plural(left, "photo") +
+        " not stored. Messages are saved. Pasting again won't help; tell Claude.";
+    } else if (stop === "rate_limited") s += part + ". Too many uploads right now: wait 2 minutes, then paste again.";
+    else if (stop === "auth") s += part + ". Sign-in expired: reload this page, then paste again.";
+    else if (stop === "lease") s += part + "; another open copy of this page took over the import." + again;
+    else if (stop === "index-full")
+      s += part + "; the photo index" + (at ? " for #" + at.i : "") + " is full. Messages are saved. Tell Claude.";
+    else if (stop)
+      s +=
+        part +
+        "; stopped" +
+        (at ? " at #" + at.i : "") +
+        " (" +
+        (stop === "index" ? "index write" : code || stop) +
+        ")." +
+        again;
+    return s;
+  }
+  /* Asset usage (files and bytes against the page's limits), recorded with every import and shown at 80% */
+  function usageLevel(u) {
+    if (!u) return 0;
+    return Math.max(u.maxFiles ? u.files / u.maxFiles : 0, u.maxBytes ? u.bytes / u.maxBytes : 0);
+  }
+  function usageNote(u) {
+    if (usageLevel(u) < 0.8) return "";
+    const f = u.maxFiles ? u.files / u.maxFiles : 0;
+    const b = u.maxBytes ? u.bytes / u.maxBytes : 0;
+    return (
+      "Photo storage is " +
+      Math.floor(usageLevel(u) * 100) +
+      "% full (" +
+      (f >= b
+        ? u.files.toLocaleString("en-US") + " of " + u.maxFiles.toLocaleString("en-US") + " files"
+        : fmtBytes(u.bytes) + " of " + fmtBytes(u.maxBytes)) +
+      ")."
+    );
+  }
+  async function recordUsage(R, P) {
+    let u = null;
+    try {
+      const a = await claude.use("assets");
+      if (!a || typeof a.list !== "function") return;
+      const l = (await a.list()).usage;
+      if (!l || typeof l.files !== "number") return;
+      u = { files: l.files, bytes: l.bytes, maxFiles: l.maxFiles, maxBytes: l.maxBytes };
+    } catch (e) {
+      return;
+    }
+    R.usage = u;
+    S.assetLive = Object.assign({ at: new Date().toISOString() }, u);
+    renderStorage();
+    const was = P.meta.assetUsage || {};
+    if (["files", "bytes", "maxFiles", "maxBytes"].some(k => was[k] !== u[k]))
+      try {
+        await S.db.doc("meta/chat").update({ assetUsage: S.assetLive });
+      } catch (e) {}
+  }
+  function renderStorage() {
+    const st = $("#storage-st");
+    if (!st) return;
+    const m = S.meta && S.meta.assetUsage;
+    const u = S.assetLive && (!m || !(m.at > S.assetLive.at)) ? S.assetLive : m;
+    const n = usageNote(u);
+    st.hidden = !n;
+    st.textContent = n
+      ? n +
+        " New photos still store for now. To make room, ask Claude to tidy up photo storage: it lists unused and duplicate files and asks before deleting anything."
+      : "";
+  }
   async function importCore(raw, opts) {
     const src = (opts && opts.src) || "button";
     const R = { src, ok: false };
@@ -4050,7 +5270,7 @@
       if (!L.ok)
         return done(
           "Another import is running in another open copy of this page. Nothing saved. Try again in a minute" +
-            (L.until ? " (after " + fmtTs(L.until) + ")" : "") +
+            (L.until ? " (after " + fmtTime(L.until) + ")" : "") +
             ".",
         );
     }
@@ -4167,6 +5387,16 @@
       type: ph.type,
       bytes: Math.floor((ph.b64.length * 3) / 4),
     }));
+    const gifsNew = cap.lab ? [] : (cap.gifs || []).filter(i => inCap.has(i));
+    const plan = { photos, gifs: gifsNew, meta, inCap, firstI: ms.length ? ms[0].i : null, oldLastI: lastI };
+    plan.lab = !!cap.lab;
+    let dryPh = "";
+    if (dry && photos.length) {
+      const L = await planPhotos(plan);
+      R.photos = { total: photos.length, todo: L.todo.length, skipped: L.skipped, bytes: L.bytes };
+      dryPh = ", " + L.todo.length + " to store" + (L.skipped ? " (" + L.skipped + " already stored)" : "");
+      dryPh += L.todo.length ? ", " + fmtBytes(L.bytes) : "";
+    }
     if (dry)
       return done(
         repNote +
@@ -4181,7 +5411,9 @@
               writes.map(w => w.id).join(", ") +
               ")"
             : "nothing new") +
-          (photos.length ? "; " + photos.length + " photo" + (photos.length > 1 ? "s" : "") + " verified" : "") +
+          (photos.length
+            ? "; " + photos.length + " photo" + (photos.length > 1 ? "s" : "") + " verified" + dryPh
+            : "") +
           ". Nothing written.",
         { ok: true, fresh: fresh.length, chunks: writes.map(w => w.id), photos: phInfo },
       );
@@ -4193,7 +5425,7 @@
         const g = await S.db.doc("chunks/" + w.id).get();
         const d = g.exists ? g.data() : null;
         if (!d || JSON.stringify(d.msgs.map(x => [x.i, x.m, x.b])) !== JSON.stringify(w.msgs.map(x => [x.i, x.m, x.b])))
-          return done("Saved, but the read-back of " + w.id + " didn't match. Tell Claude.");
+          return done("Saved, but the read-back of " + w.id + " didn't match. Tell Claude.", { state: "failed" });
       }
       const z = fresh[fresh.length - 1];
       const upd = {
@@ -4241,88 +5473,56 @@
     }
     R.fresh = fresh.length;
     R.chunks = [...new Set((repaired ? repaired.chunks : []).concat(writes.map(w => w.id)))].sort();
-    /* Photos and GIFs. Uploads that land are indexed even if a later one fails, and a re-paste skips photos already stored,
- so pasting again after "Photos: upload failed" is safe and finishes the job. GIFs are recorded with or without photos. */
-    const gifsNew = (cap.gifs || []).filter(i => inCap.has(i));
-    if (photos.length || (gifsNew.length && !cap.lab)) {
-      const g = await S.db.doc("photos/index").get();
-      const d = g.exists ? g.data() : { byI: {}, gifs: [] };
-      const byI = Object.assign({}, d.byI || {});
-      /* byK[i][k]: the stored photo for capture slot k of message i (byI is the compact list the page shows). A capture can skip a
-   slot (a photo the helper couldn't fetch), so "already stored" must be decided by slot, not by position in byI. */
-      const byK = JSON.parse(JSON.stringify(d.byK || {}));
-      const have = ph => (byK[ph.i] ? !!byK[ph.i][ph.k] : !!(byI[ph.i] || [])[ph.k]); /* older indexes: by position */
-      const todo = cap.lab ? photos : photos.filter(ph => !have(ph));
-      const up = [];
-      let fail = null;
-      if (todo.length) {
-        const assets = await claude.use("assets");
-        if (!assets)
-          return done(
-            msgPart +
-              " Photos not stored: this view can't upload them (open the page on claude.ai, signed in as its owner).",
-            { ok: !!fresh.length },
-          );
-        else
-          for (const ph of todo) {
-            try {
-              const r = await assets.upload(b64ToBlob(ph.b64, ph.type), { type: ph.type });
-              up.push({ i: ph.i, k: ph.k, id: r.id, bytes: r.sizeBytes, type: r.contentType });
-            } catch (e) {
-              fail = "upload failed at #" + ph.i + " (" + ((e && e.code) || e) + ")";
-              break;
-            }
-          }
-      }
-      R.uploaded = up;
-      if (!cap.lab) {
-        up.forEach(u => {
-          const m = byK[u.i] || (byK[u.i] = Object.fromEntries((byI[u.i] || []).map((p, k) => [k, p])));
-          m[u.k] = "/_blob/" + u.id;
-        });
-        new Set(up.map(u => String(u.i))).forEach(i => {
-          byI[i] = Object.keys(byK[i])
-            .sort((a, b) => a - b)
-            .map(k => byK[i][k]);
-        });
-        const gifs = [...new Set([...(d.gifs || []), ...gifsNew])].sort((a, b) => a - b);
-        if (up.length || gifs.length !== (d.gifs || []).length)
-          await S.db.doc("photos/index").set(Object.assign({}, d, { byI, byK, gifs }));
-      }
-      const skipped = photos.length - todo.length;
-      if (up.length || skipped)
-        msgPart +=
-          " " +
-          up.length +
-          " photo" +
-          (up.length === 1 ? "" : "s") +
-          " stored" +
-          (skipped ? " (" + skipped + " already stored)" : "") +
-          (cap.lab ? " (lab test, not linked)" : "") +
-          ".";
-      if (fail)
-        return done(msgPart + " Photos: " + fail + "; paste again to store the rest.", {
-          ok: !!fresh.length,
-          uploaded: up,
-        });
-    }
+    /* Photos and GIFs are stored by storePhotos (importCapture calls it with R.plan once the messages are saved). A
+       re-paste skips photos already stored, so pasting again after a partial import is safe and finishes the job. */
+    plan.lastI = fresh.length ? fresh[fresh.length - 1].i : lastI;
+    R.plan = plan;
     return done(msgPart, { ok: true });
   }
   async function importCapture(raw, opts) {
     const note = $("#imp-note");
     const btn = $("#imp-go");
+    const pasted = opts && opts.src === "paste";
+    const show = (R, sticky) => {
+      note.textContent = R.msg;
+      if (pasted) {
+        const d = $("#imp");
+        if (d) d.open = true;
+        toast([el("b", null, R.msg)], sticky);
+      }
+    };
+    /* one import at a time per tab, whether it came from a paste or the Import button */
+    if (S.importing) {
+      busyNote(pasted);
+      return null;
+    }
+    S.importing = true;
     btn.disabled = true;
     let R;
     try {
       R = await importCore(raw, opts);
+      const P = R.plan;
+      delete R.plan;
+      if (P && !R.dry) {
+        let end = null;
+        const owed = P.meta.photosOwed && P.meta.photosOwed.n;
+        if (P.photos.length || P.gifs.length || owed) end = await storePhotos(R, P, show);
+        if (!end || end.stop !== "lease") await recordUsage(R, P);
+        if (end) R.msg += photoNote(R, P, end);
+        const n = usageNote(R.usage);
+        if (n && !(end && end.stop === "quota")) R.msg += " " + n;
+      }
     } catch (e) {
-      R = {
+      R = Object.assign(R || { src: (opts && opts.src) || "button" }, {
         ok: false,
+        state: "failed",
         msg: "Import failed: " + ((e && e.message) || e) + ".",
-        src: (opts && opts.src) || "button",
-      };
+      });
+      delete R.plan;
     } finally {
       btn.disabled = false;
+      S.photoProgress = null;
+      S.importing = false;
       /* let the import lease lapse now (renew it for the 1 s minimum) so another tab, or this one after a reload, needn't wait 2 minutes */
       if (S.db) {
         const ref = S.db.doc("refresh/importLock");
@@ -4332,32 +5532,35 @@
           } catch (e) {}
       }
     }
-    note.textContent = R.msg;
-    if (R.ok && !R.dry && (!opts || opts.src === "button")) $("#imp-in").value = "";
-    if (opts && opts.src === "paste") {
-      const d = $("#imp");
-      if (d) d.open = true;
-      toast([el("b", null, R.msg)]);
-    }
-    await logImport(R);
+    if (!R.state) R.state = R.ok ? "done" : "refused";
+    if (R.ok && !R.dry && !pasted) $("#imp-in").value = "";
+    show(R);
+    /* a tab that lost its lease to another tab leaves refresh/lastImport to that tab */
+    if (R.stop !== "lease") await logImport(R);
     return R;
   }
+  function busyNote(pasted) {
+    const pr = S.photoProgress;
+    const t = pr
+      ? "Still storing photos from the last paste (" + pr.done + "/" + pr.todo + ")… keep this tab open."
+      : "Still importing the last paste…";
+    if (pasted) toast([el("b", null, t)], !!pr);
+    else $("#imp-note").textContent = t;
+  }
   $("#imp-go").onclick = () => importCapture($("#imp-in").value, { src: "button" });
-  /* Paste anywhere on the page (outside a text box) with a catch-up capture on the clipboard imports it. */
+  /* Paste anywhere on the page (outside a text box) with a catch-up capture on the clipboard imports it. A paste while
+     the last one is still storing photos changes nothing (refresh/lastImport included); the toast says so. */
   document.addEventListener("paste", e => {
     const tg = e.target;
     if (tg && (tg.tagName === "TEXTAREA" || tg.tagName === "INPUT" || tg.isContentEditable)) return;
     const txt = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
     if (!/^\s*\{"kind":"mc-capture"/.test(txt)) return;
     e.preventDefault();
-    if (S.pasting) return;
-    S.pasting = true;
-    importCapture(txt, { src: "paste" }).finally(() => {
-      S.pasting = false;
-    });
+    importCapture(txt, { src: "paste" });
   });
   /* Status line: refreshes are asked for in chat (the page can't reach the Messenger tab); while Claude runs one, say so. */
   function renderRefresh() {
+    renderStorage();
     const rr = S.refresh;
     if (rr && rr.state === "running" && (Date.now() - Date.parse(rr.startedAt || 0)) / 60000 < 25) {
       setRS("Claude is refreshing: " + (rr.step || "working") + "…", { busy: true });
@@ -4372,7 +5575,157 @@
   }
   setInterval(() => {
     if (S.refresh) renderRefresh();
+    renderUpdates();
   }, 60000);
+
+  /* ---------- update notices (F5) ----------
+     The page can't see the helper (it lives in the facebook.com tab) and can't fetch releases, so Claude writes
+     meta/chat.versions with every lastRefresh: what that refresh's skill ships (page, helper), a copy of lastRefresh
+     (refresh) and the helper each Chrome ran (browsers). The page compares them with its own PAGE_VERSION and
+     pageVersion and shows one calm line per thing to update. It writes nothing to the database; a dismissal is kept in
+     this browser's localStorage under a key naming the version that would fix it, so the next release brings it back. */
+  const SELF_UPDATE_FROM = "1.5"; /* helpers from 1.5 on update themselves (@updateURL); older ones were pasted */
+  const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
+  const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
+  const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";
+  /* Number by number (2.0 > 1.9, 10.0 > 9.9, "2" = "2.0"): -1, 0 or 1, or null when either isn't a version. */
+  function vcmp(a, b) {
+    const pa = String(a ?? "").split(".");
+    const pb = String(b ?? "").split(".");
+    if (!pa.concat(pb).every(x => /^\d+$/.test(x))) return null;
+    for (let k = 0; k < Math.max(pa.length, pb.length); k++) {
+      const d = Number(pa[k] || 0) - Number(pb[k] || 0);
+      if (d) return d < 0 ? -1 : 1;
+    }
+    return 0;
+  }
+  const isObj = v => v != null && typeof v === "object" && !Array.isArray(v);
+  /* Pure: meta/chat, refresh/status, the time and the userscript's install URL in; [{key, parts}] out, in the order
+     shown (this tab, a waiting page, an older skill, then each Chrome by name). parts are text or {t, href} links. */
+  function updateNotices(meta, status, now, install) {
+    const out = [];
+    if (!isObj(meta)) return out;
+    const add = (key, parts) => out.push({ key: "mcUpd:" + key, parts });
+    const P = PAGE_VERSION;
+    const M = meta.pageVersion;
+    /* A: this tab runs an older copy of a page that has since been republished */
+    if (vcmp(P, M) === -1)
+      add("A:" + M, [
+        "This tab has an older copy of the page (" + P + "; the current one is " + M + "). Reload the tab to get it.",
+      ]);
+    const V = isObj(meta.versions) ? meta.versions : null;
+    if (!V) return out;
+    /* B: the last refresh's skill ships a newer page than any published one (its republish didn't land) */
+    const newest = vcmp(P, M) === -1 ? M : P;
+    if (vcmp(V.page, newest) === 1)
+      add("B:" + V.page, [
+        "Page " +
+          V.page +
+          " is ready. Claude puts it in place at the start of the next refresh: ask Claude to “" +
+          (meta.refreshPhrase || "refresh my catch-up") +
+          "”.",
+      ]);
+    /* C: an older copy of the skill ran the last refresh: one that knows versions wrote a lower page (C1), or one
+       from before them wrote lastRefresh alone (C2). Not while a refresh is running: versions lands at its end. */
+    const running =
+      isObj(status) && status.state === "running" && (now - Date.parse(status.startedAt || 0)) / 60000 < 25;
+    const c1 = vcmp(V.page, M) === -1;
+    const c2 = !!V.refresh && !!meta.lastRefresh && meta.lastRefresh !== V.refresh;
+    if ((c1 || c2) && !running)
+      add("C:" + (M || P), [
+        "The last refresh ran an older copy of the Messenger Catch-up skill than this page was made for. Until it's updated, new photos may not be stored or shown. Update the plugin wherever Claude runs your refreshes (claude.ai or Claude Desktop: Customize › Plugins; Claude Code: /plugin), and remove any copy of the skill you uploaded yourself. ",
+        { t: "How to install ↗", href: INSTALL_DOCS },
+      ]);
+    /* D and E: a Chrome whose helper is behind the one the last refresh's skill ships. Below 1.5 it can't update
+       itself (D); from 1.5 on it should have (E). "none" (no helper: Claude injected the current one) is never behind.
+       E only for the Chrome of the last refresh (the newest `at`): one used before has most likely updated itself
+       since. D for an older one says when it was used. An older NO_NAME entry may be any named Chrome, so it shows
+       nothing; when the newest is NO_NAME, an older entry on the same helper is probably that Chrome and shows nothing. */
+    if (vcmp(V.helper, V.helper) !== 0) return out;
+    const browsers = isObj(V.browsers) ? V.browsers : {};
+    const seen = Object.keys(browsers)
+      .sort()
+      .map(name => ({ name, b: browsers[name] }))
+      .filter(({ b }) => isObj(b) && now - Date.parse(b.at) <= VERSIONS_FRESH_DAYS * 864e5);
+    const last = seen.reduce((x, e) => (!x || Date.parse(e.b.at) > Date.parse(x.b.at) ? e : x), null);
+    seen.forEach(e => {
+      const { name, b } = e;
+      const isLast = e === last;
+      if (vcmp(b.helper, V.helper) !== -1) return;
+      if (!isLast && (name === NO_NAME || (last.name === NO_NAME && b.helper === last.b.helper))) return;
+      const cant = vcmp(b.helper, SELF_UPDATE_FROM) === -1;
+      if (!isLast && !cant) return;
+      const label = name === NO_NAME ? "Chrome" : "Chrome “" + name + "”";
+      const day = new Date(b.at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const chrome = isLast
+        ? "At the last refresh, " + label + " ran helper " + b.helper
+        : "When " + label + " was last used for a refresh (" + day + "), it ran helper " + b.helper;
+      const link = { t: "Install the userscript", href: install };
+      if (cant)
+        add("D:" + V.helper + ":" + name, [
+          chrome + ", which can't update itself. In that Chrome, open ",
+          link,
+          " and press Install; it keeps itself up to date after that.",
+        ]);
+      else
+        add("E:" + V.helper + ":" + name, [
+          chrome +
+            "; the current one is " +
+            V.helper +
+            ". It updates itself, usually within a day. To update now, use the extension's menu › Check for updates, or open ",
+          link,
+          ".",
+        ]);
+    });
+    return out;
+  }
+  /* Dismissed in this page load: localStorage can be blocked (a private window), and Dismiss still works then. */
+  const updHidden = new Set();
+  let updShown = null;
+  function updDismissed(key) {
+    if (updHidden.has(key)) return true;
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch (e) {
+      return false;
+    }
+  }
+  function renderUpdates() {
+    const box = $("#upd");
+    if (!box) return;
+    const inst = $("#us-install");
+    const list = updateNotices(S.meta, S.refresh, Date.now(), inst ? inst.href : "").filter(n => !updDismissed(n.key));
+    /* rebuild only when something changed, so the status region isn't announced again every minute */
+    const sig = JSON.stringify(list);
+    if (sig === updShown) return;
+    updShown = sig;
+    box.textContent = "";
+    list.forEach(n => {
+      const p = el("p");
+      p.dataset.key = n.key;
+      const msg = el("span", "msg");
+      n.parts.forEach(x => {
+        if (typeof x === "string") return msg.append(x);
+        const a = el("a", null, x.t);
+        a.href = x.href;
+        a.target = "_blank";
+        a.rel = "noopener";
+        msg.append(a);
+      });
+      const dis = el("button", "link", "Dismiss");
+      dis.type = "button";
+      dis.onclick = () => {
+        updHidden.add(n.key);
+        try {
+          localStorage.setItem(n.key, "1");
+        } catch (e) {}
+        renderUpdates();
+      };
+      p.append(msg, " ", dis);
+      box.append(p);
+    });
+    box.hidden = !list.length;
+  }
 
   /* ---------- threading and summary documents (v1.17) ----------
      A database document holds at most 256 KiB, so each is a collection: `current` names its block documents (`blocks`),
@@ -4499,7 +5852,24 @@
     const [db, sample] = await Promise.all([claude.use("db"), claude.use("sample")]);
     S.db = db;
     S.sample = sample;
+    /* limits() is local and free; until it answers, the contract's cap is used */
+    S.capReady = sampleCap(sample).then(() => {
+      if (S.promptCap !== PROMPT_CAP && S.msgs.length) keepPlace(renderSummary);
+    });
     renderRefresh();
+    /* the storage warning from a fresh listing, so it's right after a cleanup too (read only; imports record it) */
+    claude
+      .use("assets")
+      .then(a => a && typeof a.list === "function" && a.list())
+      .then(l => {
+        if (l && l.usage && typeof l.usage.files === "number") {
+          const u = l.usage;
+          S.assetLive = { at: new Date().toISOString(), files: u.files, bytes: u.bytes };
+          Object.assign(S.assetLive, { maxFiles: u.maxFiles, maxBytes: u.maxBytes });
+          renderStorage();
+        }
+      })
+      .catch(() => {});
     if (!sample) {
       $("#ask-go").disabled = true;
       $("#view-go").disabled = true;
@@ -4516,6 +5886,7 @@
           applyCfg();
           rebuild();
           renderRefresh();
+          renderUpdates();
         });
       },
       () => {},
@@ -4569,6 +5940,7 @@
       s => {
         S.refresh = s.exists ? s.data() : null;
         renderRefresh();
+        renderUpdates();
       },
       () => {},
     );
@@ -4591,11 +5963,12 @@
       },
       () => {},
     );
-    db.doc("photos/index").onSnapshot(
-      s => {
-        const d = s.exists ? s.data() : null;
-        S.photos = d ? d.byI || {} : null;
-        S.gifs = new Set((d && d.gifs) || []);
+    /* photos/index (pages up to 2.6) and the photos/b<start> blocks, merged */
+    db.collection("photos").onSnapshot(
+      q => {
+        const M = q.docs.length ? mergePhotos(collDocs(q)) : null;
+        S.photos = M ? M.byI : null;
+        S.gifs = M ? M.gifs : new Set();
         /* the summary shows photos too: in snippets and in context blocks */
         keepPlace(() => {
           renderMessages();

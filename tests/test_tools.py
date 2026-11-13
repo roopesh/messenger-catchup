@@ -1,7 +1,7 @@
 """Repo-level checks: helper copies in sync, the sync tool itself, the plugin and its ZIP, and SKILL.md's file references.
 Run: python3 -m unittest discover -s tests"""
 
-import contextlib, html, importlib.util, io, json, os, re, shutil, subprocess, tempfile, unittest, urllib.parse, zipfile
+import collections, contextlib, html, importlib.util, io, json, os, re, shutil, subprocess, tempfile, unittest, urllib.parse, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location("sync_helper", os.path.join(ROOT, "tools", "sync.py"))
@@ -33,6 +33,7 @@ REFERENCES = [
     "open-message.md",
     "outbox.md",
     "people.md",
+    "photos.md",
     "posting-with-helper.md",
     "restoring-a-summary.md",
     "scheduling.md",
@@ -196,6 +197,18 @@ class TestSkillReferences(unittest.TestCase):
             top = p.split("/")[0]
             self.assertTrue(("`%s`" % p in skill) or ("`%s/" % top in skill), "SKILL.md never mentions " + p)
 
+    def test_database_md_documents_sent(self):
+        """The page saves what each answer and view read (F6); a later Claude reading qa/* has to know an answer rested
+        on summaries, so the field and its parts are documented on their own line."""
+        page, db = in_skill("assets", "page.html"), in_skill("references", "database.md")
+        self.assertIn("row.sent = sent", page)
+        self.assertIn("v.sent = sent", page)
+        line = re.search(r"^- `sent` on `qa/\*` and `views/\*`.*$", db, re.M)
+        self.assertTrue(line, "database.md has no line for sent")
+        self.assertIn("afterFrom:", page)
+        for part in ("`from`", "`to`", "`sumFrom`", "`afterFrom`"):
+            self.assertIn(part.strip("`"), line.group(0))
+
     def test_every_meta_chat_field_the_page_writes_is_documented(self):
         """Anchored on each doc("meta/chat").update(...): an object literal, or a variable traced back to its literal,
         the fields assigned to it before the write, and (for setMarker's Object.assign) what its callers pass."""
@@ -228,9 +241,11 @@ class TestSkillReferences(unittest.TestCase):
         self.assertTrue(
             {"lastI", "ownLastMid", "markerTo", "caughtUpAt", "markerSetAt", "anchorMids"} <= fields, fields
         )
+        # the meta/chat line, plus the lines of their own for fields added later (`meta/chat.photosOwed`, ...)
         meta = re.search(r"^- `meta/chat`:(.*)$", skill, re.M).group(1)
+        meta += " ".join("`%s`" % f for f in re.findall(r"^- `meta/chat\.(\w+)`", skill, re.M))
         for f in fields:
-            self.assertIn("`%s`" % f, meta, "meta/chat field not documented in SKILL.md: " + f)
+            self.assertIn("`%s`" % f, meta, "meta/chat field not documented in references/database.md: " + f)
 
     def test_every_referenced_file_exists(self):
         text = in_skill("SKILL.md") + "".join(in_skill("references", f) for f in REFERENCES)
@@ -306,7 +321,7 @@ class TestSkillReferences(unittest.TestCase):
         toasts = re.search(
             r"^## Import toasts.*?(?=^## )", in_skill("references", "troubleshooting.md"), re.M | re.S
         ).group(0)
-        for t in ("REPAIRED", "Photos: upload failed", "Photos not stored", "Another import is running"):
+        for t in ("REPAIRED", "Photos not stored", "Another import is running", "`references/photos.md` › Waiting"):
             self.assertIn(t, toasts)
 
     def test_setup_points_at_the_field_names_it_seeds(self):
@@ -443,6 +458,296 @@ class TestSkillReferences(unittest.TestCase):
         step8 = re.search(r"^8\. Handle the outbox.*$", skill, re.M).group(0)
         self.assertIn("read `references/outbox.md` in full first", step8)
         self.assertIn("Never send a message", skill, "the hard rule stays in SKILL.md")
+
+
+class TestPhotos(unittest.TestCase):
+    """R2: photos stored as they upload. What SKILL.md and references/photos.md must say for the page's states, stop
+    codes and timings, the backfill, the storage warning and the cleanup."""
+
+    def setUp(self):
+        self.skill = in_skill("SKILL.md")
+        self.page = in_skill("assets", "page.html")
+        self.doc = in_skill("references", "photos.md")
+
+    def section(self, name):
+        return re.search(r"^## %s.*?(?=^## |\Z)" % name, self.doc, re.M | re.S).group(0)
+
+    def tune(self, key):
+        lit = re.search(r"const IMPORT_TUNE = Object\.freeze\(\s*Object\.assign\(\s*(\{[^{}]*\})", self.page).group(1)
+        return int(re.search(r"\b%s:\s*(\d+)" % key, lit).group(1))
+
+    def test_steps_point_at_photos_md(self):
+        step3 = re.search(r"^3\. .*$", self.skill, re.M).group(0)
+        step4 = re.search(r"^4\. Import by paste:.*?(?=^5\. )", self.skill, re.M | re.S).group(0)
+        step5 = re.search(r"^5\. .*$", self.skill, re.M).group(0)
+        self.assertIn("`meta/chat.photosOwed` set: `references/photos.md` › Backfill", step3)
+        self.assertIn("`references/photos.md` › Waiting", step4)
+        self.assertIn("never close the page tab", step4)
+        self.assertIn("`references/photos.md` › Looking", step5)
+        self.assertNotIn("photos/index", step5)
+
+    def test_every_state_and_stop_the_page_writes_has_a_rule(self):
+        imp = self.page[self.page.index("async function planPhotos(") : self.page.index("/* Status line: refreshes")]
+        states = set(re.findall(r'R\.state = (?:[\w.]+ \? )?"(\w+)"(?: : "(\w+)")?', imp))
+        states = {s for pair in states for s in pair if s} | set(re.findall(r'state: "(\w+)"', imp))
+        self.assertEqual(states, {"uploading", "done", "partial", "refused", "failed"})
+        stop_of = re.search(r"const stopOf = c =>(.*?);\n", self.page, re.S).group(1)
+        stops = set(re.findall(r'\? "(\w+)"', stop_of)) | set(re.findall(r': "(\w+)"\s*$', stop_of))
+        stops |= set(re.findall(r'\bstop = "(\w+)"', self.page)) | {"index"}  # a block write refused
+        self.assertEqual(
+            stops, {"rate_limited", "timeout", "quota", "auth", "no_assets", "unavailable", "lease", "index"}
+        )
+        waiting = self.section("Waiting")
+        for s in states:
+            self.assertIn("`%s`" % s, waiting, "photos.md › Waiting has no rule for state " + s)
+        rules = re.findall(r"^   - (.*)$", waiting, re.M)
+        for s in stops:
+            self.assertTrue(any("`%s`" % s in r.split(":")[0] for r in rules), "no rule for stop " + s)
+        self.assertIn("Don't paste again", [r for r in rules if r.startswith("`quota`")][0])
+        self.assertIn("even in a scheduled run", [r for r in rules if r.startswith("`quota`")][0])
+
+    def test_stall_and_wait_fit_the_page_timings(self):
+        """Two reads at least 60 s apart with the same beat: at least 3 heartbeats; the 10-minute cap is longer than
+        one upload's timeout, so a single slow photo never ends the wait."""
+        waiting = self.section("Waiting")
+        stall = int(re.search(r"at least (\d+) s apart show the same `beat`", waiting).group(1))
+        cap = int(re.search(r"Wait at most (\d+) minutes in total", waiting).group(1))
+        self.assertGreaterEqual(stall * 1000, 3 * self.tune("beatMs"))
+        self.assertGreater(cap * 60000, self.tune("uploadTimeoutMs"))
+        self.assertGreaterEqual(stall * 1000, self.tune("leaseMs"), "a stalled tab's lease lapses within the stall")
+        self.assertIn("never `beat` with your clock", waiting)
+        self.assertIn("leave the page tab open", waiting)
+
+    def test_backfill_matches_the_pages_give_up_window(self):
+        backfill = self.section("Backfill")
+        window = self.tune("owedWindow")
+        self.assertIn("`S = max(fromI, meta.lastI − %d, 3)`" % window, backfill)
+        self.assertIn("`BASE = S−1`", backfill)
+        self.assertIn("more than %d messages behind the newest" % window, self.doc)
+        # photos owed on #0-#2 can't be backfilled: the page gives them up, and the procedure says so
+        self.assertIn('`e:"no-backfill"`', backfill)
+        self.assertIn('"no-backfill"', self.page)
+        # (that a capture's own owed photos are never given up by it is the page test "review 12")
+
+    def test_only_store_unavailable_is_retried(self):
+        """assets.d.ts: store_unavailable is the only retry-once code; upstream_error includes an unanswered call."""
+        loop = self.page[self.page.index("res = await upload(ph);") : self.page.index("if (res.code && !GIVE_UP")]
+        self.assertIn('c === "rate_limited"', loop)
+        self.assertIn('c === "store_unavailable"', loop)
+        self.assertNotIn('stopOf(c) === "unavailable"', loop)
+        self.assertIn("unpublished or being deleted", self.page, "quota_or_state is also an unpublished page")
+        self.assertIn("unpublished or being deleted", self.section("Waiting"))
+
+    def test_waiting_and_cleanup_never_trust_a_dead_tabs_record(self):
+        """Review of #42: a paste is matched by sha and at; a record stuck at uploading with a frozen beat doesn't
+        block Cleanup; step 5 leaves the page tab open when Waiting says so; the lease's time is to the second."""
+        waiting = self.section("Waiting")
+        self.assertIn("**and** its `at` differs from the one you noted", waiting)
+        cleanup = self.section("Cleanup")
+        self.assertIn("`get` it again at least 60 s later. If `beat` changed", cleanup)
+        self.assertIn("If it didn't, the tab that wrote it is gone: carry on", cleanup)
+        step5 = re.search(r"^5\. .*$", self.skill, re.M).group(0)
+        self.assertTrue(step5.startswith("5. Close the page tab (unless photos.md › Waiting says to leave it open)"))
+        self.assertIn("fmtTime(L.until)", self.page)
+        self.assertIn('second: "2-digit"', self.page)
+
+    def test_every_import_toast_has_a_rule(self):
+        """Waiting sends refused and failed to troubleshooting › Import toasts, which must cover them."""
+        toasts = re.search(
+            r"^## Import toasts.*?(?=^## )", in_skill("references", "troubleshooting.md"), re.M | re.S
+        ).group(0)
+        for s in ('ending "Nothing saved."', '"Import failed: …"', '"Saved, but the read-back of c…', "`refused`"):
+            self.assertIn(s, toasts)
+        self.assertIn("Saved, but the read-back of ", self.page)
+        self.assertIn('msg: "Import failed: "', self.page)
+
+    def test_an_older_skill_says_photos_wont_be_stored(self):
+        """A pre-1.22 SKILL.md closes the page tab right after IMPORT OK and reads photos/index: on a 2.7 page photos
+        are neither stored nor seen until the plugin is updated. The page's notice and the older-copy section say so."""
+        newer = re.search(
+            r"^## `pageVersion` is newer.*?(?=^## |\Z)", in_skill("references", "updating-the-page.md"), re.M | re.S
+        ).group(0)
+        self.assertIn("new photos aren't stored or seen until the plugin is updated", newer)
+        self.assertIn("so new photos aren't stored or seen until it's updated", newer)
+        self.assertIn("**Never republish**", newer, "F5's rule stays")
+        self.assertIn("Until it's updated, new photos may not be stored or shown.", self.page)
+
+    def test_setup_seeds_no_photo_index(self):
+        """photos/index is never written again; older pages read a missing one as empty."""
+        seed = re.search(r"^4\. \*\*Seed the database\*\*.*$", in_setup("SKILL.md"), re.M).group(0)
+        self.assertNotIn("photos/", seed)
+
+    def test_every_new_photo_is_looked_at(self):
+        """The owner kept today's behavior: no cap on the photos Claude opens."""
+        looking = self.section("Looking")
+        self.assertIn("Open every one", looking)
+        self.assertIn("`stored`", looking)
+        self.assertNotRegex(looking, r"at most \d+")
+
+    def test_storage_warning_and_cleanup_are_safe(self):
+        storage = self.section("Storage")
+        self.assertIn("80%", storage)
+        self.assertIn("usageLevel(u) < 0.8", self.page)
+        cleanup = self.section("Cleanup")
+        for s in (
+            "only when the user asks",
+            "never in a scheduled run",
+            "**never delete a file any `photos` document references**",
+            "SHA-256",
+            "Without a clear yes",
+            "List `photos` again",
+            '`Artifact` `action:"delete"`',
+        ):
+            self.assertIn(s, cleanup)
+        self.assertIn("offer Cleanup", storage)
+
+    def test_database_md_documents_the_photo_documents(self):
+        db = in_skill("references", "database.md")
+        for s in (
+            "- `photos/b<start>`",
+            "- `meta/chat.photosOwed`",
+            "- `meta/chat.assetUsage`",
+            "- `refresh/lastImport`",
+            "`stored` `[{i,k,id}]`",
+            "never writes it again",
+        ):
+            self.assertIn(s, db)
+        for f in ("photosOwed", "assetUsage"):
+            self.assertRegex(self.page, r'doc\("meta/chat"\)\.update\(\{ %s: ' % f)
+        self.assertNotRegex(self.page, r'doc\("photos/index"\)\.(set|update)', "the old index is never written")
+
+
+class TestUpdateNotice(unittest.TestCase):
+    """F5: Claude writes meta/chat.versions with every lastRefresh, and the page compares it with its own version. The
+    skill text must document every key the page reads, and tell Claude when to write it."""
+
+    def setUp(self):
+        self.page = in_skill("assets", "page.html")
+        self.db = in_skill("references", "database.md")
+        m = re.search(r"^## Versions\n.*?(?=^## )", self.db, re.M | re.S)
+        self.versions = m.group(0) if m else ""
+
+    def test_database_md_documents_versions(self):
+        self.assertRegex(self.db, r"(?m)^- `meta/chat\.versions` \(Claude; with every `lastRefresh`")
+        for k in ("page", "helper", "refresh", "browsers", "at"):
+            self.assertIn("`%s`" % k, self.versions, k)
+        self.assertIn('`"none"`', self.versions)
+        self.assertIn("30 days", self.versions)
+
+    def test_every_versions_key_the_page_reads_is_documented(self):
+        body = re.search(r"function updateNotices\(.*?\n  \}\n", self.page, re.S).group(0)
+        keys = set(re.findall(r"\bV\.(\w+)", body)) | set(re.findall(r"\bb\.(\w+)", body))
+        self.assertTrue({"page", "helper", "refresh", "browsers", "at"} <= keys, keys)
+        for k in keys:
+            self.assertIn("`%s`" % k, self.versions, "database.md › Versions doesn't name " + k)
+
+    def test_versions_window_matches_the_page(self):
+        days = re.search(r"const VERSIONS_FRESH_DAYS = (\d+);", self.page).group(1)
+        self.assertIn("older than %s days" % days, self.versions)
+
+    def test_lastrefresh_is_always_written_with_versions(self):
+        """Every place that tells Claude to write lastRefresh names versions, SKILL.md's steps first: they're what a
+        refresh follows (a run that wrote lastRefresh alone after one that wrote versions shows "an older copy of the
+        skill ran" on a current plugin). Step 7 says where the shape is."""
+        skill = in_skill("SKILL.md")
+        texts = {"SKILL.md": skill, "scripts/catchup.py": in_skill("scripts", "catchup.py")}
+        texts.update({"references/" + f: in_skill("references", f) for f in REFERENCES})
+        found = collections.Counter()
+        for name, text in texts.items():
+            for lit in re.findall(r"\{lastRefresh[^}]*\}", text):
+                found[name] += 1
+                self.assertIn("versions", lit, name + ": " + lit)
+        self.assertGreaterEqual(found["SKILL.md"], 2, "the nothing-new path and step 7")
+        self.assertGreaterEqual(sum(found.values()), 5)
+        step7 = re.search(r"^7\. .*$", skill, re.M).group(0)
+        self.assertIn("{lastRefresh, coverage, versions}` (`references/database.md` › Versions)", step7)
+        self.assertIn("{lastRefresh, coverage, versions:{page, helper, refresh, browsers:", self.versions)
+
+    def test_page_version_check_goes_both_ways(self):
+        skill = in_skill("SKILL.md")
+        self.assertIn(
+            "If `meta/chat.pageVersion` differs from `PAGE_VERSION` in `assets/page.html` (compare number by number),"
+            " read `references/updating-the-page.md` first.",
+            skill,
+        )
+        doc = in_skill("references", "updating-the-page.md")
+        older = re.search(r"^## `pageVersion` is older.*?(?=^## )", doc, re.M | re.S).group(0)
+        newer = re.search(r"^## `pageVersion` is newer.*", doc, re.M | re.S).group(0)
+        self.assertIn("publish `assets/page.html` to that url", older)
+        self.assertIn("`{pageVersion, versions:{page}}`", older)
+        for must in ("**Never republish**", "never lower `pageVersion`", "carry on with the run", "Update the"):
+            self.assertIn(must, newer)
+        self.assertIn("scheduled runs included", newer)
+        self.assertIn("`{pageVersion, versions:{page}}`", self.versions)
+        # a newer major stops instead of carrying on; minors can change what's stored too (R2 did, in v1.22.0)
+        self.assertNotIn("only changes in a major release", doc)
+        major = re.search(r"^- \*\*A newer major\*\*.*$", newer, re.M)
+        self.assertTrue(major, "updating-the-page.md › newer: no **A newer major** rule")
+        for must in ("stop before step 1", "write nothing", "tell the user"):
+            self.assertIn(must, major.group(0))
+        self.assertIn("Claude Code: `/plugin`", newer)
+        # setup reuses an existing page the same way: pageVersion and versions.page in one pinned update, or the page
+        # would say an older skill ran (versions.page from the last refresh below the new pageVersion)
+        reuse = re.search(r"^   - `Artifact list` .*$", in_setup("SKILL.md"), re.M).group(0)
+        self.assertIn("`{pageVersion, versions:{page}}`", reuse)
+        self.assertIn("one pinned update", reuse)
+
+    def test_self_update_threshold_matches_helper_md(self):
+        """The page's D notice (can't update itself) uses the same line as helper.md › Versions, which is the first
+        helper with @updateURL."""
+        page_v = re.search(r'const SELF_UPDATE_FROM = "([\d.]+)";', self.page).group(1)
+        helper_md = re.search(
+            r"\*\*older than ([\d.]+):\*\* it was installed by pasting", in_skill("references", "helper.md")
+        )
+        self.assertEqual(helper_md.group(1), page_v)
+        first = re.search(r"\*\*Helper ([\d.]+):\*\* `@updateURL`", read("CHANGELOG.md"))
+        self.assertEqual(first.group(1), page_v)
+
+    def test_notice_install_link_is_the_release_url(self):
+        """One install URL in the page (the #us-install anchor); the notices read it from there, and How to install
+        points at the README's Install section."""
+        self.assertEqual(self.page.count("releases/latest/download/helper.user.js"), 1)
+        self.assertRegex(
+            self.page, r'id="us-install"\s+href="https://github\.com/[^"]+/releases/latest/download/helper\.user\.js"'
+        )
+        render = re.search(r"function renderUpdates\(.*?\n  \}\n", self.page, re.S).group(0)
+        self.assertIn('$("#us-install")', render)
+        docs = re.search(r'const INSTALL_DOCS = "([^"]+)";', self.page).group(1)
+        self.assertTrue(docs.endswith("#install"), docs)
+        self.assertRegex(read("README.md"), r"(?m)^## Install$")
+
+    def test_helper_md_records_the_browser(self):
+        which = re.search(r"^## Which Chrome.*?(?=^## )", in_skill("references", "helper.md"), re.M | re.S).group(0)
+        self.assertIn("`meta/chat.versions.browsers`", which)
+        self.assertIn('`"none"`', which)
+
+    def test_page_never_writes_versions(self):
+        """versions is Claude's: the page only reads it (dismissals stay in localStorage). Catches a key with any value,
+        quoted or not, the shorthand `{versions}`, a dotted update path and an assignment."""
+        for pat in (
+            r"""[{,]\s*["'`]?versions["'`]?\s*:""",  # { versions: …, "versions": …, 'versions': … (not a ?: ternary)
+            r"[{,]\s*versions\s*[,}]",  # update({versions}), {a, versions}
+            r"""["'`]versions\.""",  # update({"versions.page": …})
+            r"\.versions\s*=[^=]",
+            r"\[\s*[\"'`]versions[\"'`]\s*\]\s*=[^=]",
+        ):
+            self.assertNotRegex(self.page, pat)
+
+    def test_page_never_writes_versions_catches_writes(self):
+        """The check above, on the writes it must catch."""
+        test = TestUpdateNotice("test_page_never_writes_versions")
+        for bad in (
+            'S.db.doc("meta/chat").update({ versions: { page: "9.9" } });',
+            'S.db.doc("meta/chat").update({ "versions": v });',
+            'S.db.doc("meta/chat").update({ versions });',
+            'S.db.doc("meta/chat").update({ lastI, versions });',
+            'S.db.doc("meta/chat").update({ "versions.page": "9.9" });',
+            "meta.versions = {};",
+            'meta["versions"] = {};',
+        ):
+            test.page = self.page + "\n" + bad
+            with self.assertRaises(AssertionError, msg=bad):
+                test.test_page_never_writes_versions()
 
 
 class TestHelper2(unittest.TestCase):

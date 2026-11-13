@@ -1,5 +1,15 @@
 # Updating the page
 
-Read this on a refresh when `meta/chat.pageVersion` is older than `PAGE_VERSION` in `assets/page.html` (compare number by number, never as decimals: 2.0 is newer than 1.9, and 1.10 would be newer than 1.9).
+Read this on a refresh when `meta/chat.pageVersion` differs from `PAGE_VERSION` in `assets/page.html`. Compare number by number, never as decimals: 2.0 is newer than 1.9, and 1.10 would be newer than 1.9.
 
-Update the page before anything else: `Artifact read` its url, publish `assets/page.html` to that url (leave out `capabilities` so the stored ones carry over; the database survives), then update `meta/chat` `{pageVersion}` pinned with `if_version`, and say so in the report.
+## `pageVersion` is older: update the page
+Update the page before anything else: `Artifact read` its url, publish `assets/page.html` to that url (leave out `capabilities` so the stored ones carry over; the database survives), then update `meta/chat` `{pageVersion, versions:{page}}` (both set to this `PAGE_VERSION`, in one update) pinned with `if_version`, and say so in the report. Writing `versions.page` with `pageVersion` keeps the page from saying an older skill ran if this run stops before step 7. If the publish is refused, leave `pageVersion` as it is and carry on; step 7 still writes `versions`, so the page says a newer page is waiting, and the next run tries again.
+
+## `pageVersion` is newer: this copy of the skill is older than the page
+The page was published by a newer copy of this skill (the user has the updated plugin somewhere, and this run came from an older copy: an uploaded skill, or an old scheduled task).
+- **Never republish** and never lower `pageVersion`: that would put an older page in place of a newer one.
+- **A newer major** (the number before the dot of `pageVersion` is higher than this `PAGE_VERSION`'s): stop before step 1 and write nothing (a scheduled run still reschedules), because that page may store things this copy would misread; tell the user with the line below, scheduled runs included.
+- **The same major:** carry on with the run as usual. A minor release can change what's stored too, so this run may miss what it doesn't know; `catchup.py` stops on a threading or summary layout it doesn't know (`references/troubleshooting.md`).
+- **Photos may be lost on this run.** A newer page can store photos in a way this copy doesn't follow (since page 2.7 it uploads them after the "IMPORT OK" toast and indexes them in `photos/b<start>`; a copy without `references/photos.md` closes the page tab too soon, never backfills, and reads `photos/index`, which gets no new photos). So new photos aren't stored or seen until the plugin is updated. Still never republish.
+- Write `versions` as usual (`references/database.md` › Versions). Its lower `page` is what makes the page tell the user an older skill ran; never write a higher `page` to make that go away.
+- In the report, scheduled runs included, add one line: "This copy of the skill is older than the one that published your page (page <pageVersion>, this copy's <PAGE_VERSION>), so new photos aren't stored or seen until it's updated. Update the Messenger Catch-up plugin (claude.ai or Claude Desktop: Customize › Plugins; Claude Code: `/plugin`) and remove any copy of the skill you uploaded yourself."

@@ -19,7 +19,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G1 | P2 | doc gap | `meta/chat` fields written by the page are missing from SKILL.md; `pageVersion` never updated on republish · **done** (v1.2.0, v1.4.0) |
 | G2 | P2 | doc gap | Page says Claude reads `views`, ideas and `qa`; SKILL.md never tells it to · **done** (v1.4.0) |
 | G3 | P2 | doc gap | Page offers "say reply 3232 to Claude"; SKILL.md has no procedure for it · **done** (v1.4.0) |
-| R2 | P2 | risk | Capture size is unbounded (photos travel inline as base64) |
+| R2 | P2 | risk | Photos lost when the page tab closes mid-upload (capture size measured: not the limit) · **done** (v1.22.0) |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
 | R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **done** (v1.7.2: repo public, branch protection) |
 | R9 | P3 | risk | Outbox name matching assumes Messenger's "Replying to …" and stored sender names agree. Live (Nov 7): labels are the nickname or the first name, and `to` uses the same; the reply bar itself is still unverified |
@@ -28,6 +28,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
 | R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up |
+| R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 715 and adds about 55 a day (to design) |
+| R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
+| R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again |
+| R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
@@ -73,6 +77,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B47 | P2 | bug | A build that gives bullets to a conversation with an old string synopsis crashes (`str` has no `append`) · **done** (v1.18.1) |
 | B48 | P2 | bug | Reply on a photo-only message: `jump` finds no Reply button, so the reply is marked failed (#32 §2) · **done** (v1.20.0) |
 | B49 | P3 | bug | A scan that stops growing hangs (stops) or reads as the top of the chat (first run) (#32 §5) · **done** (v1.20.0) |
+| B50 | P3 | bug | `troubleshooting.md` says the skill's version is in `VERSION`, "shipped with it"; `VERSION` is at the repo root, outside `plugin/` · **done** (v1.22.0) |
+| B51 | P3 | bug | A built view's reply could set its own `kind`: `{kind:"view", ...v}` let `kind:"idea"` from the model through, posing as a method idea Claude acts on after a refresh · **done** (v1.22.0) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -83,7 +89,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
 | G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads · **done** (v1.18.0) |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) · **done** (v1.20.0, option B: silent failures warn; English labels remain) |
-| R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt · date-range speed **done** (v1.20.1); prompt size with F6 |
+| R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt · **done** (v1.20.1 date-range speed; v1.22.0 prompt size, with F6). Show older paging is F15 |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
 | C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) · **done** (v1.7.3; range summaries kept, they're live) |
 | C3 | P3 | cleanup | Leftover `cc*` names and chat-specific comments · **done** |
@@ -95,8 +101,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | T5 | P3 | test | No CI · **done** |
 | F1 | P3 | feature | More than one chat per page |
 | F2 | P3 | feature | Faster distant photo-reply parents · **done** (v1.14.0) |
-| F5 | P3 | feature | Page shows "update available" when its version is behind |
-| F6 | P3 | feature | Ask Claude over long histories |
+| F5 | P3 | feature | Page shows "update available" when its version is behind · **done** (v1.22.0) |
+| F6 | P3 | feature | Ask Claude over long histories · **done** (v1.22.0: one prompt budget; older history as conversation and day lines) |
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
@@ -105,6 +111,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.20.0) |
 | F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
 | F14 | P3 | feature | The page shows when the next scheduled refresh is due (`refresh/schedule.nextAt`) |
+| F15 | P3 | perf | "Show older messages" renders the whole history at once; page it by day (R4's remainder) |
+| F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
+| F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
+| F18 | P3 | feature | Range summaries longer than one request: split into parts and merge |
 
 ---
 
@@ -307,6 +317,14 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Tests:** sim `E: history stops loading …: err "stalled"`, `E: a first run that stalls is "stalled", not a truncated "top of the chat"`, `E: anchors that are gone …` (the first two fail on 1.9).
 - **Still to see live:** whether Messenger's loading indicator is a `[role="progressbar"]` at the top of the list. If it isn't, a stall at the top still reads as the top after 12 s, as before; if one were always there, a short chat's first run would stall instead of finishing.
 
+### B50 · P3 · `troubleshooting.md` says `VERSION` ships with the skill · done (v1.22.0)
+- **Found:** writing F5's design. `references/troubleshooting.md` › Tested said "The skill's version is in `VERSION` (shipped with it)". `VERSION` is at the repo root, not in `plugin/`, so an installed skill can't read its release version.
+- **Fix:** the line now says the release version is the plugin's and isn't in the skill's folder, and names what the skill can read: `PAGE_VERSION` in `assets/page.html` and `@version` in `assets/helper.user.js`. F5 compares those for the same reason.
+
+### B51 · P3 · A view reply could pose as a method idea · done (v1.22.0)
+- **Where:** `page.html`, Views › Build view: the model's JSON was saved as `{ kind: "view", ...v }`, so a reply carrying `kind: "idea"` replaced `kind: "view"`. Method ideas (`views/*` with `kind:"idea"`) are what Claude checks and acts on after each refresh (the refresh skill's SKILL.md › Method ideas). Found in the review of PR #42; it predates F6.
+- **Fix:** `{ ...v, kind: "view" }`. Test: page `history` › `B51` (a reply with `kind:"idea"` is saved as a view); it fails on the page before the fix.
+
 ## Risks
 
 ### R1 · P1 · Unpinned page writes; half-finished imports · done
@@ -325,10 +343,36 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Tests:** 17 page checks, shown to fail against the v1.1.2 page (EXPERIMENTS.md §12).
 - **Still true:** a page and Claude can both write `meta/chat`. Claude's writes are pinned, and the page only merges its own fields (`update`), so neither side clobbers the other's fields.
 
-### R2 · P2 · Capture size is unbounded
-- **Where:** `helper.user.js:103-105`
-- **What:** every photo in the window travels base64-encoded inside the clipboard text. A first run of 1,000 messages, or a long gap, can mean many MB on the clipboard and in one paste event. The real limits of clipboard, paste and upload haven't been measured.
-- **Fix:** measure; cap photos per capture (send the rest on the next run, or split into several pastes).
+### R2 · P2 · Photos lost when the page tab closes mid-upload · done (v1.22.0)
+- **Where:** `helper.user.js:103-105`, the page's importer
+- **What (first filed):** every photo in the window travels base64-encoded inside the clipboard text, and the real limits of clipboard, paste and upload hadn't been measured.
+- **Measured (Nov 12, EXPERIMENTS.md §14):** not the limit. Captures up to 400 MB copy, paste and import locally in under 3 s; the helper fails only at about 512 MB (JavaScript's longest string). Live: about 0.5 s per upload and about 54 KB per photo on the owner's page.
+- **The real loss:** the page wrote `photos/index` only after every upload finished, and step 5 closed the page tab 8–10 s after the paste. A tab closed mid-upload left the photos that had landed unindexed (lost), and a re-paste uploaded them again as duplicates. A quota failure said "paste again", which could never work, and `photos/index` would have hit the 256 KiB cap at about 2,500 photos.
+- **Done in v1.22.0 (owner's decisions, Nov 12):**
+  - The page indexes each photo as it lands, in 500-message block documents `photos/b<start>`; `photos/index` is read, never written. Owed slots are `null` and counted in `meta/chat.photosOwed`.
+  - `refresh/lastImport` says `uploading` with a 10 s heartbeat that also renews a 60 s import lease, then `done` or `partial` with a `stop` code; each upload error code has its own handling (retry once, wait and retry, give the photo up, or stop with the right advice).
+  - `references/photos.md`: Claude waits while the heartbeat moves, at most 10 minutes (stall: two of its reads at least 60 s apart with the same beat), never closes the page tab while uploads run, and the next run backfills owed photos by scanning from just before them, up to 300 messages behind the newest; older ones are given up and reported. Every new photo is still opened (no cap). No capture splitting.
+  - Photos stay the original files. Asset usage is recorded with each import (`meta/chat.assetUsage`), the page warns at 80% of either limit, and `photos.md` › Cleanup removes duplicates and unused files, only when the user asks and confirms (R13 is the long-term fix).
+- **Tests:** page section `photos` (P1–P23 and the usage checks; the key ones fail on 2.6), `standIn` (scripted uploads, quota, `list`, `steal`, paste waits), sim section G (the backfill scan and multi-photo captures), `TestPhotos` in `tests/test_tools.py`.
+
+### R13 · P2 · A page holds at most 5,000 photo files
+- **Found (Nov 12, live, read only):** the owner's page has 715 asset files against claude.ai's 5,000-file limit per artifact (bytes: 38.8 MB of 1 GiB), growing about 55 files a day, so it reaches the limit in roughly 11 weeks. There are also more files than indexed photos (715 against 549 in the old `byI`), probably copies from re-pastes before v1.22.
+- **Now (v1.22.0):** the page records usage with each import and warns at 80%; `references/photos.md` › Cleanup removes copies and unused files on the user's say-so. That buys time, not a fix.
+- **To design:** for example keep older photos as links only (Messenger's own, which expire), move older photos to an archive page with its own quota, or store a smaller copy of old photos. Each has costs (lost photos, a second page to maintain, re-encoding the owner ruled out for now).
+
+### R15 · P3 · Photos the helper couldn't fetch aren't recorded as owed
+- **What:** when the helper can't fetch a photo (`FAILED #…` in the capture summary), the capture has no slot for it, so the page never marks it owed and no backfill retries it.
+- **Fix:** the helper lists them (`phfail:[{i,k}]`, helper 2.1) and the page records them as owed `null` slots, so the next run's backfill retries them like any other owed photo.
+
+### R16 · P3 · Backfill captures can misplace a photo's slot, and fetch every photo again
+- **Found:** the review of PR #42 (v1.22.0).
+- **Slot shift:** the helper numbers a message's photos `k` = 0, 1, … in the order of the images it finds loaded. On a backfill scan (messages already stored, scrolled past quickly), an image that hasn't loaded yet is skipped, so the photos after it take a lower `k`. The page then stores a photo in another photo's slot: the owed slot stays owed and a stored slot is skipped as "already stored", or a photo lands under the wrong `k`.
+- **Refetching:** a backfill window of up to 300 messages fetches and base64-encodes every photo in it, stored ones included, only for the page to skip them. The paste grows with every stored photo in the window.
+- **Fix (to design):** key slots by something stable (the photo's Messenger attachment id from its link) instead of position, and let the helper skip photos the page says are stored (for example a `skip:[{i,k}]` or attachment-id list passed to `full`); helper 2.1 with R15.
+
+### R17 · P3 · The helper notice runs ahead of the release
+- **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.
+- **Options:** run `tools/release.sh` straight after every merge that bumps the helper (today's practice, so the gap is usually minutes); or have the page hold E until a day after `versions.helper` first appears (a `since` the skill keeps), which the owner turned down for F5 ("flagged right away").
 
 ### R3 · P3 · Messenger markup dependency (known) · done (v1.20.0, option B)
 - English UI labels, `[role="log"]`, `data-message-id`, "Go to replied message", "Reply to this message", the `At <time>, <name>: ` aria-label shape. See F4.
@@ -342,7 +386,9 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **What:** the page rebuilds the full list on every chunk change; Ask Claude with "include older messages" sends every stored message (~3,900 and growing). `prompt_too_large` is handled but makes the option useless.
 - **Fix:** see F6.
 - **Date-range mode fixed in v1.20.1:** `inWin()` worked the window out once per message and citation (5–6 s per update at 6,400 messages). It's now worked out once per message list and marker; the page section `speed` counts it.
-- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0): each is a collection of block documents, so no document grows with the history. The page still holds every chunk and block in memory, and Ask Claude's prompt still grows.
+- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0): each is a collection of block documents, so no document grows with the history. The page still holds every chunk and block in memory.
+- **Prompt size done in v1.22.0** (F6): Ask, Views and range summaries measure their prompt in UTF-8 bytes against `sample.limits()`; "include older" works at any size. The page section `history` counts it (H1–H16).
+- **What remains is F15:** "Show older messages" still renders every stored message (0.5 s and 79k elements at 6,400 messages in an earlier bench). The default view is the window only.
 
 ### R5 · P2 · E2EE and messenger.com
 - **What:** `/messages/e2ee/t/` URLs are stored and used but untested against a live E2EE chat. The userscript `@match` covers only `www.facebook.com/messages/*`, so `messenger.com` isn't supported.
@@ -541,12 +587,38 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Warns only:** missing avatars (no full names), or mostly unreadable date labels.
   - **Tests:** the sim breaks each hook on the mock and checks that it's named. This covers R3's "fail clearly" half; R3 itself (English labels, markup) remains.
 
-### F5 · P3 · "Update available" on the page
+### F5 · P3 · "Update available" on the page · done (v1.22.0)
 - The page could compare its `PAGE_VERSION` with `meta/chat.pageVersion` and the helper's `data-mc-helper` version, and say when either is behind.
+- **What stood in the way:** the page can't see `data-mc-helper` (it's on the facebook.com tab) and has no way to fetch GitHub releases (no network capability; it would also tell GitHub whenever the user reads their chat). And `pageVersion` equals `PAGE_VERSION` on a healthy page; only the skill knows what it ships.
+- **Done in v1.22.0:** Claude writes `meta/chat.versions` with every `lastRefresh`: `page` and `helper` (what this skill ships), `refresh` (a copy of `lastRefresh`) and `browsers` (one entry per Chrome, by name: the helper read there, or `"none"` when injected, and when). A republish writes `versions.page` together with `pageVersion`. The page shows at most one calm, dismissible line per issue under the status line:
+  - **A** this tab is older than `pageVersion` (reload);
+  - **B** the last refresh's skill ships a newer page than the published one (a republish didn't land);
+  - **C** an older copy of the skill ran the last refresh: `versions.page` below `pageVersion`, or `lastRefresh` written without `versions` (a copy from before this release, such as an uploaded skill or an old scheduled task); not while a refresh is running;
+  - **D** a Chrome ran a helper below 1.5, which can't update itself; **E** a Chrome ran a self-updating helper (1.5+) that is behind, flagged right away (the owner's call: no grace period). Entries older than 30 days are left out.
+  - Dismissals stay in the browser's `localStorage`, keyed to the version that would fix it, so they come back with the next release; with storage blocked, Dismiss works for that page load. The page writes nothing to the database.
+  - An older skill that finds a newer `pageVersion` never republishes (that would downgrade the page): it carries on, writes its lower `versions.page` (so C shows) and tells the user to update the plugin (`references/updating-the-page.md`).
+- **Tests:** page section `notices` (U1–U20: every notice and its wording, number-by-number comparison, the running-refresh rule, the 30-day window, unreadable versions, order, Dismiss and its return on a new version, blocked storage, live updates, a browser name with markup, phone width, dark mode, no database, and the last release's page reading data that has `versions`); 41 of its 42 checks fail on page 2.6 (the last is the backward-compatibility check, run on the old page itself). `test_tools.TestUpdateNotice`: every `versions` key the page reads is documented, `lastRefresh` is always written with `versions`, the page-version check goes both ways, the self-update threshold matches `helper.md` and the changelog, one install URL. `test_catchup`: bootstrap ignores `versions`.
+- **Review fixes (PR #42):**
+  - SKILL.md's steps named only `{lastRefresh}` (nothing new) and `{lastRefresh, coverage}` (step 7), so a run that followed them after one that wrote `versions` made every page say "an older copy of the skill ran" on a current plugin. Both now name `versions`, and step 7 points at `references/database.md` › Versions. The test that checked this had skipped SKILL.md.
+  - Setup's reuse of an existing page set `pageVersion` alone, which made notice C show (`versions.page` below it); it now writes `{pageVersion, versions:{page}}` in one pinned update.
+  - E showed for every Chrome in `browsers`, "at the last refresh", including ones used days before that had most likely updated themselves. Now E is only for the newest `at`; D for an older Chrome says the day it was last used; the unnamed key `"Chrome"` counts only while it's the newest, and when it is, an older entry on the same helper shows nothing (probably the same browser).
+  - "The database layout only changes in a major release" (`updating-the-page.md`) wasn't true: R2 changed `photos/*` in this minor release. A newer page with a newer major now means stop before the lock and write nothing; the same major carries on. A 2.9 → 3.0 bump only to keep minors one digit also stops older copies, which is the safe side. `catchup.py` refuses a threading or summary `layout` it doesn't know, instead of reading it as the old single document.
+  - C now names Claude Code's `/plugin` as well as claude.ai's menu. `test_page_never_writes_versions` also catches quoted keys, `{versions}` shorthand, dotted paths and bracket assignment; U14b covers a throwing `window.localStorage` getter. Filed R17.
+  - Not done: having `catchup.py`'s manifest prefill `versions.page` and `helper`. The nothing-new path and troubleshooting's "nothing left to build" have no manifest, so Claude reads the two versions from the skill's files either way.
+- **Live checks still to do:** whether an open tab reloads by itself after a republish (notice A's wording), the claude.ai menu path for plugins ("Customize › Plugins"), and what `list_connected_browsers` calls a single Chrome.
 
-### F6 · P3 · Ask Claude over long histories
+### F6 · P3 · Ask Claude over long histories · done (v1.22.0)
 - Send summaries for older stretches plus the raw window, or pick messages by keyword first, instead of all stored messages.
-- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0), so older summaries are kept and could feed this. The prompt size itself is still open.
+- **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0), so older summaries are kept and could feed this.
+- **Owner's calls (Nov 12, on the R4/F6 design):** summaries take up to 35% of an "include older" prompt; a range summary too long for one call is refused, saying how much fits; `qa` and `views` save `sent`; performance tests count operations in `npm test`, with timings only in `npm run test:perf`; day lines are built on the page now, refresh-written digests later (F16).
+- **Done in v1.22.0:**
+  - **One budget** for Ask, Views and range summaries: UTF-8 bytes against `sample.limits().maxPromptBytes` (262,144 when it's missing, rejects or answers nonsense), less a 4 KiB margin. `packHistory` sends the newest messages word for word as one run, and the rest as OLDER HISTORY: one line per conversation (newest first: the summary's outcome, a range summary's, or "no summary; N messages from …"), then one line per day back to the first stored message. "Nothing before #N is included" when even the day lines don't fit.
+  - **Ask:** "What you have" says which numbers are word for word and which are summaries, and Claude is asked to say when a point comes from a summary. Earlier turns are trimmed oldest pair first past a quarter of the cap; a question over half the cap isn't sent; one free retry at 80% on `prompt_too_large`.
+  - **The note** under each answer and built view says what was read, and `qa/*` and `views/*` save it as `sent: {from, to, sumFrom, afterFrom}` (`references/database.md`).
+  - **Range summaries** over the cap get no button: the box says how many of the span's newest messages fit and from when.
+  - **Tests:** the page section `history` (H1–H16). The key cases fail on page 2.6. `npm run test:perf` prints timings at 6,400, 25,000 and 50,000 messages (EXPERIMENTS.md §14).
+- **Still to see live** (the design's L2–L7): "include older" answers with a note like "Read #… word for word. Older than #…: summaries only." and no "(sent a smaller set…)"; answers about things 1 to 3 weeks old cite numbers and say when they rest on summaries (L4, which decides F16 and F17); Views on a 5-day window; a long span before `fromI` refused with a start time; what `sample.limits()` returns in the real runtime.
+- **Deferred:** F15 (Show older paging), F16 (refresh-written digests), F17 (a two-step or tool ask), F18 (splitting range summaries).
 
 ### F7 · P3 · Ship as a plugin · done (v1.15.0, v1.16.0)
 - **What:** plugins (Customize › Plugins, or a marketplace added from a git repo) load their skills in web and Desktop chat, Cowork and Claude Code, and follow the user's account. This replaces "re-upload the ZIP". Plugins need a paid plan, as Claude in Chrome already does.
@@ -636,3 +708,24 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### F14 · P3 · Show the next scheduled refresh on the page
 - **What:** `refresh/schedule.nextAt` (v1.21.0) says when the next scheduled run is due, and `problem` why the schedule stopped. The page could show both next to the status line, so a dead schedule is visible without asking Claude.
 - **Fix:** read `refresh/schedule` by name (the page lists no `refresh` collection today); ship with the next page change.
+
+### F15 · P3 · perf · Page "Show older messages" by day
+- **What:** with "Show older messages" on, the Messages tab renders every stored message. An earlier bench: 0.5 s and 79k elements at 6,400 messages, 2.0 s and 307k at 25,000, 4.2 s and 2.9 GB at 50,000. The default view (the window only) is unaffected. This is what remains of R4.
+- **Fix:** load the previous day on demand ("Load the previous day"), the smaller change. Virtualizing threaded rows of varying height isn't worth it.
+- **Trigger:** about 15,000 stored messages (roughly 17 days after 6,933 at 460 a day), or Show older taking over 1 s on the owner's machine.
+
+### F16 · P3 · Per-day digests written during refresh
+- **What:** older than the conversation lines reach (2–3 weeks at every size), F6's prompt has one line per day built on the page from threading titles. A refresh could write a real digest per day (`digests/dYYYY-MM-DD`) for those lines to use.
+- **Cost:** a spec key, `catchup.py` checks, a new collection and a backfill: a MINOR with a skill change.
+- **Also here:** older open questions, answers and deals as their own lines (the design's "level 1b"); they're mostly in conversation outcomes today.
+- **Trigger:** live answers about things older than 3 weeks turn out poor (F6's live check L4), or the owner asks.
+
+### F17 · P3 · A two-step or tool-using Ask
+- **What:** Claude first sees the digest, names the stretch it needs, and the page sends that stretch word for word in a second call (or a tool call does it).
+- **Cost:** about twice the time and usage (30–90 s on the default model); `limits().tools` isn't guaranteed; more ways to fail. Today the manual version works: pick the stretch as a date range and ask with it as the window.
+- **Also considered:** a keyword prefilter (an earlier live sample: common words matched 30–93 KB, "?" 480 KB); it still needs the budget and misses synonyms.
+- **Trigger:** L4 shows answers saying "only summarized" often for questions people care about.
+
+### F18 · P3 · Split long range summaries
+- **What:** a span before `summary.fromI` too long for one request (about 1,990 live-sized messages, 4.3 days) is refused since v1.22.0. Splitting it into parts and merging (conversations joined by id, bullets concatenated, lists joined) would let any span work, at k× the usage and time, with a merge to test.
+- **Trigger:** the owner wants long spans summarized and `catchup.py restore-summary` (which moves `fromI` back on the owner's page) hasn't removed the need.

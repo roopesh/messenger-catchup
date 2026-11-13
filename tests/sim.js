@@ -75,9 +75,10 @@ const newCtx = async (b, helper) => {
 (async () => {
   const b = await chromium.launch();
   if (process.env.SIM_ONLY) {
-    /* SIM_ONLY=E, F or EF runs just those sections (quicker while working on them) */
+    /* SIM_ONLY=E, F, G or EF runs just those sections (quicker while working on them) */
     if (process.env.SIM_ONLY.includes('E')) await helper2(b);
     if (process.env.SIM_ONLY.includes('F')) await posting(b);
+    if (process.env.SIM_ONLY.includes('G')) await photoCaps(b);
     return b.close();
   }
   // ---------- A: helper installed (userscript manager emulated with an init script) ----------
@@ -465,8 +466,83 @@ const newCtx = async (b, helper) => {
   ok(bmJumped, 'C: the bookmarklet scrolled back and highlighted #mock80');
   await helper2(b);
   await posting(b);
+  await photoCaps(b);
   await b.close();
 })();
+
+/* ---------- G: photos (R2): the next run's backfill scan, and messages with several photos ----------
+   A photo the page couldn't store is "owed" (meta/chat.photosOwed); the next refresh scans from just before it
+   (references/photos.md › Backfill: STOPS = the three messages before it, BASE = the one before it). Writes
+   tests/out/sim_cap_photos.json {first, backfill, multi} for the page suite (P18). */
+async function photoCaps(b) {
+  const c = await newCtx(b, true);
+  const p = await c.newPage();
+  await mode(p, {}, 120);
+  let r = await bridge(p, 'full', { first: { count: 50 }, base: -1, run: 'g1' });
+  await p.waitForLoadState('load');
+  let res = await pollResult(p);
+  const first = JSON.parse(await p.evaluate(() => window.__capText));
+  ok(
+    res && res.stage === 'captured' && first.count === 50 && first.photos.length === 1 && first.photos[0].i === 30,
+    'G: first run of 50 with a photo on #30 (' + (res && res.capture) + ')',
+  );
+  const stops = first.msgs
+    .slice(27, 30)
+    .map(m => m.m)
+    .reverse();
+  await p.goto(URL);
+  await p.waitForTimeout(600);
+  await p.evaluate(() => {
+    sessionStorage.removeItem('mc_result');
+    window.addMsgs(5);
+  });
+  r = await bridge(p, 'full', { stops, base: 29, run: 'g2' });
+  ok(
+    r && r.stage === 'reloading' && r.scan.win === 25,
+    'G: backfill scan with STOPS = #29, #28, #27 and BASE 29: a window from #30, 25 messages (win ' +
+      (r && r.scan && r.scan.win) +
+      ')',
+  );
+  await p.waitForLoadState('load');
+  res = await pollResult(p);
+  const backfill = JSON.parse(await p.evaluate(() => window.__capText));
+  ok(
+    res &&
+      res.stage === 'captured' &&
+      res.verify.ok &&
+      backfill.msgs[0].i === 30 &&
+      backfill.msgs.slice(0, 20).every((m, k) => m.m === first.msgs[30 + k].m && m.i === 30 + k) &&
+      backfill.msgs[24].i === 54 &&
+      backfill.photos.length === 1 &&
+      backfill.photos[0].i === 30,
+    'G: backfill capture #30-#54: its ids line up with the stored ones, the owed photo #30 is in it, verify ok',
+  );
+  // mock_photos=4: every 4th message carries 1-3 photos (a caption too)
+  await mode(p, { photos: '4' }, 120);
+  r = await bridge(p, 'full', { first: { count: 30 }, base: -1, run: 'g3' });
+  await p.waitForLoadState('load');
+  res = await pollResult(p);
+  const multi = JSON.parse(await p.evaluate(() => window.__capText));
+  const want = [];
+  for (let k = 0; k < 30; k++) {
+    const mi = 90 + k;
+    const n = mi === 100 ? 1 : mi % 4 === 0 ? 1 + ((mi / 4) % 3) : 0;
+    for (let j = 0; j < n; j++) want.push(k + '.' + j);
+  }
+  ok(
+    res &&
+      res.stage === 'captured' &&
+      multi.photos.map(ph => ph.i + '.' + ph.k).join() === want.join() &&
+      new RegExp(' photos ' + want.length + ' ').test(res.capture),
+    'G: messages with several photos: ' +
+      want.length +
+      ' photos, each in its slot k, the summary counts them (' +
+      (res && res.capture) +
+      ')',
+  );
+  fs.writeFileSync(D + 'tests/out/sim_cap_photos.json', JSON.stringify({ first, backfill, multi }));
+  await c.close();
+}
 
 /* ---------- E: helper 2.0: silent failures become warnings (R3), the scroller, the stall timeout, full names (B41) ---------- */
 const STOPS99 = ['mid.$mock99', 'mid.$mock98', 'mid.$mock97']; /* window #100-#119 (base 99) of the 120-message mock */

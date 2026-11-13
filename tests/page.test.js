@@ -19,6 +19,7 @@ const PAGE = /^<!doctype/i.test(SRC) ? SRC : SKELETON + SRC + '</body></html>';
 const URL = 'http://localhost:9917/catchup';
 const CATCHUP = path.join(ROOT, 'plugin/skills/refresh/scripts/catchup.py');
 const CAPS = path.join(__dirname, 'out/sim_caps.json');
+const BACKFILL = path.join(__dirname, 'out/sim_cap_photos.json'); /* sim section G: {first, backfill, multi} */
 const ok = (c, msg) => {
   console.log((c ? 'PASS ' : 'FAIL ') + msg);
   if (!c) process.exitCode = 1;
@@ -120,9 +121,11 @@ function runtime(seed) {
       const c = p.split('/')[0];
       (subs.get('c:' + c) || []).forEach(cb => cb(collSnap(c)));
     }, 0);
+  /* fails: [{p, op, after?}]: the next matching write throws "unavailable" (after: let that many through first) */
   const failIf = (p, op) => {
     const k = fails.findIndex(f => f.p === p && f.op === op);
-    if (k >= 0) {
+    if (k >= 0 && fails[k].after > 0) fails[k].after--;
+    else if (k >= 0) {
       fails.splice(k, 1);
       throw Object.assign(new Error('injected failure'), { code: 'unavailable' });
     }
@@ -195,17 +198,63 @@ function runtime(seed) {
         return { id };
       },
     });
+  /* Assets (assets.d.ts, contract 0.2.92). window.__up = {delayMs, script:{<call>: code | {hang: ms} | {delayMs: ms}},
+     quota:{maxFiles, maxBytes}} scripts uploads by call number (0 = the first upload() call; retries count): a code
+     rejects with {code}, {hang} answers only after ms (a late answer the page must ignore), {delayMs} slows that one.
+     Over the quota (default 5,000 files, 1 GiB, as on claude.ai) an upload rejects quota_or_state. Ids are 32 hex
+     characters; each upload is logged as {id, size, type, hash} (SHA-256 of the bytes), so a duplicate shows by hash.
+     opts.assetUse {files, bytes} counts files stored before the test. __failUploadAt (older tests) fails the upload
+     whose number of stored uploads equals it, with "unavailable". */
+  let calls = 0;
+  const pause = ms => new Promise(r => setTimeout(r, ms));
+  const quota = () => Object.assign({ maxFiles: 5000, maxBytes: 1 << 30 }, (window.__up || {}).quota);
+  const usage = () => {
+    const live = uploads.filter(u => !u.deleted);
+    const pre = opts.assetUse || {};
+    const q = quota();
+    return {
+      files: live.length + (pre.files || 0),
+      bytes: live.reduce((n, u) => n + u.size, pre.bytes || 0),
+      maxFiles: q.maxFiles,
+      maxBytes: q.maxBytes,
+    };
+  };
   const assets = {
     upload: async (blob, o) => {
+      const n = calls++;
+      const U = window.__up || {};
+      const s = (U.script || {})[n];
       if (window.__failUploadAt === uploads.length) {
         window.__failUploadAt = null;
         throw Object.assign(new Error('injected upload failure'), { code: 'unavailable' });
       }
-      const id = 'blob' + (uploads.length + 1);
-      uploads.push({ id, size: blob.size, type: o.type });
-      return { id, sizeBytes: blob.size, contentType: o.type };
+      await pause(s && s.hang != null ? s.hang : s && s.delayMs != null ? s.delayMs : U.delayMs || 0);
+      if (typeof s === 'string') throw Object.assign(new Error('scripted ' + s), { code: s });
+      const u = usage();
+      if (u.files + 1 > u.maxFiles || u.bytes + blob.size > u.maxBytes)
+        throw Object.assign(new Error('quota'), { code: 'quota_or_state' });
+      const d = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+      const hash = [...new Uint8Array(d)].map(x => x.toString(16).padStart(2, '0')).join('');
+      const id = 'b10b' + String(uploads.length + 1).padStart(28, '0');
+      uploads.push({ id, size: blob.size, type: o.type, hash, call: n });
+      return { id, url: '/_blob/' + id, sizeBytes: blob.size, contentType: o.type };
+    },
+    list: async () => {
+      if (opts.listReject) throw Object.assign(new Error('list unavailable'), { code: 'store_unavailable' });
+      const live = uploads.filter(u => !u.deleted);
+      return {
+        assets: live.map(u => ({ id: u.id, url: '/_blob/' + u.id, contentType: u.type, sizeBytes: u.size })),
+        usage: usage(),
+      };
+    },
+    delete: async id => {
+      const u = uploads.find(x => x.id === id && !x.deleted);
+      if (u) u.deleted = true;
+      return { deleted: !!u };
     },
   };
+  if (opts.tune) window.__mcImportTune = opts.tune; /* the page's photo timings, shortened (R2 tests) */
+  Object.entries(opts.leases || {}).forEach(([p, l]) => leases.set(p, l)); /* a lease another tab left behind */
   /* The real cap (sample.d.ts, SampleLimits.maxPromptBytes): every turn's content together, in UTF-8 bytes; over it the
      call rejects with prompt_too_large and nothing is sent. opts.promptMax is what limits() reports, opts.enforce what
      is enforced (lower = the runtime counts more strictly than it says); noLimits, limitsReject and limitsBogus break
@@ -231,12 +280,14 @@ function runtime(seed) {
   }
   if (!opts.noLimits)
     sample.limits = async () => {
+      if (opts.limitsHang) return new Promise(() => {});
       if (opts.limitsReject) throw Object.assign(new Error('limits unavailable'), { code: 'unavailable' });
       return { maxPromptBytes: opts.limitsBogus ? 'x' : PROMPT_MAX };
     };
   sample.json = async prompt => {
     samples.push(prompt);
     capCheck(prompt);
+    if (opts.viewJson) return JSON.parse(JSON.stringify(opts.viewJson));
     return {
       title: 'By person',
       intro: 'Grouped by who posted.',
@@ -296,9 +347,14 @@ function runtime(seed) {
     },
     get: p => clone(store.get(p)),
     all: () => Object.fromEntries([...store].map(([k, v]) => [k, clone(v)])),
+    /* another tab takes a lease (only possible once the holder's has lapsed, but tests take it outright) */
+    steal: (p, holder, ms) => leases.set(p, { holder, exp: Date.now() + ms }),
+    calls: () => calls,
+    usage,
   };
   window.claude = {
-    use: async n => ({ db: { doc, collection }, assets: opts.noAssets ? null : assets, sample })[n] || null,
+    use: async n =>
+      ({ db: opts.noDb ? null : { doc, collection }, assets: opts.noAssets ? null : assets, sample })[n] || null,
   };
 }
 const META = {
@@ -352,6 +408,48 @@ async function open(seed, page = PAGE, ctxOpts) {
   return p;
 }
 const get = (p, k) => p.evaluate(k => __rt.get(k) ?? null, k);
+/* The stored photo slots, merged here (independently of the page) from photos/index and the photos/b<start> blocks:
+   byK[i][k] = "/_blob/<id>" | null (owed) | {e} (given up); stored(i) = message i's stored photos in slot order. */
+async function photoState(p) {
+  const all = await p.evaluate(() =>
+    Object.fromEntries([...__rt.store].filter(([k]) => /^photos\//.test(k)).map(([k, v]) => [k.slice(7), v])),
+  );
+  const byK = {};
+  const ix = all.index || {};
+  const at = i => (byK[i] = byK[i] || {});
+  Object.entries(ix.byI || {}).forEach(([i, l]) => !(ix.byK || {})[i] && l.forEach((v, k) => (at(i)[k] = v)));
+  Object.entries(ix.byK || {}).forEach(([i, m]) => Object.assign(at(i), m));
+  Object.keys(all)
+    .filter(id => /^b\d+$/.test(id))
+    .forEach(id =>
+      Object.entries(all[id].byK || {}).forEach(([i, m]) =>
+        Object.entries(m).forEach(([k, v]) => {
+          if (typeof v === 'string' || !(k in at(i))) at(i)[k] = v;
+        }),
+      ),
+    );
+  const stored = i =>
+    Object.keys(byK[i] || {})
+      .sort((a, b) => a - b)
+      .map(k => byK[i][k])
+      .filter(v => typeof v === 'string');
+  const owed = Object.entries(byK).flatMap(([i, m]) =>
+    Object.entries(m)
+      .filter(([, v]) => v === null)
+      .map(([k]) => +i + '.' + k),
+  );
+  const gifs = new Set([].concat(...Object.values(all).map(d => d.gifs || [])));
+  return { all, byK, stored, owed, gifs };
+}
+/* Fail the upload calls at these offsets from the next one (0 = the next call) with code */
+const failCalls = (p, offs, code = 'store_unavailable') =>
+  p.evaluate(
+    ([o, c]) => {
+      const n = __rt.calls();
+      window.__up = Object.assign({}, window.__up, { script: Object.fromEntries(o.map(k => [n + k, c])) });
+    },
+    [offs, code],
+  );
 const nWrites = (p, re) => p.evaluate(src => __rt.writes.filter(w => new RegExp(src).test(w.p)).length, re);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function until(p, fn, arg, ms = 10000) {
@@ -363,8 +461,16 @@ async function until(p, fn, arg, ms = 10000) {
     await sleep(100);
   }
 }
-/* Paste like Claude does: a paste event on the page body (or another target). Returns the new refresh/lastImport, or null if the page ignored it. */
+/* Paste like Claude does: a paste event on the page body (or another target). Returns the new refresh/lastImport once
+   the import has finished (a record whose state isn't "uploading"), or null if the page ignored it. pasteFirst returns
+   the first new record, whatever its state. */
+const finished = v => v && v.state !== 'uploading';
 async function paste(p, text, sel = 'body', ms = 10000) {
+  const first = await pasteFirst(p, text, sel, ms);
+  if (!first || finished(first)) return first;
+  return until(p, () => (v => (v && v.state !== 'uploading' ? v : null))(__rt.get('refresh/lastImport')), null, ms);
+}
+async function pasteFirst(p, text, sel = 'body', ms = 10000) {
   const before = JSON.stringify(await get(p, 'refresh/lastImport'));
   await p.evaluate(
     ([t, s]) => {
@@ -397,7 +503,7 @@ async function viaButton(p, text) {
     p,
     b => {
       const v = __rt.get('refresh/lastImport');
-      return v && JSON.stringify(v) !== b ? v : null;
+      return v && JSON.stringify(v) !== b && v.state !== 'uploading' ? v : null;
     },
     before,
   );
@@ -451,16 +557,18 @@ async function importer() {
     'meta/chat: lastI, lastMid, lastT, anchorMids updated',
   );
   ok(m.ownLastI === 117 && m.ownLastMid === 'mid.117', 'meta/chat: ownLastI = your newest message');
-  const ph = await get(p, 'photos/index');
+  const ph = await get(p, 'photos/b0');
   const up = await p.evaluate(() => __rt.uploads);
   ok(
     ph &&
-      JSON.stringify(ph.byI['10']) === '["/_blob/blob1"]' &&
+      JSON.stringify(ph.byK['10']) === JSON.stringify({ 0: '/_blob/' + up[0].id }) &&
       JSON.stringify(ph.gifs) === '[5]' &&
       up.length === 1 &&
       up[0].size === Buffer.from(PNG, 'base64').length &&
-      up[0].type === 'image/png',
-    'photos: uploaded byte-identical size, photos/index and gifs updated',
+      up[0].type === 'image/png' &&
+      JSON.stringify(r.stored) === JSON.stringify([{ i: 10, k: 0, id: up[0].id }]) &&
+      r.state === 'done',
+    'photos: uploaded byte-identical size, photos/b0 holds the photo and the GIF, lastImport lists it in stored',
   );
   // same capture again
   let w0 = await nWrites(p, '^chunks/');
@@ -724,34 +832,33 @@ async function robustness() {
   // B17: GIFs recorded without photos; a failed upload keeps what landed, and a re-paste finishes without duplicates
   r = await paste(p, JSON.stringify(cap(range(200, 202), { gifs: [201] })));
   ok(
-    r && r.ok && JSON.stringify((await get(p, 'photos/index')).gifs) === '[201]',
+    r && r.ok && [...(await photoState(p)).gifs].join() === '201',
     'a capture with GIFs and no photos records the GIFs',
   );
   const P3 = [203, 204, 205].map(i => ({ i, k: 0, type: 'image/png', b64: PNG }));
-  await p.evaluate(() => {
-    window.__failUploadAt = __rt.uploads.length + 1;
-  });
+  await failCalls(p, [1, 2]); /* the 2nd photo fails, and so does its one retry */
   r = await paste(p, JSON.stringify(cap(range(203, 205), { photos: P3 })));
-  let ix = (await get(p, 'photos/index')).byI;
+  let ix = await photoState(p);
   ok(
     r &&
       r.fresh === 3 &&
-      /1 photo stored\. Photos: upload failed at #204 .*paste again/.test(r.msg) &&
-      ix['203'] &&
-      !ix['204'],
+      r.state === 'partial' &&
+      /1 photo stored\. Photos: 1 of 3 stored; stopped at #204 \(store_unavailable\)\. Paste again/.test(r.msg) &&
+      ix.stored(203).length === 1 &&
+      !ix.stored(204).length,
     'upload fails at the 2nd photo: messages saved, the 1st photo indexed, told to paste again (' +
       (r && r.msg.slice(-90)) +
       ')',
   );
   const n0 = await p.evaluate(() => __rt.uploads.length);
   r = await paste(p, JSON.stringify(cap(range(203, 205), { photos: P3 })));
-  ix = (await get(p, 'photos/index')).byI;
+  ix = await photoState(p);
   ok(
     r &&
       r.ok &&
       /2 photos stored \(1 already stored\)/.test(r.msg) &&
-      ix['204'] &&
-      ix['205'] &&
+      ix.stored(204).length === 1 &&
+      ix.stored(205).length === 1 &&
       (await p.evaluate(() => __rt.uploads.length)) - n0 === 2,
     'paste again: only the 2 missing photos upload, all 3 indexed',
   );
@@ -761,21 +868,19 @@ async function robustness() {
     { i: 206, k: 2, type: 'image/png', b64: PNG },
     { i: 207, k: 0, type: 'image/png', b64: PNG },
   ];
-  await p.evaluate(() => {
-    window.__failUploadAt = __rt.uploads.length + 2;
-  });
+  await failCalls(p, [2, 3]);
   r = await paste(p, JSON.stringify(cap(range(206, 207), { photos: PK })));
   let n1 = await p.evaluate(() => __rt.uploads.length);
   r = await paste(p, JSON.stringify(cap(range(206, 207), { photos: PK })));
-  ix = await get(p, 'photos/index');
+  ix = await photoState(p);
   ok(
     r &&
       r.ok &&
       (await p.evaluate(() => __rt.uploads.length)) - n1 === 1 &&
-      ix.byI['206'].length === 2 &&
-      ix.byI['207'].length === 1 &&
-      ix.byK['206']['1'] &&
-      ix.byK['206']['2'],
+      ix.stored(206).length === 2 &&
+      ix.stored(207).length === 1 &&
+      typeof ix.byK['206']['1'] === 'string' &&
+      typeof ix.byK['206']['2'] === 'string',
     'B28: slot 0 missing, upload fails, paste again: only #207 uploads, #206 keeps 2 photos (no duplicate)',
   );
   // B25 groundwork: unconfirmed and sending replies stay listed until resolved
@@ -1093,8 +1198,10 @@ async function pipeline() {
     'messages: #33 nested under its parent with "reply to #30"',
   );
   ok(
-    (await p.$eval('#m30 .pics img', i => i.getAttribute('src'))) === '/_blob/blob1',
-    'messages: photo #30 shown from its uploaded blob',
+    (await p.$eval('#m30 .pics img', i => i.getAttribute('src'))) ===
+      '/_blob/' + (await p.evaluate(() => __rt.uploads[0].id)) &&
+      typeof ((await get(p, 'photos/b0')) || { byK: {} }).byK['30']?.['0'] === 'string',
+    'messages: photo #30 shown from its uploaded blob, indexed in photos/b0 (P22)',
   );
   const href = await p.$eval('#m40 a.replylink', a => a.href);
   ok(
@@ -1234,7 +1341,7 @@ async function pipeline() {
   );
   const prompt = await p.evaluate(() => __rt.samples[0][0].content);
   ok(
-    /MESSAGES:\n#\d+ \[/.test(prompt) && prompt.includes('Sam'),
+    /MESSAGES \(oldest first\):\n#\d+ \[/.test(prompt) && prompt.includes('Sam'),
     'ask: prompt carries the owner name and the window messages',
   );
   ok(
@@ -2374,6 +2481,1981 @@ async function speed() {
   }
 }
 
+/* ---------- history: Ask, Views and range summaries over long histories (R4, F6) ----------
+   One prompt budget measured in UTF-8 bytes against sample.limits(): the newest messages word for word, older ones as
+   one line per conversation and then per day, back to the first stored message; a range summary too long for one call
+   is refused. Small fake caps force every cut path with a few hundred messages; synth.py gives the scale. The
+   assertions are about structure and the cap, never how many messages fit. */
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/* n messages from Oct 1, perDay a day between 7 AM and 11 PM, mock cast; o.body(i) for the text */
+function hmsgs(n, o = {}) {
+  const perDay = o.perDay || n;
+  return Array.from({ length: n }, (_, i) => {
+    const day = new Date(2026, 9, 1 + Math.floor(i / perDay), 12);
+    const min = 7 * 60 + Math.floor(((i % perDay) * 16 * 60) / perDay);
+    const h = Math.floor(min / 60);
+    return {
+      i,
+      t:
+        DOW[day.getDay()] +
+        ' ' +
+        (h % 12 || 12) +
+        ':' +
+        String(min % 60).padStart(2, '0') +
+        ' ' +
+        (h < 12 ? 'AM' : 'PM'),
+      f: NAMES[i % 5],
+      b: o.body ? o.body(i) : 'message ' + i + ' about the ridge trail and spare tent poles',
+      m: 'mid.' + i,
+      d: ymd(day),
+    };
+  });
+}
+/* Conversations of 10 messages, or (o.interleave) four sharing each block of 40, taking turns; o.long: the members of
+   one long-running conversation (taken out of the others). Every third conversation is summarized. */
+function hthreads(n, o = {}) {
+  const convs = [],
+    sums = [];
+  const long = new Set(o.long || []);
+  const add = (k, title, members) => {
+    members = members.filter(i => !long.has(i));
+    if (!members.length) return;
+    convs.push({ id: 'c' + k, title, members });
+    if (k % 3 === 0)
+      sums.push({
+        id: 'c' + k,
+        tag: 'Gear talk',
+        synopsis: [{ t: 'Bullet ' + k, refs: [members[0]] }],
+        outcome: 'Outcome ' + k,
+        key: [members[0], members[members.length - 1]],
+      });
+  };
+  if (o.interleave)
+    for (let blk = 0; blk * 40 < n; blk++)
+      for (let j = 0; j < 4; j++)
+        add(
+          blk * 4 + j,
+          'Thread ' + (blk * 4 + j) + ' about tents',
+          range(blk * 40, Math.min(n, blk * 40 + 40) - 1, i => i).filter(i => i % 4 === j),
+        );
+  else
+    for (let k = 0; k * 10 < n; k++)
+      add(
+        k,
+        'Topic ' + k + ' about stoves',
+        range(k * 10, Math.min(n, k * 10 + 10) - 1, i => i),
+      );
+  if (o.long) convs.push({ id: 'long', title: 'Long-running permit thread', members: o.long.slice() });
+  return {
+    threading: { convs, links: {}, to: n - 1, note: '' },
+    summary: {
+      version: 2,
+      convs: sums.reverse(),
+      open: [],
+      answered: [],
+      deals: [],
+      mentions: [],
+      toI: n - 1,
+      generatedAt: 'now',
+    },
+  };
+}
+function hseed(msgs, o = {}) {
+  const last = msgs[msgs.length - 1];
+  const meta = Object.assign(
+    {},
+    META,
+    { lastI: last.i, lastMid: last.m, anchorMids: msgs.slice(-3).map(m => m.m), markerMode: 'caught' },
+    o.meta || {},
+  );
+  const seed = Object.assign(SEED(), { 'meta/chat': meta }, o.docs || {});
+  for (let k = 0; k < msgs.length; k += 82)
+    seed['chunks/c' + String(k).padStart(4, '0')] = { start: k, msgs: msgs.slice(k, k + 82) };
+  if (o.threads) {
+    const T = hthreads(msgs.length, o.threads === true ? {} : o.threads);
+    seed['threading/current'] = T.threading;
+    seed['summary/current'] = T.summary;
+  }
+  if (o.opts) seed.__opts = o.opts;
+  return seed;
+}
+async function hopen(seed, n) {
+  const p = await open(seed);
+  HP.push(p);
+  await until(p, n => S.msgs.length === n && S.threading, n, 120000);
+  return p;
+}
+const lastSample = p => p.evaluate(() => __rt.samples[__rt.samples.length - 1]);
+/* Ask one question; returns the calls it made ({bytes, code} each), the turns of the last one and the notes */
+async function hask(p, q, all = false) {
+  const n0 = await p.evaluate(() => __rt.sampleLog.length);
+  await p.evaluate(
+    ([q, all]) => {
+      location.hash = '#ask';
+      document.getElementById('ask-all').checked = all;
+      document.getElementById('ask-in').value = q;
+      document.getElementById('ask-go').click();
+    },
+    [q, all],
+  );
+  await until(
+    p,
+    n0 =>
+      (__rt.sampleLog.length > n0 || document.getElementById('ask-note').textContent) &&
+      !document.getElementById('ask-go').disabled,
+    n0,
+  );
+  await sleep(100);
+  return p.evaluate(n0 => {
+    const ts = document.querySelectorAll('#chat .turn.assistant');
+    const t = ts[ts.length - 1];
+    const s = __rt.samples[__rt.samples.length - 1];
+    return {
+      calls: __rt.sampleLog.slice(n0),
+      turns: Array.isArray(s) ? s : null,
+      prompt: Array.isArray(s) ? s[0].content : s,
+      note: (t && t.querySelector('.sent') && t.querySelector('.sent').textContent) || '',
+      askNote: document.getElementById('ask-note').textContent,
+      answer: (t && t.querySelector('.txt').textContent) || '',
+    };
+  }, n0);
+}
+/* The prompt's parts: the summary lines ([a, b, text]) and the word-for-word message numbers */
+function parts(prompt) {
+  const sec = name => {
+    const m = prompt.match(new RegExp('\\n' + name + ' \\(oldest first\\):\\n([\\s\\S]*?)(?:\\n\\n|$)'));
+    return m ? m[1].split('\n') : [];
+  };
+  const dig = sec('OLDER HISTORY').map(l => {
+    const m = l.match(/^\[#(\d+)(?:–#(\d+))?/);
+    return m ? [+m[1], +(m[2] ?? m[1]), l] : [NaN, NaN, l];
+  });
+  const raw = sec('MESSAGES').map(l => +((l.match(/^#(\d+) \[/) || [])[1] ?? NaN));
+  return { dig, raw, newer: sec('NEWER HISTORY') };
+}
+/* The older messages no summary line accounts for: a day line or an ungrouped run covers its range, a conversation's
+   line covers that conversation's members inside its range (found by title); a range-summary line covers nothing */
+function uncovered(dig, convs, c) {
+  const seen = new Set();
+  for (const [a, b, l] of dig) {
+    if (/\] [\d,]+ messages?(\.|, not grouped)/.test(l)) {
+      for (let i = a; i <= b; i++) seen.add(i);
+      continue;
+    }
+    const cv = convs.find(x => l.includes('] ' + x.title + ' (') || l.includes('] ' + x.title + ':'));
+    if (cv) cv.members.forEach(i => i >= a && i <= b && seen.add(i));
+  }
+  return range(0, c - 1, i => i).filter(i => !seen.has(i));
+}
+const keysOf = dig =>
+  dig.flatMap(([, , l]) => ((l.match(/ Key: (#\d+(?:, #\d+)*)/) || [])[1] || '').match(/\d+/g) || []).map(Number);
+const contiguous = a => a.length > 0 && a.every((x, k) => k === 0 || x === a[k - 1] + 1);
+const ascending = a => a.every((x, k) => k === 0 || x >= a[k - 1]);
+const synthSeed = (n, block, args = [], meta = {}, layout = 'new') => {
+  const S0 = JSON.parse(
+    execFileSync('python3', [SYNTH, 'page', String(n), String(block), ...args], {
+      encoding: 'utf8',
+      maxBuffer: 1 << 28,
+    }),
+  );
+  const msgs = Object.values(S0.chunks).flatMap(c => c.msgs);
+  const seed = Object.assign(
+    SEED(),
+    {
+      'meta/chat': Object.assign({}, META, {
+        lastI: S0.last,
+        lastMid: msgs[msgs.length - 1].m,
+        anchorMids: msgs.slice(-3).map(m => m.m),
+        lastRefresh: 'Wed Nov 11, 9:00 PM',
+        ...meta,
+      }),
+    },
+    S0[layout],
+  );
+  Object.entries(S0.chunks).forEach(([k, v]) => (seed['chunks/' + k] = v));
+  return { seed, msgs };
+};
+const HMARGIN = 4096;
+/* each case runs on its own: a crash fails that case (on an older page, say) and the rest still run */
+const HP = [];
+async function hcase(name, fn) {
+  try {
+    await fn();
+  } catch (e) {
+    ok(false, name + ' crashed: ' + ((e && e.stack) || e).toString().split('\n').slice(0, 3).join(' '));
+  }
+  while (HP.length)
+    await HP.pop()
+      .context()
+      .close()
+      .catch(() => {});
+}
+
+async function history() {
+  /* H1, H2: a full render reads each message a few times, and each conversation once, in every marker mode */
+  await hcase('H1, H2', async () => {
+    const reads = {};
+    for (const n of [1500, 6000]) {
+      const { seed, msgs } = synthSeed(n, 1000, [], { markerMode: 'time' });
+      seed['meta/chat'].markerFrom = msgs[Math.max(0, n - 920)].d + 'T00:00';
+      const p = await hopen(seed, n);
+      const r = await p.evaluate(() => {
+        const real = S.msgs;
+        const count = (a, box) =>
+          new Proxy(a, {
+            get(t, k, rcv) {
+              if (typeof k === 'string' && /^\d+$/.test(k)) box.n++;
+              return Reflect.get(t, k, rcv);
+            },
+          });
+        const render = meta => {
+          const box = { n: 0 };
+          S.meta = Object.assign({}, S.meta, meta);
+          S.msgs = count(real, box);
+          renderHeader();
+          renderSummary();
+          renderMessages();
+          S.msgs = real;
+          return box.n;
+        };
+        const N = real.length;
+        const out = {
+          time: render({}),
+          caught: render({ markerMode: 'caught', caughtUpI: real[N - 151].i }),
+          own: render({ markerMode: 'own', ownLastI: real[N - 40].i }),
+        };
+        /* a new threading object, so lookups that index it once per object are counted too */
+        const box = { n: 0 };
+        S.meta = Object.assign({}, S.meta, { markerMode: 'caught' });
+        S.threading = Object.assign({}, S.threading, { convs: count(S.threading.convs, box) });
+        renderHeader();
+        renderSummary();
+        renderMessages();
+        out.convReads = box.n;
+        out.convs = S.threading.convs.length;
+        return out;
+      });
+      reads[n] = r;
+      ok(
+        r.time <= 12 * n && r.caught <= 20 * n && r.own <= 20 * n,
+        'H1: a full render at ' +
+          n +
+          ' messages reads S.msgs ' +
+          (r.time / n).toFixed(1) +
+          '× per message in date-range mode, ' +
+          (r.caught / n).toFixed(1) +
+          '× caught, ' +
+          (r.own / n).toFixed(1) +
+          '× own (at most 12, 20, 20)',
+      );
+      ok(
+        r.convReads <= 3 * r.convs,
+        'H2: conversations are scanned ' +
+          (r.convReads / r.convs).toFixed(1) +
+          '× each per render at ' +
+          n +
+          ' messages (at most 3)',
+      );
+      await p.close();
+    }
+    const ratio = reads[6000].time / reads[1500].time;
+    ok(
+      ratio <= 5,
+      'H1: 4× the messages, ' + ratio.toFixed(1) + '× the reads in date-range mode (linear: about 4; quadratic: 16)',
+    );
+  });
+
+  /* H3: the window memo follows every change of S.msgs and S.meta */
+  await hcase('H3', async () => {
+    const msgs = hmsgs(200, { perDay: 50 });
+    let p = await hopen(hseed(msgs.slice(0, 190), { meta: { markerMode: null } }), 190);
+    /* brute force, from the same meta: the messages after lo (and through hi) */
+    const brute = (all, mt) => {
+      let lo = -1,
+        hi = Infinity;
+      if (mt.markerMode === 'time') {
+        lo = all[0].i - 1;
+        const ts = m => {
+          const t = m.t.match(/^(\w{3})\s+(\d+):(\d+)\s*([AP]M)$/i);
+          return m.d + 'T' + String((+t[2] % 12) + (/p/i.test(t[4]) ? 12 : 0)).padStart(2, '0') + ':' + t[3];
+        };
+        all.forEach(m => ts(m) < mt.markerFrom && (lo = m.i));
+        if (mt.markerTo) {
+          hi = lo;
+          all.forEach(m => ts(m) <= mt.markerTo && (hi = m.i));
+        }
+      } else if (mt.markerMode === 'own') lo = mt.ownLastI;
+      else lo = mt.caughtUpI ?? -1;
+      return all.filter(m => m.i > lo && m.i <= hi).length;
+    };
+    const check = async (label, all) => {
+      await sleep(300);
+      const got = await p.evaluate(() => {
+        location.hash = '#messages';
+        document.getElementById('lay-flat').click();
+        return {
+          meta: S.meta,
+          strip: +document.querySelector('#strip .stat .n').textContent,
+          rows: document.querySelectorAll('#msgs .msg').length,
+          inWin: S.msgs.filter(m => inWin(m.i)).length,
+        };
+      });
+      const want = brute(all, got.meta);
+      ok(
+        got.strip === want && got.rows === want && got.inWin === want,
+        'H3: ' +
+          label +
+          ': header, Messages and inWin agree with a count from scratch (' +
+          [got.strip, got.rows, got.inWin, want].join(', ') +
+          ')',
+      );
+    };
+    const m0 = await get(p, 'meta/chat');
+    await p.evaluate(
+      m =>
+        __rt.write(
+          'meta/chat',
+          Object.assign(m, { markerMode: 'time', markerFrom: '2026-10-02T12:00', markerTo: null }),
+        ),
+      m0,
+    );
+    await check('date range', msgs.slice(0, 190));
+    await p.evaluate(
+      m => __rt.write('meta/chat', Object.assign(m, { markerFrom: '2026-10-03T09:00', markerTo: '2026-10-04T15:00' })),
+      await get(p, 'meta/chat'),
+    );
+    await check('marker moved, with an end', msgs.slice(0, 190));
+    await p.evaluate(() => markCaughtUp());
+    await check('Mark caught up', msgs.slice(0, 190));
+    await p.evaluate(c => __rt.write('chunks/c0190', { start: 190, msgs: c }), msgs.slice(190));
+    await until(p, () => S.msgs.length === 200);
+    await check('a new chunk', msgs);
+    await p.evaluate(
+      m => __rt.write('meta/chat', Object.assign(m, { markerMode: 'own', ownLastI: 150 })),
+      await get(p, 'meta/chat'),
+    );
+    await check('own mode', msgs);
+    ok(p.errors.length === 0, 'H3: no page errors ' + JSON.stringify(p.errors));
+    await p.close();
+  });
+
+  /* H4: nothing cut: today's prompt plus the "What you have" line */
+  await hcase('H4', async () => {
+    const p = await hopen(hseed(hmsgs(20), { meta: { markerMode: null } }), 20);
+    const r = await hask(p, 'What was for sale?');
+    const lines = await p.evaluate(() => S.msgs.map(lineFor).join('\n'));
+    ok(
+      r.calls.length === 1 &&
+        r.prompt.endsWith('MESSAGES (oldest first):\n' + lines) &&
+        !/OLDER HISTORY/.test(r.prompt) &&
+        /- MESSAGES: every message in the catch-up window, #0 to #19, word for word/.test(r.prompt),
+      'H4: a window that fits is sent whole: every line in order, no summaries, "What you have" names #0 to #19',
+    );
+    ok(r.note === 'Read #0–#19 word for word.', 'H4: the note under the answer: "' + r.note + '"');
+    await p.close();
+  });
+
+  /* H5, H13, H14: "include older" at a small cap */
+  await hcase('H5, H13, H14', async () => {
+    const msgs = hmsgs(800, { perDay: 130 });
+    const TH5 = { interleave: true, long: [50, 700] };
+    const p = await hopen(
+      hseed(msgs, {
+        threads: TH5,
+        meta: { caughtUpI: 769 },
+        opts: { promptMax: 32768, answer: 'Ana sold the stove early on [#5].' },
+        docs: {
+          'qa/old1': {
+            q: 'An old question',
+            a: 'An old answer [#3].',
+            at: '2026-10-01T10:00:00Z',
+            scope: 'window',
+            toI: 5,
+          },
+        },
+      }),
+      800,
+    );
+    const r = await hask(p, 'Who sold a stove?', true);
+    const { dig, raw } = parts(r.prompt);
+    const c = raw[0];
+    ok(
+      r.calls.length === 1 && r.calls[0].code === null && r.calls[0].bytes <= 32768 - HMARGIN,
+      'H5: include older at a 32 KiB cap: one call of ' +
+        (r.calls[0] || {}).bytes +
+        ' bytes, within the cap less the margin',
+    );
+    ok(
+      raw[raw.length - 1] === 799 && contiguous(raw) && c > 0 && c < 770,
+      'H5: word for word is one run ending at the newest, #' + c + '–#799',
+    );
+    ok(
+      r.prompt.includes('- MESSAGES: every message from #' + c + ' to #799') &&
+        r.note.startsWith('Read #' + c + '–#799 word for word') &&
+        r.note.includes('Older than #' + c + ': summaries only.'),
+      'H5: the prompt and the note name the same cut, #' + c + ' ("' + r.note + '")',
+    );
+    const missing = uncovered(dig, hthreads(800, TH5).threading.convs, c);
+    ok(
+      dig.length > 0 && missing.length === 0,
+      'H5: every message before #' +
+        c +
+        " is accounted for by a summary line: its conversation's, or a day line (" +
+        dig.length +
+        ' lines, conversations sharing blocks and one running #50–#700; ' +
+        missing.length +
+        ' missing: ' +
+        missing.slice(0, 5) +
+        ')',
+    );
+    ok(
+      dig.length > 0 && dig.every(([, b]) => b < c) && keysOf(dig).every(i => i < c),
+      "H5: no summary line or Key number reaches into the word-for-word part (the long conversation's line stops before #" +
+        c +
+        ')',
+    );
+    ok(ascending(dig.map(([a]) => a)) && dig[0][0] === 0, 'H5: summary lines run oldest first, from #0');
+    ok(
+      dig.some(([, , l]) => /Thread \d+ about tents \(Gear talk\): Outcome \d+/.test(l)) &&
+        dig.some(([, , l]) => /no summary; \d+ messages from /.test(l)),
+      'H5: conversation lines carry summary outcomes, or "no summary" with the count and names',
+    );
+    /* H14: what was sent is saved and listed */
+    const qa = await until(p, () =>
+      Object.entries(Object.fromEntries(__rt.store)).find(
+        ([k, v]) => k.startsWith('qa/a') && v.q === 'Who sold a stove?',
+      ),
+    );
+    const sent = qa && qa[1].sent;
+    ok(
+      sent && sent.from === c && sent.to === 799 && sent.sumFrom === 0 && sent.afterFrom === null,
+      'H14: the qa row saves sent ' + JSON.stringify(sent) + ', the numbers the note gives',
+    );
+    const list = await p.textContent('#qa-list');
+    ok(
+      list.includes('all stored messages · #' + c + '–#799 word for word, older as summaries from #0') &&
+        list.includes('An old question'),
+      'H14: Earlier questions shows what was read, and an old row without sent still renders',
+    );
+    /* H13: a citation of a number only a summary line names opens it, with older messages shown */
+    await p.click('#chat .turn.assistant a.cite');
+    ok(
+      await until(
+        p,
+        () =>
+          location.hash === '#messages' &&
+          document.getElementById('m5') &&
+          !document.getElementById('msg-older').hidden,
+      ),
+      'H13: a citation into the summaries (#5) opens that message, with older messages switched on',
+    );
+    ok(p.errors.length === 0, 'H5: no page errors ' + JSON.stringify(p.errors));
+    await p.close();
+  });
+
+  /* H6, H14: window-only Ask and Views on a window over the budget */
+  await hcase('H6, H14', async () => {
+    const msgs = hmsgs(800, { perDay: 100 });
+    const p = await hopen(
+      hseed(msgs, {
+        threads: true,
+        meta: { markerMode: 'time', markerFrom: '2026-10-02T00:00', markerTo: null },
+        opts: { promptMax: 32768 },
+      }),
+      800,
+    );
+    const r = await hask(p, 'What happened?');
+    const A = parts(r.prompt);
+    await p.evaluate(() => {
+      location.hash = '#views';
+      document.getElementById('view-in').value = 'group by person';
+      document.getElementById('view-go').click();
+    });
+    await until(
+      p,
+      () =>
+        !document.getElementById('view-go').disabled &&
+        /By person/.test(document.getElementById('view-out').textContent),
+    );
+    const vp = await lastSample(p);
+    const V = parts(vp);
+    const vlog = await p.evaluate(() => __rt.sampleLog[__rt.sampleLog.length - 1]);
+    const vnote = await p.$eval('#view-out .sent', e => e.textContent).catch(() => '');
+    for (const [what, X, bytes, note] of [
+      ['Ask', A, r.calls[0] && r.calls[0].bytes, r.note],
+      ['Views', V, vlog.bytes, vnote],
+    ]) {
+      const n = X.raw.length;
+      ok(
+        bytes <= 32768 - HMARGIN &&
+          X.raw[n - 1] === 799 &&
+          contiguous(X.raw) &&
+          X.dig.length > 0 &&
+          X.dig.every(([a]) => a >= 100) &&
+          note.startsWith(
+            'Your window has 700 messages: read the newest ' +
+              n +
+              ' word for word (#' +
+              X.raw[0] +
+              '–#799), the rest as summaries',
+          ),
+        'H6: ' +
+          what +
+          ' on a 700-message window: within the cap (' +
+          bytes +
+          '), the newest ' +
+          n +
+          ' word for word, summaries only from the window ("' +
+          note +
+          '")',
+      );
+    }
+    ok(
+      /the rest of the window, #100 to #/.test(vp),
+      'H6: the Views prompt says the summaries are the rest of the window',
+    );
+    const view = await until(p, () => Object.values(Object.fromEntries(__rt.store)).find(v => v && v.kind === 'view'));
+    ok(
+      view && view.sent && view.sent.to === 799 && view.sent.sumFrom === 100,
+      'H14: a built view saves sent too (' + JSON.stringify(view && view.sent) + ')',
+    );
+    ok(p.errors.length === 0, 'H6: no page errors ' + JSON.stringify(p.errors));
+    await p.close();
+  });
+
+  /* H7: two levels reach #0; when even day lines don't fit, the prompt says where it stops */
+  await hcase('H7', async () => {
+    const msgs = hmsgs(800, { perDay: 134 });
+    let p = await hopen(hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: 16384 } }), 800);
+    let r = await hask(p, 'Anything about permits?', true);
+    let { dig } = parts(r.prompt);
+    const days = dig.filter(([, , l]) => /\] \d+ messages?\. (Busiest|Not grouped)/.test(l));
+    const dayOk = days.every(([a, b, l]) => +l.match(/\] (\d+) message/)[1] === b - a + 1 && msgs[a].d === msgs[b].d);
+    ok(
+      days.length > 0 &&
+        dig[0][0] === 0 &&
+        /one line per conversation back to #\d+ \(Oct \d+\), and one line per day for everything before #\d+/.test(
+          r.prompt,
+        ),
+      'H7: at 16 KiB, conversation lines then day lines (' + days.length + '), from #0, and the prompt says so',
+    );
+    ok(days.length > 0 && dayOk, "H7: each day line counts that day's stored messages, all of one date");
+    await p.close();
+    p = await hopen(
+      hseed(hmsgs(800, { perDay: 10 }), { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: 9216 } }),
+      800,
+    );
+    r = await hask(p, 'Anything about permits?', true);
+    dig = parts(r.prompt).dig;
+    const N = dig.length ? dig[0][0] : -1;
+    ok(
+      N > 0 &&
+        r.calls[0].bytes <= 9216 - HMARGIN &&
+        r.prompt.includes('- Nothing before #' + N + ' is included.') &&
+        r.note.includes('summaries back to #' + N + '; nothing older.'),
+      'H7: at 9 KiB even the day lines stop: "Nothing before #' +
+        N +
+        ' is included", the first summary line\'s number ("' +
+        r.note +
+        '")',
+    );
+    await p.close();
+  });
+
+  /* H8: where conversation lines come from, and the stretch before summary.fromI */
+  await hcase('H8', async () => {
+    const { seed, msgs } = synthSeed(
+      400,
+      1000,
+      ['--from-i', '200', '--range-summary', '0', '120'],
+      { markerMode: 'caught', caughtUpI: 389 },
+      'old',
+    );
+    msgs.forEach(m => (m.d = ymd(new Date(2026, 9, 1 + Math.floor(m.i / 40), 12))));
+    Object.keys(seed)
+      .filter(k => k.startsWith('chunks/'))
+      .forEach(k => seed[k].msgs.forEach(m => (m.d = msgs[m.i].d)));
+    const th = seed['threading/current'];
+    th.convs = th.convs
+      .map(c => Object.assign(c, { members: c.members.filter(i => i >= 60) }))
+      .filter(c => c.members.length);
+    const sm = seed['summary/current'];
+    const strConv = sm.convs[sm.convs.length - 1]; /* the oldest summarized conversation */
+    Object.assign(strConv, { synopsis: 'A plain text synopsis about the lake trip stove.', outcome: '' });
+    const rs = seed['rangeSummaries/r0_120'];
+    seed['rangeSummaries/r2_110'] = Object.assign(JSON.parse(JSON.stringify(rs)), { fromI: 2, toI: 110 });
+    seed.__opts = { promptMax: 24576 };
+    const p = await hopen(seed, 400);
+    const r = await hask(p, 'Who ran the strap order?', true);
+    const { dig, raw } = parts(r.prompt);
+    const check = await p.evaluate(
+      ([dig, rawLo]) => {
+        const text = dig.map(d => d[2]);
+        const sum = new Map(S.summary.convs.map(c => [c.id, c]));
+        const rs = new Map(S.rangeSums.r0_120.convs.map(c => [c.id, c]));
+        const out = { summary: 0, range: 0, none: 0, bad: [], dup: [] };
+        S.threading.convs.forEach(c => {
+          const mem = c.members.filter(i => S.byI.has(i) && i < rawLo);
+          if (!mem.length || mem[0] >= rawLo) return;
+          const pre = '[#' + mem[0] + (mem.length > 1 ? '–#' + mem[mem.length - 1] : '');
+          const ls = text.filter(l => l.startsWith(pre) && l.includes(trunc(c.title, 80)));
+          if (ls.length !== 1) return ls.length > 1 && out.dup.push(c.id);
+          const s = sum.get(c.id),
+            g = rs.get(c.id);
+          const want = sumText(s)
+            ? (out.summary++, trunc(sumText(s), 160))
+            : g
+              ? (out.range++, g.outcome)
+              : (out.none++, 'no summary; ');
+          if (!ls[0].includes(want)) out.bad.push(c.id + ': ' + ls[0]);
+        });
+        return out;
+      },
+      [dig, raw[0]],
+    );
+    ok(
+      check.summary > 0 && check.range > 0 && check.none > 0 && !check.bad.length && !check.dup.length,
+      'H8: conversation lines come from the summary (' +
+        check.summary +
+        '), a range summary (' +
+        check.range +
+        ') or threading alone, "no summary" (' +
+        check.none +
+        ') ' +
+        JSON.stringify(check.bad.slice(0, 2)),
+    );
+    ok(
+      r.prompt.includes('A plain text synopsis about the lake trip stove.'),
+      'H8: an old plain-text synopsis is used as it is',
+    );
+    const orphan = dig.filter(([, , l]) => l.includes('Orphan outcome: straps ordered'));
+    ok(
+      orphan.length === 1 &&
+        orphan[0][0] === 12 &&
+        orphan[0][1] === 100 &&
+        / Group buy: Orphan outcome/.test(orphan[0][2]),
+      'H8: a range-summary conversation threading lacks is placed by the numbers it cites, once, though two range summaries carry it (' +
+        (orphan[0] || [])[2] +
+        ')',
+    );
+    const low = dig.filter(([, b, l]) => b < 60 && /\] \d+ messages?[.,]/.test(l));
+    ok(
+      low.length > 0 &&
+        low.every(([, , l]) => /not grouped/i.test(l)) &&
+        (r.prompt.match(/Loose outcome/g) || []).length === 1,
+      'H8: the stretch threading never reached (before #60) reads "not grouped" (' +
+        low.map(x => x[2].slice(0, 40)).join(' | ') +
+        ')',
+    );
+    ok(p.errors.length === 0, 'H8: no page errors ' + JSON.stringify(p.errors));
+    await p.close();
+  });
+
+  /* H9: chat turns trimmed oldest pair first, the instructions kept; a question too long is never sent */
+  await hcase('H9', async () => {
+    const p = await hopen(
+      hseed(hmsgs(20), {
+        meta: { markerMode: null },
+        opts: { promptMax: 65536, answer: 'Long answer [#1]. ' + 'x'.repeat(12000) },
+      }),
+      20,
+    );
+    const qs = ['first?', 'second?', 'third?', 'fourth?', 'fifth?'];
+    const res = [];
+    for (const q of qs) res.push(await hask(p, q));
+    const fine = res.every((r, k) => {
+      const t = r.turns;
+      const users = t
+        .slice(1)
+        .filter(x => x.role === 'user')
+        .map(x => x.content);
+      const want = qs.slice(k + 1 - users.length, k + 1);
+      return (
+        r.calls.length === 1 &&
+        r.calls[0].bytes <= 65536 &&
+        t[0].role === 'user' &&
+        t[0].content.startsWith('You are helping Sam') &&
+        t[t.length - 1].content === qs[k] &&
+        t.slice(1).every((x, j) => x.role === (j % 2 ? 'assistant' : 'user')) &&
+        JSON.stringify(users) === JSON.stringify(want)
+      );
+    });
+    ok(
+      fine && res[1].turns.length === 4 && res[4].turns.length < 2 * 5,
+      'H9: every call within the cap, the instructions first, the new question last, turns alternating, the oldest pairs dropped (' +
+        res.map(r => r.turns.length).join(', ') +
+        ' turns)',
+    );
+    const before = await p.evaluate(() => __rt.sampleLog.length);
+    const big = await hask(p, 'Is this too long? ' + 'y'.repeat(40 * 1024));
+    ok(
+      big.calls.length === 0 &&
+        (await p.evaluate(() => __rt.sampleLog.length)) === before &&
+        /too long to send/.test(big.askNote),
+      'H9: a 40 KiB question at a 64 KiB cap is never sent: "' + big.askNote + '"',
+    );
+    await p.close();
+  });
+
+  /* H10: bytes, not characters */
+  await hcase('H10', async () => {
+    const p = await hopen(
+      hseed(hmsgs(300, { body: i => i + ' 🏕️⛺ 山の上で会いましょう、テントを持ってきて ' + '🔥'.repeat(5) }), {
+        meta: { caughtUpI: 290 },
+        opts: { promptMax: 16384 },
+      }),
+      300,
+    );
+    const r = await hask(p, 'Where do we meet?', true);
+    const chars = r.turns.reduce((n, t) => n + t.content.length, 0);
+    ok(
+      r.calls.length === 1 &&
+        r.calls[0].code === null &&
+        r.calls[0].bytes <= 16384 - HMARGIN &&
+        chars < 0.7 * r.calls[0].bytes,
+      'H10: emoji and CJK are measured in UTF-8 bytes: ' +
+        r.calls[0].bytes +
+        ' bytes in ' +
+        chars +
+        ' characters, within 16 KiB',
+    );
+    await p.close();
+  });
+
+  /* H11, H12: limits() missing, failing or absurd; a stricter runtime; one retry */
+  await hcase('H11, H12', async () => {
+    const big = hmsgs(2000, {
+      perDay: 460,
+      body: i => 'message ' + i + ' ' + 'about the ridge trail permits and the spare tent poles '.repeat(2),
+    });
+    for (const [label, opts, lo, hi] of [
+      ['limits() missing', { noLimits: true }, 200000, 262144 - HMARGIN],
+      ['limits() rejecting', { limitsReject: true }, 200000, 262144 - HMARGIN],
+      ['limits() answering nonsense', { limitsBogus: true }, 200000, 262144 - HMARGIN],
+      ['a 50,000-byte cap', { promptMax: 50000 }, 30000, 50000 - HMARGIN],
+    ]) {
+      const p = await hopen(hseed(big, { threads: true, meta: { caughtUpI: 1969 }, opts }), 2000);
+      const r = await hask(p, 'Permits?', true);
+      const b = r.calls.length === 1 && r.calls[0].code === null ? r.calls[0].bytes : -1;
+      ok(
+        b > lo && b <= hi,
+        'H11: ' + label + ': include older at 2,000 messages sends ' + b + ' bytes (' + lo + '–' + hi + ')',
+      );
+      await p.close();
+    }
+    {
+      let p = await hopen(
+        hseed(big, { threads: true, meta: { caughtUpI: 1969 }, opts: { enforce: 262144 - 20480 } }),
+        2000,
+      );
+      let r = await hask(p, 'Permits?', true);
+      ok(
+        r.calls.length === 2 &&
+          r.calls[0].code === 'prompt_too_large' &&
+          r.calls[1].code === null &&
+          r.calls[1].bytes < r.calls[0].bytes &&
+          r.calls[1].bytes <= 262144 - 20480 &&
+          /Ben offered one/.test(r.answer) &&
+          r.note.includes('(sent a smaller set: the first was too large)'),
+        'H12: a runtime stricter than it says: one retry, smaller (' +
+          r.calls.map(c => c.bytes).join(' → ') +
+          '), answered, and the note says so',
+      );
+      await p.close();
+      p = await hopen(hseed(big, { threads: true, meta: { caughtUpI: 1969 }, opts: { enforce: 1024 } }), 2000);
+      r = await hask(p, 'Permits?', true);
+      ok(
+        r.calls.length === 2 &&
+          r.calls.every(c => c.code === 'prompt_too_large') &&
+          /Too much to send at once, even trimmed/.test(r.askNote),
+        'H12: refused twice: exactly 2 calls, never a third, and "' + r.askNote + '"',
+      );
+      await p.close();
+    }
+  });
+
+  /* H5b: real membership at 2,000 messages, the two layouts a review measured missing messages with */
+  await hcase('H5b', async () => {
+    for (const [label, th, cap] of [
+      ['four conversations sharing each block of 40', { interleave: true }, 65536],
+      ['four conversations sharing each block of 40', { interleave: true }, 20480],
+      ['four conversations sharing each block of 40', { interleave: true }, 28672],
+      [
+        'four conversations sharing each block of 40, and one running #50–#1900',
+        { interleave: true, long: [50, 1900] },
+        16384,
+      ],
+      ['blocks of 10 and one conversation running #50–#1900', { long: [50, 1900] }, 12288],
+    ]) {
+      const p = await hopen(
+        hseed(hmsgs(2000, { perDay: 460 }), { threads: th, meta: { caughtUpI: 1969 }, opts: { promptMax: cap } }),
+        2000,
+      );
+      const r = await hask(p, 'Permits?', true);
+      const { dig, raw } = parts(r.prompt);
+      const c = raw[0];
+      const missing = uncovered(dig, hthreads(2000, th).threading.convs, c);
+      ok(
+        r.calls.length === 1 &&
+          r.calls[0].code === null &&
+          dig.length > 0 &&
+          missing.length === 0 &&
+          dig.every(([, b]) => b < c),
+        'H5b: ' +
+          label +
+          ' at ' +
+          cap / 1024 +
+          ' KiB: each of the ' +
+          c +
+          ' older messages is in some line (' +
+          missing.length +
+          ' missing)',
+      );
+      await p.close();
+    }
+  });
+
+  /* H7b: an ungrouped run cut short by the second pass ends on the date of its last message */
+  await hcase('H7b', async () => {
+    const msgs = hmsgs(800, { perDay: 100 });
+    const p = await hopen(hseed(msgs, { meta: { caughtUpI: 789 }, opts: { promptMax: 32768 } }), 800);
+    const r = await hask(p, 'Anything?', true);
+    const { dig } = parts(r.prompt);
+    const MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const dayOf = d => MONS[+d.slice(5, 7) - 1] + ' ' + +d.slice(8, 10);
+    const span = (x, y) =>
+      x === y
+        ? dayOf(x)
+        : dayOf(x).slice(0, 3) === dayOf(y).slice(0, 3)
+          ? dayOf(x) + '–' + dayOf(y).slice(4)
+          : dayOf(x) + '–' + dayOf(y);
+    const runs = dig.filter(([, , l]) => /not grouped\.$/.test(l) && /messages, not grouped/.test(l));
+    const bad = runs.filter(([a, b, l]) => !l.includes(', ' + span(msgs[a].d, msgs[b].d) + '] '));
+    ok(
+      runs.length > 0 && !bad.length,
+      'H7b: an ungrouped run gives the dates of its own first and last message (' + (bad[0] || runs[0] || [])[2] + ')',
+    );
+    await p.close();
+  });
+
+  /* H9b: Views checks the request's length; a prompt whose fixed text can't fit is refused on the page, never sent;
+     a second click while a question is on its way sends nothing more */
+  await hcase('H9b', async () => {
+    let p = await hopen(hseed(hmsgs(20), { meta: { markerMode: null }, opts: { promptMax: 65536 } }), 20);
+    await p.evaluate(() => {
+      location.hash = '#views';
+      document.getElementById('view-in').value = 'Group by person ' + 'z'.repeat(40 * 1024);
+      document.getElementById('view-go').click();
+    });
+    await until(
+      p,
+      () =>
+        !document.getElementById('view-go').disabled &&
+        /too long|By person/.test(
+          document.getElementById('view-note').textContent + document.getElementById('view-out').textContent,
+        ),
+    );
+    const vn = await p.textContent('#view-note');
+    ok(
+      (await p.evaluate(() => __rt.sampleLog.length)) === 0 && /That request is too long to send/.test(vn),
+      'H9b: a 40 KiB view request at a 64 KiB cap is never sent: "' + vn + '"',
+    );
+    await p.close();
+    p = await hopen(hseed(hmsgs(20), { meta: { markerMode: null }, opts: { promptMax: 9216 } }), 20);
+    const r = await hask(p, 'Long? ' + 'q'.repeat(4500));
+    ok(
+      r.calls.length === 0 && /too long to send, even with the chat trimmed/.test(r.askNote),
+      'H9b: at a 9 KiB cap a 4.5 KB question leaves no room for the instructions: refused on the page, no call ("' +
+        r.askNote +
+        '")',
+    );
+    await p.close();
+    p = await hopen(hseed(hmsgs(20), { meta: { markerMode: null } }), 20);
+    await p.evaluate(() => {
+      location.hash = '#ask';
+      document.getElementById('ask-in').value = 'Twice?';
+      const b = document.getElementById('ask-go');
+      b.click();
+      b.click();
+    });
+    await sleep(1500);
+    const n = await p.evaluate(() => [__rt.sampleLog.length, document.querySelectorAll('#chat .turn.user').length]);
+    ok(
+      n[0] === 1 && n[1] === 1,
+      'H9b: two quick clicks on Ask send one question (' + n.join(' calls, ') + ' questions shown)',
+    );
+    await p.close();
+  });
+
+  /* H10b: cuts by code point: an emoji at a cut is never split into half a character */
+  await hcase('H10b', async () => {
+    const msgs = hmsgs(200, { perDay: 50 });
+    Object.assign(msgs[195], { r: 'Ben', q: 'a'.repeat(119) + '🔥 tail', a: 'b'.repeat(239) + '🔥 more' });
+    const title = 'c'.repeat(38) + '🔥' + 'c'.repeat(38) + '🔥 tail';
+    const seed = hseed(msgs, { threads: true, meta: { caughtUpI: 189 }, opts: { promptMax: 12288 } });
+    seed['threading/current'].convs[0].title = title;
+    seed['summary/current'].convs.find(c => c.id === 'c0').outcome = 'd'.repeat(158) + '🔥 end';
+    const p = await hopen(seed, 200);
+    await hask(p, 'Emoji?', true);
+    const r = await p.evaluate(t => {
+      const s = __rt.samples[__rt.samples.length - 1][0].content;
+      return {
+        lone: /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s),
+        title: s.includes(t.slice(0, 38) + '🔥'),
+        quote: s.includes('a'.repeat(119) + '🔥'),
+      };
+    }, title);
+    ok(
+      !r.lone && r.title && r.quote,
+      'H10b: titles, outcomes, quotes and link previews cut at an emoji keep it whole ' + JSON.stringify(r),
+    );
+    await p.close();
+  });
+
+  /* H11b, H12b: limits() overstating or understating the cap, or never answering; the retry follows what was sent */
+  await hcase('H11b, H12b', async () => {
+    const big = hmsgs(2000, {
+      perDay: 460,
+      body: i => 'message ' + i + ' ' + 'about the ridge trail permits and the spare tent poles '.repeat(2),
+    });
+    for (const [label, opts] of [
+      ['limits() overstating the cap (1e9) against a real 256 KiB', { promptMax: 1e9, enforce: 262144 }],
+      ['limits() answering a tiny number (100)', { promptMax: 100, enforce: 262144 }],
+      ['limits() never answering', { limitsHang: true }],
+    ]) {
+      const p = await hopen(hseed(big, { threads: true, meta: { caughtUpI: 1969 }, opts }), 2000);
+      const r = await hask(p, 'Permits?', true);
+      const b = r.calls.length === 1 && r.calls[0].code === null ? r.calls[0].bytes : -1;
+      ok(b > 200000 && b <= 262144 - HMARGIN, 'H11b: ' + label + ': one call of ' + b + ' bytes, within 262,144');
+      await p.close();
+    }
+    /* a history smaller than the cap, refused by a stricter runtime: the retry must be smaller than what was sent */
+    const small = big.slice(0, 1000);
+    let p = await hopen(hseed(small, { threads: true, meta: { caughtUpI: 969 } }), 1000);
+    const B = (await hask(p, 'Permits?', true)).calls[0].bytes;
+    await p.close();
+    p = await hopen(
+      hseed(small, { threads: true, meta: { caughtUpI: 969 }, opts: { enforce: Math.floor(B * 0.9) } }),
+      1000,
+    );
+    const r = await hask(p, 'Permits?', true);
+    ok(
+      r.calls.length === 2 &&
+        r.calls[0].code === 'prompt_too_large' &&
+        r.calls[1].code === null &&
+        r.calls[1].bytes <= 0.8 * B,
+      'H12b: everything fit in ' +
+        B +
+        ' bytes but the runtime took at most 90% of that: the retry sends ' +
+        r.calls.map(c => c.bytes).join(' → '),
+    );
+    await p.close();
+  });
+
+  /* H14b, H13b: a date range with an end, older messages included: newer summaries are recorded as afterFrom, never
+     as sumFrom; a citation into them says the message is after the window; their lines can't push the window out */
+  await hcase('H14b, H13b', async () => {
+    const msgs = hmsgs(3000, { perDay: 10 });
+    const meta = { markerMode: 'time', markerFrom: '2026-10-11T00:00', markerTo: '2026-10-20T23:59' };
+    let p = await hopen(hseed(msgs, { threads: true, meta, opts: { answer: 'A later sale [#250].' } }), 3000);
+    const r = await hask(p, 'What sold?', true);
+    const qa = await until(p, () => Object.values(Object.fromEntries(__rt.store)).find(v => v && v.q === 'What sold?'));
+    const sent = qa && qa.sent;
+    ok(
+      sent &&
+        sent.from === 0 &&
+        sent.to === 199 &&
+        sent.sumFrom === null &&
+        sent.afterFrom === 200 &&
+        r.note.includes('Newer than #199: summaries only.'),
+      'H14b: all older messages word for word, newer ones summarized: sent ' +
+        JSON.stringify(sent) +
+        ' ("' +
+        r.note +
+        '")',
+    );
+    const list = await p.textContent('#qa-list');
+    ok(
+      list.includes('#0–#199 word for word, newer as summaries from #200') && !list.includes('older as summaries'),
+      'H14b: Earlier questions says the summaries were of newer messages',
+    );
+    await p.click('#chat .turn.assistant a.cite');
+    const older = await until(p, () => {
+      const o = document.getElementById('msg-older');
+      return o && !o.hidden && document.getElementById('m250') && o.textContent;
+    });
+    ok(
+      /after your catch-up window/.test(older || ''),
+      'H13b: a citation into the newer summaries says the message is after the window: "' + older + '"',
+    );
+    await p.close();
+    p = await hopen(hseed(msgs, { threads: true, meta, opts: { promptMax: 16384 } }), 3000);
+    const r2 = await hask(p, 'What sold?', true);
+    const X = parts(r2.prompt);
+    const newerB = X.newer.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0);
+    ok(
+      X.raw.includes(199) &&
+        X.raw.length >= 20 &&
+        newerB <= 0.1 * 16384 &&
+        /Nothing after #\d+ is included/.test(r2.prompt),
+      'H14b: at 16 KiB, 280 days of newer lines take ' +
+        newerB +
+        ' bytes (at most 10%) and the window stays word for word (' +
+        X.raw.length +
+        ' messages, to #199)',
+    );
+    await p.close();
+  });
+
+  /* B51: a view reply that says kind "idea" is still saved as a view, so it can't pose as a method idea */
+  await hcase('B51', async () => {
+    const p = await hopen(
+      hseed(hmsgs(20), {
+        meta: { markerMode: null },
+        opts: { viewJson: { kind: 'idea', title: 'Sneaky', intro: 'x', sections: [] } },
+      }),
+      20,
+    );
+    await p.evaluate(() => {
+      location.hash = '#views';
+      document.getElementById('view-in').value = 'group by person';
+      document.getElementById('view-go').click();
+    });
+    const v = await until(p, () => Object.values(Object.fromEntries(__rt.store)).find(v => v && v.title === 'Sneaky'));
+    ok(
+      v && v.kind === 'view',
+      'B51: a built view is saved with kind "view" whatever the reply says (' + (v && v.kind) + ')',
+    );
+    await p.close();
+  });
+
+  /* H15: a range summary too long for one call is refused, saying how much fits and from when */
+  await hcase('H15', async () => {
+    const n = 600;
+    const TH = {
+      convs: [{ id: 'a', title: 'Packs', members: range(0, n - 1, i => i) }],
+      links: {},
+      to: n - 1,
+      note: '',
+    };
+    const SM = {
+      version: 2,
+      convs: [{ id: 'a', tag: '', synopsis: [{ t: 'Later part', refs: [400] }], outcome: '', key: [400] }],
+      open: [],
+      answered: [],
+      deals: [],
+      mentions: [],
+      fromI: 300,
+      toI: n - 1,
+      generatedAt: 'now',
+    };
+    const msgs = range(0, n - 1);
+    const p = await hopen(
+      hseed(msgs, {
+        meta: { markerMode: 'time', markerFrom: ymd(TODAY) + 'T00:00', markerTo: null },
+        docs: { 'threading/current': TH, 'summary/current': SM },
+        opts: { promptMax: 24576 },
+      }),
+      n,
+    );
+    const box = await until(p, () => {
+      const t = (document.querySelector('#v-summary .rangebox') || {}).textContent || '';
+      return /This span has/.test(t) && t;
+    });
+    const m = (box || '').match(
+      /This span has 600 messages, more than Claude can read at once \(about (\d+) fit\)\. ?Pick a shorter span: from (.+?) through the same end fits\./,
+    );
+    ok(
+      !!m && !(await p.$('#v-summary .rangebox button')) && (await p.evaluate(() => __rt.sampleLog.length)) === 0,
+      'H15: a 600-message span at a 24 KiB cap is refused with no button and no call: "' +
+        (box || '').slice(0, 150) +
+        '…"',
+    );
+    if (m) {
+      const fit = +m[1];
+      const from = mk(n - fit);
+      const t = from.t.match(/(\d+):(\d+) ([AP]M)/);
+      const ts = from.d + 'T' + String((+t[1] % 12) + (t[3] === 'PM' ? 12 : 0)).padStart(2, '0') + ':' + t[2];
+      await p.evaluate(ts => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { markerFrom: ts })), ts);
+      const box2 = await until(p, () => {
+        const b = document.querySelector('#v-summary .rangebox');
+        return b && b.querySelector('button') && b.textContent;
+      });
+      ok(
+        !!box2 && box2.includes('All ' + fit + ' messages in this span'),
+        'H15: the start it suggests fits: from ' + m[2] + ', ' + fit + ' messages, and the button is offered',
+      );
+    }
+    await p.close();
+  });
+
+  /* H16: scale, counted: 25,000 messages (50,000 too with PERF=1) */
+  await hcase('H16', async () => {
+    for (const n of process.env.PERF ? [25000, 50000] : [25000]) {
+      const { seed } = synthSeed(n, 1000, [], { markerMode: 'caught', caughtUpI: n - 151 });
+      const p = await hopen(seed, n);
+      await p.evaluate(() => {
+        const real = S.msgs;
+        window.__cnt = { lineFor: 0, reads: 0 };
+        const orig = window.lineFor;
+        window.lineFor = function () {
+          __cnt.lineFor++;
+          return orig.apply(this, arguments);
+        };
+        S.msgs = new Proxy(real, {
+          get(t, k, rcv) {
+            if (typeof k === 'string' && /^\d+$/.test(k)) __cnt.reads++;
+            return Reflect.get(t, k, rcv);
+          },
+        });
+      });
+      const r = await hask(p, 'Who organized the group buy?', true);
+      const cnt = await p.evaluate(() => __cnt);
+      const { dig, raw } = parts(r.prompt);
+      ok(
+        r.calls.length === 1 &&
+          r.calls[0].bytes <= 262144 - HMARGIN &&
+          raw[raw.length - 1] === n - 1 &&
+          contiguous(raw) &&
+          dig[0][0] === 0,
+        'H16: ' +
+          n +
+          ' messages, include older: ' +
+          r.calls[0].bytes +
+          ' bytes, #' +
+          raw[0] +
+          '–#' +
+          (n - 1) +
+          ' word for word, summaries from #0',
+      );
+      ok(
+        cnt.lineFor <= raw.length + 2 && cnt.reads <= 4 * n,
+        'H16: packing calls lineFor ' +
+          cnt.lineFor +
+          ' times for ' +
+          raw.length +
+          ' lines and reads S.msgs ' +
+          (cnt.reads / n).toFixed(2) +
+          '× per message (at most 4)',
+      );
+      await p.close();
+    }
+  });
+}
+
+/* ---------- R2: photos stored as they upload ----------
+   Each photo is indexed (photos/b<start>) the moment it lands, refresh/lastImport says "uploading" with a heartbeat
+   while they store, owed slots are on record (null, and meta/chat.photosOwed), every upload error code has its own
+   handling, and asset usage is recorded with each import. Timings are shortened with __mcImportTune. */
+const TUNE = { beatMs: 200, leaseMs: 1500, uploadTimeoutMs: 1500, retryMs: 100, rateWaitMs: 300 };
+/* distinct bytes per slot, so a photo uploaded twice shows up as two uploads with the same hash */
+const phB64 = (i, k, pad = 0) =>
+  Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from(' #' + i + '.' + k + ' '), Buffer.alloc(pad, 0x2e)]).toString(
+    'base64',
+  );
+const PH = (i, k = 0, pad = 0) => ({ i, k, type: 'image/png', b64: phB64(i, k, pad) });
+const openR2 = (extra = {}, opts = {}) =>
+  open(Object.assign(SEED(), extra, { __opts: Object.assign({ tune: TUNE }, opts) }));
+const setUp = (p, up) => p.evaluate(u => (window.__up = u), up);
+const uploads = p => p.evaluate(() => __rt.uploads);
+const writesTo = (p, re) => p.evaluate(src => __rt.writes.filter(w => new RegExp(src).test(w.p)).map(w => w.p), re);
+const imports = p => p.evaluate(() => __rt.writes.filter(w => w.p === 'refresh/lastImport').map(w => w.v));
+const toastText = p => p.evaluate(() => (document.getElementById('toast') || {}).textContent || '');
+const SIX = [PH(2), PH(3), PH(5), PH(5, 1), PH(7), PH(8)];
+const capSix = () => JSON.stringify(cap(range(0, 9), { photos: SIX }));
+async function photos() {
+  // P1, P2, P4: six photos at 300 ms each
+  let p = await openR2();
+  await setUp(p, { delayMs: 300 });
+  let r = await pasteFirst(p, capSix());
+  ok(
+    r &&
+      r.state === 'uploading' &&
+      r.ok &&
+      r.fresh === 10 &&
+      JSON.stringify(r.chunks) === '["c0000"]' &&
+      r.photos &&
+      r.photos.total === 6 &&
+      r.photos.done === 0 &&
+      (await get(p, 'meta/chat')).lastI === 9 &&
+      /IMPORT OK: 10 new messages.*Storing photos \d\/6… keep this tab open/.test(await toastText(p)),
+    'P1: the first lastImport after a paste with photos is "uploading" (messages saved, photos 0/6), the toast says ' +
+      'keep this tab open (' +
+      JSON.stringify(r && { state: r.state, photos: r.photos }) +
+      ')',
+  );
+  await until(p, () => __rt.uploads.length >= 3);
+  let st = await photoState(p);
+  let up = await uploads(p);
+  const owedMid = (await get(p, 'meta/chat')).photosOwed;
+  ok(
+    up.length >= 3 &&
+      up.every(u => Object.values(st.byK).some(m => Object.values(m).includes('/_blob/' + u.id))) &&
+      st.owed.length +
+        up.filter(u => Object.values(st.byK).some(m => Object.values(m).includes('/_blob/' + u.id))).length ===
+        6 &&
+      owedMid &&
+      owedMid.fromI === 2 &&
+      owedMid.toI === 8,
+    'P2: mid-upload, every photo that landed is already indexed in photos/b0, the rest are owed (null), and ' +
+      'meta/chat.photosOwed covers them (' +
+      up.length +
+      ' landed, owed ' +
+      st.owed +
+      ')',
+  );
+  r = await until(p, () => (v => (v && v.state !== 'uploading' ? v : null))(__rt.get('refresh/lastImport')));
+  up = await uploads(p);
+  st = await photoState(p);
+  ok(
+    r &&
+      r.state === 'done' &&
+      r.stored.length === 6 &&
+      r.stored.every(s => up.some(u => u.id === s.id) && st.byK[s.i][s.k] === '/_blob/' + s.id) &&
+      /6 photos stored\./.test(r.msg) &&
+      (await get(p, 'meta/chat')).photosOwed === null &&
+      !st.owed.length &&
+      (await writesTo(p, '^photos/index$')).length === 0 &&
+      (await p.evaluate(() => __rt.leases.get('refresh/importLock').exp - Date.now() <= 1100)),
+    'P4: done: stored lists the 6 {i,k,id}, photosOwed cleared, lease let go, photos/index never written (' +
+      (r && r.msg) +
+      ')',
+  );
+  ok(
+    (await imports(p)).filter(v => v.state === 'uploading').every((v, k, a) => !k || v.beat >= a[k - 1].beat) &&
+      (await imports(p)).filter(v => v.state !== 'uploading').length === 1,
+    'P4: lastImport goes uploading (heartbeats) then one closing record',
+  );
+  await p.close();
+  // P3: one slow upload still beats, and the lease moves forward
+  p = await openR2();
+  await setUp(p, { script: { 0: { delayMs: 1200 } } });
+  await pasteFirst(p, JSON.stringify(cap(range(0, 2), { photos: [PH(1)] })));
+  const l0 = await p.evaluate(() => __rt.leases.get('refresh/importLock').exp);
+  await sleep(700);
+  const l1 = await p.evaluate(() => __rt.leases.get('refresh/importLock').exp);
+  await until(p, () => (__rt.get('refresh/lastImport') || {}).state === 'done');
+  const beats = (await imports(p)).filter(v => v.state === 'uploading').map(v => v.beat);
+  ok(
+    beats.length >= 4 && beats.every((b, k) => !k || b > beats[k - 1]) && l1 > l0,
+    'P3: during one 1.2 s upload the heartbeat wrote ' +
+      beats.length +
+      ' rising beats and the import lease moved forward',
+  );
+  await p.close();
+  // P5: the tab closes after 4 uploads, with the 5th in flight; that one still lands (late, never indexed), and a new
+  // tab on the same store finishes the job: only the photo in flight is stored twice
+  const TEN = range(0, 9, i => PH(i));
+  const capTen = JSON.stringify(cap(range(0, 9), { photos: TEN }));
+  p = await openR2();
+  await setUp(p, { delayMs: 50, script: { 4: { hang: 800 }, 5: { hang: 1e9 } } });
+  pasteFirst(p, capTen).catch(() => {});
+  await until(p, () => Object.values((__rt.get('photos/b0') || { byK: {} }).byK).filter(m => m[0]).length === 4);
+  const snap = await p.evaluate(() => ({ all: __rt.all(), leases: Object.fromEntries(__rt.leases) }));
+  await until(p, () => __rt.uploads.length === 5); /* the photo in flight lands after the tab "closed" (the snapshot) */
+  const hashesA = (await uploads(p)).map(u => u.hash);
+  await p.context().close();
+  const p2 = await openR2(Object.assign({}, snap.all), { leases: snap.leases });
+  st = await photoState(p2);
+  ok(
+    st.owed.length === 6 &&
+      [0, 1, 2, 3].every(i => st.stored(i).length === 1) &&
+      snap.all['refresh/lastImport'].state === 'uploading' &&
+      snap.all['meta/chat'].photosOwed.n === 10,
+    'P5: after the tab closed: the 4 photos that landed are indexed, 6 owed, lastImport stuck at uploading',
+  );
+  const w5 = (await writesTo(p2, '^(photos|chunks|meta)/')).length;
+  r = await paste(p2, capTen);
+  ok(
+    r &&
+      !r.ok &&
+      /Another import is running .*\(after \d{1,2}:\d\d:\d\d [AP]M\)\./.test(r.msg) &&
+      (await writesTo(p2, '^(photos|chunks|meta)/')).length === w5,
+    'P5: pasting before the closed tab’s lease lapses: "Another import is running", the lease’s end to the second, ' +
+      'nothing written (' +
+      (r && r.msg) +
+      ')',
+  );
+  await sleep(1600);
+  r = await paste(p2, capTen);
+  up = await uploads(p2);
+  st = await photoState(p2);
+  ok(
+    r &&
+      r.state === 'done' &&
+      up.length === 6 &&
+      hashesA.length === 5 &&
+      new Set(up.map(u => u.hash).concat(hashesA)).size === 10 &&
+      up.filter(u => hashesA.includes(u.hash)).length === 1 &&
+      up[0].hash === hashesA[4] &&
+      range(0, 9, i => i).every(i => st.stored(i).length === 1) &&
+      /Nothing new.*6 photos stored \(4 already stored\)/.test(r.msg),
+    'P5: once it lapses, the same paste in the new tab uploads exactly the 6 owed photos; only the one in flight when ' +
+      'the tab closed is stored twice; all 10 indexed (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p2.close();
+  // P6: a second paste in the same tab while photos upload changes nothing
+  p = await openR2();
+  await setUp(p, { delayMs: 300 });
+  await pasteFirst(p, capSix());
+  await p.evaluate(t => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, capSix());
+  const t6 = await toastText(p);
+  await until(p, () => (__rt.get('refresh/lastImport') || {}).state === 'done');
+  await sleep(500);
+  ok(
+    /Still storing photos from the last paste \(\d\/6\)… keep this tab open/.test(t6) &&
+      (await uploads(p)).length === 6 &&
+      (await imports(p)).filter(v => v.state !== 'uploading').length === 1,
+    'P6: a second paste while uploading: toast "Still storing photos from the last paste (n/6)", no second import, ' +
+      '6 uploads (' +
+      t6 +
+      ')',
+  );
+  await p.close();
+  // P7: a capture with no photos: one record, as before
+  p = await openR2();
+  r = await paste(p, JSON.stringify(cap(range(0, 2))));
+  ok(
+    r &&
+      r.state === 'done' &&
+      /^IMPORT OK: 3 new messages, #0–#2 \(chunks c0000\)\. Checksum and read-back OK\.$/.test(r.msg) &&
+      (await imports(p)).length === 1 &&
+      (await writesTo(p, '^photos/')).length === 0,
+    'P7: messages only: a single "done" record with the same message as before, no photo writes (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P8: another tab takes the lease mid-upload (ours lapsed): nothing more is written
+  p = await openR2();
+  await setUp(p, { delayMs: 400 });
+  await pasteFirst(p, capSix());
+  await until(p, () => __rt.uploads.length >= 2);
+  const before8 = await p.evaluate(() => {
+    __rt.steal('refresh/importLock', 'other', 60000);
+    return __rt.writes.filter(w => /^(photos|meta|refresh\/lastImport)/.test(w.p)).length;
+  });
+  await until(p, () => !S.importing && !S.pasting, null, 15000);
+  await sleep(500);
+  const after8 = (await writesTo(p, '^(photos|meta|refresh/lastImport)')).length;
+  const note8 = await p.evaluate(() => document.getElementById('imp-note').textContent);
+  st = await photoState(p);
+  up = await uploads(p);
+  ok(
+    after8 === before8 &&
+      (await get(p, 'refresh/lastImport')).state === 'uploading' &&
+      up.length > st.stored(2).length + st.stored(3).length + st.stored(5).length + st.stored(7).length &&
+      /another open copy of this page took over the import\. Paste again/.test(note8),
+    'P8: lease taken mid-upload: no block, meta/chat or refresh/lastImport write after it (no heartbeat, no closing ' +
+      'record: that record is the other tab’s), the photo in flight not indexed (' +
+      note8 +
+      ')',
+  );
+  await p.close();
+  // P9: rate_limited once (waits, retries, done) and twice (partial)
+  p = await openR2();
+  await setUp(p, { script: { 1: 'rate_limited' } });
+  r = await paste(p, capSix());
+  ok(
+    r && r.state === 'done' && (await uploads(p)).length === 6 && /6 photos stored\./.test(r.msg),
+    'P9a: one rate_limited: waits, retries that photo, done with 6 uploads',
+  );
+  await p.close();
+  p = await openR2();
+  await setUp(p, { script: { 1: 'rate_limited', 2: 'rate_limited' } });
+  r = await paste(p, capSix());
+  st = await photoState(p);
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r.stop === 'rate_limited' &&
+      /Too many uploads right now: wait 2 minutes, then paste again/.test(r.msg) &&
+      st.stored(2).length === 1 &&
+      st.owed.length === 5 &&
+      (await get(p, 'meta/chat')).photosOwed.n === 5,
+    'P9b: rate_limited twice: partial, "wait 2 minutes", the first photo indexed, 5 owed (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P10: store_unavailable once (retried) and twice (partial; a re-paste finishes, no duplicate)
+  p = await openR2();
+  await setUp(p, { script: { 1: 'store_unavailable' } });
+  r = await paste(p, capSix());
+  ok(r && r.state === 'done' && (await uploads(p)).length === 6, 'P10a: one store_unavailable: retried once, done');
+  await p.close();
+  p = await openR2();
+  await setUp(p, { script: { 1: 'store_unavailable', 2: 'store_unavailable' } });
+  r = await paste(p, capSix());
+  const r10 = r;
+  r = await paste(p, capSix());
+  up = await uploads(p);
+  ok(
+    r10 &&
+      r10.state === 'partial' &&
+      r10.stop === 'unavailable' &&
+      /stopped at #3 \(store_unavailable\)\. Paste again to store the rest\./.test(r10.msg) &&
+      r &&
+      r.state === 'done' &&
+      up.length === 6 &&
+      new Set(up.map(u => u.hash)).size === 6,
+    'P10b: store_unavailable twice: partial, "paste again"; the re-paste stores the rest with no duplicate (' +
+      (r10 && r10.msg) +
+      ')',
+  );
+  await p.close();
+  // P11: storage full (the stand-in's file limit set to 3)
+  p = await openR2();
+  await setUp(p, { quota: { maxFiles: 3 } });
+  r = await paste(p, capSix());
+  st = await photoState(p);
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r.stop === 'quota' &&
+      r.usage &&
+      r.usage.files === 3 &&
+      r.usage.maxFiles === 3 &&
+      /Photo uploads refused \(quota_or_state\): this page's photo storage is full \(3 files, .*\), or the page is unpublished or being deleted: 3 photos not stored\. Messages are saved\. Pasting again won't help; tell Claude\./.test(
+        r.msg,
+      ) &&
+      !/paste again/i.test(r.msg) &&
+      st.owed.length === 3,
+    'P11: storage full: partial, stop "quota", usage recorded, the message says so and never "paste again" (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p.close();
+  // P12: too_large: given up for good, never retried
+  p = await openR2();
+  await setUp(p, { script: { 1: 'too_large' } });
+  r = await paste(p, capSix());
+  st = await photoState(p);
+  const n12 = (await uploads(p)).length;
+  const r12 = await paste(p, capSix());
+  ok(
+    r &&
+      r.state === 'done' &&
+      JSON.stringify(st.byK['3']) === '{"0":{"e":"too_large"}}' &&
+      JSON.stringify(r.gaveUp) === '[{"i":3,"k":0,"e":"too_large"}]' &&
+      /5 photos stored\. 1 photo couldn't be stored \(#3, too large\)\./.test(r.msg) &&
+      n12 === 5 &&
+      (await uploads(p)).length === 5 &&
+      r12 &&
+      /6 already stored/.test(r12.msg),
+    'P12: too_large on #3: slot given up ({e}), the rest stored, done; a re-paste uploads nothing (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p.close();
+  // P13: an upload that hangs: the page's timeout stops it; the late answer is never indexed
+  p = await openR2();
+  await setUp(p, { script: { 1: { hang: 2500 } } });
+  r = await paste(p, capSix());
+  const w13 = (await writesTo(p, '^photos/')).length;
+  await sleep(1500);
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r.stop === 'timeout' &&
+      /stopped at #3 \(timeout\)\. Paste again/.test(r.msg) &&
+      (await uploads(p)).length === 2 &&
+      (await writesTo(p, '^photos/')).length === w13 &&
+      (await photoState(p)).owed.length === 5,
+    'P13: a hung upload times out: partial, stop "timeout"; its late answer leaves one unindexed asset and no write (' +
+      (r && r.msg) +
+      ')',
+  );
+  r = await paste(p, capSix());
+  st = await photoState(p);
+  ok(
+    r && r.state === 'done' && !st.owed.length && (await uploads(p)).length === 7,
+    'P13: the re-paste stores the rest (one asset duplicated: the late one)',
+  );
+  await p.close();
+  // P14: messages #499 and #500 fall in two blocks; the page shows both and picks up a live block change
+  p = await openR2();
+  r = await paste(p, JSON.stringify(cap(range(0, 502), { photos: [PH(499), PH(500)] })));
+  const b0 = await get(p, 'photos/b0');
+  const b500 = await get(p, 'photos/b500');
+  await p.evaluate(() => (location.hash = '#messages'));
+  await p.evaluate(() => {
+    document.getElementById('lay-flat') && document.getElementById('lay-flat').click();
+  });
+  const shown = await until(
+    p,
+    () => document.querySelector('#m499 .pics img') && document.querySelector('#m500 .pics img'),
+  );
+  ok(
+    r &&
+      r.state === 'done' &&
+      b0 &&
+      b0.start === 0 &&
+      Object.keys(b0.byK).join() === '499' &&
+      b500 &&
+      b500.start === 500 &&
+      Object.keys(b500.byK).join() === '500' &&
+      !!shown,
+    'P14: #499 lands in photos/b0 and #500 in photos/b500, and the Messages view shows both',
+  );
+  await p.evaluate(() => {
+    const b = __rt.get('photos/b500') || { start: 500, byK: {}, gifs: [] };
+    b.byK['501'] = { 0: '/_blob/' + 'f'.repeat(32) };
+    __rt.write('photos/b500', b);
+  });
+  ok(
+    !!(await until(p, () => document.querySelector('#m501 .pics img[src="/_blob/' + 'f'.repeat(32) + '"]'))),
+    'P14: a live change to a block shows the new photo without a reload',
+  );
+  await p.close();
+  // P15: an old photos/index is read (byI+byK, byI only), never written; a new slot goes to the block
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 9))));
+  await p.evaluate(() =>
+    __rt.write('photos/index', {
+      byI: { 2: ['/_blob/old2'], 3: ['/_blob/old3'] },
+      byK: { 2: { 0: '/_blob/old2' } },
+      gifs: [4],
+    }),
+  );
+  const wIdx = (await writesTo(p, '^photos/index$')).length;
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(2), PH(3)] })));
+  ok(
+    r && /Nothing new.*0 photos stored \(2 already stored\)/.test(r.msg) && (await uploads(p)).length === 0,
+    'P15a/b: photos in an old index (byI+byK, and byI only) count as stored: a re-paste uploads nothing (' +
+      (r && r.msg) +
+      ')',
+  );
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(2), PH(2, 1)] })));
+  st = await photoState(p);
+  await p.evaluate(() => (location.hash = '#messages'));
+  const pics2 = await until(p, () => {
+    const l = [...document.querySelectorAll('#m2 .pics img')].map(i => i.getAttribute('src'));
+    return l.length === 2 ? l : null;
+  });
+  ok(
+    r &&
+      r.state === 'done' &&
+      typeof (await get(p, 'photos/b0')).byK['2']['1'] === 'string' &&
+      st.stored(2).length === 2 &&
+      pics2 &&
+      pics2[0] === '/_blob/old2' &&
+      (await writesTo(p, '^photos/index$')).length === wIdx &&
+      !!(await p.$('#m3 .pics img[src="/_blob/old3"]')),
+    'P15c: slot 1 of a message whose slot 0 is in the old index goes to photos/b0, both show in slot order, and ' +
+      'photos/index is never written',
+  );
+  await p.close();
+  // P16a: a block of 500 messages with 4 photos each, at real id length, fits the 256 KiB cap
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 505))));
+  await p.evaluate(() => {
+    const byK = {};
+    for (let i = 0; i < 499; i++) byK[i] = { 0: 0, 1: 1, 2: 2, 3: 3 };
+    Object.values(byK).forEach(m => Object.keys(m).forEach(k => (m[k] = '/_blob/' + 'a'.repeat(32))));
+    byK[499] = { 0: null, 1: null, 2: null, 3: null };
+    __rt.write('photos/b0', { start: 0, byK, gifs: [] });
+    return __rt.batch([
+      {
+        op: 'update',
+        p: 'meta/chat',
+        v: { photosOwed: { n: 4, fromI: 499, toI: 499, at: 'x' } },
+        if_version: __rt.version('meta/chat'),
+      },
+    ]);
+  });
+  r = await paste(p, JSON.stringify(cap(range(495, 505), { photos: [0, 1, 2, 3].map(k => PH(499, k)) })));
+  const size16 = await p.evaluate(() => new TextEncoder().encode(JSON.stringify(__rt.get('photos/b0'))).length);
+  ok(
+    r &&
+      r.state === 'done' &&
+      r.stored.length === 4 &&
+      size16 < 262144 &&
+      (await get(p, 'meta/chat')).photosOwed === null,
+    'P16a: 500 messages × 4 photos in one block is ' + size16 + ' bytes, under the 256 KiB cap (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P16b: an old index near the cap doesn't stop an import with photos (2.6 rewrote it and went over)
+  const big = { byI: {}, byK: {}, gifs: [] };
+  for (let i = 0; JSON.stringify(big).length < 262000; i++) {
+    big.byI[i + 1000] = ['/_blob/' + 'c'.repeat(32)];
+    big.byK[i + 1000] = { 0: '/_blob/' + 'c'.repeat(32) };
+  }
+  p = await openR2({ 'photos/index': big });
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(4)] })));
+  ok(
+    r && r.state === 'done' && r.stored.length === 1 && (await photoState(p)).stored(4).length === 1,
+    'P16b: a photos/index within 150 bytes of the cap doesn’t stop an import with photos (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P17: an owed slot more than 300 messages behind the newest is given up and reported
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 20))));
+  await p.evaluate(() => {
+    __rt.write('photos/b0', { start: 0, byK: { 10: { 0: null } }, gifs: [] });
+    __rt.batch([
+      {
+        op: 'update',
+        p: 'meta/chat',
+        v: { photosOwed: { n: 1, fromI: 10, toI: 10, at: 'x' } },
+        if_version: __rt.version('meta/chat'),
+      },
+    ]);
+  });
+  r = await paste(p, JSON.stringify(cap(range(21, 500))));
+  ok(
+    r &&
+      r.state === 'done' &&
+      JSON.stringify((await get(p, 'photos/b0')).byK['10']) === '{"0":{"e":"gave-up"}}' &&
+      JSON.stringify(r.gaveUp) === '[{"i":10,"k":0,"e":"gave-up"}]' &&
+      (await get(p, 'meta/chat')).photosOwed === null &&
+      /1 photo owed from earlier imports given up \(#10\): more than 300 messages old/.test(r.msg),
+    'P17: an owed photo 490 messages behind is given up, listed in gaveUp, photosOwed cleared (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P18: backfill with the real helper's captures (sim: a first run with a photo on #30, then a scan from before it)
+  if (!fs.existsSync(BACKFILL)) ok(false, 'P18: ' + path.relative(ROOT, BACKFILL) + ' missing: run tests/sim.js first');
+  else {
+    const B = JSON.parse(fs.readFileSync(BACKFILL, 'utf8'));
+    p = await openR2();
+    await failCalls(p, [0, 1]);
+    r = await paste(p, JSON.stringify(B.first));
+    const owed18 = (await get(p, 'meta/chat')).photosOwed;
+    const n18 = (await uploads(p)).length;
+    const r18 = await paste(p, JSON.stringify(B.backfill));
+    st = await photoState(p);
+    ok(
+      r &&
+        r.state === 'partial' &&
+        owed18 &&
+        owed18.n === 1 &&
+        owed18.fromI === 30 &&
+        r18 &&
+        r18.state === 'done' &&
+        r18.fresh === B.backfill.msgs.filter(m => m.i > B.first.msgs.length - 1).length &&
+        r18.backfill === true &&
+        (await uploads(p)).length - n18 === 1 &&
+        st.stored(30).length === 1 &&
+        (await get(p, 'meta/chat')).photosOwed === null,
+      'P18: the backfill capture (from #30) imports the new messages and stores the owed photo once, backfill true (' +
+        (r18 && r18.msg) +
+        ')',
+    );
+    const drift = JSON.parse(JSON.stringify(B.backfill));
+    drift.msgs = drift.msgs.slice(1).map((m, k) => Object.assign(m, { i: drift.msgs[0].i + k }));
+    drift.sha = sha(JSON.stringify(drift.msgs));
+    drift.photos = [];
+    drift.phsha = sha('[]');
+    const w18 = (await writesTo(p, '^(photos|chunks|meta)/')).length;
+    r = await paste(p, JSON.stringify(drift));
+    ok(
+      r &&
+        r.state === 'refused' &&
+        /doesn't match the stored message/.test(r.msg) &&
+        (await writesTo(p, '^(photos|chunks|meta)/')).length === w18,
+      'P18: a backfill whose numbering drifted (a message deleted since) is refused, nothing written',
+    );
+    await p.close();
+    // the multi-photo mock capture (a first run): every slot lands where the helper put it
+    const M = B.multi;
+    p = await openR2();
+    r = await paste(p, JSON.stringify(M));
+    st = await photoState(p);
+    ok(
+      r &&
+        M.photos.length >= 6 &&
+        M.photos.every(ph => typeof st.byK[ph.i][ph.k] === 'string') &&
+        (r.photos || {}).total === M.photos.length,
+      'P18: a sim capture with several photos per message stores every slot (' + M.photos.length + ' photos)',
+    );
+    await p.close();
+  }
+  // P19: a dry run reports what it would store, and writes nothing
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(2), PH(3)] })));
+  const w19 = (await writesTo(p, '^(photos|chunks|meta)/')).length;
+  const n19 = (await uploads(p)).length;
+  r = await paste(p, JSON.stringify(cap(range(0, 11), { photos: SIX.concat([PH(11)]), dry: true })));
+  ok(
+    r &&
+      r.dry &&
+      /DRY RUN OK: 2 new messages.*7 photos verified, 5 to store \(2 already stored\), \d+ KB\. Nothing written\./.test(
+        r.msg,
+      ) &&
+      (await writesTo(p, '^(photos|chunks|meta)/')).length === w19 &&
+      (await uploads(p)).length === n19,
+    'P19: a dry run says how many photos it would store, and writes and uploads nothing (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // P20: a view that can't upload: messages saved, owed photos on record for a view that can
+  p = await openR2({}, { noAssets: true });
+  r = await paste(p, JSON.stringify(cap(range(0, 3), { photos: [PH(1), PH(2)] })));
+  st = await photoState(p);
+  ok(
+    r &&
+      r.ok &&
+      r.state === 'partial' &&
+      r.stop === 'no_assets' &&
+      /Photos not stored: this view can't upload them/.test(r.msg) &&
+      !/paste again/i.test(r.msg) &&
+      st.owed.length === 2 &&
+      (await get(p, 'meta/chat')).photosOwed.n === 2,
+    'P20: no assets: partial, stop "no_assets", today’s text with no "paste again", both photos owed (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p.close();
+  // a block write refused once is retried; refused twice, the import stops ("index") and the messages stay saved
+  p = await openR2();
+  await p.evaluate(() => __rt.fails.push({ p: 'photos/b0', op: 'set' }));
+  r = await paste(p, JSON.stringify(cap(range(0, 3), { photos: [PH(1)] })));
+  ok(r && r.state === 'done' && r.stored.length === 1, 'a block write refused once is retried: done');
+  await p.evaluate(() => __rt.fails.push({ p: 'photos/b0', op: 'update' }, { p: 'photos/b0', op: 'update' }));
+  r = await paste(p, JSON.stringify(cap(range(0, 5), { photos: [PH(4)] })));
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r.stop === 'index' &&
+      r.ok &&
+      r.fresh === 2 &&
+      /Photos: 0 of 1 stored; stopped \(index write\)\. Paste again/.test(r.msg) &&
+      (await uploads(p)).length === 1,
+    'a block write refused twice: partial, stop "index", nothing uploaded, "paste again" (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // a lab capture uploads its photos and indexes nothing
+  p = await openR2();
+  const lab = cap(range(0, 3), { photos: [PH(1), PH(2)] });
+  lab.lab = true;
+  r = await paste(p, JSON.stringify(lab));
+  ok(
+    r &&
+      r.state === 'done' &&
+      (await uploads(p)).length === 2 &&
+      (await writesTo(p, '^photos/')).length === 0 &&
+      /2 photos stored \(lab test, not linked\)/.test(r.msg),
+    'a lab capture uploads its 2 photos and writes no photos/ document',
+  );
+  await p.close();
+  // review of #42, 1: a tab that lost its lease never writes its stale copy of a block over another tab's slots
+  p = await openR2({}, { tune: Object.assign({}, TUNE, { retryMs: 900 }) });
+  await setUp(p, { delayMs: 300 });
+  await pasteFirst(p, JSON.stringify(cap(range(0, 9), { photos: [PH(2), PH(3)] })));
+  await p.evaluate(() => __rt.fails.push({ p: 'photos/b0', op: 'update' }, { p: 'photos/b0', op: 'set' }));
+  await until(p, () => __rt.fails.length === 1); /* tab A's first photo write was refused; it waits to retry */
+  const otherId = '/_blob/' + 'e'.repeat(32);
+  await p.evaluate(id => {
+    __rt.fails.length = 0;
+    __rt.steal('refresh/importLock', 'tabB', 60000); /* A froze past its lease; tab B took over and indexed #8 */
+    const b = __rt.get('photos/b0');
+    b.byK['8'] = { 0: id };
+    __rt.write('photos/b0', b);
+  }, otherId);
+  await until(p, () => !S.importing && !S.pasting, null, 15000);
+  await sleep(300);
+  st = await photoState(p);
+  ok(
+    st.byK['8'] && st.byK['8']['0'] === otherId && st.byK['2']['0'] === null,
+    'review 1: a tab whose block write was refused, and whose lease another tab then took, never writes its stale ' +
+      'block over the other tab’s slot #8 (' +
+      JSON.stringify(st.byK) +
+      ')',
+  );
+  await p.close();
+  // a slot write merges into the block (update), so another tab's slots written meanwhile survive
+  p = await openR2();
+  await setUp(p, { delayMs: 300 });
+  await pasteFirst(p, JSON.stringify(cap(range(0, 9), { photos: [PH(2), PH(3)] })));
+  await p.evaluate(id => {
+    const b = __rt.get('photos/b0');
+    b.byK['9'] = { 0: id };
+    b.gifs = [7];
+    __rt.silent('photos/b0', b);
+  }, otherId);
+  r = await until(p, () => (v => (v && v.state !== 'uploading' ? v : null))(__rt.get('refresh/lastImport')));
+  st = await photoState(p);
+  ok(
+    r &&
+      r.state === 'done' &&
+      (st.byK['9'] || {})['0'] === otherId &&
+      st.stored(2).length === 1 &&
+      st.stored(3).length === 1 &&
+      [...st.gifs].join() === '7',
+    'review 1: photos are indexed slot by slot: a slot (and a GIF) another writer added to the block meanwhile survive',
+  );
+  await p.close();
+  // review 4: a failed photosOwed write doesn't fail an import whose messages are saved
+  p = await openR2();
+  await p.evaluate(() => __rt.fails.push({ p: 'meta/chat', op: 'update', after: 1 }));
+  r = await paste(p, JSON.stringify(cap(range(0, 3), { photos: [PH(1)] })));
+  ok(
+    r && r.state === 'done' && r.stored.length === 1 && !/Import failed/.test(r.msg),
+    'review 4: a refused meta/chat.photosOwed write leaves the import done, photo stored (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // review 6: only store_unavailable is retried; upstream_error (maybe an unanswered call) and transform_error aren't
+  for (const code of ['upstream_error', 'transform_error']) {
+    p = await openR2();
+    await setUp(p, { script: { 1: code } });
+    r = await paste(p, capSix());
+    const calls6 = await p.evaluate(() => __rt.calls());
+    ok(
+      r &&
+        r.state === 'partial' &&
+        r.stop === 'unavailable' &&
+        calls6 === 2 &&
+        new RegExp('stopped at #3 \\(' + code + '\\)\\. Paste again').test(r.msg),
+      'review 6: ' + code + ' is not retried (it may have been stored): partial, "paste again" (' + calls6 + ' calls)',
+    );
+    await p.close();
+  }
+  // review 7: a paste while an Import-button run stores photos starts no second import
+  p = await openR2();
+  await setUp(p, { delayMs: 300 });
+  await p.evaluate(t => {
+    document.getElementById('imp').open = true;
+    document.getElementById('imp-in').value = t;
+    document.getElementById('imp-go').click();
+  }, capSix());
+  await until(p, () => (__rt.get('refresh/lastImport') || {}).state === 'uploading');
+  await p.evaluate(t => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, capSix());
+  const t7 = await toastText(p);
+  await until(p, () => (__rt.get('refresh/lastImport') || {}).state === 'done');
+  await sleep(800);
+  up = await uploads(p);
+  ok(
+    /Still storing photos from the last paste/.test(t7) &&
+      up.length === 6 &&
+      new Set(up.map(u => u.hash)).size === 6 &&
+      (await imports(p)).filter(v => v.state !== 'uploading').length === 1,
+    'review 7: a paste during an Import-button run: "Still storing photos", one import, 6 uploads, no duplicate (' +
+      up.length +
+      ' uploads)',
+  );
+  await p.close();
+  // review 8: photos upload oldest first; owed photos on #0-#2 (no backfill scan reaches them) are given up
+  p = await openR2();
+  await setUp(p, { script: { 1: 'store_unavailable', 2: 'store_unavailable' } });
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(5), PH(1)] })));
+  st = await photoState(p);
+  ok(
+    r && r.state === 'partial' && st.stored(1).length === 1 && st.owed.join() === '5.0',
+    'review 8: photos upload oldest first (#1 before #5, whatever the capture’s order), so the newest stays owed',
+  );
+  await p.close();
+  p = await openR2();
+  await failCalls(p, [0, 1]);
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(1)] })));
+  const r8 = await paste(p, JSON.stringify(cap(range(10, 12))));
+  ok(
+    r &&
+      r.state === 'partial' &&
+      r8 &&
+      r8.state === 'done' &&
+      JSON.stringify(r8.gaveUp) === '[{"i":1,"k":0,"e":"no-backfill"}]' &&
+      JSON.stringify((await get(p, 'photos/b0')).byK['1']) === '{"0":{"e":"no-backfill"}}' &&
+      (await get(p, 'meta/chat')).photosOwed === null &&
+      /couldn't be stored \(#1, too early in the chat to fetch again\)/.test(r8.msg),
+    'review 8: a photo owed on #1 (no backfill can reach it) is given up by the next import, with the reason (' +
+      (r8 && r8.msg) +
+      ')',
+  );
+  await p.close();
+  // review 12: a capture's own owed photos are never given up by that import, however old (a re-paste stores them)
+  p = await openR2();
+  await failCalls(p, [0, 1]);
+  r = await paste(p, JSON.stringify(cap(range(0, 400), { photos: [PH(10)] })));
+  st = await photoState(p);
+  const r12b = await paste(p, JSON.stringify(cap(range(0, 400), { photos: [PH(10)] })));
+  ok(
+    r &&
+      r.state === 'partial' &&
+      !r.gaveUp.length &&
+      st.owed.join() === '10.0' &&
+      r12b &&
+      r12b.state === 'done' &&
+      (await photoState(p)).stored(10).length === 1,
+    'review 12: a photo owed on #10 with lastI 400 stays owed in the capture that holds it, and its re-paste stores it',
+  );
+  await p.close();
+  // asset usage: recorded with each import, a calm warning from 80% of either limit
+  p = await openR2({}, { assetUse: { files: 3997, bytes: 1000 } });
+  await sleep(300);
+  ok(
+    await p.evaluate(() => (document.getElementById('storage-st') || { hidden: true }).hidden),
+    'usage: 3,997 of 5,000 files (79.9%): no warning',
+  );
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(1), PH(2), PH(3)] })));
+  const m21 = await get(p, 'meta/chat');
+  const warn = await until(p, () => {
+    const s = document.getElementById('storage-st');
+    return s && !s.hidden && s.textContent;
+  });
+  ok(
+    r &&
+      r.usage &&
+      r.usage.files === 4000 &&
+      r.usage.maxFiles === 5000 &&
+      m21.assetUsage &&
+      m21.assetUsage.files === 4000 &&
+      m21.assetUsage.maxBytes === 1 << 30 &&
+      /3 photos stored\. Photo storage is 80% full \(4,000 of 5,000 files\)\.$/.test(r.msg) &&
+      /Photo storage is 80% full \(4,000 of 5,000 files\)\..*ask Claude to tidy up photo storage/.test(warn || ''),
+    'usage: recorded in lastImport and meta/chat.assetUsage; at 80% the page shows a calm warning (' + warn + ')',
+  );
+  await p.close();
+  p = await openR2({}, { assetUse: { files: 10, bytes: 900 * 1048576 } });
+  ok(
+    !!(await until(p, () =>
+      /Photo storage is 87% full \(900\.0 MB of 1024\.0 MB\)/.test(
+        (document.getElementById('storage-st') || {}).textContent,
+      ),
+    )),
+    'usage: the byte limit counts too, and the warning shows on load from a fresh listing',
+  );
+  r = await paste(p, JSON.stringify(cap(range(0, 2))));
+  ok(
+    r && r.usage && r.usage.files === 10 && /Photo storage is 87% full/.test(r.msg),
+    'usage: an import with no photos records it as well, and its message repeats the warning',
+  );
+  ok(p.errors.length === 0, 'photos: no page errors ' + JSON.stringify(p.errors));
+  await p.close();
+}
+/* P23: a 20 MB capture through a real clipboard and a real paste keystroke */
+async function bigPaste() {
+  const many = range(0, 199, i => i).map(i => PH(i, 0, 100 * 1024));
+  const text = JSON.stringify(cap(range(0, 199), { photos: many }));
+  const p = await openR2({}, {});
+  await p.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:9917' });
+  await p.evaluate(t => navigator.clipboard.writeText(t), text);
+  await p.click('#h1');
+  const t0 = Date.now();
+  await p.keyboard.press('ControlOrMeta+V');
+  const r = await until(
+    p,
+    () => (v => (v && v.state !== 'uploading' ? v : null))(__rt.get('refresh/lastImport')),
+    null,
+    60000,
+  );
+  const st = await photoState(p);
+  ok(
+    r && r.state === 'done' && r.photos.done === 200 && range(0, 199, i => i).every(i => st.stored(i).length === 1),
+    'P23: a ' +
+      (text.length / 1048576).toFixed(1) +
+      ' MB capture pasted with a real keystroke: 200 messages and 200 photos stored in ' +
+      ((Date.now() - t0) / 1000).toFixed(1) +
+      ' s' +
+      (r && r.state !== 'done' ? ' ' + r.msg : ''),
+  );
+  await p.close();
+}
+
 /* The stand-in itself: the runtime behaviors later tests rely on, checked once so a fixture change can't quietly make
    them pass */
 async function standIn() {
@@ -2411,9 +4493,576 @@ async function standIn() {
     'stand-in: sample.limits() reports the cap, and a prompt over it in UTF-8 bytes (not characters) is refused',
   );
   await p.close();
+  // assets: scripted codes by call number, a hung call that answers late, the quota, list() and delete()
+  const q = await openR2({}, { assetUse: { files: 1, bytes: 10 } });
+  const a = await q.evaluate(async () => {
+    const as = await claude.use('assets');
+    const blob = t => new Blob([t], { type: 'image/png' });
+    window.__up = { script: { 1: 'rate_limited', 2: { hang: 300 } }, quota: { maxFiles: 4 } };
+    const out = [];
+    const t0 = Date.now();
+    for (const t of ['a', 'b', 'c', 'a', 'd'])
+      out.push(
+        await as.upload(blob(t), { type: 'image/png' }).then(
+          r => r.id,
+          e => e.code,
+        ),
+      );
+    const slow = Date.now() - t0 >= 300;
+    const l = await as.list();
+    const del = [await as.delete(out[0]), await as.delete(out[0])].map(d => d.deleted);
+    const steal = (__rt.steal('refresh/importLock', 'other', 5000), __rt.leases.get('refresh/importLock').holder);
+    return { out, slow, l, del, after: (await as.list()).usage, ups: __rt.uploads, steal };
+  });
+  ok(
+    /^[0-9a-f]{32}$/.test(a.out[0]) &&
+      a.out[1] === 'rate_limited' &&
+      a.slow &&
+      a.out[4] === 'quota_or_state' &&
+      a.ups[0].hash === a.ups[2].hash &&
+      a.ups[0].hash !== a.ups[1].hash &&
+      a.l.usage.files === 4 &&
+      a.l.usage.bytes === 13 &&
+      a.l.usage.maxFiles === 4 &&
+      a.l.usage.maxBytes === 1 << 30 &&
+      a.l.assets.length === 3 &&
+      a.del.join() === 'true,false' &&
+      a.after.files === 3 &&
+      a.steal === 'other',
+    'stand-in: uploads follow __up (a code, a late answer, the file limit), ids are 32 hex, duplicates share a hash, ' +
+      'list() reports usage with files stored before, delete() works once, steal() takes the lease (' +
+      JSON.stringify(a.out) +
+      ')',
+  );
+  await q.close();
+  // the paste helpers: paste() waits for the import to finish, pasteFirst() returns its first record
+  const w = await openR2();
+  await setUp(w, { delayMs: 400 });
+  const f = await pasteFirst(w, JSON.stringify(cap(range(0, 3), { photos: [PH(1)] })));
+  await until(w, () => (__rt.get('refresh/lastImport') || {}).state === 'done');
+  const g = await paste(w, JSON.stringify(cap(range(0, 4), { photos: [PH(4)] })));
+  ok(
+    f && f.state === 'uploading' && g && g.state === 'done' && /1 photo stored/.test(g.msg),
+    'stand-in: pasteFirst() returns the "uploading" record, paste() the finished one',
+  );
+  await w.close();
 }
 
-const SECTIONS = { importer, robustness, pipeline, variants, ranges, layouts, names, messagesView, speed, standIn };
+/* F5: "update available" notices. Claude writes meta/chat.versions with every lastRefresh; the page compares it with
+   its own PAGE_VERSION (read from the file, so these tests don't depend on the number) and pageVersion. */
+const PV = (SRC.match(/const PAGE_VERSION\s*=\s*"([^"]+)"/) || [])[1] || '0.0';
+const DAY = 864e5;
+const iso = msAgo => new Date(Date.now() - msAgo).toISOString();
+const LAST = 'Nov 20, 9:04 AM';
+const metaWith = o => Object.assign({}, META, { pageVersion: PV, lastRefresh: LAST }, o);
+const vers = o => Object.assign({ page: PV, helper: '2.0', refresh: LAST, browsers: {} }, o);
+const withMeta = (meta, extra) => Object.assign(SEED(), { 'meta/chat': meta }, extra);
+/* the visible notices' text, without their Dismiss buttons; null when the page has no notice area at all */
+const noticeTexts = p =>
+  p.evaluate(() => {
+    const box = document.getElementById('upd');
+    if (!box) return null;
+    if (box.hidden) return [];
+    return [...box.querySelectorAll('p')].map(x => {
+      const c = x.cloneNode(true);
+      c.querySelectorAll('button').forEach(b => b.remove());
+      return c.textContent.replace(/\s+/g, ' ').trim();
+    });
+  });
+/* how many show (-1: no notice area, as on pages before them) */
+const nCount = async p => {
+  const n = await noticeTexts(p);
+  return n ? n.length : -1;
+};
+/* clicks Dismiss on the notice that contains `text` (the only one when omitted); false when there's none to click */
+async function dismissNotice(p, text) {
+  const loc = text ? p.locator('#upd p', { hasText: text }) : p.locator('#upd p');
+  if ((await loc.count()) !== 1) return false;
+  await loc.locator('button', { hasText: 'Dismiss' }).click();
+  return true;
+}
+const noticeLinks = p =>
+  p.evaluate(() =>
+    [...document.querySelectorAll('#upd p a')].map(a => ({
+      t: a.textContent,
+      href: a.href,
+      target: a.target,
+      rel: a.rel,
+    })),
+  );
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/* the newest release tag whose page predates the notices (a page that ignores versions), or null */
+function olderPage() {
+  let tags = [];
+  try {
+    tags = execFileSync('git', ['tag', '--list', 'v*', '--sort=-v:refname'], { cwd: ROOT, encoding: 'utf8' }).split(
+      /\s+/,
+    );
+  } catch (e) {}
+  for (const t of tags.filter(Boolean)) {
+    try {
+      const src = execFileSync('git', ['show', t + ':plugin/skills/refresh/assets/page.html'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      if (!src.includes('updateNotices')) return { tag: t, page: SKELETON + src + '</body></html>' };
+    } catch (e) {}
+  }
+  return null;
+}
+async function notices() {
+  const none = async (seed, what, ctxOpts) => {
+    const p = await open(seed, PAGE, ctxOpts);
+    const n = await noticeTexts(p);
+    ok(Array.isArray(n) && n.length === 0 && !p.errors.length, 'notices: ' + what + ' (' + JSON.stringify(n) + ')');
+    await p.close();
+  };
+  /* U1: a page in step with its data says nothing */
+  let p = await open(withMeta(metaWith({})));
+  ok(
+    (await p.evaluate(() => !!document.getElementById('upd') && document.getElementById('upd').hidden)) &&
+      (await nCount(p)) === 0 &&
+      !p.errors.length,
+    'notices U1: pageVersion = PAGE_VERSION and no versions: the notice area is there, hidden and empty',
+  );
+  await p.close();
+  /* U1b: an old seed without pageVersion */
+  const noPv = metaWith({});
+  delete noPv.pageVersion;
+  await none(withMeta(noPv), 'U1b: meta/chat without pageVersion shows nothing');
+  /* U2, U2b: an open tab older than the published page */
+  for (const m of ['9.9', '10.0']) {
+    p = await open(withMeta(metaWith({ pageVersion: m })));
+    const n = await noticeTexts(p);
+    ok(
+      n &&
+        n.length === 1 &&
+        new RegExp(
+          'older copy of the page \\(' + reEsc(PV) + '; the current one is ' + reEsc(m) + '\\)\\. Reload the tab',
+        ).test(n[0]),
+      'notices U2: pageVersion ' +
+        m +
+        ' > ' +
+        PV +
+        ' (number by number) says this tab is an older copy (' +
+        JSON.stringify(n) +
+        ')',
+    );
+    await p.close();
+  }
+  /* U3: a published page older than this one (its pageVersion write is pending), or the same version written short */
+  await none(withMeta(metaWith({ pageVersion: '1.0' })), 'U3: pageVersion lower than PAGE_VERSION shows nothing');
+  await none(withMeta(metaWith({ pageVersion: PV + '.0' })), 'U3: pageVersion "' + PV + '.0" equals ' + PV);
+  /* U4: the last refresh's skill ships a newer page that isn't in place yet */
+  p = await open(withMeta(metaWith({ refreshPhrase: 'catch me up', versions: vers({ page: '9.9' }) })));
+  let n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && /^Page 9\.9 is ready\./.test(n[0]) && n[0].includes('“catch me up”'),
+    'notices U4: versions.page newer than the page: "Page 9.9 is ready", with the refresh phrase (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  await p.close();
+  /* U5: an older skill that knows versions ran (it wrote a lower page) */
+  p = await open(withMeta(metaWith({ versions: vers({ page: '1.0' }) })));
+  n = await noticeTexts(p);
+  let links = await noticeLinks(p);
+  ok(
+    n &&
+      n.length === 1 &&
+      /older copy of the Messenger Catch-up skill/.test(n[0]) &&
+      /Update the plugin/.test(n[0]) &&
+      /Customize › Plugins/.test(n[0]) &&
+      /Claude Code: \/plugin\b/.test(n[0]) &&
+      links.length === 1 &&
+      links[0].href === 'https://github.com/roopesh/messenger-catchup#install' &&
+      links[0].target === '_blank' &&
+      /\bnoopener\b/.test(links[0].rel),
+    'notices U5: versions.page below pageVersion: an older skill ran; update the plugin (claude.ai and Claude Code), with How to install (' +
+      JSON.stringify([n, links]) +
+      ')',
+  );
+  await p.close();
+  /* U6: a skill from before versions ran: lastRefresh moved on without them */
+  const c2 = metaWith({ versions: vers({ refresh: 'Nov 19, 8:00 PM' }) });
+  p = await open(withMeta(c2));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && /older copy of the Messenger Catch-up skill/.test(n[0]),
+    'notices U6: lastRefresh differs from versions.refresh: an older skill ran (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  await none(withMeta(metaWith({ versions: vers({}) })), 'U6b: lastRefresh equals versions.refresh: nothing');
+  const v6c = vers({});
+  delete v6c.refresh;
+  await none(
+    withMeta(metaWith({ versions: v6c })),
+    'U6c: versions without refresh (a republish, then the run stopped): nothing',
+  );
+  /* U7: not while a refresh is running (versions lands at its end); back by itself when it's done, or gone stale */
+  p = await open(withMeta(c2, { 'refresh/status': { state: 'running', startedAt: iso(0), step: 'scan' } }));
+  const quiet = (await nCount(p)) === 0;
+  await p.evaluate(() => __rt.write('refresh/status', { state: 'done', finishedAt: new Date().toISOString() }));
+  const back = await until(p, () => document.querySelectorAll('#upd p').length === 1, null, 3000);
+  ok(
+    quiet && back && !p.errors.length,
+    'notices U7: hidden while a refresh runs, shown without a reload once it is done',
+  );
+  await p.close();
+  await (async () => {
+    const q = await open(withMeta(c2, { 'refresh/status': { state: 'running', startedAt: iso(30 * 60000) } }));
+    const t = await noticeTexts(q);
+    ok(
+      t && t.length === 1,
+      'notices U7: a "running" status 30 minutes old no longer hides it (' + JSON.stringify(t) + ')',
+    );
+    await q.close();
+  })();
+  /* U8: a helper below 1.5 can't update itself */
+  p = await open(withMeta(metaWith({ versions: vers({ browsers: { Home: { helper: '1.1', at: iso(DAY) } } }) })));
+  n = await noticeTexts(p);
+  links = await noticeLinks(p);
+  const inst = await p.evaluate(() => document.getElementById('us-install').href);
+  ok(
+    n &&
+      n.length === 1 &&
+      n[0].includes('Chrome “Home” ran helper 1.1') &&
+      /can't update itself/.test(n[0]) &&
+      links.length === 1 &&
+      links[0].t === 'Install the userscript' &&
+      links[0].href === inst &&
+      links[0].target === '_blank' &&
+      /\bnoopener\b/.test(links[0].rel),
+    'notices U8: Chrome "Home" on helper 1.1: can\'t update itself; the link is the page\'s install link (' +
+      JSON.stringify([n, links]) +
+      ')',
+  );
+  await p.close();
+  /* U8b, U9: from 1.5 on it updates itself, and a lag is flagged right away (the owner's call: no grace period) */
+  for (const [h, at, kind] of [
+    ['1.4', iso(DAY), 'D'],
+    ['1.5', iso(0), 'E'],
+    ['1.9', iso(DAY), 'E'],
+    ['1.9', iso(60000), 'E'],
+  ]) {
+    p = await open(withMeta(metaWith({ versions: vers({ browsers: { 'Work Mac': { helper: h, at } } }) })));
+    n = await noticeTexts(p);
+    const good =
+      kind === 'D'
+        ? n && n.length === 1 && n[0].includes('ran helper ' + h + ", which can't update itself")
+        : n &&
+          n.length === 1 &&
+          n[0].includes('Chrome “Work Mac” ran helper ' + h + '; the current one is 2.0') &&
+          /Check for updates/.test(n[0]);
+    ok(
+      good,
+      'notices U8b/U9: helper ' +
+        h +
+        ' read ' +
+        Math.round((Date.now() - Date.parse(at)) / 60000) +
+        ' min ago: notice ' +
+        kind +
+        ' (' +
+        JSON.stringify(n) +
+        ')',
+    );
+    await p.close();
+  }
+  for (const h of ['2.0', '2.1', '2', '2.0.0'])
+    await none(
+      withMeta(metaWith({ versions: vers({ browsers: { 'Work Mac': { helper: h, at: iso(DAY) } } }) })),
+      'U9: helper ' + h + ' is not behind 2.0',
+    );
+  /* U10: no helper (Claude injected), or a version that can't be read */
+  for (const h of ['none', '', 'dev', null])
+    await none(
+      withMeta(metaWith({ versions: vers({ browsers: { Home: { helper: h, at: iso(DAY) } } }) })),
+      'U10: helper ' + JSON.stringify(h) + ' shows nothing',
+    );
+  const noH = vers({ browsers: { Home: { helper: '1.1', at: iso(DAY) } } });
+  delete noH.helper;
+  await none(withMeta(metaWith({ versions: noH })), 'U10: versions without helper shows nothing');
+  await none(
+    withMeta(metaWith({ versions: vers({ browsers: { Home: 'x', Work: null, Lab: { helper: '1.1' } } }) })),
+    'U10: malformed browser entries (not an object, no at) show nothing',
+  );
+  await none(withMeta(metaWith({ versions: 'yes' })), 'U10: versions that is not an object shows nothing');
+  /* U11: a Chrome not used in 30 days is left out */
+  await none(
+    withMeta(metaWith({ versions: vers({ browsers: { Home: { helper: '1.1', at: iso(31 * DAY) } } }) })),
+    'U11: a Chrome last seen 31 days ago shows nothing',
+  );
+  /* U12: everything at once, in a fixed order: this tab, the older skill, then each Chrome by name */
+  const all = () =>
+    withMeta(
+      metaWith({
+        pageVersion: '9.9',
+        versions: vers({
+          browsers: { 'Work Mac': { helper: '1.9', at: iso(3600000) }, Home: { helper: '1.1', at: iso(2 * DAY) } },
+        }),
+      }),
+    );
+  p = await open(all());
+  n = await noticeTexts(p);
+  const dis = await p.evaluate(() =>
+    [...document.querySelectorAll('#upd p')].map(x => x.querySelectorAll('button').length),
+  );
+  ok(
+    n &&
+      n.length === 4 &&
+      /older copy of the page/.test(n[0]) &&
+      /older copy of the Messenger Catch-up skill/.test(n[1]) &&
+      /When Chrome “Home” was last used for a refresh \(\w{3} \d{1,2}\), it ran helper 1\.1/.test(n[2]) &&
+      n[3].includes('At the last refresh, Chrome “Work Mac” ran helper 1.9') &&
+      dis.every(k => k === 1),
+    'notices U12: four at once, in order A, C, D (Home, used before), E (Work Mac, the last refresh), one Dismiss each (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  const lightBg = await p.evaluate(() => {
+    const x = document.querySelector('#upd p');
+    return x ? getComputedStyle(x).backgroundColor : null;
+  });
+  await p.close();
+  /* U13: Dismiss hides it in this browser, writes nothing, survives a reload, and a new version brings it back */
+  p = await open(
+    withMeta(
+      metaWith({
+        pageVersion: '9.9',
+        versions: vers({ page: '9.9', browsers: { Home: { helper: '1.1', at: iso(DAY) } } }),
+      }),
+    ),
+  );
+  const w0 = await p.evaluate(() => __rt.writes.length);
+  const clicked = await dismissNotice(p, 'older copy of the page');
+  n = await noticeTexts(p);
+  ok(
+    clicked && n && n.length === 1 && n[0].includes('“Home”') && (await p.evaluate(() => __rt.writes.length)) === w0,
+    'notices U13: Dismiss hides that notice only, and the page writes nothing to the database (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  const clicked2 = await dismissNotice(p);
+  ok(
+    clicked2 && (await p.evaluate(() => document.getElementById('upd').hidden)) && (await nCount(p)) === 0,
+    'notices U13: with every notice dismissed the area hides',
+  );
+  await p.reload();
+  await p.waitForFunction(() => window.__rt && document.getElementById('window').textContent !== 'Loading the chat…');
+  await p.waitForTimeout(300);
+  ok((await nCount(p)) === 0, 'notices U13: still dismissed after a reload in the same browser');
+  await p.evaluate(() => {
+    const m = __rt.get('meta/chat');
+    m.pageVersion = m.versions.page = '10.0';
+    m.versions.helper = '2.1';
+    __rt.write('meta/chat', m);
+  });
+  await until(p, () => document.querySelectorAll('#upd p').length === 2, null, 3000);
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 2 && n[0].includes('the current one is 10.0') && n[1].includes('“Home” ran helper 1.1'),
+    'notices U13: a new pageVersion and a new helper bring their notices back (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  /* U14: storage blocked (a private window): the notices still show, and Dismiss works for this page load */
+  p = await open(withMeta(metaWith({ pageVersion: '9.9' })));
+  await p.context().addInitScript(() => {
+    const no = () => {
+      throw new DOMException('blocked', 'SecurityError');
+    };
+    Storage.prototype.getItem = no;
+    Storage.prototype.setItem = no;
+  });
+  await p.reload();
+  await p.waitForFunction(() => window.__rt && document.getElementById('window').textContent !== 'Loading the chat…');
+  await p.waitForTimeout(300);
+  const blocked = await p.evaluate(() => {
+    try {
+      localStorage.getItem('x');
+      return false;
+    } catch (e) {
+      return true;
+    }
+  });
+  const shown = (await nCount(p)) === 1;
+  const clicked3 = await dismissNotice(p);
+  ok(
+    blocked && shown && clicked3 && (await nCount(p)) === 0 && !p.errors.length,
+    'notices U14: with localStorage throwing, the notice shows and Dismiss hides it, with no page errors (' +
+      p.errors.join('; ') +
+      ')',
+  );
+  await p.close();
+  /* U14b: with site data blocked, Chrome throws on reading window.localStorage itself, not only on its methods */
+  p = await open(withMeta(metaWith({ pageVersion: '9.9' })));
+  await p.context().addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('blocked', 'SecurityError');
+      },
+    });
+  });
+  await p.reload();
+  await p.waitForFunction(() => window.__rt && document.getElementById('window').textContent !== 'Loading the chat…');
+  await p.waitForTimeout(300);
+  const getterThrows = await p.evaluate(() => {
+    try {
+      return !window.localStorage;
+    } catch (e) {
+      return true;
+    }
+  });
+  const shownB = (await nCount(p)) === 1;
+  const clicked4 = await dismissNotice(p);
+  ok(
+    getterThrows && shownB && clicked4 && (await nCount(p)) === 0 && !p.errors.length,
+    'notices U14b: with the localStorage getter throwing, the notice shows and Dismiss hides it, with no page errors (' +
+      p.errors.join('; ') +
+      ')',
+  );
+  await p.close();
+  /* U15: live: a republish elsewhere shows A without a reload, and it goes once the data matches again */
+  p = await open(withMeta(metaWith({})));
+  await p.evaluate(() => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { pageVersion: '9.9' })));
+  const live = await until(p, () => document.querySelectorAll('#upd p').length === 1, null, 3000);
+  await p.evaluate(pv => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { pageVersion: pv })), PV);
+  const gone = await until(
+    p,
+    () => document.getElementById('upd') && document.getElementById('upd').hidden && !document.querySelector('#upd p'),
+    null,
+    3000,
+  );
+  ok(live && gone && !p.errors.length, 'notices U15: a pageVersion change shows and clears notice A live');
+  await p.close();
+  /* U16: a Chrome's name is data, shown as text */
+  const evil = '<img src=x onerror="window.__x=1">';
+  p = await open(withMeta(metaWith({ versions: vers({ browsers: { [evil]: { helper: '1.1', at: iso(DAY) } } }) })));
+  await p.waitForTimeout(300);
+  n = await noticeTexts(p);
+  ok(
+    n &&
+      n.length === 1 &&
+      n[0].includes('“' + evil + '”') &&
+      (await p.evaluate(() => window.__x === undefined && !document.querySelector('#upd img'))),
+    'notices U16: a browser name with markup shows as literal text and runs nothing',
+  );
+  await p.close();
+  /* U17: phone width */
+  p = await open(all(), PAGE, { viewport: { width: 390, height: 800 } });
+  const fit = await p.evaluate(() => ({
+    sw: document.documentElement.scrollWidth,
+    iw: innerWidth,
+    right: Math.max(...[...document.querySelectorAll('#upd p')].map(x => x.getBoundingClientRect().right)),
+    n: document.querySelectorAll('#upd p').length,
+  }));
+  ok(
+    fit.n === 4 && fit.sw <= fit.iw && fit.right <= fit.iw,
+    'notices U17: four notices at 390 px fit the width, no sideways scroll (' + JSON.stringify(fit) + ')',
+  );
+  await p.close();
+  /* U18: dark mode uses the dark tokens */
+  p = await open(all(), PAGE, { colorScheme: 'dark' });
+  const dark = await p.evaluate(() => {
+    const x = document.querySelector('#upd p');
+    if (!x) return null;
+    const probe = document.createElement('div');
+    probe.style.cssText = 'background:var(--accent-soft);color:var(--fg)';
+    document.body.append(probe);
+    const want = getComputedStyle(probe);
+    const got = getComputedStyle(x);
+    return { bg: got.backgroundColor, fg: got.color, wantBg: want.backgroundColor, wantFg: want.color };
+  });
+  ok(
+    dark && dark.bg === dark.wantBg && dark.fg === dark.wantFg && dark.bg !== lightBg,
+    'notices U18: in dark mode a notice uses the dark --accent-soft and --fg (' + JSON.stringify([dark, lightBg]) + ')',
+  );
+  await p.close();
+  /* U21: E (self-updating, behind) only for the Chrome of the last refresh: one used before has likely updated since */
+  const two = browsers => withMeta(metaWith({ versions: vers({ browsers }) }));
+  p = await open(two({ 'Work Mac': { helper: '1.9', at: iso(3600000) }, Home: { helper: '1.9', at: iso(3 * DAY) } }));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && n[0].startsWith('At the last refresh, Chrome “Work Mac” ran helper 1.9;'),
+    "notices U21: two Chromes behind on 1.9: E for the last refresh's only (" + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  /* U22: D (can't update itself) for a Chrome used before, worded with when it was last used */
+  p = await open(two({ 'Work Mac': { helper: '2.0', at: iso(3600000) }, Home: { helper: '1.1', at: iso(3 * DAY) } }));
+  n = await noticeTexts(p);
+  const homeDay = await p.evaluate(
+    at => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    iso(3 * DAY),
+  );
+  ok(
+    n &&
+      n.length === 1 &&
+      n[0].startsWith(
+        'When Chrome “Home” was last used for a refresh (' +
+          homeDay +
+          "), it ran helper 1.1, which can't update itself.",
+      ),
+    'notices U22: an older Chrome on 1.1: D, saying when it was last used (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  /* U23: "Chrome" is what a run with no browser name writes; it may be any named Chrome, so only the newest counts */
+  await none(
+    two({ 'Work Mac': { helper: '2.0', at: iso(3600000) }, Chrome: { helper: '1.1', at: iso(2 * DAY) } }),
+    'U23: an older entry under the fallback name "Chrome" shows nothing',
+  );
+  p = await open(two({ Chrome: { helper: '1.1', at: iso(3600000) }, Home: { helper: '1.1', at: iso(2 * DAY) } }));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && n[0].startsWith("At the last refresh, Chrome ran helper 1.1, which can't update itself."),
+    'notices U23: the newest entry is "Chrome" and an older one ran the same helper: one notice, not two (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  await p.close();
+  p = await open(two({ Chrome: { helper: '2.0', at: iso(3600000) }, Home: { helper: '1.1', at: iso(2 * DAY) } }));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && n[0].startsWith('When Chrome “Home” was last used'),
+    'notices U23: the newest entry is "Chrome" on 2.0: an older Chrome on 1.1 still gets D (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  /* U19: no database in this view (signed out, a preview): nothing to compare, nothing shown */
+  await none(Object.assign(all(), { __opts: { noDb: true } }), 'U19: no database: no notices, no errors');
+  /* U20: a page from before the notices ignores versions */
+  const old = olderPage();
+  if (!old) console.log('SKIP notices U20: no release tag with a page from before the notices');
+  else {
+    p = await open(all(), old.page);
+    const txt = await p.evaluate(() => document.getElementById('window').textContent);
+    ok(
+      !p.errors.length && !/can't load/.test(txt),
+      'notices U20: the ' +
+        old.tag +
+        ' page renders data that has versions, with no page errors (' +
+        p.errors.join('; ') +
+        ')',
+    );
+    await p.close();
+  }
+}
+
+const SECTIONS = {
+  importer,
+  robustness,
+  pipeline,
+  variants,
+  ranges,
+  layouts,
+  names,
+  messagesView,
+  speed,
+  photos,
+  bigPaste,
+  standIn,
+  history,
+  notices,
+};
 (async () => {
   browser = await chromium.launch();
   try {

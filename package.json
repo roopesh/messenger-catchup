@@ -1,6 +1,6 @@
 {
   "name": "messenger-catchup",
-  "version": "1.21.0",
+  "version": "1.22.0",
   "private": true,
   "description": "Dev tooling for the Messenger Catch-up skill (tests only; the plugin itself is the plugin/ folder)",
   "scripts": {
@@ -13,6 +13,7 @@
     "test:py": "python3 -W error::ResourceWarning -m unittest discover -s tests",
     "test:sim": "node tests/run.js",
     "test:page": "node tests/page.test.js",
+    "test:perf": "node tests/perf.js",
     "sync": "python3 tools/sync.py"
   },
   "devDependencies": {
