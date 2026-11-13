@@ -2061,14 +2061,20 @@
     const nick = !(full === m.f || full.startsWith(m.f + " "));
     return nick ? m.f + " (" + base + ")" : base;
   }
+  /* s's first n characters, counted by code point, so an emoji is never cut in half */
+  function cutCp(s, n) {
+    if (s.length <= n) return s;
+    const a = Array.from(s);
+    return a.length <= n ? s : a.slice(0, n).join("");
+  }
   function lineFor(m) {
     let s = "#" + m.i + " [" + m.t + "] " + nameOf(m);
-    if (m.r) s += " (replying to " + m.r + (m.q ? ': "' + m.q.replace(/\s+/g, " ").slice(0, 120) + '"' : "") + ")";
+    if (m.r) s += " (replying to " + m.r + (m.q ? ': "' + cutCp(m.q.replace(/\s+/g, " "), 120) + '"' : "") + ")";
     s +=
       ": " +
       (m.b || "") +
       (m.p ? " [photo]" : "") +
-      (m.a ? " [link preview: " + m.a.replace(/\s+/g, " ").slice(0, 240) + "]" : "") +
+      (m.a ? " [link preview: " + cutCp(m.a.replace(/\s+/g, " "), 240) + "]" : "") +
       (m.l ? " " + m.l.join(" ") : "") +
       (m.x ? " {reactions: " + m.x + "}" : "");
     return s;
@@ -2296,7 +2302,7 @@
   /* Summary v2: built on the conversation threading. Messages are shown as their own words, never as labels. */
   function trunc(s, n) {
     s = (s || "").replace(/\s+/g, " ").trim();
-    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+    return s.length > n ? cutCp(s, n - 1) + "…" : s;
   }
   function snip(i, { quote = false, len = 200 } = {}) {
     const m = S.byI.get(i);
@@ -3672,7 +3678,9 @@
           " so you can see #" +
             S.autoOlder +
             (am ? " (" + nameOf(am) + ", " + am.t + ")" : "") +
-            ", which is before your catch-up window. ",
+            ", which is " +
+            (S.autoOlder > winRange().hi ? "after" : "before") +
+            " your catch-up window. ",
         ),
       );
       const bb = el("button", "link", "Back to my window");
@@ -3837,7 +3845,8 @@
     try {
       const l = sample && sample.limits ? await sample.limits() : null;
       const v = l && l.maxPromptBytes;
-      if (Number.isFinite(v) && v > 8192) S.promptCap = v;
+      /* a cap larger than the contract's is never trusted: if limits() overstates it, every call would fail */
+      if (Number.isFinite(v) && v > 8192) S.promptCap = Math.min(v, PROMPT_CAP);
     } catch (e) {}
   }
   /* s cut to at most n UTF-8 bytes, ending "… [cut]" */
@@ -3927,7 +3936,8 @@
     for (const r of sc.loose) {
       if (r.e <= k) loose.push(r);
       else {
-        if (r.s <= k) loose.push(Object.assign({}, r, { e: k, b: S.msgs[k].i, n: k - r.s + 1 }));
+        if (r.s <= k)
+          loose.push(Object.assign({}, r, { e: k, b: S.msgs[k].i, n: k - r.s + 1, d2: days[days.length - 1].d }));
         break;
       }
     }
@@ -3998,8 +4008,9 @@
   function digestUnits(loI, hiI, rawLoI, loose) {
     const src = digestSources();
     const units = [];
+    const top = Math.min(hiI, rawLoI - 1); /* lines describe only what's older than the word-for-word part */
     const keyText = c => {
-      const key = (c.key || []).filter(i => S.byI.has(i) && i >= loI && i <= hiI).slice(0, 3);
+      const key = (c.key || []).filter(i => S.byI.has(i) && i >= loI && i <= top).slice(0, 3);
       return key.length ? " Key: #" + key.join(", #") : "";
     };
     const add = (a, b, kind, rest) =>
@@ -4009,19 +4020,19 @@
         b = -Infinity,
         n = 0;
       (c.members || []).forEach(i => {
-        if (i < loI || i > hiI || !S.byI.has(i)) return;
+        if (i < loI || i > top || !S.byI.has(i)) return;
         n++;
         if (i < a) a = i;
         if (i > b) b = i;
       });
-      if (!n || a >= rawLoI) return;
+      if (!n) return;
       const pick = src.sum.get(c.id) || src.rs.get(c.id);
       let rest = trunc(c.title, 80);
       if (pick) rest += (pick.tag ? " (" + pick.tag + ")" : "") + ": " + trunc(sumText(pick), 160) + keyText(pick);
       else {
         const names = [];
         for (const i of c.members) {
-          const m = i >= loI && i <= hiI && S.byI.get(i);
+          const m = i >= loI && i <= top && S.byI.get(i);
           const nm = m && nameOf(m);
           if (nm && !names.includes(nm)) names.push(nm);
           if (names.length === 4) break;
@@ -4031,8 +4042,8 @@
       add(a, b, "conv", rest);
     });
     src.orphans.forEach(o => {
-      const refs = o.refs.filter(i => i >= loI && i <= hiI);
-      if (!refs.length || Math.min(...refs) >= rawLoI) return;
+      const refs = o.refs.filter(i => i >= loI && i <= top);
+      if (!refs.length) return;
       const label = o.c.id === "loose" ? "Not grouped" : o.c.tag || "Summary";
       add(Math.min(...refs), Math.max(...refs), "conv", label + ": " + trunc(sumText(o.c), 160) + keyText(o.c));
     });
@@ -4049,8 +4060,10 @@
     return units.sort((p, q) => q.b - p.b);
   }
   /* The digest of indices a..k (sc: their scan) in at most D bytes, with the lines for messages after the verbatim part.
-     Conversation lines go in newest first while they, plus day lines for everything older than they reach, fit; then
-     the day lines. If that's still over (the last day was estimated), the oldest lines go. */
+     Conversation lines go in newest first while they, plus day lines for everything they leave out, fit; then the day
+     lines. Units come newest message first, so every one not taken ends at or before the first that didn't fit: day
+     lines run up to that one's newest message, and every older message is in some line (a day line, or the line of its
+     own conversation). If that's still over (the last day was estimated), the oldest lines go. */
   function digest(sc, a, k, hiI, after, D) {
     const out = { before: [], after: after.slice() };
     let used = out.after.reduce((n, x) => n + x.bytes, 0);
@@ -4071,16 +4084,19 @@
       }
       return pre[lo] + (lo < days.length && days[lo].a < cut ? days[lo].bytes : 0);
     };
-    let cut = rawLoI,
-      l1 = 0;
+    const units = digestUnits(S.msgs[a].i, hiI, rawLoI, sc.loose);
+    /* where day lines stop when units[0..j-1] are taken: everything taken covers its own members */
+    const edge = j => (j < units.length ? Math.min(rawLoI, units[j].b + 1) : S.msgs[a].i);
+    let l1 = 0,
+      j = 0;
     const chosen = [];
-    for (const u of digestUnits(S.msgs[a].i, hiI, rawLoI, sc.loose)) {
-      const nc = Math.min(cut, u.a);
-      if (used + l1 + u.bytes + l2(nc) > D) break;
+    for (; j < units.length; j++) {
+      const u = units[j];
+      if (used + l1 + u.bytes + l2(edge(j + 1)) > D) break;
       chosen.push(u);
       l1 += u.bytes;
-      cut = nc;
     }
+    const cut = edge(j);
     const lines = [];
     for (let d = 0; d < sc.days.length; d++) {
       const x = sc.days[d];
@@ -4094,7 +4110,8 @@
         break;
       }
     }
-    lines.push(...chosen.sort((p, q) => p.a - q.a));
+    lines.push(...chosen);
+    lines.sort((p, q) => p.a - q.a || p.b - q.b);
     let total = used + lines.reduce((n, x) => n + x.bytes, 0),
       s = 0;
     while (total > D && s < lines.length) total -= lines[s++].bytes;
@@ -4105,12 +4122,14 @@
   /* packHistory: what of the stored messages one prompt carries.
      o.lo..o.hi: the messages the request is about (numbers). o.fHi: the newest to send word for word (the window's
      newest). o.fixed: bytes of everything else (instructions, task, chat turns). o.share: the part of the budget kept
-     for summaries when not everything fits; what they don't need goes back to messages. o.scale: 0.8 on the retry.
+     for summaries when not everything fits; what they don't need goes back to messages. o.cap: the whole prompt's
+     budget in bytes (the cap, or less on the retry). Newer-day lines get at most AFTER_SHARE of it.
      Word for word runs from fHi back, as one run #rawLo..#rawHi; what's older becomes OLDER HISTORY lines, and anything
      after fHi (a date range with an end, older messages included) one line per day. lineFor is called only for the
      lines that go in, plus one. */
+  const AFTER_SHARE = 0.1;
   function packHistory(o) {
-    const R = Math.floor(S.promptCap * (o.scale || 1)) - MARGIN - o.fixed;
+    const R = Math.floor(o.cap) - MARGIN - o.fixed;
     const a = idxOf(o.lo),
       z = idxOf(o.hi + 1) - 1;
     const fz = Math.min(z, idxOf(o.fHi + 1) - 1);
@@ -4119,6 +4138,11 @@
     P.loI = S.msgs[a].i;
     P.hiI = S.msgs[z].i;
     const after = fz < z ? dayScan(Math.max(a, fz + 1), z).days.map(dayText) : [];
+    /* the newer-day lines never push the window out: past their share, the newest days go */
+    for (let n = after.reduce((t, x) => t + x.bytes, 0); after.length && n > Math.floor(R * AFTER_SHARE); )
+      n -= after.pop().bytes;
+    /* no room for even one line of a scope that has messages: the caller must not send a prompt without them */
+    P.noRoom = R <= 0;
     if (fz < a || R <= 0) {
       P.after = digest(null, a, a - 1, P.hiI, after, Math.max(0, R)).after;
       return finish(P);
@@ -4176,13 +4200,16 @@
     const x = r.length ? idxOf(P.rawLo) : 0;
     P.beforeHi = x > 0 ? S.msgs[x - 1].i : null;
     P.afterLo = P.hasAfter ? P.after[0].a : null;
+    P.afterHi = P.hasAfter ? P.after[P.after.length - 1].b : null;
     const first = P.hasBefore ? P.beforeLo : P.rawLo;
     P.dropped = P.loI != null && first != null && first > P.loI ? first : null;
-    P.sumFrom = P.hasBefore ? P.beforeLo : P.afterLo;
+    P.sumFrom = P.hasBefore ? P.beforeLo : null;
     const conv = P.before.find(l => l.kind !== "day");
     P.convFrom = conv ? conv.a : null;
     P.convDay = conv ? dayOf((S.byI.get(conv.a) || {}).d) : "";
-    P.hasDays = P.before.some(l => l.kind === "day");
+    const days = P.before.filter(l => l.kind === "day");
+    P.hasDays = days.length > 0;
+    P.dayUntil = P.hasDays ? Math.max(...days.map(l => l.b)) + 1 : null;
     P.rawDays = r.length ? daySpan((S.byI.get(P.rawLo) || {}).d, (S.byI.get(P.rawHi) || {}).d) : "";
     P.cut = P.hasBefore || P.hasAfter || P.dropped != null;
     return P;
@@ -4203,6 +4230,8 @@
     beforeLo: 9999999,
     beforeHi: 9999999,
     afterLo: 9999999,
+    afterHi: 9999998,
+    dayUntil: 9999999,
     dropped: 9999999,
     sumFrom: 9999999,
     convFrom: 9999999,
@@ -4240,7 +4269,11 @@
     ];
     if (P.hasBefore) {
       const back = P.hasDays
-        ? " back to #" + P.convFrom + (P.convDay ? " (" + P.convDay + ")" : "") + ", then one line per day"
+        ? " back to #" +
+          P.convFrom +
+          (P.convDay ? " (" + P.convDay + ")" : "") +
+          ", and one line per day for everything before #" +
+          P.dayUntil
         : "";
       L.push(
         "- OLDER HISTORY: " +
@@ -4260,8 +4293,9 @@
         "- NEWER HISTORY: #" +
           P.afterLo +
           " to #" +
-          P.hiI +
-          ", after the catch-up window, as summaries, not messages: one line per day.",
+          P.afterHi +
+          ", after the catch-up window, as summaries, not messages: one line per day." +
+          (P.afterHi < P.hiI ? " Nothing after #" + P.afterHi + " is included." : ""),
       );
     if (P.dropped != null) L.push("- Nothing before #" + P.dropped + " is included.");
     return L.join("\n");
@@ -4283,12 +4317,13 @@
   }
   const intro = () =>
     "You are helping " + OWNER() + ' (shown as "You" in the data) catch up on ' + CHATDESC() + ".\n\nWhat you have:\n";
-  /* Packs and lays out a prompt; extra = the bytes sent beside it (chat turns). The result is measured again and the
-     oldest lines go until it fits, whatever the estimates did. */
-  function fitPrompt(scope, build, extra, share, scale) {
+  /* Packs and lays out a prompt in cap bytes; extra = the bytes sent beside it (chat turns). The result is measured
+     again and the oldest lines go until it fits, whatever the estimates did; fits is false when even the fixed text
+     doesn't, and then nothing may be sent. */
+  function fitPrompt(scope, build, extra, share, cap0) {
     const fixed = u8(build(DUMMY)) + 256 + extra;
-    const P = packHistory(Object.assign({ fixed, share, scale }, scope));
-    const cap = Math.floor(S.promptCap * scale) - MARGIN - extra;
+    const P = packHistory(Object.assign({ fixed, share, cap: cap0 }, scope));
+    const cap = Math.floor(cap0) - MARGIN - extra;
     let text = build(P);
     for (let over = u8(text) - cap; over > 0; over = u8(text) - cap) {
       let n = 0;
@@ -4299,22 +4334,28 @@
       finish(P);
       text = build(P);
     }
-    return { text, P };
+    const bytes = u8(text);
+    return { text, P, bytes: bytes + extra, fits: bytes <= cap && !P.noRoom };
   }
-  /* Calls sample (or sample.json) with what fits; on prompt_too_large, once more with 80% of the budget. That code
-     means nothing was sent, so the retry spends nothing. */
+  /* Calls sample (or sample.json) with what fits; on prompt_too_large, once more with 80% of the bytes just sent (that
+     code means nothing was sent, so the retry spends nothing). A prompt that can't fit is never sent. */
   async function sendFitted(make, call) {
-    let retried = false;
+    let cap = S.promptCap,
+      retried = false;
     for (;;) {
-      const m = make(retried ? 0.8 : 1);
+      const m = make(cap);
+      if (!m.fits) throw Object.assign(new Error("too long to send"), { code: "too_long" });
       try {
         return { res: await call(m), P: m.P, retried };
       } catch (e) {
         if (!(e && e.code === "prompt_too_large") || retried) throw e;
         retried = true;
+        cap = Math.floor(m.bytes * 0.8);
       }
     }
   }
+  /* limits() is local and quick; if it hangs, the contract's cap is used after a second */
+  const capWait = () => Promise.race([S.capReady, new Promise(r => setTimeout(r, 1000))]);
   /* What was read word for word and what as summaries: the note under an answer or a built view */
   function sentNote(P, view, retried) {
     if (!P.raw.length) return "";
@@ -4346,11 +4387,17 @@
               ? "summaries back to #" + P.dropped + "; nothing older."
               : "nothing included.");
     }
-    if (P.hasAfter) s += " Newer than #" + P.rawHi + ": summaries only.";
+    if (P.hasAfter)
+      s +=
+        " Newer than #" +
+        P.rawHi +
+        ": " +
+        (P.afterHi < P.hiI ? "summaries to #" + P.afterHi + "; nothing newer." : "summaries only.");
     return s + (retried ? " (sent a smaller set: the first was too large)" : "");
   }
   /* Saved with each answer and view (qa/*, views/*): what Claude read */
-  const sentOf = P => (P.raw.length ? { from: P.rawLo, to: P.rawHi, sumFrom: P.sumFrom } : null);
+  const sentOf = P =>
+    P.raw.length ? { from: P.rawLo, to: P.rawHi, sumFrom: P.sumFrom, afterFrom: P.hasAfter ? P.afterLo : null } : null;
   const sentShort = x =>
     x && x.sent && x.sent.from != null
       ? "#" +
@@ -4358,7 +4405,8 @@
         "–#" +
         x.sent.to +
         " word for word" +
-        (x.sent.sumFrom != null ? ", summaries from #" + x.sent.sumFrom : "")
+        (x.sent.sumFrom != null ? ", older as summaries from #" + x.sent.sumFrom : "") +
+        (x.sent.afterFrom != null ? ", newer as summaries from #" + x.sent.afterFrom : "")
       : "";
 
   /* ---------- ask ---------- */
@@ -4372,12 +4420,12 @@
     const hi = Math.min(W.hi, last);
     return useAll ? { lo: S.msgs[0].i, hi: last, fHi: hi, win: false } : { lo: W.lo + 1, hi, fHi: hi, win: true };
   }
-  function askPrompt(useAll, hist, scale) {
+  function askPrompt(useAll, hist, cap) {
     const extra = hist.reduce((n, t) => n + u8(t.content), 0);
     const build = P => intro() + haveText(P) + "\n\nRules:\n" + rulesText(P) + "\n\n" + sections(P);
-    return fitPrompt(askScope(useAll), build, extra, useAll ? 0.35 : 0.2, scale);
+    return fitPrompt(askScope(useAll), build, extra, useAll ? 0.35 : 0.2, cap);
   }
-  function viewPrompt(p, scale) {
+  function viewPrompt(p, cap) {
     const build = P =>
       intro() +
       haveText(P) +
@@ -4388,14 +4436,14 @@
       "\n\n" +
       sections(P) +
       '\n\nReply with only JSON: {"title": short name, "intro": one or two sentences, "sections": [{"heading": string, "tag": optional short status like "open" or "answered", "summary": 1-3 sentences citing [#n], "refs": [message numbers]}]}. Cover everything relevant; keep each summary short.';
-    return fitPrompt(askScope(false), build, 0, 0.2, scale);
+    return fitPrompt(askScope(false), build, 0, 0.2, cap);
   }
   /* The earlier chat turns sent with a question: at most the last 9 (starting and ending on a question), the oldest
      pairs dropped while they take more than a quarter of the cap */
-  function chatTurns(scale) {
+  function chatTurns(cap) {
     let h = turns.slice(-9);
     if (h.length && h[0].role !== "user") h = h.slice(1);
-    const lim = S.promptCap * scale * 0.25;
+    const lim = cap * 0.25;
     while (h.length > 2 && h.reduce((n, t) => n + u8(t.content), 0) > lim) h = h.slice(2);
     return h;
   }
@@ -4431,14 +4479,23 @@
     return t;
   }
   $("#ask-stop").onclick = () => ctl && ctl.abort();
+  let asking = false; /* one question at a time: a second click while one is on its way does nothing */
   $("#ask-go").onclick = async () => {
     const q = $("#ask-in").value.trim();
-    if (!q) return;
+    if (!q || asking) return;
     if (!S.sample) {
       $("#ask-note").textContent = "Asking Claude isn't available in this view.";
       return;
     }
-    await S.capReady;
+    asking = true;
+    try {
+      await ask(q);
+    } finally {
+      asking = false;
+    }
+  };
+  async function ask(q) {
+    await capWait();
     if (u8(q) > S.promptCap / 2) {
       $("#ask-note").textContent = "That question is too long to send. Shorten it.";
       return;
@@ -4455,9 +4512,9 @@
     try {
       const sig = ctl.signal;
       const { res, P, retried } = await sendFitted(
-        scale => {
-          const hist = chatTurns(scale);
-          return Object.assign(askPrompt(useAll, hist, scale), { hist });
+        cap => {
+          const hist = chatTurns(cap);
+          return Object.assign(askPrompt(useAll, hist, cap), { hist });
         },
         m =>
           S.sample([{ role: "user", content: m.text }, ...m.hist], {
@@ -4497,7 +4554,7 @@
       $("#ask-stop").hidden = true;
       ctl = null;
     }
-  };
+  }
   function errCopy(c) {
     return (
       {
@@ -4505,6 +4562,7 @@
         not_granted: "Claude wasn't allowed for this page.",
         rate_limited: "Too many requests right now. Try again in a minute.",
         prompt_too_large: "Too much to send at once, even trimmed. Tell Claude in chat if this repeats.",
+        too_long: "That's too long to send, even with the chat trimmed. Shorten it.",
         refused: "Claude declined that one. Try rephrasing.",
         session_expired: "Sign in again, then retry.",
         invalid_json: "Claude's reply couldn't be read as a view. Try again or simplify the request.",
@@ -4582,13 +4640,17 @@
     $("#view-go").disabled = true;
     $("#view-note").textContent = "Building… this can take a minute.";
     try {
-      await S.capReady;
+      await capWait();
+      if (u8(p) > S.promptCap / 2) {
+        $("#view-note").textContent = "That request is too long to send. Shorten it.";
+        return;
+      }
       const {
         res: v,
         P,
         retried,
       } = await sendFitted(
-        scale => viewPrompt(p, scale),
+        cap => viewPrompt(p, cap),
         m => S.sample.json(m.text),
       );
       v.prompt = p;
@@ -4600,7 +4662,8 @@
       $("#view-note").textContent = "";
       if (S.db) {
         try {
-          await S.db.collection("views").add({ kind: "view", ...v });
+          /* B51: kind last, so a reply that says kind "idea" can't pose as a method idea */
+          await S.db.collection("views").add({ ...v, kind: "view" });
         } catch (e) {
           $("#view-note").textContent = "Built, but not saved.";
         }

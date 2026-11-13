@@ -76,6 +76,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B48 | P2 | bug | Reply on a photo-only message: `jump` finds no Reply button, so the reply is marked failed (#32 §2) · **done** (v1.20.0) |
 | B49 | P3 | bug | A scan that stops growing hangs (stops) or reads as the top of the chat (first run) (#32 §5) · **done** (v1.20.0) |
 | B50 | P3 | bug | `troubleshooting.md` says the skill's version is in `VERSION`, "shipped with it"; `VERSION` is at the repo root, outside `plugin/` · **done** (v1.22.0) |
+| B51 | P3 | bug | A built view's reply could set its own `kind`: `{kind:"view", ...v}` let `kind:"idea"` from the model through, posing as a method idea Claude acts on after a refresh · **done** (v1.22.0) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -317,6 +318,10 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### B50 · P3 · `troubleshooting.md` says `VERSION` ships with the skill · done (v1.22.0)
 - **Found:** writing F5's design. `references/troubleshooting.md` › Tested said "The skill's version is in `VERSION` (shipped with it)". `VERSION` is at the repo root, not in `plugin/`, so an installed skill can't read its release version.
 - **Fix:** the line now says the release version is the plugin's and isn't in the skill's folder, and names what the skill can read: `PAGE_VERSION` in `assets/page.html` and `@version` in `assets/helper.user.js`. F5 compares those for the same reason.
+
+### B51 · P3 · A view reply could pose as a method idea · done (v1.22.0)
+- **Where:** `page.html`, Views › Build view: the model's JSON was saved as `{ kind: "view", ...v }`, so a reply carrying `kind: "idea"` replaced `kind: "view"`. Method ideas (`views/*` with `kind:"idea"`) are what Claude checks and acts on after each refresh (the refresh skill's SKILL.md › Method ideas). Found in the review of PR #42; it predates F6.
+- **Fix:** `{ ...v, kind: "view" }`. Test: page `history` › `B51` (a reply with `kind:"idea"` is saved as a view); it fails on the page before the fix.
 
 ## Risks
 
@@ -590,7 +595,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Done in v1.22.0:**
   - **One budget** for Ask, Views and range summaries: UTF-8 bytes against `sample.limits().maxPromptBytes` (262,144 when it's missing, rejects or answers nonsense), less a 4 KiB margin. `packHistory` sends the newest messages word for word as one run, and the rest as OLDER HISTORY: one line per conversation (newest first: the summary's outcome, a range summary's, or "no summary; N messages from …"), then one line per day back to the first stored message. "Nothing before #N is included" when even the day lines don't fit.
   - **Ask:** "What you have" says which numbers are word for word and which are summaries, and Claude is asked to say when a point comes from a summary. Earlier turns are trimmed oldest pair first past a quarter of the cap; a question over half the cap isn't sent; one free retry at 80% on `prompt_too_large`.
-  - **The note** under each answer and built view says what was read, and `qa/*` and `views/*` save it as `sent: {from, to, sumFrom}` (`references/database.md`).
+  - **The note** under each answer and built view says what was read, and `qa/*` and `views/*` save it as `sent: {from, to, sumFrom, afterFrom}` (`references/database.md`).
   - **Range summaries** over the cap get no button: the box says how many of the span's newest messages fit and from when.
   - **Tests:** the page section `history` (H1–H16). The key cases fail on page 2.6. `npm run test:perf` prints timings at 6,400, 25,000 and 50,000 messages (EXPERIMENTS.md §14).
 - **Still to see live** (the design's L2–L7): "include older" answers with a note like "Read #… word for word. Older than #…: summaries only." and no "(sent a smaller set…)"; answers about things 1 to 3 weeks old cite numbers and say when they rest on summaries (L4, which decides F16 and F17); Views on a 5-day window; a long span before `fromI` refused with a start time; what `sample.limits()` returns in the real runtime.

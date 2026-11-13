@@ -278,12 +278,14 @@ function runtime(seed) {
   }
   if (!opts.noLimits)
     sample.limits = async () => {
+      if (opts.limitsHang) return new Promise(() => {});
       if (opts.limitsReject) throw Object.assign(new Error('limits unavailable'), { code: 'unavailable' });
       return { maxPromptBytes: opts.limitsBogus ? 'x' : PROMPT_MAX };
     };
   sample.json = async prompt => {
     samples.push(prompt);
     capCheck(prompt);
+    if (opts.viewJson) return JSON.parse(JSON.stringify(opts.viewJson));
     return {
       title: 'By person',
       intro: 'Grouped by who posted.',
@@ -2507,22 +2509,41 @@ function hmsgs(n, o = {}) {
     };
   });
 }
-/* conversations of 10 messages; every third one summarized */
-function hthreads(n) {
+/* Conversations of 10 messages, or (o.interleave) four sharing each block of 40, taking turns; o.long: the members of
+   one long-running conversation (taken out of the others). Every third conversation is summarized. */
+function hthreads(n, o = {}) {
   const convs = [],
     sums = [];
-  for (let k = 0; k * 10 < n; k++) {
-    const members = range(k * 10, Math.min(n, k * 10 + 10) - 1, i => i);
-    convs.push({ id: 'c' + k, title: 'Topic ' + k + ' about stoves', members });
+  const long = new Set(o.long || []);
+  const add = (k, title, members) => {
+    members = members.filter(i => !long.has(i));
+    if (!members.length) return;
+    convs.push({ id: 'c' + k, title, members });
     if (k % 3 === 0)
       sums.push({
         id: 'c' + k,
         tag: 'Gear talk',
-        synopsis: [{ t: 'Bullet ' + k, refs: [k * 10] }],
+        synopsis: [{ t: 'Bullet ' + k, refs: [members[0]] }],
         outcome: 'Outcome ' + k,
-        key: [k * 10],
+        key: [members[0], members[members.length - 1]],
       });
-  }
+  };
+  if (o.interleave)
+    for (let blk = 0; blk * 40 < n; blk++)
+      for (let j = 0; j < 4; j++)
+        add(
+          blk * 4 + j,
+          'Thread ' + (blk * 4 + j) + ' about tents',
+          range(blk * 40, Math.min(n, blk * 40 + 40) - 1, i => i).filter(i => i % 4 === j),
+        );
+  else
+    for (let k = 0; k * 10 < n; k++)
+      add(
+        k,
+        'Topic ' + k + ' about stoves',
+        range(k * 10, Math.min(n, k * 10 + 10) - 1, i => i),
+      );
+  if (o.long) convs.push({ id: 'long', title: 'Long-running permit thread', members: o.long.slice() });
   return {
     threading: { convs, links: {}, to: n - 1, note: '' },
     summary: {
@@ -2549,7 +2570,7 @@ function hseed(msgs, o = {}) {
   for (let k = 0; k < msgs.length; k += 82)
     seed['chunks/c' + String(k).padStart(4, '0')] = { start: k, msgs: msgs.slice(k, k + 82) };
   if (o.threads) {
-    const T = hthreads(msgs.length);
+    const T = hthreads(msgs.length, o.threads === true ? {} : o.threads);
     seed['threading/current'] = T.threading;
     seed['summary/current'] = T.summary;
   }
@@ -2610,6 +2631,22 @@ function parts(prompt) {
   const raw = sec('MESSAGES').map(l => +((l.match(/^#(\d+) \[/) || [])[1] ?? NaN));
   return { dig, raw, newer: sec('NEWER HISTORY') };
 }
+/* The older messages no summary line accounts for: a day line or an ungrouped run covers its range, a conversation's
+   line covers that conversation's members inside its range (found by title); a range-summary line covers nothing */
+function uncovered(dig, convs, c) {
+  const seen = new Set();
+  for (const [a, b, l] of dig) {
+    if (/\] [\d,]+ messages?(\.|, not grouped)/.test(l)) {
+      for (let i = a; i <= b; i++) seen.add(i);
+      continue;
+    }
+    const cv = convs.find(x => l.includes('] ' + x.title + ' (') || l.includes('] ' + x.title + ':'));
+    if (cv) cv.members.forEach(i => i >= a && i <= b && seen.add(i));
+  }
+  return range(0, c - 1, i => i).filter(i => !seen.has(i));
+}
+const keysOf = dig =>
+  dig.flatMap(([, , l]) => ((l.match(/ Key: (#\d+(?:, #\d+)*)/) || [])[1] || '').match(/\d+/g) || []).map(Number);
 const contiguous = a => a.length > 0 && a.every((x, k) => k === 0 || x === a[k - 1] + 1);
 const ascending = a => a.every((x, k) => k === 0 || x >= a[k - 1]);
 const synthSeed = (n, block, args = [], meta = {}, layout = 'new') => {
@@ -2819,9 +2856,10 @@ async function history() {
   /* H5, H13, H14: "include older" at a small cap */
   await hcase('H5, H13, H14', async () => {
     const msgs = hmsgs(800, { perDay: 130 });
+    const TH5 = { interleave: true, long: [50, 700] };
     const p = await hopen(
       hseed(msgs, {
-        threads: true,
+        threads: TH5,
         meta: { caughtUpI: 769 },
         opts: { promptMax: 32768, answer: 'Ana sold the stove early on [#5].' },
         docs: {
@@ -2855,23 +2893,29 @@ async function history() {
         r.note.includes('Older than #' + c + ': summaries only.'),
       'H5: the prompt and the note name the same cut, #' + c + ' ("' + r.note + '")',
     );
-    const covered = i => dig.some(([a, b]) => a <= i && i <= b);
-    const missing = range(0, c - 1, i => i).filter(i => !covered(i));
+    const missing = uncovered(dig, hthreads(800, TH5).threading.convs, c);
     ok(
       dig.length > 0 && missing.length === 0,
       'H5: every message before #' +
         c +
-        ' is inside some summary line (' +
+        " is accounted for by a summary line: its conversation's, or a day line (" +
         dig.length +
-        ' lines; missing: ' +
+        ' lines, conversations sharing blocks and one running #50–#700; ' +
+        missing.length +
+        ' missing: ' +
         missing.slice(0, 5) +
         ')',
     );
-    ok(dig.length > 0 && dig.every(([a]) => a < c), 'H5: no summary line lies wholly inside the word-for-word part');
+    ok(
+      dig.length > 0 && dig.every(([, b]) => b < c) && keysOf(dig).every(i => i < c),
+      "H5: no summary line or Key number reaches into the word-for-word part (the long conversation's line stops before #" +
+        c +
+        ')',
+    );
     ok(ascending(dig.map(([a]) => a)) && dig[0][0] === 0, 'H5: summary lines run oldest first, from #0');
     ok(
-      dig.some(([, , l]) => /Topic \d+ about stoves \(Gear talk\): Outcome \d+/.test(l)) &&
-        dig.some(([, , l]) => /no summary; 10 messages from /.test(l)),
+      dig.some(([, , l]) => /Thread \d+ about tents \(Gear talk\): Outcome \d+/.test(l)) &&
+        dig.some(([, , l]) => /no summary; \d+ messages from /.test(l)),
       'H5: conversation lines carry summary outcomes, or "no summary" with the count and names',
     );
     /* H14: what was sent is saved and listed */
@@ -2882,12 +2926,12 @@ async function history() {
     );
     const sent = qa && qa[1].sent;
     ok(
-      sent && sent.from === c && sent.to === 799 && sent.sumFrom === 0,
+      sent && sent.from === c && sent.to === 799 && sent.sumFrom === 0 && sent.afterFrom === null,
       'H14: the qa row saves sent ' + JSON.stringify(sent) + ', the numbers the note gives',
     );
     const list = await p.textContent('#qa-list');
     ok(
-      list.includes('all stored messages · #' + c + '–#799 word for word, summaries from #0') &&
+      list.includes('all stored messages · #' + c + '–#799 word for word, older as summaries from #0') &&
         list.includes('An old question'),
       'H14: Earlier questions shows what was read, and an old row without sent still renders',
     );
@@ -2988,7 +3032,9 @@ async function history() {
     ok(
       days.length > 0 &&
         dig[0][0] === 0 &&
-        /one line per conversation back to #\d+ \(Oct \d+\), then one line per day/.test(r.prompt),
+        /one line per conversation back to #\d+ \(Oct \d+\), and one line per day for everything before #\d+/.test(
+          r.prompt,
+        ),
       'H7: at 16 KiB, conversation lines then day lines (' + days.length + '), from #0, and the prompt says so',
     );
     ok(days.length > 0 && dayOk, "H7: each day line counts that day's stored messages, all of one date");
@@ -3047,7 +3093,7 @@ async function history() {
         const rs = new Map(S.rangeSums.r0_120.convs.map(c => [c.id, c]));
         const out = { summary: 0, range: 0, none: 0, bad: [], dup: [] };
         S.threading.convs.forEach(c => {
-          const mem = c.members.filter(i => S.byI.has(i));
+          const mem = c.members.filter(i => S.byI.has(i) && i < rawLo);
           if (!mem.length || mem[0] >= rawLo) return;
           const pre = '[#' + mem[0] + (mem.length > 1 ? '–#' + mem[mem.length - 1] : '');
           const ls = text.filter(l => l.startsWith(pre) && l.includes(trunc(c.title, 80)));
@@ -3224,6 +3270,261 @@ async function history() {
       );
       await p.close();
     }
+  });
+
+  /* H5b: real membership at 2,000 messages, the two layouts a review measured missing messages with */
+  await hcase('H5b', async () => {
+    for (const [label, th, cap] of [
+      ['four conversations sharing each block of 40', { interleave: true }, 65536],
+      ['four conversations sharing each block of 40', { interleave: true }, 20480],
+      ['four conversations sharing each block of 40', { interleave: true }, 28672],
+      [
+        'four conversations sharing each block of 40, and one running #50–#1900',
+        { interleave: true, long: [50, 1900] },
+        16384,
+      ],
+      ['blocks of 10 and one conversation running #50–#1900', { long: [50, 1900] }, 12288],
+    ]) {
+      const p = await hopen(
+        hseed(hmsgs(2000, { perDay: 460 }), { threads: th, meta: { caughtUpI: 1969 }, opts: { promptMax: cap } }),
+        2000,
+      );
+      const r = await hask(p, 'Permits?', true);
+      const { dig, raw } = parts(r.prompt);
+      const c = raw[0];
+      const missing = uncovered(dig, hthreads(2000, th).threading.convs, c);
+      ok(
+        r.calls.length === 1 &&
+          r.calls[0].code === null &&
+          dig.length > 0 &&
+          missing.length === 0 &&
+          dig.every(([, b]) => b < c),
+        'H5b: ' +
+          label +
+          ' at ' +
+          cap / 1024 +
+          ' KiB: each of the ' +
+          c +
+          ' older messages is in some line (' +
+          missing.length +
+          ' missing)',
+      );
+      await p.close();
+    }
+  });
+
+  /* H7b: an ungrouped run cut short by the second pass ends on the date of its last message */
+  await hcase('H7b', async () => {
+    const msgs = hmsgs(800, { perDay: 100 });
+    const p = await hopen(hseed(msgs, { meta: { caughtUpI: 789 }, opts: { promptMax: 32768 } }), 800);
+    const r = await hask(p, 'Anything?', true);
+    const { dig } = parts(r.prompt);
+    const MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const dayOf = d => MONS[+d.slice(5, 7) - 1] + ' ' + +d.slice(8, 10);
+    const span = (x, y) =>
+      x === y
+        ? dayOf(x)
+        : dayOf(x).slice(0, 3) === dayOf(y).slice(0, 3)
+          ? dayOf(x) + '–' + dayOf(y).slice(4)
+          : dayOf(x) + '–' + dayOf(y);
+    const runs = dig.filter(([, , l]) => /not grouped\.$/.test(l) && /messages, not grouped/.test(l));
+    const bad = runs.filter(([a, b, l]) => !l.includes(', ' + span(msgs[a].d, msgs[b].d) + '] '));
+    ok(
+      runs.length > 0 && !bad.length,
+      'H7b: an ungrouped run gives the dates of its own first and last message (' + (bad[0] || runs[0] || [])[2] + ')',
+    );
+    await p.close();
+  });
+
+  /* H9b: Views checks the request's length; a prompt whose fixed text can't fit is refused on the page, never sent;
+     a second click while a question is on its way sends nothing more */
+  await hcase('H9b', async () => {
+    let p = await hopen(hseed(hmsgs(20), { meta: { markerMode: null }, opts: { promptMax: 65536 } }), 20);
+    await p.evaluate(() => {
+      location.hash = '#views';
+      document.getElementById('view-in').value = 'Group by person ' + 'z'.repeat(40 * 1024);
+      document.getElementById('view-go').click();
+    });
+    await until(
+      p,
+      () =>
+        !document.getElementById('view-go').disabled &&
+        /too long|By person/.test(
+          document.getElementById('view-note').textContent + document.getElementById('view-out').textContent,
+        ),
+    );
+    const vn = await p.textContent('#view-note');
+    ok(
+      (await p.evaluate(() => __rt.sampleLog.length)) === 0 && /That request is too long to send/.test(vn),
+      'H9b: a 40 KiB view request at a 64 KiB cap is never sent: "' + vn + '"',
+    );
+    await p.close();
+    p = await hopen(hseed(hmsgs(20), { meta: { markerMode: null }, opts: { promptMax: 9216 } }), 20);
+    const r = await hask(p, 'Long? ' + 'q'.repeat(4500));
+    ok(
+      r.calls.length === 0 && /too long to send, even with the chat trimmed/.test(r.askNote),
+      'H9b: at a 9 KiB cap a 4.5 KB question leaves no room for the instructions: refused on the page, no call ("' +
+        r.askNote +
+        '")',
+    );
+    await p.close();
+    p = await hopen(hseed(hmsgs(20), { meta: { markerMode: null } }), 20);
+    await p.evaluate(() => {
+      location.hash = '#ask';
+      document.getElementById('ask-in').value = 'Twice?';
+      const b = document.getElementById('ask-go');
+      b.click();
+      b.click();
+    });
+    await sleep(1500);
+    const n = await p.evaluate(() => [__rt.sampleLog.length, document.querySelectorAll('#chat .turn.user').length]);
+    ok(
+      n[0] === 1 && n[1] === 1,
+      'H9b: two quick clicks on Ask send one question (' + n.join(' calls, ') + ' questions shown)',
+    );
+    await p.close();
+  });
+
+  /* H10b: cuts by code point: an emoji at a cut is never split into half a character */
+  await hcase('H10b', async () => {
+    const msgs = hmsgs(200, { perDay: 50 });
+    Object.assign(msgs[195], { r: 'Ben', q: 'a'.repeat(119) + '🔥 tail', a: 'b'.repeat(239) + '🔥 more' });
+    const title = 'c'.repeat(38) + '🔥' + 'c'.repeat(38) + '🔥 tail';
+    const seed = hseed(msgs, { threads: true, meta: { caughtUpI: 189 }, opts: { promptMax: 12288 } });
+    seed['threading/current'].convs[0].title = title;
+    seed['summary/current'].convs.find(c => c.id === 'c0').outcome = 'd'.repeat(158) + '🔥 end';
+    const p = await hopen(seed, 200);
+    await hask(p, 'Emoji?', true);
+    const r = await p.evaluate(t => {
+      const s = __rt.samples[__rt.samples.length - 1][0].content;
+      return {
+        lone: /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s),
+        title: s.includes(t.slice(0, 38) + '🔥'),
+        quote: s.includes('a'.repeat(119) + '🔥'),
+      };
+    }, title);
+    ok(
+      !r.lone && r.title && r.quote,
+      'H10b: titles, outcomes, quotes and link previews cut at an emoji keep it whole ' + JSON.stringify(r),
+    );
+    await p.close();
+  });
+
+  /* H11b, H12b: limits() overstating or understating the cap, or never answering; the retry follows what was sent */
+  await hcase('H11b, H12b', async () => {
+    const big = hmsgs(2000, {
+      perDay: 460,
+      body: i => 'message ' + i + ' ' + 'about the ridge trail permits and the spare tent poles '.repeat(2),
+    });
+    for (const [label, opts] of [
+      ['limits() overstating the cap (1e9) against a real 256 KiB', { promptMax: 1e9, enforce: 262144 }],
+      ['limits() answering a tiny number (100)', { promptMax: 100, enforce: 262144 }],
+      ['limits() never answering', { limitsHang: true }],
+    ]) {
+      const p = await hopen(hseed(big, { threads: true, meta: { caughtUpI: 1969 }, opts }), 2000);
+      const r = await hask(p, 'Permits?', true);
+      const b = r.calls.length === 1 && r.calls[0].code === null ? r.calls[0].bytes : -1;
+      ok(b > 200000 && b <= 262144 - HMARGIN, 'H11b: ' + label + ': one call of ' + b + ' bytes, within 262,144');
+      await p.close();
+    }
+    /* a history smaller than the cap, refused by a stricter runtime: the retry must be smaller than what was sent */
+    const small = big.slice(0, 1000);
+    let p = await hopen(hseed(small, { threads: true, meta: { caughtUpI: 969 } }), 1000);
+    const B = (await hask(p, 'Permits?', true)).calls[0].bytes;
+    await p.close();
+    p = await hopen(
+      hseed(small, { threads: true, meta: { caughtUpI: 969 }, opts: { enforce: Math.floor(B * 0.9) } }),
+      1000,
+    );
+    const r = await hask(p, 'Permits?', true);
+    ok(
+      r.calls.length === 2 &&
+        r.calls[0].code === 'prompt_too_large' &&
+        r.calls[1].code === null &&
+        r.calls[1].bytes <= 0.8 * B,
+      'H12b: everything fit in ' +
+        B +
+        ' bytes but the runtime took at most 90% of that: the retry sends ' +
+        r.calls.map(c => c.bytes).join(' → '),
+    );
+    await p.close();
+  });
+
+  /* H14b, H13b: a date range with an end, older messages included: newer summaries are recorded as afterFrom, never
+     as sumFrom; a citation into them says the message is after the window; their lines can't push the window out */
+  await hcase('H14b, H13b', async () => {
+    const msgs = hmsgs(3000, { perDay: 10 });
+    const meta = { markerMode: 'time', markerFrom: '2026-10-11T00:00', markerTo: '2026-10-20T23:59' };
+    let p = await hopen(hseed(msgs, { threads: true, meta, opts: { answer: 'A later sale [#250].' } }), 3000);
+    const r = await hask(p, 'What sold?', true);
+    const qa = await until(p, () => Object.values(Object.fromEntries(__rt.store)).find(v => v && v.q === 'What sold?'));
+    const sent = qa && qa.sent;
+    ok(
+      sent &&
+        sent.from === 0 &&
+        sent.to === 199 &&
+        sent.sumFrom === null &&
+        sent.afterFrom === 200 &&
+        r.note.includes('Newer than #199: summaries only.'),
+      'H14b: all older messages word for word, newer ones summarized: sent ' +
+        JSON.stringify(sent) +
+        ' ("' +
+        r.note +
+        '")',
+    );
+    const list = await p.textContent('#qa-list');
+    ok(
+      list.includes('#0–#199 word for word, newer as summaries from #200') && !list.includes('older as summaries'),
+      'H14b: Earlier questions says the summaries were of newer messages',
+    );
+    await p.click('#chat .turn.assistant a.cite');
+    const older = await until(p, () => {
+      const o = document.getElementById('msg-older');
+      return o && !o.hidden && document.getElementById('m250') && o.textContent;
+    });
+    ok(
+      /after your catch-up window/.test(older || ''),
+      'H13b: a citation into the newer summaries says the message is after the window: "' + older + '"',
+    );
+    await p.close();
+    p = await hopen(hseed(msgs, { threads: true, meta, opts: { promptMax: 16384 } }), 3000);
+    const r2 = await hask(p, 'What sold?', true);
+    const X = parts(r2.prompt);
+    const newerB = X.newer.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0);
+    ok(
+      X.raw.includes(199) &&
+        X.raw.length >= 20 &&
+        newerB <= 0.1 * 16384 &&
+        /Nothing after #\d+ is included/.test(r2.prompt),
+      'H14b: at 16 KiB, 280 days of newer lines take ' +
+        newerB +
+        ' bytes (at most 10%) and the window stays word for word (' +
+        X.raw.length +
+        ' messages, to #199)',
+    );
+    await p.close();
+  });
+
+  /* B51: a view reply that says kind "idea" is still saved as a view, so it can't pose as a method idea */
+  await hcase('B51', async () => {
+    const p = await hopen(
+      hseed(hmsgs(20), {
+        meta: { markerMode: null },
+        opts: { viewJson: { kind: 'idea', title: 'Sneaky', intro: 'x', sections: [] } },
+      }),
+      20,
+    );
+    await p.evaluate(() => {
+      location.hash = '#views';
+      document.getElementById('view-in').value = 'group by person';
+      document.getElementById('view-go').click();
+    });
+    const v = await until(p, () => Object.values(Object.fromEntries(__rt.store)).find(v => v && v.title === 'Sneaky'));
+    ok(
+      v && v.kind === 'view',
+      'B51: a built view is saved with kind "view" whatever the reply says (' + (v && v.kind) + ')',
+    );
+    await p.close();
   });
 
   /* H15: a range summary too long for one call is refused, saying how much fits and from when */

@@ -205,7 +205,8 @@ class TestSkillReferences(unittest.TestCase):
         self.assertIn("v.sent = sent", page)
         line = re.search(r"^- `sent` on `qa/\*` and `views/\*`.*$", db, re.M)
         self.assertTrue(line, "database.md has no line for sent")
-        for part in ("`from`", "`to`", "`sumFrom`"):
+        self.assertIn("afterFrom:", page)
+        for part in ("`from`", "`to`", "`sumFrom`", "`afterFrom`"):
             self.assertIn(part.strip("`"), line.group(0))
 
     def test_every_meta_chat_field_the_page_writes_is_documented(self):
