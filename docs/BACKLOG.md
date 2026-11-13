@@ -75,6 +75,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B47 | P2 | bug | A build that gives bullets to a conversation with an old string synopsis crashes (`str` has no `append`) · **done** (v1.18.1) |
 | B48 | P2 | bug | Reply on a photo-only message: `jump` finds no Reply button, so the reply is marked failed (#32 §2) · **done** (v1.20.0) |
 | B49 | P3 | bug | A scan that stops growing hangs (stops) or reads as the top of the chat (first run) (#32 §5) · **done** (v1.20.0) |
+| B50 | P3 | bug | `troubleshooting.md` says the skill's version is in `VERSION`, "shipped with it"; `VERSION` is at the repo root, outside `plugin/` · **done** (v1.22.0) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -97,7 +98,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | T5 | P3 | test | No CI · **done** |
 | F1 | P3 | feature | More than one chat per page |
 | F2 | P3 | feature | Faster distant photo-reply parents · **done** (v1.14.0) |
-| F5 | P3 | feature | Page shows "update available" when its version is behind |
+| F5 | P3 | feature | Page shows "update available" when its version is behind · **done** (v1.22.0) |
 | F6 | P3 | feature | Ask Claude over long histories · **done** (v1.22.0: one prompt budget; older history as conversation and day lines) |
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
@@ -312,6 +313,10 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Fix (helper 2.0):** nothing new for 30 s (`stallMs`) ends the scan (and verify) with `err:"stalled"`; `references/helper.md` › Scan results says to reload and retry once. The top of the chat now needs 8 tries and 12 s with nothing loaded and no loading spinner at the top; a scan with stops that reaches the top ends with "… (reached the top of the chat)"; results carry `top`. SKILL.md: the first poll after `full` may fail with "Inspected target navigated", which is expected.
 - **Tests:** sim `E: history stops loading …: err "stalled"`, `E: a first run that stalls is "stalled", not a truncated "top of the chat"`, `E: anchors that are gone …` (the first two fail on 1.9).
 - **Still to see live:** whether Messenger's loading indicator is a `[role="progressbar"]` at the top of the list. If it isn't, a stall at the top still reads as the top after 12 s, as before; if one were always there, a short chat's first run would stall instead of finishing.
+
+### B50 · P3 · `troubleshooting.md` says `VERSION` ships with the skill · done (v1.22.0)
+- **Found:** writing F5's design. `references/troubleshooting.md` › Tested said "The skill's version is in `VERSION` (shipped with it)". `VERSION` is at the repo root, not in `plugin/`, so an installed skill can't read its release version.
+- **Fix:** the line now says the release version is the plugin's and isn't in the skill's folder, and names what the skill can read: `PAGE_VERSION` in `assets/page.html` and `@version` in `assets/helper.user.js`. F5 compares those for the same reason.
 
 ## Risks
 
@@ -565,8 +570,18 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Warns only:** missing avatars (no full names), or mostly unreadable date labels.
   - **Tests:** the sim breaks each hook on the mock and checks that it's named. This covers R3's "fail clearly" half; R3 itself (English labels, markup) remains.
 
-### F5 · P3 · "Update available" on the page
+### F5 · P3 · "Update available" on the page · done (v1.22.0)
 - The page could compare its `PAGE_VERSION` with `meta/chat.pageVersion` and the helper's `data-mc-helper` version, and say when either is behind.
+- **What stood in the way:** the page can't see `data-mc-helper` (it's on the facebook.com tab) and has no way to fetch GitHub releases (no network capability; it would also tell GitHub whenever the user reads their chat). And `pageVersion` equals `PAGE_VERSION` on a healthy page; only the skill knows what it ships.
+- **Done in v1.22.0:** Claude writes `meta/chat.versions` with every `lastRefresh`: `page` and `helper` (what this skill ships), `refresh` (a copy of `lastRefresh`) and `browsers` (one entry per Chrome, by name: the helper read there, or `"none"` when injected, and when). A republish writes `versions.page` together with `pageVersion`. The page shows at most one calm, dismissible line per issue under the status line:
+  - **A** this tab is older than `pageVersion` (reload);
+  - **B** the last refresh's skill ships a newer page than the published one (a republish didn't land);
+  - **C** an older copy of the skill ran the last refresh: `versions.page` below `pageVersion`, or `lastRefresh` written without `versions` (a copy from before this release, such as an uploaded skill or an old scheduled task); not while a refresh is running;
+  - **D** a Chrome ran a helper below 1.5, which can't update itself; **E** a Chrome ran a self-updating helper (1.5+) that is behind, flagged right away (the owner's call: no grace period). Entries older than 30 days are left out.
+  - Dismissals stay in the browser's `localStorage`, keyed to the version that would fix it, so they come back with the next release; with storage blocked, Dismiss works for that page load. The page writes nothing to the database.
+  - An older skill that finds a newer `pageVersion` never republishes (that would downgrade the page): it carries on, writes its lower `versions.page` (so C shows) and tells the user to update the plugin (`references/updating-the-page.md`).
+- **Tests:** page section `notices` (U1–U20: every notice and its wording, number-by-number comparison, the running-refresh rule, the 30-day window, unreadable versions, order, Dismiss and its return on a new version, blocked storage, live updates, a browser name with markup, phone width, dark mode, no database, and the last release's page reading data that has `versions`); 41 of its 42 checks fail on page 2.6 (the last is the backward-compatibility check, run on the old page itself). `test_tools.TestUpdateNotice`: every `versions` key the page reads is documented, `lastRefresh` is always written with `versions`, the page-version check goes both ways, the self-update threshold matches `helper.md` and the changelog, one install URL. `test_catchup`: bootstrap ignores `versions`.
+- **Live checks still to do:** whether an open tab reloads by itself after a republish (notice A's wording), the claude.ai menu path for plugins ("Customize › Plugins"), and what `list_connected_browsers` calls a single Chrome.
 
 ### F6 · P3 · Ask Claude over long histories · done (v1.22.0)
 - Send summaries for older stretches plus the raw window, or pick messages by keyword first, instead of all stored messages.

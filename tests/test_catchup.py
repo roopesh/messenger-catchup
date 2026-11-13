@@ -187,6 +187,20 @@ class TestBootstrap(unittest.TestCase):
         self.e.seed(meta={"tz": "Europe/Berlin"})
         self.assertEqual(self.e.state()["tz"], "Europe/Berlin")
 
+    def test_meta_with_versions_bootstraps_the_same(self):
+        """F5: meta/chat.versions (written by Claude for the page's update notices) is ignored by bootstrap."""
+        ms = [msg(i, "Ana", "m%d" % i, mi=i % 60) for i in range(5)]
+        self.e.seed(ms)
+        plain = (self.e.state(), r(os.path.join(self.e.work, "all.json")))
+        versions = {
+            "page": "2.7",
+            "helper": "2.0",
+            "refresh": "Nov 20, 9:04 AM",
+            "browsers": {"Work Mac": {"helper": "2.0", "at": "2026-11-20T17:04:00Z"}, "Home": {"helper": "none"}},
+        }
+        self.e.seed(ms, meta={"lastRefresh": "Nov 20, 9:04 AM", "versions": versions})
+        self.assertEqual((self.e.state(), r(os.path.join(self.e.work, "all.json"))), plain)
+
     def test_gap_in_stored_messages(self):
         with self.assertRaisesRegex(AssertionError, "gap in stored messages"):
             self.e.seed([msg(0, "Ana"), msg(2, "Ben")])

@@ -565,6 +565,102 @@ class TestPhotos(unittest.TestCase):
         self.assertNotRegex(self.page, r'doc\("photos/index"\)\.(set|update)', "the old index is never written")
 
 
+class TestUpdateNotice(unittest.TestCase):
+    """F5: Claude writes meta/chat.versions with every lastRefresh, and the page compares it with its own version. The
+    skill text must document every key the page reads, and tell Claude when to write it."""
+
+    def setUp(self):
+        self.page = in_skill("assets", "page.html")
+        self.db = in_skill("references", "database.md")
+        m = re.search(r"^## Versions\n.*?(?=^## )", self.db, re.M | re.S)
+        self.versions = m.group(0) if m else ""
+
+    def test_database_md_documents_versions(self):
+        self.assertRegex(self.db, r"(?m)^- `meta/chat\.versions` \(Claude; with every `lastRefresh`")
+        for k in ("page", "helper", "refresh", "browsers", "at"):
+            self.assertIn("`%s`" % k, self.versions, k)
+        self.assertIn('`"none"`', self.versions)
+        self.assertIn("30 days", self.versions)
+
+    def test_every_versions_key_the_page_reads_is_documented(self):
+        body = re.search(r"function updateNotices\(.*?\n  \}\n", self.page, re.S).group(0)
+        keys = set(re.findall(r"\bV\.(\w+)", body)) | set(re.findall(r"\bb\.(\w+)", body))
+        self.assertTrue({"page", "helper", "refresh", "browsers", "at"} <= keys, keys)
+        for k in keys:
+            self.assertIn("`%s`" % k, self.versions, "database.md › Versions doesn't name " + k)
+
+    def test_versions_window_matches_the_page(self):
+        days = re.search(r"const VERSIONS_FRESH_DAYS = (\d+);", self.page).group(1)
+        self.assertIn("older than %s days" % days, self.versions)
+
+    def test_lastrefresh_is_always_written_with_versions(self):
+        """SKILL.md's meta/chat line carries the rule for its own {lastRefresh…} writes (it has no room to repeat it);
+        every other place that tells Claude to write lastRefresh names versions."""
+        skill = in_skill("SKILL.md")
+        meta = re.search(r"^- `meta/chat` .*$", skill, re.M).group(0)
+        self.assertIn("`lastRefresh` (always with `versions`: `references/database.md`)", meta)
+        others = {"references/" + f: in_skill("references", f) for f in REFERENCES}
+        others["scripts/catchup.py"] = in_skill("scripts", "catchup.py")
+        found = 0
+        for name, text in others.items():
+            for lit in re.findall(r"\{lastRefresh[^}]*\}", text):
+                found += 1
+                self.assertIn("versions", lit, name + ": " + lit)
+        self.assertGreaterEqual(found, 3)
+        self.assertIn("{lastRefresh, coverage, versions:{page, helper, refresh, browsers:", self.versions)
+
+    def test_page_version_check_goes_both_ways(self):
+        skill = in_skill("SKILL.md")
+        self.assertIn(
+            "If `meta/chat.pageVersion` differs from `PAGE_VERSION` in `assets/page.html` (compare number by number),"
+            " read `references/updating-the-page.md` first.",
+            skill,
+        )
+        doc = in_skill("references", "updating-the-page.md")
+        older = re.search(r"^## `pageVersion` is older.*?(?=^## )", doc, re.M | re.S).group(0)
+        newer = re.search(r"^## `pageVersion` is newer.*", doc, re.M | re.S).group(0)
+        self.assertIn("publish `assets/page.html` to that url", older)
+        self.assertIn("`{pageVersion, versions:{page}}`", older)
+        for must in ("**Never republish**", "never lower `pageVersion`", "Carry on with the run", "Update the plugin"):
+            self.assertIn(must, newer)
+        self.assertIn("scheduled runs included", newer)
+        self.assertIn("`{pageVersion, versions:{page}}`", self.versions)
+
+    def test_self_update_threshold_matches_helper_md(self):
+        """The page's D notice (can't update itself) uses the same line as helper.md › Versions, which is the first
+        helper with @updateURL."""
+        page_v = re.search(r'const SELF_UPDATE_FROM = "([\d.]+)";', self.page).group(1)
+        helper_md = re.search(
+            r"\*\*older than ([\d.]+):\*\* it was installed by pasting", in_skill("references", "helper.md")
+        )
+        self.assertEqual(helper_md.group(1), page_v)
+        first = re.search(r"\*\*Helper ([\d.]+):\*\* `@updateURL`", read("CHANGELOG.md"))
+        self.assertEqual(first.group(1), page_v)
+
+    def test_notice_install_link_is_the_release_url(self):
+        """One install URL in the page (the #us-install anchor); the notices read it from there, and How to install
+        points at the README's Install section."""
+        self.assertEqual(self.page.count("releases/latest/download/helper.user.js"), 1)
+        self.assertRegex(
+            self.page, r'id="us-install"\s+href="https://github\.com/[^"]+/releases/latest/download/helper\.user\.js"'
+        )
+        render = re.search(r"function renderUpdates\(.*?\n  \}\n", self.page, re.S).group(0)
+        self.assertIn('$("#us-install")', render)
+        docs = re.search(r'const INSTALL_DOCS = "([^"]+)";', self.page).group(1)
+        self.assertTrue(docs.endswith("#install"), docs)
+        self.assertRegex(read("README.md"), r"(?m)^## Install$")
+
+    def test_helper_md_records_the_browser(self):
+        which = re.search(r"^## Which Chrome.*?(?=^## )", in_skill("references", "helper.md"), re.M | re.S).group(0)
+        self.assertIn("`meta/chat.versions.browsers`", which)
+        self.assertIn('`"none"`', which)
+
+    def test_page_never_writes_versions(self):
+        """versions is Claude's: the page only reads it (dismissals stay in localStorage)."""
+        self.assertNotRegex(self.page, r"versions\s*:\s*[{\[]")
+        self.assertNotRegex(self.page, r"\.versions\s*=[^=]")
+
+
 class TestHelper2(unittest.TestCase):
     """Helper 2.0 (issue #32, R3, B41): what the skill text must say for the new helper behavior."""
 

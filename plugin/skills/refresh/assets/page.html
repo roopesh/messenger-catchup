@@ -843,6 +843,29 @@
   .refresh .st.err {
     color: var(--warn);
   }
+  /* Update notices (F5): calm, one line each, under the status line */
+  .upd {
+    display: grid;
+    gap: 6px;
+  }
+  .upd[hidden] {
+    display: none;
+  }
+  .upd p {
+    margin: 0;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--accent-soft);
+    color: var(--fg);
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;
+  }
+  .upd p a {
+    color: var(--accent);
+  }
+  .upd p button.link {
+    margin-left: 4px;
+  }
   .marker {
     display: flex;
     flex-wrap: wrap;
@@ -1286,6 +1309,7 @@
     <div class="refresh">
       <span class="st" id="refresh-st" role="status"></span><span class="st" id="storage-st" hidden></span>
     </div>
+    <div class="upd" id="upd" role="status" hidden></div>
     <p class="note" id="layout-st" role="status" hidden></p>
     <div class="strip" id="strip"></div>
   </header>
@@ -5438,7 +5462,143 @@
   }
   setInterval(() => {
     if (S.refresh) renderRefresh();
+    renderUpdates();
   }, 60000);
+
+  /* ---------- update notices (F5) ----------
+     The page can't see the helper (it lives in the facebook.com tab) and can't fetch releases, so Claude writes
+     meta/chat.versions with every lastRefresh: what that refresh's skill ships (page, helper), a copy of lastRefresh
+     (refresh) and the helper each Chrome ran (browsers). The page compares them with its own PAGE_VERSION and
+     pageVersion and shows one calm line per thing to update. It writes nothing to the database; a dismissal is kept in
+     this browser's localStorage under a key naming the version that would fix it, so the next release brings it back. */
+  const SELF_UPDATE_FROM = "1.5"; /* helpers from 1.5 on update themselves (@updateURL); older ones were pasted */
+  const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
+  const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";
+  /* Number by number (2.0 > 1.9, 10.0 > 9.9, "2" = "2.0"): -1, 0 or 1, or null when either isn't a version. */
+  function vcmp(a, b) {
+    const pa = String(a ?? "").split(".");
+    const pb = String(b ?? "").split(".");
+    if (!pa.concat(pb).every(x => /^\d+$/.test(x))) return null;
+    for (let k = 0; k < Math.max(pa.length, pb.length); k++) {
+      const d = Number(pa[k] || 0) - Number(pb[k] || 0);
+      if (d) return d < 0 ? -1 : 1;
+    }
+    return 0;
+  }
+  const isObj = v => v != null && typeof v === "object" && !Array.isArray(v);
+  /* Pure: meta/chat, refresh/status, the time and the userscript's install URL in; [{key, parts}] out, in the order
+     shown (this tab, a waiting page, an older skill, then each Chrome by name). parts are text or {t, href} links. */
+  function updateNotices(meta, status, now, install) {
+    const out = [];
+    if (!isObj(meta)) return out;
+    const add = (key, parts) => out.push({ key: "mcUpd:" + key, parts });
+    const P = PAGE_VERSION;
+    const M = meta.pageVersion;
+    /* A: this tab runs an older copy of a page that has since been republished */
+    if (vcmp(P, M) === -1)
+      add("A:" + M, [
+        "This tab has an older copy of the page (" + P + "; the current one is " + M + "). Reload the tab to get it.",
+      ]);
+    const V = isObj(meta.versions) ? meta.versions : null;
+    if (!V) return out;
+    /* B: the last refresh's skill ships a newer page than any published one (its republish didn't land) */
+    const newest = vcmp(P, M) === -1 ? M : P;
+    if (vcmp(V.page, newest) === 1)
+      add("B:" + V.page, [
+        "Page " +
+          V.page +
+          " is ready. Claude puts it in place at the start of the next refresh: ask Claude to “" +
+          (meta.refreshPhrase || "refresh my catch-up") +
+          "”.",
+      ]);
+    /* C: an older copy of the skill ran the last refresh: one that knows versions wrote a lower page (C1), or one
+       from before them wrote lastRefresh alone (C2). Not while a refresh is running: versions lands at its end. */
+    const running =
+      isObj(status) && status.state === "running" && (now - Date.parse(status.startedAt || 0)) / 60000 < 25;
+    const c1 = vcmp(V.page, M) === -1;
+    const c2 = !!V.refresh && !!meta.lastRefresh && meta.lastRefresh !== V.refresh;
+    if ((c1 || c2) && !running)
+      add("C:" + (M || P), [
+        "The last refresh ran an older copy of the Messenger Catch-up skill than this page was made for. Update the plugin in Claude (Customize › Plugins), and remove any copy of the skill you uploaded yourself. ",
+        { t: "How to install ↗", href: INSTALL_DOCS },
+      ]);
+    /* D and E: a Chrome whose helper is behind the one the last refresh's skill ships. Below 1.5 it can't update
+       itself (D); from 1.5 on it should have (E). "none" (no helper: Claude injected the current one) is never behind. */
+    if (vcmp(V.helper, V.helper) !== 0) return out;
+    const browsers = isObj(V.browsers) ? V.browsers : {};
+    Object.keys(browsers)
+      .sort()
+      .forEach(name => {
+        const b = browsers[name];
+        if (!isObj(b) || !(now - Date.parse(b.at) <= VERSIONS_FRESH_DAYS * 864e5)) return;
+        if (vcmp(b.helper, V.helper) !== -1) return;
+        const chrome = "At the last refresh, Chrome “" + name + "” ran helper " + b.helper;
+        const link = { t: "Install the userscript", href: install };
+        if (vcmp(b.helper, SELF_UPDATE_FROM) === -1)
+          add("D:" + V.helper + ":" + name, [
+            chrome + ", which can't update itself. In that Chrome, open ",
+            link,
+            " and press Install; it keeps itself up to date after that.",
+          ]);
+        else
+          add("E:" + V.helper + ":" + name, [
+            chrome +
+              "; the current one is " +
+              V.helper +
+              ". It updates itself, usually within a day. To update now, use the extension's menu › Check for updates, or open ",
+            link,
+            ".",
+          ]);
+      });
+    return out;
+  }
+  /* Dismissed in this page load: localStorage can be blocked (a private window), and Dismiss still works then. */
+  const updHidden = new Set();
+  let updShown = null;
+  function updDismissed(key) {
+    if (updHidden.has(key)) return true;
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch (e) {
+      return false;
+    }
+  }
+  function renderUpdates() {
+    const box = $("#upd");
+    if (!box) return;
+    const inst = $("#us-install");
+    const list = updateNotices(S.meta, S.refresh, Date.now(), inst ? inst.href : "").filter(n => !updDismissed(n.key));
+    /* rebuild only when something changed, so the status region isn't announced again every minute */
+    const sig = JSON.stringify(list);
+    if (sig === updShown) return;
+    updShown = sig;
+    box.textContent = "";
+    list.forEach(n => {
+      const p = el("p");
+      p.dataset.key = n.key;
+      const msg = el("span", "msg");
+      n.parts.forEach(x => {
+        if (typeof x === "string") return msg.append(x);
+        const a = el("a", null, x.t);
+        a.href = x.href;
+        a.target = "_blank";
+        a.rel = "noopener";
+        msg.append(a);
+      });
+      const dis = el("button", "link", "Dismiss");
+      dis.type = "button";
+      dis.onclick = () => {
+        updHidden.add(n.key);
+        try {
+          localStorage.setItem(n.key, "1");
+        } catch (e) {}
+        renderUpdates();
+      };
+      p.append(msg, " ", dis);
+      box.append(p);
+    });
+    box.hidden = !list.length;
+  }
 
   /* ---------- threading and summary documents (v1.17) ----------
      A database document holds at most 256 KiB, so each is a collection: `current` names its block documents (`blocks`),
@@ -5599,6 +5759,7 @@
           applyCfg();
           rebuild();
           renderRefresh();
+          renderUpdates();
         });
       },
       () => {},
@@ -5652,6 +5813,7 @@
       s => {
         S.refresh = s.exists ? s.data() : null;
         renderRefresh();
+        renderUpdates();
       },
       () => {},
     );

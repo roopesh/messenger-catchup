@@ -746,7 +746,7 @@ def build(work, run, specp):
                 % (base, max(m["i"] for m in ms))
             )
         raise AssertionError(
-            "nothing left to build: WORK already covers RUN (through #%d; another build did it). Write only meta/chat {lastRefresh} and refresh/status"
+            "nothing left to build: WORK already covers RUN (through #%d; another build did it). Write only meta/chat {lastRefresh, versions} and refresh/status"
             % base
         )
     ids = [m["i"] for m in new]

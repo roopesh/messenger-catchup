@@ -3,6 +3,7 @@
 The full reference. The refresh skill's SKILL.md lists what a refresh needs.
 
 - `meta/chat`: `kind:"messenger-catchup"`, `pageVersion`, `thread` (Messenger thread id), `chatUrl` (full chat URL), `threadName`, `shortName`, `ownerName`, `ownerAliases` (names others call them), `topic`, `outboxAuto`, `helperPost` (true lets the helper post approved replies; off unless the user asks Claude to turn it on: the refresh skill's `references/posting-with-helper.md`), `refreshPhrase`, `tz` (IANA), `firstCount` (the history size chosen at setup: how many messages the first capture reads), `helper` ("installed" | "inject"), `chunkSize:82`, `lastI`, `lastMid`, `lastT`, `anchorMids` (newest 3 ids; reversed = STOPS), `caughtUpI`, `caughtUpAt`, `ownLastI`, `ownLastMid`, `markerMode` (`caught` | `own` | `time`), `markerSetAt`, `markerFrom`, `markerTo`, `lastRefresh`, `coverage` (one short sentence the page shows after "Stored: N messages, #a to #b.", such as how far back the stored history goes; it ends with a period), `schedule` (`{mode, every, hours, tz}`, the user's choice, `hours` as `{from, to}`: `references/scheduling.md`), `ideasSeenAt`, `aliasesAskedAt` (when the user was asked which aliases count; the refresh skill's `references/people.md`). The page writes `lastI` … `ownLastMid` when it imports, and the marker fields when the user picks a catch-up start; Claude writes the rest.
+- `meta/chat.versions` (Claude; with every `lastRefresh`, in the same update): what that refresh's skill ships and the helper each Chrome ran, so the page can say what to update (below, under Versions).
 - `chunks/cNNNN` `{start, msgs:[...]}`: message fields `i` (number from 0), `t` ("Fri 8:41 AM"), `d` (date), `f` (sender as Messenger shows them: nickname or first name; the user = "You"), `fn` (full name from their avatar; helper 1.6+), `b` (text), `m` (Messenger id), `r` (replied-to name), `q` (quoted text), `pi`/`pmid`/`pq`/`perr` (reply parent), `p` (photo), `a` (link preview), `l` (links), `x` (reactions).
 - `threading/*`: `current` plus the block documents it names; merged: `convs:[{id,title,members}]`, `links:{i:[parent,type]}` (r = Messenger link, rq = matched by quote, rg = photo reply best match, i = answers, c = same person continuing), `to`, `note`, `builtAt`.
 - `summary/*`: the same; merged: `version:2`, `convs:[{id,tag,synopsis:[{t,refs}],outcome,key}]`, `open`, `answered`, `deals`, `mentions`, `toI`, `generatedAt` (optional `mentionsNote`, `fromI`).
@@ -30,6 +31,22 @@ A document holds at most 256 KiB, so since v1.17 threading and summary are colle
 - `summary.fromI` (pages from before v1.17): the first message the stored summary covers. Sessions before v1.17 dropped older conversations and moved it up; the page offers summaries of spans before it (`rangeSummaries`). A build keeps it as it is. `catchup.py restore-summary` moves it back to the backup's, or removes it when the summary then covers everything from #0 (no `fromI` means that).
 - `backups/<name>-a`, `-b`, …: a copy of `summary/current` that a session before v1.17 saved before dropping items, split in parts to fit the cap: `{part:"a", of:2, what, savedAt, …}`. Part a holds the summary's fields (`version`, `fromI`, `toI`, `generatedAt`, `mentionsNote`, the lists) and the first conversations; later parts hold more of the lists (`convs`). Joined in part order they're the old single document. The page ignores this collection. `catchup.py restore-summary` reads it (the refresh skill's `references/restoring-a-summary.md`). Never delete it unless the user asks.
 - A page set up before v1.17 has one `current` document each with no `layout`; it's still read, and the first build converts it.
+
+## Versions
+`meta/chat.versions` tells the page what to update: it can't see the helper (that lives in the Messenger tab) or fetch releases, so it compares these with its own `PAGE_VERSION` and `pageVersion`, and shows a short notice the user can dismiss.
+```json
+"versions": {"page": "2.7", "helper": "2.0", "refresh": "Nov 20, 9:04 AM", "browsers": {"Work Mac": {"helper": "2.0", "at": "2026-11-20T17:04:00Z"}}}
+```
+- `page`: `PAGE_VERSION` in this skill's `assets/page.html`.
+- `helper`: `@version` in this skill's `assets/helper.user.js`.
+- `refresh`: exactly the string written to `lastRefresh` in the same update. A refresh that writes `lastRefresh` without it was run by a copy of the skill from before `versions`, and the page says so.
+- `browsers`: one entry per Chrome, keyed by its name: the name `list_connected_browsers` gives the Chrome this run used (call it once if you haven't), or `"Chrome"` when it gives none. Write only this run's Chrome; `update` merges, so the others stay. The page ignores entries older than 30 days.
+  - its `helper`: `data-mc-helper` as read on its Messenger tab at step 2, or `"none"` when no helper was installed and you injected it.
+  - its `at`: when you read it (ISO time).
+- **Write it with every `lastRefresh`** (step 7, the nothing-new path, troubleshooting's "nothing left to build"), in the same pinned `meta/chat` update: `{lastRefresh, coverage, versions:{page, helper, refresh, browsers:{"<name>":{helper, at}}}}`.
+- **When you republish the page**, write `{pageVersion, versions:{page}}` together (the refresh skill's `references/updating-the-page.md`).
+- Never write a higher `page` or `helper` than this skill ships to make a notice go away: the notice is the point.
+- What the page shows: this tab is older than `pageVersion` (reload); `page` newer than the published page (a republish didn't land); `page` older than `pageVersion`, or `refresh` not equal to `lastRefresh` (an older copy of the skill ran: update the plugin); a Chrome's `helper` older than `helper` (below 1.5 it can't update itself: install once from the link; from 1.5 on: it should update itself, or check for updates now). `"none"` and versions it can't read show nothing.
 
 ## What the page saves for Claude
 The page promises the user that Claude sees these, so act on them. (Method ideas are checked after every refresh: the refresh skill's SKILL.md › Method ideas.)
