@@ -38,7 +38,7 @@ A document holds at most 256 KiB, so since v1.17 threading and summary are colle
 "versions": {"page": "2.7", "helper": "2.0", "refresh": "Nov 20, 9:04 AM", "browsers": {"Work Mac": {"helper": "2.0", "at": "2026-11-20T17:04:00Z"}}}
 ```
 - `page`: `PAGE_VERSION` in this skill's `assets/page.html`.
-- `helper`: `@version` in this skill's `assets/helper.user.js`.
+- `helper`: `@version` in the refresh skill's `assets/helper.user.js`.
 - `refresh`: exactly the string written to `lastRefresh` in the same update. A refresh that writes `lastRefresh` without it was run by a copy of the skill from before `versions`, and the page says so.
 - `browsers`: one entry per Chrome, keyed by its name: the name `list_connected_browsers` gives the Chrome this run used (call it once if you haven't), or `"Chrome"` when it gives none. Write only this run's Chrome; `update` merges, so the others stay. The page ignores entries older than 30 days.
   - its `helper`: `data-mc-helper` as read on its Messenger tab at step 2, or `"none"` when no helper was installed and you injected it.
