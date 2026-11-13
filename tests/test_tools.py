@@ -33,6 +33,7 @@ REFERENCES = [
     "open-message.md",
     "outbox.md",
     "people.md",
+    "photos.md",
     "posting-with-helper.md",
     "restoring-a-summary.md",
     "troubleshooting.md",
@@ -227,9 +228,11 @@ class TestSkillReferences(unittest.TestCase):
         self.assertTrue(
             {"lastI", "ownLastMid", "markerTo", "caughtUpAt", "markerSetAt", "anchorMids"} <= fields, fields
         )
+        # the meta/chat line, plus the lines of their own for fields added later (`meta/chat.photosOwed`, ...)
         meta = re.search(r"^- `meta/chat`:(.*)$", skill, re.M).group(1)
+        meta += " ".join("`%s`" % f for f in re.findall(r"^- `meta/chat\.(\w+)`", skill, re.M))
         for f in fields:
-            self.assertIn("`%s`" % f, meta, "meta/chat field not documented in SKILL.md: " + f)
+            self.assertIn("`%s`" % f, meta, "meta/chat field not documented in references/database.md: " + f)
 
     def test_every_referenced_file_exists(self):
         text = in_skill("SKILL.md") + "".join(in_skill("references", f) for f in REFERENCES)
@@ -305,7 +308,7 @@ class TestSkillReferences(unittest.TestCase):
         toasts = re.search(
             r"^## Import toasts.*?(?=^## )", in_skill("references", "troubleshooting.md"), re.M | re.S
         ).group(0)
-        for t in ("REPAIRED", "Photos: upload failed", "Photos not stored", "Another import is running"):
+        for t in ("REPAIRED", "Photos not stored", "Another import is running", "`references/photos.md` › Waiting"):
             self.assertIn(t, toasts)
 
     def test_setup_points_at_the_field_names_it_seeds(self):
@@ -442,6 +445,112 @@ class TestSkillReferences(unittest.TestCase):
         step8 = re.search(r"^8\. Handle the outbox.*$", skill, re.M).group(0)
         self.assertIn("read `references/outbox.md` in full first", step8)
         self.assertIn("Never send a message", skill, "the hard rule stays in SKILL.md")
+
+
+class TestPhotos(unittest.TestCase):
+    """R2: photos stored as they upload. What SKILL.md and references/photos.md must say for the page's states, stop
+    codes and timings, the backfill, the storage warning and the cleanup."""
+
+    def setUp(self):
+        self.skill = in_skill("SKILL.md")
+        self.page = in_skill("assets", "page.html")
+        self.doc = in_skill("references", "photos.md")
+
+    def section(self, name):
+        return re.search(r"^## %s.*?(?=^## |\Z)" % name, self.doc, re.M | re.S).group(0)
+
+    def tune(self, key):
+        lit = re.search(r"const IMPORT_TUNE = Object\.freeze\(\s*Object\.assign\(\s*(\{[^{}]*\})", self.page).group(1)
+        return int(re.search(r"\b%s:\s*(\d+)" % key, lit).group(1))
+
+    def test_steps_point_at_photos_md(self):
+        step3 = re.search(r"^3\. .*$", self.skill, re.M).group(0)
+        step4 = re.search(r"^4\. Import by paste:.*?(?=^5\. )", self.skill, re.M | re.S).group(0)
+        step5 = re.search(r"^5\. .*$", self.skill, re.M).group(0)
+        self.assertIn("`meta/chat.photosOwed` set: `references/photos.md` › Backfill", step3)
+        self.assertIn("`references/photos.md` › Waiting", step4)
+        self.assertIn("never close the page tab", step4)
+        self.assertIn("`references/photos.md` › Looking", step5)
+        self.assertNotIn("photos/index", step5)
+
+    def test_every_state_and_stop_the_page_writes_has_a_rule(self):
+        imp = self.page[self.page.index("async function planPhotos(") : self.page.index("/* Status line: refreshes")]
+        states = set(re.findall(r'R\.state = (?:[\w.]+ \? )?"(\w+)"(?: : "(\w+)")?', imp))
+        states = {s for pair in states for s in pair if s} | set(re.findall(r'state: "(\w+)"', imp))
+        self.assertEqual(states, {"uploading", "done", "partial", "refused", "failed"})
+        stop_of = re.search(r"const stopOf = c =>(.*?);\n", self.page, re.S).group(1)
+        stops = set(re.findall(r'\? "(\w+)"', stop_of)) | set(re.findall(r': "(\w+)"\s*$', stop_of))
+        stops |= set(re.findall(r'\bstop = "(\w+)"', self.page)) | {"index"}  # a block write refused
+        self.assertEqual(
+            stops, {"rate_limited", "timeout", "quota", "auth", "no_assets", "unavailable", "lease", "index"}
+        )
+        waiting = self.section("Waiting")
+        for s in states:
+            self.assertIn("`%s`" % s, waiting, "photos.md › Waiting has no rule for state " + s)
+        rules = re.findall(r"^   - (.*)$", waiting, re.M)
+        for s in stops:
+            self.assertTrue(any("`%s`" % s in r.split(":")[0] for r in rules), "no rule for stop " + s)
+        self.assertIn("Don't paste again", [r for r in rules if r.startswith("`quota`")][0])
+        self.assertIn("even in a scheduled run", [r for r in rules if r.startswith("`quota`")][0])
+
+    def test_stall_and_wait_fit_the_page_timings(self):
+        """Two reads at least 60 s apart with the same beat: at least 3 heartbeats; the 10-minute cap is longer than
+        one upload's timeout, so a single slow photo never ends the wait."""
+        waiting = self.section("Waiting")
+        stall = int(re.search(r"at least (\d+) s apart show the same `beat`", waiting).group(1))
+        cap = int(re.search(r"Wait at most (\d+) minutes in total", waiting).group(1))
+        self.assertGreaterEqual(stall * 1000, 3 * self.tune("beatMs"))
+        self.assertGreater(cap * 60000, self.tune("uploadTimeoutMs"))
+        self.assertGreaterEqual(stall * 1000, self.tune("leaseMs"), "a stalled tab's lease lapses within the stall")
+        self.assertIn("never `beat` with your clock", waiting)
+        self.assertIn("leave the page tab open", waiting)
+
+    def test_backfill_matches_the_pages_give_up_window(self):
+        backfill = self.section("Backfill")
+        window = self.tune("owedWindow")
+        self.assertIn("`S = max(fromI, meta.lastI − %d)`" % window, backfill)
+        self.assertIn("`BASE = S−1`", backfill)
+        self.assertIn("more than %d messages behind the newest" % window, self.doc)
+        self.assertIn("!P.inCap.has(o.i)", self.page, "a capture's own owed photos are never given up by it")
+
+    def test_every_new_photo_is_looked_at(self):
+        """The owner kept today's behavior: no cap on the photos Claude opens."""
+        looking = self.section("Looking")
+        self.assertIn("Open every one", looking)
+        self.assertIn("`stored`", looking)
+        self.assertNotRegex(looking, r"at most \d+")
+
+    def test_storage_warning_and_cleanup_are_safe(self):
+        storage = self.section("Storage")
+        self.assertIn("80%", storage)
+        self.assertIn("usageLevel(u) < 0.8", self.page)
+        cleanup = self.section("Cleanup")
+        for s in (
+            "only when the user asks",
+            "never in a scheduled run",
+            "**never delete a file any `photos` document references**",
+            "SHA-256",
+            "Without a clear yes",
+            "List `photos` again",
+            '`Artifact` `action:"delete"`',
+        ):
+            self.assertIn(s, cleanup)
+        self.assertIn("offer Cleanup", storage)
+
+    def test_database_md_documents_the_photo_documents(self):
+        db = in_skill("references", "database.md")
+        for s in (
+            "- `photos/b<start>`",
+            "- `meta/chat.photosOwed`",
+            "- `meta/chat.assetUsage`",
+            "- `refresh/lastImport`",
+            "`stored` `[{i,k,id}]`",
+            "never writes it again",
+        ):
+            self.assertIn(s, db)
+        for f in ("photosOwed", "assetUsage"):
+            self.assertRegex(self.page, r'doc\("meta/chat"\)\.update\(\{ %s: ' % f)
+        self.assertNotRegex(self.page, r'doc\("photos/index"\)\.(set|update)', "the old index is never written")
 
 
 class TestHelper2(unittest.TestCase):

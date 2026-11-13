@@ -35,9 +35,11 @@ There is no server. The artifact database (ArtifactData) is the only store, and 
  click COPY CAPTURE ─────────▶ clipboard ─────────────────────────────────▶ paste anywhere
                                                                            importCore: checksum, numbering,
                                                                            overlap, fields; write chunks,
-                                                                           read back, update meta/chat,
-                                                                           upload photos, photos/index
- read refresh/lastImport ◀──────────────────────────────────────────────── refresh/lastImport
+                                                                           read back, update meta/chat;
+                                                                           storePhotos: one upload at a time,
+                                                                           each indexed in photos/b<start>
+ read refresh/lastImport ◀──────────────────────────────────────────────── refresh/lastImport (uploading,
+ (wait while its beat moves: photos.md)                                    beat, then done | partial)
  get touched chunks + meta/chat, list threading + summary into RUN/
  write spec.json; catchup.py build WORK RUN spec.json  ->  RUN/out/manifest.json
  batch write per manifest: new blocks (unpinned), threading/current +
@@ -87,7 +89,7 @@ The helper exists **twice**: the file itself, and its `jump()` body as a URL-enc
 
 - **Capabilities:** `db`, `assets` (photo uploads), `sample` (Ask Claude, Views, range summaries). Published by Claude with `capabilities: {"db":{}, "assets":{}, "sample":{}}`.
 - **Config:** everything chat-specific comes from `meta/chat` via `applyCfg()` (line 500). `PAGE_VERSION` is at line 493.
-- **Boot:** subscribes with `onSnapshot` to `meta/chat`, the `summary` collection, `chunks`, `qa`, `views`, `notes`, `outbox`, `refresh/status`, `rangeSummaries`, `people/index`, `photos/index` and the `threading` collection. Every chunk change rebuilds the full in-memory message list (`rebuild`). `mergeThreading` and `mergeSummary` turn each collection back into the single objects `S.threading` and `S.summary` that every view reads (old single documents are used as they are), so nothing else knows about blocks.
+- **Boot:** subscribes with `onSnapshot` to `meta/chat`, the `summary` collection, `chunks`, `qa`, `views`, `notes`, `outbox`, `refresh/status`, `rangeSummaries`, `people/index`, the `photos` collection (merged by `mergePhotos`) and the `threading` collection. With the `assets` capability it also lists assets once, read only, for the storage warning. Every chunk change rebuilds the full in-memory message list (`rebuild`). `mergeThreading` and `mergeSummary` turn each collection back into the single objects `S.threading` and `S.summary` that every view reads (old single documents are used as they are), so nothing else knows about blocks.
 - **Keeping the reader's place (v1.19.0, BACKLOG B39):** a snapshot of new data redraws the Summary and Messages tabs from scratch inside `keepPlace`, which notes the message whose reply is being written (else the first row or card on screen) and its height on screen, redraws, and scrolls it back to the same height; open summary threads keep their inner scroll. Which Messages conversations the reader opened or closed is kept in `S.convOpen` (the summary's threads in `S.openThr`); only untouched ones follow the first-four default. An `outbox` change redraws nothing: `outboxChanged` refills the "reply queued" chips (`.pt[data-pt]`), the Summary's "Your replies" (`#ob-slot`) and closes the composer whose reply was queued.
 - **Tabs:** Summary · Ask Claude · Messages · Views, plus a fixed "Refreshing" section with helper setup and the manual Import box.
 
@@ -117,9 +119,15 @@ Checks, in order: JSON → `kind` → message checksum → photo checksum → le
 2. appends to the newest chunk, rolling to a new `cNNNN` at `chunkSize` (82)
 3. **reads each chunk back and compares**
 4. updates `meta/chat` (`lastI`, `lastMid`, `lastT`, `anchorMids`, `ownLastI`, `ownLastMid`)
-5. uploads photos and merges `photos/index`
+5. hands the photos to `storePhotos` (v1.22.0, R2), still under the lease:
+   - **placeholders:** a `null` slot in its `photos/b<start>` block for every photo not stored yet, plus new GIFs, and `meta/chat.photosOwed` `{n, fromI, toI, at}` for every owed slot in the chat; then `refresh/lastImport` `state:"uploading"`
+   - **uploads, one at a time:** each races `uploadTimeoutMs` (90 s); on success the slot gets `/_blob/<id>` and the block is written at once, so a tab closed mid-upload loses at most the photo in flight. Before each block write the lease is renewed; if another tab holds it (ours lapsed), nothing more is written (`stop:"lease"`)
+   - **heartbeat:** a timer every `beatMs` (10 s) rewrites `refresh/lastImport` with a new `beat` and renews the lease for `leaseMs` (60 s), so a dead tab's lease lapses within a minute
+   - **error codes** (`assets.d.ts`): `store_unavailable`, `upstream_error` and unknown codes retry once after 2 s; `rate_limited` waits 30 s and retries once; `too_large`, `unsupported_type`, `invalid_request` give that photo up (`{e:code}`) and go on; `quota_or_state`, `upstream_auth`, a timeout, the lease, a refused block write and a view without assets stop with `state:"partial"` and a `stop` code
+   - **end:** owed slots more than `owedWindow` (300) messages behind `lastI` that this capture doesn't hold become `{e:"gave-up"}`; `photosOwed` is rewritten (or `null`); `assets.list()` gives `usage`, kept in `refresh/lastImport.usage` and `meta/chat.assetUsage` (written when it changed), with a warning at 80% of either limit
+   - The timings live in `IMPORT_TUNE`; tests shorten them through `window.__mcImportTune`, which production never sets. `mergePhotos` merges the old `photos/index` (its `byK`, or `byI` by position) under the blocks; the page shows the merge (`S.photos`, `S.gifs`) and checks "already stored" by slot against it.
 
-Every outcome goes to `refresh/lastImport`. A dry run reports what it would do, including "Would repair", and writes nothing.
+Every outcome goes to `refresh/lastImport`, with `state` `uploading` → `done` | `partial`, or `refused` / `failed`. A dry run reports what it would do, including "Would repair" and how many photos it would store, and writes nothing.
 
 ### Outbox
 "Reply here" writes `outbox/r<timestamp>` `{i, mid, to, snip, text, state:"queued", queuedAt}`; Cancel sets `state:"cancelled"`. Claude moves rows to `sending` → `sent` (`sentAt`, `sentMid`), `failed` (`error`) or `unconfirmed` (sent but never found in the chat; never reposted). Failed and unconfirmed rows have a Dismiss button (`state:"dismissed"`), and they stay listed until resolved.
@@ -158,6 +166,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 |---|---|---|
 | `meta/chat` | Claude at setup | `kind`, `pageVersion`, `thread`, `chatUrl`, `threadName`, `shortName`, `ownerName`, `ownerAliases`, `topic`, `outboxAuto`, `refreshPhrase`, `tz`, `helper`, `chunkSize`, `schedule`, initial `lastI:-1`, `anchorMids:[]`, `markerMode`, `markerFrom` |
 | | Page importer | `lastI`, `lastMid`, `lastT`*, `anchorMids`, `ownLastI`, `ownLastMid`* |
+| | Page importer (v1.22.0) | `photosOwed` `{n,fromI,toI,at}` or `null`, `assetUsage` `{files,bytes,maxFiles,maxBytes,at}` |
 | | Page UI | `markerMode`, `markerSetAt`*, `markerFrom`, `markerTo`*, `caughtUpI`, `caughtUpAt`* |
 | | Claude per refresh | `lastRefresh`, `coverage`, `ideasSeenAt` |
 | | (no longer read) | `dates` (left in old pages; the page stopped reading it in v1.7.3) |
@@ -165,10 +174,11 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `threading/*` | Claude (from catchup.py's manifest) | `current` + blocks (layout above); merged: `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
 | `summary/*` | Claude (from catchup.py's manifest) | `current` + blocks (layout above); merged: `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
 | `people/index` | Page importer; Claude's one-time scan (`scannedAt`, `scanned`; entries without positions) | `people{"<full name>":{shown:[names Messenger showed],firstI,lastI}}`. The page names people from it: the first name, the full name when two share a first name, and a nickname as "nickname (first or full name)". Real names live only in each user's page database, never in the repo |
-| `photos/index` | Page importer | `byI{i:["/_blob/<id>",…]}` (what the page shows), `byK{i:{k:"/_blob/<id>"}}` (which capture slot each came from, so a re-paste skips the right ones), `gifs[i]` |
+| `photos/b<start>` | Page importer (v1.22.0) | one per 500 messages: `start`, `byK{i:{k: "/_blob/<id>" \| null \| {e}}}` (stored, owed, given up: by capture slot, so a re-paste skips the right ones), `gifs[i]` |
+| `photos/index` | Page importer before v1.22.0; read only now | `byI{i:["/_blob/<id>",…]}`, `byK{i:{k:"/_blob/<id>"}}`, `gifs[i]` |
 | `refresh/status` | Claude | `state` (idle/running/done/error), `startedAt`, `step`, `by`, `finishedAt`, `added`, `message` |
 | `backups/*` | A pre-1.17 session (the owner's page, Nov 11) | `<name>-a`, `-b`, …: `{part, of, what, savedAt}` plus a summary's fields; joined in part order, the single `summary/current` from before a trim. The page ignores it; `catchup.py restore-summary` reads it; kept until the user decides |
-| `refresh/lastImport` | Page importer | `at`, `src`, `ok`, `msg`, `dry`, `sha`, `count`, `fresh`, `chunks`, `uploaded`, `lock`, `repaired` |
+| `refresh/lastImport` | Page importer | `at`, `src`, `ok`, `msg`, `dry`, `sha`, `count`, `fresh`, `chunks`, `lock`, `repaired`, `state`, `beat`, `photos{total,todo,done,skipped,failed,bytes}`, `stored[{i,k,id}]`, `owed`, `gaveUp`, `stop`, `usage`, `backfill` (v1.22.0) |
 | `refresh/importLock` | Page importer (lease only) | the platform's lease state; holds no data |
 | `outbox/*` | Page, then Claude | see Outbox above |
 | `qa/*` | Page (Ask) | `q`, `a`, `at`, `scope`, `toI` |

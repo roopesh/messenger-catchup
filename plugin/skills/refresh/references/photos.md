@@ -1,0 +1,51 @@
+# Photos
+
+Read this on a refresh when the capture summary shows `photos` above 0 (step 4 › Waiting, step 5 › Looking), when `meta/chat.photosOwed` is set (step 3 › Backfill), when a storage warning shows (Storage), or when the user asks to tidy up photo storage (Cleanup).
+
+## How the page stores them
+- After the "IMPORT OK" toast the messages are saved. The page then uploads the photos one at a time and indexes each one as it lands (`photos/b<start>`, `references/database.md`). The toast reads "Storing photos n/N… keep this tab open" until it's done.
+- `refresh/lastImport` shows the progress: `state:"uploading"`, `beat` (a heartbeat the page writes every 10 s, also during a slow upload), and `photos.done` of `photos.todo`. It ends with `state:"done"` or `state:"partial"` plus `stop`.
+- A photo not stored yet is **owed**: its slot is `null` and `meta/chat.photosOwed` counts it. A paste of the same capture, or the next refresh's backfill, stores it. The page gives up on owed photos more than 300 messages behind the newest (they come back in `gaveUp` with `e:"gave-up"`), because a refresh can't scan back further for them.
+- **Never close the page tab, reload it, or take the Messenger tab off COPY CAPTURE while `state` is `uploading`**, except where Waiting says so. Closing it loses nothing already stored, but stops the rest.
+
+## Waiting (step 4, after the paste)
+1. Keep the page tab in front (Chrome slows timers in background tabs) and leave the Messenger tab on COPY CAPTURE. Wait about 10 s, then `ArtifactData get refresh/lastImport`. It belongs to this paste only if its `sha` starts with the 8 characters after `sha` in the capture summary. If not, the page didn't take the paste: check again once after 5 s, then paste again (safe: stored messages and photos are skipped). Never import twice blindly: a paste while photos are still storing changes nothing and the toast says "Still storing photos from the last paste".
+2. `uploading`: read it again every 20–30 s. If two of your reads at least 60 s apart show the same `beat`, the page stalled: reload the page tab, wait 10 s and paste again (if nothing reacts, click COPY CAPTURE again first). If the toast says another import is running, the stalled tab's lease hasn't lapsed yet: wait until the time it names (about a minute) and paste again. Do this at most twice per run. Compare your own reads only, never `beat` with your clock.
+3. Wait at most 10 minutes in total, even while photos keep arriving. Then carry on with step 5 but **leave the page tab open** so it keeps storing, take the Messenger tab back to the chat, and `get` `meta/chat` again just before step 7's last batch, since the page writes it when it finishes. At the end of the run, close the page tab only if `refresh/lastImport` is no longer `uploading`; otherwise say in the report that photos are still storing in the open page tab. Anything it doesn't finish stays owed for the next run.
+4. `done`: carry on. Report `gaveUp` in one line ("2 photos couldn't be stored: #812 (too large), #640 (given up: too old)"), and the storage level if Storage below says so.
+5. `partial`, by `stop`:
+   - `rate_limited`: wait 2 minutes, then paste again once.
+   - `unavailable`, `timeout` or `index`: paste again once. If the toast says "the photo index for #… is full … Tell Claude", don't paste again: report it (a block of 500 messages outgrew 256 KiB).
+   - `lease`: another page tab took over the import. Close any other page tabs you opened, then paste again once.
+   - `auth`: reload the page tab, wait 10 s, then paste again once.
+   - `quota`: photo storage is full. Don't paste again. Report it with `usage`, tell the user even in a scheduled run, and offer Cleanup.
+   - `no_assets`: this view can't upload. Don't paste again; tell the user to open the page on claude.ai as its owner. The photos stay owed until a run can store them.
+   - If the second try is also `partial`, report how many are still owed and carry on: the next run backfills them.
+6. `refused` or `failed`: nothing about photos; do what `references/troubleshooting.md` › Import toasts says.
+7. Then go on to step 5 (close the page tab, take the Messenger tab back to the chat).
+
+## Backfill (step 3, when `meta/chat.photosOwed` is set)
+`photosOwed` is `{n, fromI, toI, at}`: `n` photos owed between messages `fromI` and `toI`, left by an earlier run that stopped.
+- Start the scan at `S = max(fromI, meta.lastI − 300)`. If `S < 3`, skip the backfill (scan as usual) and report the photos as still owed.
+- `get` the chunks holding messages `S−3` to `S−1` (each is in the chunk with the highest `start` at or below it), then scan with `STOPS` = their `m`, newest first, and `BASE = S−1`. Everything else in step 3 is unchanged.
+- The window now holds stored messages too, so `win > 0` doesn't mean there are new messages; the import toast decides. "Nothing new: … n photos stored" takes step 3's nothing-new path for the build (and the report says the photos were stored); "IMPORT OK" builds as usual. `refresh/lastImport.backfill` is true when it stored owed photos.
+- If the scan or verify fails, or the import is refused with "#… doesn't match the stored message" (a message was deleted since), scan again the normal way (`anchorMids`, `lastI`) and report the photos as still owed. The page gives up on them once they're more than 300 messages old.
+
+## Looking (step 5)
+- The new photos are the `stored` lists (`[{i,k,id}]`: message `i`, photo slot `k`, asset `id`) of this run's final `refresh/lastImport` reads, one per paste, joined.
+- Open every one: `Artifact read` with path = the `id` (one id per call), then Read the saved file. Use what you saw in the build; never guess what's in a photo you didn't open.
+- Photos stored after your last read (you stopped waiting at 10 minutes) aren't in the list: describe those messages from their text and replies only.
+
+## Storage
+- With each import the page records the page's photo storage in `refresh/lastImport.usage` and `meta/chat.assetUsage`: `{files, bytes, maxFiles, maxBytes}`. On claude.ai a page holds at most 5,000 files and 1 GiB.
+- At 80% of either limit the page shows a warning under the status line and adds it to the toast. Say it in the report in one line ("Photo storage: 4,100 of 5,000 files (82%)") and offer Cleanup. In a scheduled run, just report it.
+- There are often more files than indexed photos: copies left by re-pastes and by uploads that landed as a tab closed. Cleanup finds them.
+
+## Cleanup (only when the user asks)
+Run this only when the user asks (for example "tidy up photo storage"), never on your own and never in a scheduled run. Deleting a file can't be undone, so nothing is deleted before the user confirms the counts, and **never delete a file any `photos` document references**.
+1. Take the run lock as a refresh does: `refresh/status` `{state:"running",startedAt,step:"photo cleanup",by:"photo cleanup"}`, pinned (skip and tell the user if another run holds it). `get` `refresh/lastImport`: if it's `uploading`, release the lock and stop (photos are storing; try later). When you stop, at any point, update `refresh/status` to `{state:"done",finishedAt,added:0}`, pinned.
+2. `ArtifactData list photos` (limit 1000). Referenced = every `/_blob/<id>` string in any of its documents (the blocks' `byK`, and the old `index`'s `byI` and `byK`).
+3. `Artifact list` with the page's `url` and `scope:"assets"` (continue with `after` until it ends): every file's id and size.
+4. Unused = listed ids that aren't referenced. Among them, **duplicates** have the same SHA-256 as a referenced file: for each unused file whose size equals a referenced file's, `Artifact read` with the page's `url` and path = each id, then `shasum -a 256` the saved files. The other unused files are uploads that were never indexed (a tab closed or timed out as they landed); one may be the only copy of a photo that's owed or given up.
+5. Report the counts and sizes: referenced files, duplicates, other unused files, and what deleting each group frees (files and MB). Ask which to delete: the duplicates (recommended), or every unused file. Without a clear yes, release the lock and stop.
+6. List `photos` again and drop any id that's referenced now. Delete each remaining id with `Artifact` `action:"delete"`, the page's `url` and path = the id. Release the lock and report what was deleted. The page's warning updates the next time it's opened.

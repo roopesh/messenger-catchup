@@ -1280,7 +1280,9 @@
     <h1 id="h1">Messenger Catch-up</h1>
     <div class="window muted" id="window">Loading the chat…</div>
     <div class="marker" id="marker" role="radiogroup" aria-label="Catch up from"></div>
-    <div class="refresh"><span class="st" id="refresh-st" role="status"></span></div>
+    <div class="refresh">
+      <span class="st" id="refresh-st" role="status"></span><span class="st" id="storage-st" hidden></span>
+    </div>
     <p class="note" id="layout-st" role="status" hidden></p>
     <div class="strip" id="strip"></div>
   </header>
@@ -3977,8 +3979,10 @@
   }
   /* Import core, shared by the Import button (baseline) and paste-anywhere.
    opts.src: "button" | "paste". cap.dry: run every check, write nothing.
-   cap.photos (optional): [{i,k,type,b64}] with cap.phsha = SHA-256 of JSON.stringify(cap.photos); stored via assets after the messages.
-   cap.lab: photos go to a lab report only (photos/index untouched). Every run records its outcome in refresh/lastImport. */
+   cap.photos (optional): [{i,k,type,b64}] with cap.phsha = SHA-256 of JSON.stringify(cap.photos); stored via assets after the
+   messages, one at a time, each indexed as it lands (storePhotos). cap.lab: photos are uploaded but never indexed.
+   Every run records its outcome in refresh/lastImport: state "uploading" while photos store (with a heartbeat), then
+   "done", "partial" (with a stop code), "refused" (a check failed, nothing saved) or "failed". */
   function b64ToBlob(b64, type) {
     const bin = atob(b64);
     const u = new Uint8Array(bin.length);
@@ -4016,6 +4020,425 @@
       const g = await S.db.doc("chunks/" + id).get();
       return g.exists ? Object.assign({ id }, g.data()) : null;
     }
+  }
+
+  /* ---------- photos (R2) ----------
+     Photos store one at a time after the messages, and each is indexed the moment it lands, so a tab closed mid-upload
+     loses nothing: what landed is indexed, and what's left is owed (a null slot, counted in meta/chat.photosOwed) for a
+     re-paste or the next refresh's backfill to store. photos/b<start> holds the slots of messages start..start+499:
+     byK[i][k] = "/_blob/<id>" (stored) | null (owed) | {e:code} (given up). photos/index (pages up to 2.6) is read,
+     never written. Tests shorten the timings with window.__mcImportTune; nothing in production sets it. */
+  const PHOTO_BLOCK = 500;
+  const IMPORT_TUNE = Object.freeze(
+    Object.assign(
+      { beatMs: 10000, leaseMs: 60000, uploadTimeoutMs: 90000, retryMs: 2000, rateWaitMs: 30000, owedWindow: 300 },
+      window.__mcImportTune || {},
+    ),
+  );
+  const photoBlock = i => "b" + Math.floor(i / PHOTO_BLOCK) * PHOTO_BLOCK;
+  const isStored = v => typeof v === "string";
+  /* docs: {id: data} of the photos collection, or the part of it read fresh. The old index first (its byK, or for the
+     oldest indexes byI by position), then each block slot by slot; a stored photo wins over an owed or given-up slot,
+     and a block's over the old index's. byI (what the page shows) is derived: stored photos in slot order. */
+  function mergePhotos(docs) {
+    const byK = {};
+    const gifs = new Set();
+    const put = (i, k, v) => {
+      const m = byK[i] || (byK[i] = {});
+      if (isStored(v) || !(k in m)) m[k] = v;
+    };
+    const idx = docs.index;
+    if (idx) {
+      const ik = idx.byK || {};
+      Object.entries(idx.byI || {}).forEach(([i, l]) => {
+        if (!ik[i]) (l || []).forEach((p, k) => isStored(p) && put(i, String(k), p));
+      });
+      Object.entries(ik).forEach(([i, m]) => Object.entries(m || {}).forEach(([k, p]) => isStored(p) && put(i, k, p)));
+      (idx.gifs || []).forEach(g => gifs.add(+g));
+    }
+    Object.keys(docs)
+      .filter(id => /^b\d+$/.test(id))
+      .forEach(id => {
+        const d = docs[id] || {};
+        Object.entries(d.byK || {}).forEach(([i, m]) => Object.entries(m || {}).forEach(([k, v]) => put(i, k, v)));
+        (d.gifs || []).forEach(g => gifs.add(+g));
+      });
+    const byI = {};
+    Object.entries(byK).forEach(([i, m]) => {
+      const l = Object.keys(m)
+        .sort((a, b) => a - b)
+        .map(k => m[k])
+        .filter(isStored);
+      if (l.length) byI[i] = l;
+    });
+    return { byK, byI, gifs };
+  }
+  const owedOf = M => {
+    const o = [];
+    Object.entries(M.byK).forEach(([i, m]) =>
+      Object.entries(m).forEach(([k, v]) => v === null && o.push({ i: +i, k: +k })),
+    );
+    return o.sort((a, b) => a.i - b.i || a.k - b.k);
+  };
+  const owedSummary = o =>
+    o.length ? { n: o.length, fromI: o[0].i, toI: o[o.length - 1].i, at: new Date().toISOString() } : null;
+  const fmtBytes = b => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
+  const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+  /* Fresh reads under the lease: the old index, the blocks this capture's photos and GIFs fall in, and the blocks the
+     owed range covers. todo = the capture's slots not stored and not given up. */
+  async function planPhotos(P) {
+    const ig = await S.db.doc("photos/index").get();
+    const idx = ig.exists ? ig.data() : null;
+    const ids = new Set(P.photos.map(ph => photoBlock(ph.i)).concat(P.gifs.map(photoBlock)));
+    const ow = P.meta.photosOwed;
+    if (ow && ow.n)
+      for (let s = Math.floor(ow.fromI / PHOTO_BLOCK) * PHOTO_BLOCK; s <= ow.toI; s += PHOTO_BLOCK) ids.add("b" + s);
+    const blocks = {};
+    for (const id of [...ids].sort()) {
+      const g = await S.db.doc("photos/" + id).get();
+      blocks[id] = g.exists ? g.data() : { start: +id.slice(1), byK: {}, gifs: [] };
+      if (!blocks[id].byK) blocks[id].byK = {};
+    }
+    const M = mergePhotos(Object.assign({ index: idx }, blocks));
+    const val = ph => (M.byK[ph.i] || {})[ph.k];
+    const todo = P.lab ? P.photos : P.photos.filter(ph => val(ph) == null);
+    const bytes = todo.reduce((n, ph) => n + Math.floor((ph.b64.length * 3) / 4), 0);
+    return { idx, blocks, todo, skipped: P.photos.length - todo.length, bytes };
+  }
+  const GIVE_UP = ["too_large", "unsupported_type", "invalid_request"];
+  const NO_ASSETS = ["not_granted", "capability_disabled", "capability_removed"];
+  const stopOf = c =>
+    c === "rate_limited"
+      ? "rate_limited"
+      : c === "timeout"
+        ? "timeout"
+        : c === "quota_or_state"
+          ? "quota"
+          : c === "upstream_auth"
+            ? "auth"
+            : NO_ASSETS.includes(c)
+              ? "no_assets"
+              : "unavailable";
+  async function renewLease() {
+    const ref = S.db.doc("refresh/importLock");
+    if (typeof ref.acquire !== "function") return true;
+    try {
+      return (await ref.acquire({ holder: TAB, ttlMs: IMPORT_TUNE.leaseMs })).acquired !== false;
+    } catch (e) {
+      return true;
+    }
+  }
+  /* Stores the capture's photos and GIFs (R.plan from importCore), then gives up owed slots more than owedWindow
+     messages behind lastI that this capture doesn't hold (the next refresh can't scan back that far). show(R, sticky)
+     puts progress in the toast. */
+  async function storePhotos(R, P, show) {
+    const T = IMPORT_TUNE;
+    const L = await planPhotos(P);
+    const { idx, blocks, todo } = L;
+    let M = null;
+    const remerge = () => (M = mergePhotos(Object.assign({ index: idx }, blocks)));
+    remerge();
+    const val = (i, k) => (M.byK[i] || {})[k];
+    R.photos = { total: P.photos.length, todo: todo.length, done: 0, skipped: L.skipped, failed: 0, bytes: L.bytes };
+    R.stored = [];
+    R.gaveUp = [];
+    const dirty = new Set();
+    const slot = (i, k, v) => {
+      const b = blocks[photoBlock(i)];
+      (b.byK[i] || (b.byK[i] = {}))[k] = v;
+      dirty.add(photoBlock(i));
+    };
+    /* one write at a time per document; a refused write is retried once, one over 256 KiB never */
+    const writeBlock = async id => {
+      for (let t = 0; ; t++) {
+        try {
+          await S.db.doc("photos/" + id).set(blocks[id]);
+          dirty.delete(id);
+          return null;
+        } catch (e) {
+          const big = e && e.code === "invalid_argument";
+          if (big || t) return big ? "index-full" : "index";
+          await new Promise(r => setTimeout(r, T.retryMs));
+        }
+      }
+    };
+    const flush = async () => {
+      for (const id of [...dirty].sort()) {
+        const e = await writeBlock(id);
+        if (e) return e;
+      }
+      return null;
+    };
+    const writeOwed = async () => {
+      remerge();
+      const o = owedSummary(owedOf(M));
+      const was = P.meta.photosOwed || null;
+      const key = x => (x && x.n ? [x.n, x.fromI, x.toI].join() : "");
+      if (key(o) !== key(was)) {
+        await S.db.doc("meta/chat").update({ photosOwed: o });
+        P.meta.photosOwed = o;
+      }
+    };
+    let stop = null,
+      at = null;
+    if (!P.lab) {
+      /* placeholders first, so the owed slots are on record even if the tab dies before the first upload */
+      todo.forEach(ph => val(ph.i, ph.k) !== null && slot(ph.i, ph.k, null));
+      remerge();
+      P.gifs.forEach(i => {
+        const b = blocks[photoBlock(i)];
+        if (!M.gifs.has(i)) {
+          b.gifs = [...(b.gifs || []), i].sort((x, y) => x - y);
+          dirty.add(photoBlock(i));
+        }
+      });
+      stop = await flush();
+      if (!stop) await writeOwed();
+    }
+    const assets = !stop && todo.length ? await claude.use("assets") : null;
+    if (!stop && todo.length && !assets) stop = "no_assets";
+    if (!stop && todo.length) {
+      const base = R.msg;
+      const progress = () => {
+        R.msg = base + " Storing photos " + R.photos.done + "/" + todo.length + "… keep this tab open.";
+        S.photoProgress = { done: R.photos.done, todo: todo.length };
+        show(R, true);
+      };
+      R.state = "uploading";
+      R.beat = new Date().toISOString();
+      progress();
+      await logImport(R);
+      let ended = false,
+        lost = false,
+        beatP = Promise.resolve();
+      /* the heartbeat runs on a timer, so a slow but live upload still beats; it also renews the import lease */
+      const beat = () =>
+        (beatP = beatP.then(async () => {
+          if (ended) return;
+          R.beat = new Date().toISOString();
+          await logImport(R);
+          if (!(await renewLease())) lost = true;
+        }));
+      if (!(await renewLease())) lost = true;
+      const timer = setInterval(beat, T.beatMs);
+      const upload = ph =>
+        new Promise(res => {
+          const t = setTimeout(() => res({ code: "timeout" }), T.uploadTimeoutMs);
+          assets.upload(b64ToBlob(ph.b64, ph.type), { type: ph.type }).then(
+            r => {
+              clearTimeout(t);
+              res({ r });
+            },
+            e => {
+              clearTimeout(t);
+              res({ code: (e && e.code) || "upstream_error" });
+            },
+          ); /* a late answer after the timeout is ignored: at most one unindexed asset */
+        });
+      const wait = ms => new Promise(r => setTimeout(r, ms));
+      try {
+        for (const ph of todo) {
+          if (lost) {
+            stop = "lease";
+            break;
+          }
+          let res;
+          for (let t = 0; ; t++) {
+            res = await upload(ph);
+            const c = res.code;
+            if (!c || GIVE_UP.includes(c) || t) break;
+            if (c === "rate_limited") {
+              R.photos.waiting = c;
+              await wait(T.rateWaitMs);
+              delete R.photos.waiting;
+            } else if (stopOf(c) === "unavailable") await wait(T.retryMs);
+            else break;
+          }
+          if (res.code && !GIVE_UP.includes(res.code)) {
+            stop = stopOf(res.code);
+            at = ph;
+            R.stopCode = res.code;
+            break;
+          }
+          if (P.lab) {
+            /* a lab test uploads without indexing anything */
+            if (res.code) R.photos.failed++;
+            else {
+              R.stored.push({ i: ph.i, k: ph.k, id: res.r.id });
+              R.photos.done++;
+            }
+            progress();
+            continue;
+          }
+          /* a tab whose lease lapsed (frozen past it) and was taken over writes nothing more */
+          if (lost || !(await renewLease())) {
+            lost = true;
+            stop = "lease";
+            break;
+          }
+          if (res.code) {
+            slot(ph.i, ph.k, { e: res.code });
+            R.gaveUp.push({ i: ph.i, k: ph.k, e: res.code });
+            R.photos.failed++;
+          } else slot(ph.i, ph.k, "/_blob/" + res.r.id);
+          const we = await writeBlock(photoBlock(ph.i));
+          if (we) {
+            slot(ph.i, ph.k, null);
+            stop = we;
+            at = ph;
+            break;
+          }
+          if (!res.code) {
+            R.stored.push({ i: ph.i, k: ph.k, id: res.r.id });
+            R.photos.done++;
+          }
+          progress();
+        }
+      } finally {
+        ended = true;
+        clearInterval(timer);
+        await beatP;
+        S.photoProgress = null;
+        R.msg = base;
+      }
+    }
+    if (stop !== "lease" && !P.lab) {
+      remerge();
+      owedOf(M)
+        .filter(o => o.i < P.lastI - T.owedWindow && !P.inCap.has(o.i))
+        .forEach(o => {
+          slot(o.i, o.k, { e: "gave-up" });
+          R.gaveUp.push({ i: o.i, k: o.k, e: "gave-up" });
+        });
+      const fe = await flush();
+      stop = stop || fe;
+      await writeOwed();
+    }
+    remerge();
+    R.owed = P.lab ? [] : P.photos.filter(ph => val(ph.i, ph.k) === null).map(ph => ({ i: ph.i, k: ph.k }));
+    R.backfill = P.firstI != null && P.firstI <= P.oldLastI && R.stored.some(s => s.i <= P.oldLastI);
+    if (stop) R.stop = stop === "index-full" ? "index" : stop;
+    R.state = stop ? "partial" : "done";
+    if (stop) R.ok = !!R.fresh;
+    const code = R.stopCode;
+    delete R.stopCode;
+    return { stop, at, code };
+  }
+  const GIVEN = {
+    too_large: "too large",
+    unsupported_type: "type not accepted",
+    invalid_request: "rejected",
+    "gave-up": "too old to fetch again",
+  };
+  function photoNote(R, P, { stop, at, code }) {
+    const ph = R.photos;
+    const lab = P.lab ? " (lab test, not linked)" : "";
+    let s = "";
+    if (ph.done || ph.skipped)
+      s +=
+        " " +
+        plural(ph.done, "photo") +
+        " stored" +
+        (ph.skipped ? " (" + ph.skipped + " already stored)" : "") +
+        lab +
+        ".";
+    const now = R.gaveUp.filter(g => g.e !== "gave-up");
+    const old = R.gaveUp.filter(g => g.e === "gave-up");
+    if (now.length)
+      s +=
+        " " +
+        (now.length === 1 ? "1 photo" : now.length + " photos") +
+        " couldn't be stored (" +
+        now.map(g => "#" + g.i + ", " + GIVEN[g.e]).join("; ") +
+        ").";
+    if (old.length)
+      s +=
+        " " +
+        plural(old.length, "photo") +
+        " owed from earlier imports given up (" +
+        [...new Set(old.map(g => "#" + g.i))].join(", ") +
+        "): more than " +
+        IMPORT_TUNE.owedWindow +
+        " messages old, too old to fetch again.";
+    const left = ph.todo - ph.done - ph.failed;
+    const part = " Photos: " + ph.done + " of " + ph.todo + " stored";
+    const again = " Paste again to store the rest.";
+    if (stop === "no_assets")
+      s += " Photos not stored: this view can't upload them (open the page on claude.ai, signed in as its owner).";
+    else if (stop === "quota") {
+      const u = R.usage;
+      s +=
+        " Photo storage for this page is full" +
+        (u ? " (" + u.files + " files, " + fmtBytes(u.bytes) + " of " + fmtBytes(u.maxBytes) + ")" : "") +
+        ": " +
+        plural(left, "photo") +
+        " not stored. Messages are saved. Pasting again won't help; tell Claude.";
+    } else if (stop === "rate_limited") s += part + ". Too many uploads right now: wait 2 minutes, then paste again.";
+    else if (stop === "auth") s += part + ". Sign-in expired: reload this page, then paste again.";
+    else if (stop === "lease") s += part + "; another open copy of this page took over the import." + again;
+    else if (stop === "index-full")
+      s += part + "; the photo index" + (at ? " for #" + at.i : "") + " is full. Messages are saved. Tell Claude.";
+    else if (stop)
+      s +=
+        part +
+        "; stopped" +
+        (at ? " at #" + at.i : "") +
+        " (" +
+        (stop === "index" ? "index write" : code || stop) +
+        ")." +
+        again;
+    return s;
+  }
+  /* Asset usage (files and bytes against the page's limits), recorded with every import and shown at 80% */
+  function usageLevel(u) {
+    if (!u) return 0;
+    return Math.max(u.maxFiles ? u.files / u.maxFiles : 0, u.maxBytes ? u.bytes / u.maxBytes : 0);
+  }
+  function usageNote(u) {
+    if (usageLevel(u) < 0.8) return "";
+    const f = u.maxFiles ? u.files / u.maxFiles : 0;
+    const b = u.maxBytes ? u.bytes / u.maxBytes : 0;
+    return (
+      "Photo storage is " +
+      Math.floor(usageLevel(u) * 100) +
+      "% full (" +
+      (f >= b
+        ? u.files.toLocaleString("en-US") + " of " + u.maxFiles.toLocaleString("en-US") + " files"
+        : fmtBytes(u.bytes) + " of " + fmtBytes(u.maxBytes)) +
+      ")."
+    );
+  }
+  async function recordUsage(R, P) {
+    let u = null;
+    try {
+      const a = await claude.use("assets");
+      if (!a || typeof a.list !== "function") return;
+      const l = (await a.list()).usage;
+      if (!l || typeof l.files !== "number") return;
+      u = { files: l.files, bytes: l.bytes, maxFiles: l.maxFiles, maxBytes: l.maxBytes };
+    } catch (e) {
+      return;
+    }
+    R.usage = u;
+    S.assetLive = Object.assign({ at: new Date().toISOString() }, u);
+    renderStorage();
+    const was = P.meta.assetUsage || {};
+    if (["files", "bytes", "maxFiles", "maxBytes"].some(k => was[k] !== u[k]))
+      try {
+        await S.db.doc("meta/chat").update({ assetUsage: S.assetLive });
+      } catch (e) {}
+  }
+  function renderStorage() {
+    const st = $("#storage-st");
+    if (!st) return;
+    const m = S.meta && S.meta.assetUsage;
+    const u = S.assetLive && (!m || !(m.at > S.assetLive.at)) ? S.assetLive : m;
+    const n = usageNote(u);
+    st.hidden = !n;
+    st.textContent = n
+      ? n +
+        " New photos still store for now. To make room, ask Claude to tidy up photo storage: it lists unused and duplicate files and asks before deleting anything."
+      : "";
   }
   async function importCore(raw, opts) {
     const src = (opts && opts.src) || "button";
@@ -4167,6 +4590,16 @@
       type: ph.type,
       bytes: Math.floor((ph.b64.length * 3) / 4),
     }));
+    const gifsNew = cap.lab ? [] : (cap.gifs || []).filter(i => inCap.has(i));
+    const plan = { photos, gifs: gifsNew, meta, inCap, firstI: ms.length ? ms[0].i : null, oldLastI: lastI };
+    plan.lab = !!cap.lab;
+    let dryPh = "";
+    if (dry && photos.length) {
+      const L = await planPhotos(plan);
+      R.photos = { total: photos.length, todo: L.todo.length, skipped: L.skipped, bytes: L.bytes };
+      dryPh = ", " + L.todo.length + " to store" + (L.skipped ? " (" + L.skipped + " already stored)" : "");
+      dryPh += L.todo.length ? ", " + fmtBytes(L.bytes) : "";
+    }
     if (dry)
       return done(
         repNote +
@@ -4181,7 +4614,9 @@
               writes.map(w => w.id).join(", ") +
               ")"
             : "nothing new") +
-          (photos.length ? "; " + photos.length + " photo" + (photos.length > 1 ? "s" : "") + " verified" : "") +
+          (photos.length
+            ? "; " + photos.length + " photo" + (photos.length > 1 ? "s" : "") + " verified" + dryPh
+            : "") +
           ". Nothing written.",
         { ok: true, fresh: fresh.length, chunks: writes.map(w => w.id), photos: phInfo },
       );
@@ -4193,7 +4628,7 @@
         const g = await S.db.doc("chunks/" + w.id).get();
         const d = g.exists ? g.data() : null;
         if (!d || JSON.stringify(d.msgs.map(x => [x.i, x.m, x.b])) !== JSON.stringify(w.msgs.map(x => [x.i, x.m, x.b])))
-          return done("Saved, but the read-back of " + w.id + " didn't match. Tell Claude.");
+          return done("Saved, but the read-back of " + w.id + " didn't match. Tell Claude.", { state: "failed" });
       }
       const z = fresh[fresh.length - 1];
       const upd = {
@@ -4241,88 +4676,49 @@
     }
     R.fresh = fresh.length;
     R.chunks = [...new Set((repaired ? repaired.chunks : []).concat(writes.map(w => w.id)))].sort();
-    /* Photos and GIFs. Uploads that land are indexed even if a later one fails, and a re-paste skips photos already stored,
- so pasting again after "Photos: upload failed" is safe and finishes the job. GIFs are recorded with or without photos. */
-    const gifsNew = (cap.gifs || []).filter(i => inCap.has(i));
-    if (photos.length || (gifsNew.length && !cap.lab)) {
-      const g = await S.db.doc("photos/index").get();
-      const d = g.exists ? g.data() : { byI: {}, gifs: [] };
-      const byI = Object.assign({}, d.byI || {});
-      /* byK[i][k]: the stored photo for capture slot k of message i (byI is the compact list the page shows). A capture can skip a
-   slot (a photo the helper couldn't fetch), so "already stored" must be decided by slot, not by position in byI. */
-      const byK = JSON.parse(JSON.stringify(d.byK || {}));
-      const have = ph => (byK[ph.i] ? !!byK[ph.i][ph.k] : !!(byI[ph.i] || [])[ph.k]); /* older indexes: by position */
-      const todo = cap.lab ? photos : photos.filter(ph => !have(ph));
-      const up = [];
-      let fail = null;
-      if (todo.length) {
-        const assets = await claude.use("assets");
-        if (!assets)
-          return done(
-            msgPart +
-              " Photos not stored: this view can't upload them (open the page on claude.ai, signed in as its owner).",
-            { ok: !!fresh.length },
-          );
-        else
-          for (const ph of todo) {
-            try {
-              const r = await assets.upload(b64ToBlob(ph.b64, ph.type), { type: ph.type });
-              up.push({ i: ph.i, k: ph.k, id: r.id, bytes: r.sizeBytes, type: r.contentType });
-            } catch (e) {
-              fail = "upload failed at #" + ph.i + " (" + ((e && e.code) || e) + ")";
-              break;
-            }
-          }
-      }
-      R.uploaded = up;
-      if (!cap.lab) {
-        up.forEach(u => {
-          const m = byK[u.i] || (byK[u.i] = Object.fromEntries((byI[u.i] || []).map((p, k) => [k, p])));
-          m[u.k] = "/_blob/" + u.id;
-        });
-        new Set(up.map(u => String(u.i))).forEach(i => {
-          byI[i] = Object.keys(byK[i])
-            .sort((a, b) => a - b)
-            .map(k => byK[i][k]);
-        });
-        const gifs = [...new Set([...(d.gifs || []), ...gifsNew])].sort((a, b) => a - b);
-        if (up.length || gifs.length !== (d.gifs || []).length)
-          await S.db.doc("photos/index").set(Object.assign({}, d, { byI, byK, gifs }));
-      }
-      const skipped = photos.length - todo.length;
-      if (up.length || skipped)
-        msgPart +=
-          " " +
-          up.length +
-          " photo" +
-          (up.length === 1 ? "" : "s") +
-          " stored" +
-          (skipped ? " (" + skipped + " already stored)" : "") +
-          (cap.lab ? " (lab test, not linked)" : "") +
-          ".";
-      if (fail)
-        return done(msgPart + " Photos: " + fail + "; paste again to store the rest.", {
-          ok: !!fresh.length,
-          uploaded: up,
-        });
-    }
+    /* Photos and GIFs are stored by storePhotos (importCapture calls it with R.plan once the messages are saved). A
+       re-paste skips photos already stored, so pasting again after a partial import is safe and finishes the job. */
+    plan.lastI = fresh.length ? fresh[fresh.length - 1].i : lastI;
+    R.plan = plan;
     return done(msgPart, { ok: true });
   }
   async function importCapture(raw, opts) {
     const note = $("#imp-note");
     const btn = $("#imp-go");
+    const pasted = opts && opts.src === "paste";
+    const show = (R, sticky) => {
+      note.textContent = R.msg;
+      if (pasted) {
+        const d = $("#imp");
+        if (d) d.open = true;
+        toast([el("b", null, R.msg)], sticky);
+      }
+    };
     btn.disabled = true;
     let R;
     try {
       R = await importCore(raw, opts);
+      const P = R.plan;
+      delete R.plan;
+      if (P && !R.dry) {
+        let end = null;
+        const owed = P.meta.photosOwed && P.meta.photosOwed.n;
+        if (P.photos.length || P.gifs.length || owed) end = await storePhotos(R, P, show);
+        if (!end || end.stop !== "lease") await recordUsage(R, P);
+        if (end) R.msg += photoNote(R, P, end);
+        const n = usageNote(R.usage);
+        if (n && !(end && end.stop === "quota")) R.msg += " " + n;
+      }
     } catch (e) {
-      R = {
+      R = Object.assign(R || { src: (opts && opts.src) || "button" }, {
         ok: false,
+        state: "failed",
         msg: "Import failed: " + ((e && e.message) || e) + ".",
-        src: (opts && opts.src) || "button",
-      };
+      });
+      delete R.plan;
     } finally {
       btn.disabled = false;
+      S.photoProgress = null;
       /* let the import lease lapse now (renew it for the 1 s minimum) so another tab, or this one after a reload, needn't wait 2 minutes */
       if (S.db) {
         const ref = S.db.doc("refresh/importLock");
@@ -4332,25 +4728,29 @@
           } catch (e) {}
       }
     }
-    note.textContent = R.msg;
-    if (R.ok && !R.dry && (!opts || opts.src === "button")) $("#imp-in").value = "";
-    if (opts && opts.src === "paste") {
-      const d = $("#imp");
-      if (d) d.open = true;
-      toast([el("b", null, R.msg)]);
-    }
+    if (!R.state) R.state = R.ok ? "done" : "refused";
+    if (R.ok && !R.dry && !pasted) $("#imp-in").value = "";
+    show(R);
     await logImport(R);
     return R;
   }
   $("#imp-go").onclick = () => importCapture($("#imp-in").value, { src: "button" });
-  /* Paste anywhere on the page (outside a text box) with a catch-up capture on the clipboard imports it. */
+  /* Paste anywhere on the page (outside a text box) with a catch-up capture on the clipboard imports it. A paste while
+     the last one is still storing photos changes nothing (refresh/lastImport included); the toast says so. */
   document.addEventListener("paste", e => {
     const tg = e.target;
     if (tg && (tg.tagName === "TEXTAREA" || tg.tagName === "INPUT" || tg.isContentEditable)) return;
     const txt = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
     if (!/^\s*\{"kind":"mc-capture"/.test(txt)) return;
     e.preventDefault();
-    if (S.pasting) return;
+    if (S.pasting) {
+      const pr = S.photoProgress;
+      const t = pr
+        ? "Still storing photos from the last paste (" + pr.done + "/" + pr.todo + ")… keep this tab open."
+        : "Still importing the last paste…";
+      toast([el("b", null, t)], !!pr);
+      return;
+    }
     S.pasting = true;
     importCapture(txt, { src: "paste" }).finally(() => {
       S.pasting = false;
@@ -4358,6 +4758,7 @@
   });
   /* Status line: refreshes are asked for in chat (the page can't reach the Messenger tab); while Claude runs one, say so. */
   function renderRefresh() {
+    renderStorage();
     const rr = S.refresh;
     if (rr && rr.state === "running" && (Date.now() - Date.parse(rr.startedAt || 0)) / 60000 < 25) {
       setRS("Claude is refreshing: " + (rr.step || "working") + "…", { busy: true });
@@ -4500,6 +4901,19 @@
     S.db = db;
     S.sample = sample;
     renderRefresh();
+    /* the storage warning from a fresh listing, so it's right after a cleanup too (read only; imports record it) */
+    claude
+      .use("assets")
+      .then(a => a && typeof a.list === "function" && a.list())
+      .then(l => {
+        if (l && l.usage && typeof l.usage.files === "number") {
+          const u = l.usage;
+          S.assetLive = { at: new Date().toISOString(), files: u.files, bytes: u.bytes };
+          Object.assign(S.assetLive, { maxFiles: u.maxFiles, maxBytes: u.maxBytes });
+          renderStorage();
+        }
+      })
+      .catch(() => {});
     if (!sample) {
       $("#ask-go").disabled = true;
       $("#view-go").disabled = true;
@@ -4591,11 +5005,12 @@
       },
       () => {},
     );
-    db.doc("photos/index").onSnapshot(
-      s => {
-        const d = s.exists ? s.data() : null;
-        S.photos = d ? d.byI || {} : null;
-        S.gifs = new Set((d && d.gifs) || []);
+    /* photos/index (pages up to 2.6) and the photos/b<start> blocks, merged */
+    db.collection("photos").onSnapshot(
+      q => {
+        const M = q.docs.length ? mergePhotos(collDocs(q)) : null;
+        S.photos = M ? M.byI : null;
+        S.gifs = M ? M.gifs : new Set();
         /* the summary shows photos too: in snippets and in context blocks */
         keepPlace(() => {
           renderMessages();
