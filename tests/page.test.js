@@ -298,7 +298,8 @@ function runtime(seed) {
     all: () => Object.fromEntries([...store].map(([k, v]) => [k, clone(v)])),
   };
   window.claude = {
-    use: async n => ({ db: { doc, collection }, assets: opts.noAssets ? null : assets, sample })[n] || null,
+    use: async n =>
+      ({ db: opts.noDb ? null : { doc, collection }, assets: opts.noAssets ? null : assets, sample })[n] || null,
   };
 }
 const META = {
@@ -2413,7 +2414,437 @@ async function standIn() {
   await p.close();
 }
 
-const SECTIONS = { importer, robustness, pipeline, variants, ranges, layouts, names, messagesView, speed, standIn };
+/* F5: "update available" notices. Claude writes meta/chat.versions with every lastRefresh; the page compares it with
+   its own PAGE_VERSION (read from the file, so these tests don't depend on the number) and pageVersion. */
+const PV = (SRC.match(/const PAGE_VERSION\s*=\s*"([^"]+)"/) || [])[1] || '0.0';
+const DAY = 864e5;
+const iso = msAgo => new Date(Date.now() - msAgo).toISOString();
+const LAST = 'Nov 20, 9:04 AM';
+const metaWith = o => Object.assign({}, META, { pageVersion: PV, lastRefresh: LAST }, o);
+const vers = o => Object.assign({ page: PV, helper: '2.0', refresh: LAST, browsers: {} }, o);
+const withMeta = (meta, extra) => Object.assign(SEED(), { 'meta/chat': meta }, extra);
+/* the visible notices' text, without their Dismiss buttons; null when the page has no notice area at all */
+const noticeTexts = p =>
+  p.evaluate(() => {
+    const box = document.getElementById('upd');
+    if (!box) return null;
+    if (box.hidden) return [];
+    return [...box.querySelectorAll('p')].map(x => {
+      const c = x.cloneNode(true);
+      c.querySelectorAll('button').forEach(b => b.remove());
+      return c.textContent.replace(/\s+/g, ' ').trim();
+    });
+  });
+/* how many show (-1: no notice area, as on pages before them) */
+const nCount = async p => {
+  const n = await noticeTexts(p);
+  return n ? n.length : -1;
+};
+/* clicks Dismiss on the notice that contains `text` (the only one when omitted); false when there's none to click */
+async function dismissNotice(p, text) {
+  const loc = text ? p.locator('#upd p', { hasText: text }) : p.locator('#upd p');
+  if ((await loc.count()) !== 1) return false;
+  await loc.locator('button', { hasText: 'Dismiss' }).click();
+  return true;
+}
+const noticeLinks = p =>
+  p.evaluate(() =>
+    [...document.querySelectorAll('#upd p a')].map(a => ({
+      t: a.textContent,
+      href: a.href,
+      target: a.target,
+      rel: a.rel,
+    })),
+  );
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/* the newest release tag whose page predates the notices (a page that ignores versions), or null */
+function olderPage() {
+  let tags = [];
+  try {
+    tags = execFileSync('git', ['tag', '--list', 'v*', '--sort=-v:refname'], { cwd: ROOT, encoding: 'utf8' }).split(
+      /\s+/,
+    );
+  } catch (e) {}
+  for (const t of tags.filter(Boolean)) {
+    try {
+      const src = execFileSync('git', ['show', t + ':plugin/skills/refresh/assets/page.html'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      if (!src.includes('updateNotices')) return { tag: t, page: SKELETON + src + '</body></html>' };
+    } catch (e) {}
+  }
+  return null;
+}
+async function notices() {
+  const none = async (seed, what, ctxOpts) => {
+    const p = await open(seed, PAGE, ctxOpts);
+    const n = await noticeTexts(p);
+    ok(Array.isArray(n) && n.length === 0 && !p.errors.length, 'notices: ' + what + ' (' + JSON.stringify(n) + ')');
+    await p.close();
+  };
+  /* U1: a page in step with its data says nothing */
+  let p = await open(withMeta(metaWith({})));
+  ok(
+    (await p.evaluate(() => !!document.getElementById('upd') && document.getElementById('upd').hidden)) &&
+      (await nCount(p)) === 0 &&
+      !p.errors.length,
+    'notices U1: pageVersion = PAGE_VERSION and no versions: the notice area is there, hidden and empty',
+  );
+  await p.close();
+  /* U1b: an old seed without pageVersion */
+  const noPv = metaWith({});
+  delete noPv.pageVersion;
+  await none(withMeta(noPv), 'U1b: meta/chat without pageVersion shows nothing');
+  /* U2, U2b: an open tab older than the published page */
+  for (const m of ['9.9', '10.0']) {
+    p = await open(withMeta(metaWith({ pageVersion: m })));
+    const n = await noticeTexts(p);
+    ok(
+      n &&
+        n.length === 1 &&
+        new RegExp(
+          'older copy of the page \\(' + reEsc(PV) + '; the current one is ' + reEsc(m) + '\\)\\. Reload the tab',
+        ).test(n[0]),
+      'notices U2: pageVersion ' +
+        m +
+        ' > ' +
+        PV +
+        ' (number by number) says this tab is an older copy (' +
+        JSON.stringify(n) +
+        ')',
+    );
+    await p.close();
+  }
+  /* U3: a published page older than this one (its pageVersion write is pending), or the same version written short */
+  await none(withMeta(metaWith({ pageVersion: '1.0' })), 'U3: pageVersion lower than PAGE_VERSION shows nothing');
+  await none(withMeta(metaWith({ pageVersion: PV + '.0' })), 'U3: pageVersion "' + PV + '.0" equals ' + PV);
+  /* U4: the last refresh's skill ships a newer page that isn't in place yet */
+  p = await open(withMeta(metaWith({ refreshPhrase: 'catch me up', versions: vers({ page: '9.9' }) })));
+  let n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && /^Page 9\.9 is ready\./.test(n[0]) && n[0].includes('“catch me up”'),
+    'notices U4: versions.page newer than the page: "Page 9.9 is ready", with the refresh phrase (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  await p.close();
+  /* U5: an older skill that knows versions ran (it wrote a lower page) */
+  p = await open(withMeta(metaWith({ versions: vers({ page: '1.0' }) })));
+  n = await noticeTexts(p);
+  let links = await noticeLinks(p);
+  ok(
+    n &&
+      n.length === 1 &&
+      /older copy of the Messenger Catch-up skill/.test(n[0]) &&
+      /Update the plugin/.test(n[0]) &&
+      links.length === 1 &&
+      links[0].href === 'https://github.com/roopesh/messenger-catchup#install' &&
+      links[0].target === '_blank' &&
+      /\bnoopener\b/.test(links[0].rel),
+    'notices U5: versions.page below pageVersion: an older skill ran; update the plugin, with How to install (' +
+      JSON.stringify([n, links]) +
+      ')',
+  );
+  await p.close();
+  /* U6: a skill from before versions ran: lastRefresh moved on without them */
+  const c2 = metaWith({ versions: vers({ refresh: 'Nov 19, 8:00 PM' }) });
+  p = await open(withMeta(c2));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && /older copy of the Messenger Catch-up skill/.test(n[0]),
+    'notices U6: lastRefresh differs from versions.refresh: an older skill ran (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  await none(withMeta(metaWith({ versions: vers({}) })), 'U6b: lastRefresh equals versions.refresh: nothing');
+  const v6c = vers({});
+  delete v6c.refresh;
+  await none(
+    withMeta(metaWith({ versions: v6c })),
+    'U6c: versions without refresh (a republish, then the run stopped): nothing',
+  );
+  /* U7: not while a refresh is running (versions lands at its end); back by itself when it's done, or gone stale */
+  p = await open(withMeta(c2, { 'refresh/status': { state: 'running', startedAt: iso(0), step: 'scan' } }));
+  const quiet = (await nCount(p)) === 0;
+  await p.evaluate(() => __rt.write('refresh/status', { state: 'done', finishedAt: new Date().toISOString() }));
+  const back = await until(p, () => document.querySelectorAll('#upd p').length === 1, null, 3000);
+  ok(
+    quiet && back && !p.errors.length,
+    'notices U7: hidden while a refresh runs, shown without a reload once it is done',
+  );
+  await p.close();
+  await (async () => {
+    const q = await open(withMeta(c2, { 'refresh/status': { state: 'running', startedAt: iso(30 * 60000) } }));
+    const t = await noticeTexts(q);
+    ok(
+      t && t.length === 1,
+      'notices U7: a "running" status 30 minutes old no longer hides it (' + JSON.stringify(t) + ')',
+    );
+    await q.close();
+  })();
+  /* U8: a helper below 1.5 can't update itself */
+  p = await open(withMeta(metaWith({ versions: vers({ browsers: { Home: { helper: '1.1', at: iso(DAY) } } }) })));
+  n = await noticeTexts(p);
+  links = await noticeLinks(p);
+  const inst = await p.evaluate(() => document.getElementById('us-install').href);
+  ok(
+    n &&
+      n.length === 1 &&
+      n[0].includes('Chrome “Home” ran helper 1.1') &&
+      /can't update itself/.test(n[0]) &&
+      links.length === 1 &&
+      links[0].t === 'Install the userscript' &&
+      links[0].href === inst &&
+      links[0].target === '_blank' &&
+      /\bnoopener\b/.test(links[0].rel),
+    'notices U8: Chrome "Home" on helper 1.1: can\'t update itself; the link is the page\'s install link (' +
+      JSON.stringify([n, links]) +
+      ')',
+  );
+  await p.close();
+  /* U8b, U9: from 1.5 on it updates itself, and a lag is flagged right away (the owner's call: no grace period) */
+  for (const [h, at, kind] of [
+    ['1.4', iso(DAY), 'D'],
+    ['1.5', iso(0), 'E'],
+    ['1.9', iso(DAY), 'E'],
+    ['1.9', iso(60000), 'E'],
+  ]) {
+    p = await open(withMeta(metaWith({ versions: vers({ browsers: { 'Work Mac': { helper: h, at } } }) })));
+    n = await noticeTexts(p);
+    const good =
+      kind === 'D'
+        ? n && n.length === 1 && n[0].includes('ran helper ' + h + ", which can't update itself")
+        : n &&
+          n.length === 1 &&
+          n[0].includes('Chrome “Work Mac” ran helper ' + h + '; the current one is 2.0') &&
+          /Check for updates/.test(n[0]);
+    ok(
+      good,
+      'notices U8b/U9: helper ' +
+        h +
+        ' read ' +
+        Math.round((Date.now() - Date.parse(at)) / 60000) +
+        ' min ago: notice ' +
+        kind +
+        ' (' +
+        JSON.stringify(n) +
+        ')',
+    );
+    await p.close();
+  }
+  for (const h of ['2.0', '2.1', '2', '2.0.0'])
+    await none(
+      withMeta(metaWith({ versions: vers({ browsers: { 'Work Mac': { helper: h, at: iso(DAY) } } }) })),
+      'U9: helper ' + h + ' is not behind 2.0',
+    );
+  /* U10: no helper (Claude injected), or a version that can't be read */
+  for (const h of ['none', '', 'dev', null])
+    await none(
+      withMeta(metaWith({ versions: vers({ browsers: { Home: { helper: h, at: iso(DAY) } } }) })),
+      'U10: helper ' + JSON.stringify(h) + ' shows nothing',
+    );
+  const noH = vers({ browsers: { Home: { helper: '1.1', at: iso(DAY) } } });
+  delete noH.helper;
+  await none(withMeta(metaWith({ versions: noH })), 'U10: versions without helper shows nothing');
+  await none(
+    withMeta(metaWith({ versions: vers({ browsers: { Home: 'x', Work: null, Lab: { helper: '1.1' } } }) })),
+    'U10: malformed browser entries (not an object, no at) show nothing',
+  );
+  await none(withMeta(metaWith({ versions: 'yes' })), 'U10: versions that is not an object shows nothing');
+  /* U11: a Chrome not used in 30 days is left out */
+  await none(
+    withMeta(metaWith({ versions: vers({ browsers: { Home: { helper: '1.1', at: iso(31 * DAY) } } }) })),
+    'U11: a Chrome last seen 31 days ago shows nothing',
+  );
+  /* U12: everything at once, in a fixed order: this tab, the older skill, then each Chrome by name */
+  const all = () =>
+    withMeta(
+      metaWith({
+        pageVersion: '9.9',
+        versions: vers({
+          browsers: { 'Work Mac': { helper: '1.9', at: iso(3600000) }, Home: { helper: '1.1', at: iso(2 * DAY) } },
+        }),
+      }),
+    );
+  p = await open(all());
+  n = await noticeTexts(p);
+  const dis = await p.evaluate(() =>
+    [...document.querySelectorAll('#upd p')].map(x => x.querySelectorAll('button').length),
+  );
+  ok(
+    n &&
+      n.length === 4 &&
+      /older copy of the page/.test(n[0]) &&
+      /older copy of the Messenger Catch-up skill/.test(n[1]) &&
+      n[2].includes('“Home” ran helper 1.1') &&
+      n[3].includes('“Work Mac” ran helper 1.9') &&
+      dis.every(k => k === 1),
+    'notices U12: four at once, in order A, C, D (Home), E (Work Mac), one Dismiss each (' + JSON.stringify(n) + ')',
+  );
+  const lightBg = await p.evaluate(() => {
+    const x = document.querySelector('#upd p');
+    return x ? getComputedStyle(x).backgroundColor : null;
+  });
+  await p.close();
+  /* U13: Dismiss hides it in this browser, writes nothing, survives a reload, and a new version brings it back */
+  p = await open(
+    withMeta(
+      metaWith({
+        pageVersion: '9.9',
+        versions: vers({ page: '9.9', browsers: { Home: { helper: '1.1', at: iso(DAY) } } }),
+      }),
+    ),
+  );
+  const w0 = await p.evaluate(() => __rt.writes.length);
+  const clicked = await dismissNotice(p, 'older copy of the page');
+  n = await noticeTexts(p);
+  ok(
+    clicked && n && n.length === 1 && n[0].includes('“Home”') && (await p.evaluate(() => __rt.writes.length)) === w0,
+    'notices U13: Dismiss hides that notice only, and the page writes nothing to the database (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  const clicked2 = await dismissNotice(p);
+  ok(
+    clicked2 && (await p.evaluate(() => document.getElementById('upd').hidden)) && (await nCount(p)) === 0,
+    'notices U13: with every notice dismissed the area hides',
+  );
+  await p.reload();
+  await p.waitForFunction(() => window.__rt && document.getElementById('window').textContent !== 'Loading the chat…');
+  await p.waitForTimeout(300);
+  ok((await nCount(p)) === 0, 'notices U13: still dismissed after a reload in the same browser');
+  await p.evaluate(() => {
+    const m = __rt.get('meta/chat');
+    m.pageVersion = m.versions.page = '10.0';
+    m.versions.helper = '2.1';
+    __rt.write('meta/chat', m);
+  });
+  await until(p, () => document.querySelectorAll('#upd p').length === 2, null, 3000);
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 2 && n[0].includes('the current one is 10.0') && n[1].includes('“Home” ran helper 1.1'),
+    'notices U13: a new pageVersion and a new helper bring their notices back (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  /* U14: storage blocked (a private window): the notices still show, and Dismiss works for this page load */
+  p = await open(withMeta(metaWith({ pageVersion: '9.9' })));
+  await p.context().addInitScript(() => {
+    const no = () => {
+      throw new DOMException('blocked', 'SecurityError');
+    };
+    Storage.prototype.getItem = no;
+    Storage.prototype.setItem = no;
+  });
+  await p.reload();
+  await p.waitForFunction(() => window.__rt && document.getElementById('window').textContent !== 'Loading the chat…');
+  await p.waitForTimeout(300);
+  const blocked = await p.evaluate(() => {
+    try {
+      localStorage.getItem('x');
+      return false;
+    } catch (e) {
+      return true;
+    }
+  });
+  const shown = (await nCount(p)) === 1;
+  const clicked3 = await dismissNotice(p);
+  ok(
+    blocked && shown && clicked3 && (await nCount(p)) === 0 && !p.errors.length,
+    'notices U14: with localStorage throwing, the notice shows and Dismiss hides it, with no page errors (' +
+      p.errors.join('; ') +
+      ')',
+  );
+  await p.close();
+  /* U15: live: a republish elsewhere shows A without a reload, and it goes once the data matches again */
+  p = await open(withMeta(metaWith({})));
+  await p.evaluate(() => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { pageVersion: '9.9' })));
+  const live = await until(p, () => document.querySelectorAll('#upd p').length === 1, null, 3000);
+  await p.evaluate(pv => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { pageVersion: pv })), PV);
+  const gone = await until(
+    p,
+    () => document.getElementById('upd') && document.getElementById('upd').hidden && !document.querySelector('#upd p'),
+    null,
+    3000,
+  );
+  ok(live && gone && !p.errors.length, 'notices U15: a pageVersion change shows and clears notice A live');
+  await p.close();
+  /* U16: a Chrome's name is data, shown as text */
+  const evil = '<img src=x onerror="window.__x=1">';
+  p = await open(withMeta(metaWith({ versions: vers({ browsers: { [evil]: { helper: '1.1', at: iso(DAY) } } }) })));
+  await p.waitForTimeout(300);
+  n = await noticeTexts(p);
+  ok(
+    n &&
+      n.length === 1 &&
+      n[0].includes('“' + evil + '”') &&
+      (await p.evaluate(() => window.__x === undefined && !document.querySelector('#upd img'))),
+    'notices U16: a browser name with markup shows as literal text and runs nothing',
+  );
+  await p.close();
+  /* U17: phone width */
+  p = await open(all(), PAGE, { viewport: { width: 390, height: 800 } });
+  const fit = await p.evaluate(() => ({
+    sw: document.documentElement.scrollWidth,
+    iw: innerWidth,
+    right: Math.max(...[...document.querySelectorAll('#upd p')].map(x => x.getBoundingClientRect().right)),
+    n: document.querySelectorAll('#upd p').length,
+  }));
+  ok(
+    fit.n === 4 && fit.sw <= fit.iw && fit.right <= fit.iw,
+    'notices U17: four notices at 390 px fit the width, no sideways scroll (' + JSON.stringify(fit) + ')',
+  );
+  await p.close();
+  /* U18: dark mode uses the dark tokens */
+  p = await open(all(), PAGE, { colorScheme: 'dark' });
+  const dark = await p.evaluate(() => {
+    const x = document.querySelector('#upd p');
+    if (!x) return null;
+    const probe = document.createElement('div');
+    probe.style.cssText = 'background:var(--accent-soft);color:var(--fg)';
+    document.body.append(probe);
+    const want = getComputedStyle(probe);
+    const got = getComputedStyle(x);
+    return { bg: got.backgroundColor, fg: got.color, wantBg: want.backgroundColor, wantFg: want.color };
+  });
+  ok(
+    dark && dark.bg === dark.wantBg && dark.fg === dark.wantFg && dark.bg !== lightBg,
+    'notices U18: in dark mode a notice uses the dark --accent-soft and --fg (' + JSON.stringify([dark, lightBg]) + ')',
+  );
+  await p.close();
+  /* U19: no database in this view (signed out, a preview): nothing to compare, nothing shown */
+  await none(Object.assign(all(), { __opts: { noDb: true } }), 'U19: no database: no notices, no errors');
+  /* U20: a page from before the notices ignores versions */
+  const old = olderPage();
+  if (!old) console.log('SKIP notices U20: no release tag with a page from before the notices');
+  else {
+    p = await open(all(), old.page);
+    const txt = await p.evaluate(() => document.getElementById('window').textContent);
+    ok(
+      !p.errors.length && !/can't load/.test(txt),
+      'notices U20: the ' +
+        old.tag +
+        ' page renders data that has versions, with no page errors (' +
+        p.errors.join('; ') +
+        ')',
+    );
+    await p.close();
+  }
+}
+
+const SECTIONS = {
+  importer,
+  robustness,
+  pipeline,
+  variants,
+  ranges,
+  layouts,
+  names,
+  messagesView,
+  speed,
+  standIn,
+  notices,
+};
 (async () => {
   browser = await chromium.launch();
   try {

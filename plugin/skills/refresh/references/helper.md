@@ -6,12 +6,13 @@ Read the part SKILL.md points you to: Which Chrome (more than one Chrome is conn
 - Claude in Chrome's `list_connected_browsers` lists every connected Chrome with its name, and marks the one this session uses (`inUse`). One browser, or one already in use: use it.
 - Several and none in use: the Chrome tools ask the user to choose, and you must never pick one yourself. When you ask, recommend the Chrome whose Messenger tab has the newest helper (`data-mc-helper`; older helpers lack checks: `selfcheck` came in 1.8, full names in 1.6, warnings, More actions › Reply and `post` in 2.0). If the user asks you to pick the one with the newest helper, you may select each in turn (`select_browser`), read `data-mc-helper` on its Messenger tab, and keep the newest.
 - During a scheduled run with no one to ask: don't choose. Set `refresh/status` `{state:"error",message:"several Chrome browsers connected: choose one"}`, keep the schedule, and say so in the report.
-- Every report names the browser used and its helper version, for example "Chrome 'Work Mac', helper 2.0".
+- Every report names the browser used and its helper version, for example "Chrome 'Work Mac', helper 2.0". The same name and version go into `meta/chat.versions.browsers` (`references/database.md` › Versions), with `"none"` when you injected the helper.
 
 ## Versions
 An installed helper reports its version in `data-mc-helper` (and `ping`). When it's older than `@version` in `assets/helper.user.js` (compare number by number), keep using it, and in the report:
 - **older than 1.5:** it was installed by pasting and can't update itself. Tell the user to open the install link (SKILL.md › Helper) once and press Install. It replaces the old copy and updates itself from then on.
 - **1.5 or later:** it updates itself within a day. To get it now: the extension's menu › Check for updates, or open the install link again.
+- Either way the page shows it too, from `meta/chat.versions.browsers` (`references/database.md` › Versions), until a refresh in that Chrome finds it up to date or the user dismisses it.
 - What an older helper can't do: before 1.6, no full names (`fn`); before 1.7, no `people` scan; before 1.8, no `selfcheck` (skip that check and say so); before 2.0, no warnings, no `top`, no stall timeout, no More actions › Reply, and no `post`.
 
 ## Warnings

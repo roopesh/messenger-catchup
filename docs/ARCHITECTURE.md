@@ -159,7 +159,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `meta/chat` | Claude at setup | `kind`, `pageVersion`, `thread`, `chatUrl`, `threadName`, `shortName`, `ownerName`, `ownerAliases`, `topic`, `outboxAuto`, `refreshPhrase`, `tz`, `helper`, `chunkSize`, `schedule`, initial `lastI:-1`, `anchorMids:[]`, `markerMode`, `markerFrom` |
 | | Page importer | `lastI`, `lastMid`, `lastT`*, `anchorMids`, `ownLastI`, `ownLastMid`* |
 | | Page UI | `markerMode`, `markerSetAt`*, `markerFrom`, `markerTo`*, `caughtUpI`, `caughtUpAt`* |
-| | Claude per refresh | `lastRefresh`, `coverage`, `ideasSeenAt` |
+| | Claude per refresh | `lastRefresh`, `coverage`, `ideasSeenAt`, `versions` (with every `lastRefresh`: `{page, helper, refresh, browsers{"<Chrome name>":{helper, at}}}`, what that refresh's skill ships and the helper each Chrome ran; the page's update notices read it) |
 | | (no longer read) | `dates` (left in old pages; the page stopped reading it in v1.7.3) |
 | `chunks/cNNNN` | Page importer | `{start, msgs}` |
 | `threading/*` | Claude (from catchup.py's manifest) | `current` + blocks (layout above); merged: `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
@@ -203,7 +203,7 @@ Nothing here ships: only `plugin/` reaches users, and a test keeps it to the shi
 | Thing | Where | Now |
 |---|---|---|
 | Plugin | `plugin/.claude-plugin/plugin.json` `version`, always the release version; installs update when it changes | 1.20.0 |
-| Page | `PAGE_VERSION` in page.html; stored as `meta/chat.pageVersion`; Claude republishes when it's behind (SKILL.md › Refresh steps) | 2.5 |
+| Page | `PAGE_VERSION` in page.html; stored as `meta/chat.pageVersion`; Claude republishes when it's behind, and never when it's ahead (an older skill: it reports it instead; `references/updating-the-page.md`). The page compares its own version with `pageVersion` and `meta/chat.versions` and shows update notices (F5) | 2.5 |
 | Helper | 4 places in `helper.user.js`; the page's bookmarklet is generated from it | 2.0 |
 | Summary schema | `summary.version` | 2 (the "v3" cards are a display change, same schema) |
 | Storage layout | `layout` in `threading/current` and `summary/current` | 2 (block documents, v1.17.0); absent = the single documents before it |
