@@ -4518,11 +4518,13 @@ async function notices() {
       n.length === 1 &&
       /older copy of the Messenger Catch-up skill/.test(n[0]) &&
       /Update the plugin/.test(n[0]) &&
+      /Customize › Plugins/.test(n[0]) &&
+      /Claude Code: \/plugin\b/.test(n[0]) &&
       links.length === 1 &&
       links[0].href === 'https://github.com/roopesh/messenger-catchup#install' &&
       links[0].target === '_blank' &&
       /\bnoopener\b/.test(links[0].rel),
-    'notices U5: versions.page below pageVersion: an older skill ran; update the plugin, with How to install (' +
+    'notices U5: versions.page below pageVersion: an older skill ran; update the plugin (claude.ai and Claude Code), with How to install (' +
       JSON.stringify([n, links]) +
       ')',
   );
@@ -4656,10 +4658,12 @@ async function notices() {
       n.length === 4 &&
       /older copy of the page/.test(n[0]) &&
       /older copy of the Messenger Catch-up skill/.test(n[1]) &&
-      n[2].includes('“Home” ran helper 1.1') &&
-      n[3].includes('“Work Mac” ran helper 1.9') &&
+      /When Chrome “Home” was last used for a refresh \(\w{3} \d{1,2}\), it ran helper 1\.1/.test(n[2]) &&
+      n[3].includes('At the last refresh, Chrome “Work Mac” ran helper 1.9') &&
       dis.every(k => k === 1),
-    'notices U12: four at once, in order A, C, D (Home), E (Work Mac), one Dismiss each (' + JSON.stringify(n) + ')',
+    'notices U12: four at once, in order A, C, D (Home, used before), E (Work Mac, the last refresh), one Dismiss each (' +
+      JSON.stringify(n) +
+      ')',
   );
   const lightBg = await p.evaluate(() => {
     const x = document.querySelector('#upd p');
@@ -4735,6 +4739,35 @@ async function notices() {
       ')',
   );
   await p.close();
+  /* U14b: with site data blocked, Chrome throws on reading window.localStorage itself, not only on its methods */
+  p = await open(withMeta(metaWith({ pageVersion: '9.9' })));
+  await p.context().addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('blocked', 'SecurityError');
+      },
+    });
+  });
+  await p.reload();
+  await p.waitForFunction(() => window.__rt && document.getElementById('window').textContent !== 'Loading the chat…');
+  await p.waitForTimeout(300);
+  const getterThrows = await p.evaluate(() => {
+    try {
+      return !window.localStorage;
+    } catch (e) {
+      return true;
+    }
+  });
+  const shownB = (await nCount(p)) === 1;
+  const clicked4 = await dismissNotice(p);
+  ok(
+    getterThrows && shownB && clicked4 && (await nCount(p)) === 0 && !p.errors.length,
+    'notices U14b: with the localStorage getter throwing, the notice shows and Dismiss hides it, with no page errors (' +
+      p.errors.join('; ') +
+      ')',
+  );
+  await p.close();
   /* U15: live: a republish elsewhere shows A without a reload, and it goes once the data matches again */
   p = await open(withMeta(metaWith({})));
   await p.evaluate(() => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { pageVersion: '9.9' })));
@@ -4789,6 +4822,54 @@ async function notices() {
   ok(
     dark && dark.bg === dark.wantBg && dark.fg === dark.wantFg && dark.bg !== lightBg,
     'notices U18: in dark mode a notice uses the dark --accent-soft and --fg (' + JSON.stringify([dark, lightBg]) + ')',
+  );
+  await p.close();
+  /* U21: E (self-updating, behind) only for the Chrome of the last refresh: one used before has likely updated since */
+  const two = browsers => withMeta(metaWith({ versions: vers({ browsers }) }));
+  p = await open(two({ 'Work Mac': { helper: '1.9', at: iso(3600000) }, Home: { helper: '1.9', at: iso(3 * DAY) } }));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && n[0].startsWith('At the last refresh, Chrome “Work Mac” ran helper 1.9;'),
+    "notices U21: two Chromes behind on 1.9: E for the last refresh's only (" + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  /* U22: D (can't update itself) for a Chrome used before, worded with when it was last used */
+  p = await open(two({ 'Work Mac': { helper: '2.0', at: iso(3600000) }, Home: { helper: '1.1', at: iso(3 * DAY) } }));
+  n = await noticeTexts(p);
+  const homeDay = await p.evaluate(
+    at => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    iso(3 * DAY),
+  );
+  ok(
+    n &&
+      n.length === 1 &&
+      n[0].startsWith(
+        'When Chrome “Home” was last used for a refresh (' +
+          homeDay +
+          "), it ran helper 1.1, which can't update itself.",
+      ),
+    'notices U22: an older Chrome on 1.1: D, saying when it was last used (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  /* U23: "Chrome" is what a run with no browser name writes; it may be any named Chrome, so only the newest counts */
+  await none(
+    two({ 'Work Mac': { helper: '2.0', at: iso(3600000) }, Chrome: { helper: '1.1', at: iso(2 * DAY) } }),
+    'U23: an older entry under the fallback name "Chrome" shows nothing',
+  );
+  p = await open(two({ Chrome: { helper: '1.1', at: iso(3600000) }, Home: { helper: '1.1', at: iso(2 * DAY) } }));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && n[0].startsWith("At the last refresh, Chrome ran helper 1.1, which can't update itself."),
+    'notices U23: the newest entry is "Chrome" and an older one ran the same helper: one notice, not two (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  await p.close();
+  p = await open(two({ Chrome: { helper: '2.0', at: iso(3600000) }, Home: { helper: '1.1', at: iso(2 * DAY) } }));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && n[0].startsWith('When Chrome “Home” was last used'),
+    'notices U23: the newest entry is "Chrome" on 2.0: an older Chrome on 1.1 still gets D (' + JSON.stringify(n) + ')',
   );
   await p.close();
   /* U19: no database in this view (signed out, a preview): nothing to compare, nothing shown */

@@ -190,6 +190,17 @@ def _blocks(cur, docs, name):
     return sorted((docs[b] for b in cur.get("blocks") or []), key=lambda d: d["start"])
 
 
+def _known_layout(cur, name):
+    """1 (no `layout`: the single document before v1.17) or 2 (block documents). A layout this catchup.py doesn't know
+    was written by a newer copy of the skill: stop, rather than read (and later rewrite) it as the old layout."""
+    v = (cur or {}).get("layout")
+    assert v in (None, 2), (
+        "%s/current has layout %r, which this catchup.py doesn't know: a newer copy of the skill wrote it. Write "
+        "nothing, and tell the user to update the plugin (references/troubleshooting.md)" % (name, v)
+    )
+    return 2 if v == 2 else 1
+
+
 def _named(docs):  # the block ids a collection's `current` names ([] in the old single-document layout)
     cur = docs.get("current") or {}
     return list(cur.get("blocks") or []) if cur.get("layout") == 2 else []
@@ -202,6 +213,7 @@ def _listing(run, c):
         c,
         c,
     )
+    _known_layout(docs["current"], c)
     missing = [b for b in _named(docs) if b not in docs]
     assert not missing, (
         "RUN/%s/current names %s, which %s not in RUN: list the whole %s collection into RUN (list, limit 1000), not "
@@ -218,7 +230,7 @@ def _strays(docs):  # block documents no `current` names: an interrupted write, 
 def merge_threading(docs):
     """The threading collection ({doc id: document}) -> the single document of the old layout. The page does the same."""
     cur = docs.get("current")
-    if cur is None or cur.get("layout") != 2:
+    if cur is None or _known_layout(cur, "threading") != 2:
         return cur
     t = {k: v for k, v in cur.items() if k not in LAYOUT_KEYS}
     convs, by, links = [], {}, {}
@@ -242,7 +254,7 @@ def merge_threading(docs):
 def merge_summary(docs):
     """The summary collection -> the single document of the old layout. The page does the same."""
     cur = docs.get("current")
-    if cur is None or cur.get("layout") != 2:
+    if cur is None or _known_layout(cur, "summary") != 2:
         return cur
     s = {k: v for k, v in cur.items() if k not in LAYOUT_KEYS}
     bs = _blocks(cur, docs, "summary")

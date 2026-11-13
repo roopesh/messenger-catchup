@@ -201,6 +201,20 @@ class TestBootstrap(unittest.TestCase):
         self.e.seed(ms, meta={"lastRefresh": "Nov 20, 9:04 AM", "versions": versions})
         self.assertEqual((self.e.state(), r(os.path.join(self.e.work, "all.json"))), plain)
 
+    def test_unknown_layout_is_refused(self):
+        """A threading or summary layout this catchup.py doesn't know (a newer copy of the skill wrote it) stops
+        bootstrap and a RUN read, instead of being read, and later rewritten, as the old single document."""
+        ms = [msg(i, "Ana", "m%d" % i, mi=i % 60) for i in range(5)]
+        with self.assertRaisesRegex(AssertionError, "threading/current has layout 3"):
+            self.e.seed(ms, threading={"layout": 3, "blocks": ["t0"], "to": 4, "note": ""})
+        with self.assertRaisesRegex(AssertionError, "summary/current has layout 3"):
+            self.e.seed(ms, summary={"layout": 3, "blocks": [], "version": 2, "toI": 4})
+        for c in ("threading", "summary"):
+            run = tempfile.mkdtemp(dir=self.t.name)
+            w(os.path.join(run, c, "current.json"), {"layout": 3, "blocks": []})
+            with self.assertRaisesRegex(AssertionError, c + "/current has layout 3"):
+                catchup._listing(run, c)
+
     def test_gap_in_stored_messages(self):
         with self.assertRaisesRegex(AssertionError, "gap in stored messages"):
             self.e.seed([msg(0, "Ana"), msg(2, "Ben")])

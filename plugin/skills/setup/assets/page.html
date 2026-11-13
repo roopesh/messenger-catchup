@@ -5536,6 +5536,7 @@
      this browser's localStorage under a key naming the version that would fix it, so the next release brings it back. */
   const SELF_UPDATE_FROM = "1.5"; /* helpers from 1.5 on update themselves (@updateURL); older ones were pasted */
   const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
+  const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
   const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";
   /* Number by number (2.0 > 1.9, 10.0 > 9.9, "2" = "2.0"): -1, 0 or 1, or null when either isn't a version. */
   function vcmp(a, b) {
@@ -5582,37 +5583,50 @@
     const c2 = !!V.refresh && !!meta.lastRefresh && meta.lastRefresh !== V.refresh;
     if ((c1 || c2) && !running)
       add("C:" + (M || P), [
-        "The last refresh ran an older copy of the Messenger Catch-up skill than this page was made for. Update the plugin in Claude (Customize › Plugins), and remove any copy of the skill you uploaded yourself. ",
+        "The last refresh ran an older copy of the Messenger Catch-up skill than this page was made for. Update the plugin wherever Claude runs your refreshes (claude.ai or Claude Desktop: Customize › Plugins; Claude Code: /plugin), and remove any copy of the skill you uploaded yourself. ",
         { t: "How to install ↗", href: INSTALL_DOCS },
       ]);
     /* D and E: a Chrome whose helper is behind the one the last refresh's skill ships. Below 1.5 it can't update
-       itself (D); from 1.5 on it should have (E). "none" (no helper: Claude injected the current one) is never behind. */
+       itself (D); from 1.5 on it should have (E). "none" (no helper: Claude injected the current one) is never behind.
+       E only for the Chrome of the last refresh (the newest `at`): one used before has most likely updated itself
+       since. D for an older one says when it was used. An older NO_NAME entry may be any named Chrome, so it shows
+       nothing; when the newest is NO_NAME, an older entry on the same helper is probably that Chrome and shows nothing. */
     if (vcmp(V.helper, V.helper) !== 0) return out;
     const browsers = isObj(V.browsers) ? V.browsers : {};
-    Object.keys(browsers)
+    const seen = Object.keys(browsers)
       .sort()
-      .forEach(name => {
-        const b = browsers[name];
-        if (!isObj(b) || !(now - Date.parse(b.at) <= VERSIONS_FRESH_DAYS * 864e5)) return;
-        if (vcmp(b.helper, V.helper) !== -1) return;
-        const chrome = "At the last refresh, Chrome “" + name + "” ran helper " + b.helper;
-        const link = { t: "Install the userscript", href: install };
-        if (vcmp(b.helper, SELF_UPDATE_FROM) === -1)
-          add("D:" + V.helper + ":" + name, [
-            chrome + ", which can't update itself. In that Chrome, open ",
-            link,
-            " and press Install; it keeps itself up to date after that.",
-          ]);
-        else
-          add("E:" + V.helper + ":" + name, [
-            chrome +
-              "; the current one is " +
-              V.helper +
-              ". It updates itself, usually within a day. To update now, use the extension's menu › Check for updates, or open ",
-            link,
-            ".",
-          ]);
-      });
+      .map(name => ({ name, b: browsers[name] }))
+      .filter(({ b }) => isObj(b) && now - Date.parse(b.at) <= VERSIONS_FRESH_DAYS * 864e5);
+    const last = seen.reduce((x, e) => (!x || Date.parse(e.b.at) > Date.parse(x.b.at) ? e : x), null);
+    seen.forEach(e => {
+      const { name, b } = e;
+      const isLast = e === last;
+      if (vcmp(b.helper, V.helper) !== -1) return;
+      if (!isLast && (name === NO_NAME || (last.name === NO_NAME && b.helper === last.b.helper))) return;
+      const cant = vcmp(b.helper, SELF_UPDATE_FROM) === -1;
+      if (!isLast && !cant) return;
+      const label = name === NO_NAME ? "Chrome" : "Chrome “" + name + "”";
+      const day = new Date(b.at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const chrome = isLast
+        ? "At the last refresh, " + label + " ran helper " + b.helper
+        : "When " + label + " was last used for a refresh (" + day + "), it ran helper " + b.helper;
+      const link = { t: "Install the userscript", href: install };
+      if (cant)
+        add("D:" + V.helper + ":" + name, [
+          chrome + ", which can't update itself. In that Chrome, open ",
+          link,
+          " and press Install; it keeps itself up to date after that.",
+        ]);
+      else
+        add("E:" + V.helper + ":" + name, [
+          chrome +
+            "; the current one is " +
+            V.helper +
+            ". It updates itself, usually within a day. To update now, use the extension's menu › Check for updates, or open ",
+          link,
+          ".",
+        ]);
+    });
     return out;
   }
   /* Dismissed in this page load: localStorage can be blocked (a private window), and Dismiss still works then. */

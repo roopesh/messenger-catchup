@@ -12,7 +12,7 @@ Read the part SKILL.md points you to: Which Chrome (more than one Chrome is conn
 An installed helper reports its version in `data-mc-helper` (and `ping`). When it's older than `@version` in `assets/helper.user.js` (compare number by number), keep using it, and in the report:
 - **older than 1.5:** it was installed by pasting and can't update itself. Tell the user to open the install link (SKILL.md › Helper) once and press Install. It replaces the old copy and updates itself from then on.
 - **1.5 or later:** it updates itself within a day. To get it now: the extension's menu › Check for updates, or open the install link again.
-- Either way the page shows it too, from `meta/chat.versions.browsers` (`references/database.md` › Versions), until a refresh in that Chrome finds it up to date or the user dismisses it.
+- The page shows it too, from `meta/chat.versions.browsers` (`references/database.md` › Versions): below 1.5 until a refresh in that Chrome finds it up to date, 1.5 or later only while that Chrome ran the last refresh; the user can dismiss either.
 - What an older helper can't do: before 1.6, no full names (`fn`); before 1.7, no `people` scan; before 1.8, no `selfcheck` (skip that check and say so); before 2.0, no warnings, no `top`, no stall timeout, no More actions › Reply, and no `post`.
 
 ## Warnings

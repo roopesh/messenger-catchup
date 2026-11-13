@@ -1,7 +1,7 @@
 """Repo-level checks: helper copies in sync, the sync tool itself, the plugin and its ZIP, and SKILL.md's file references.
 Run: python3 -m unittest discover -s tests"""
 
-import contextlib, html, importlib.util, io, json, os, re, shutil, subprocess, tempfile, unittest, urllib.parse, zipfile
+import collections, contextlib, html, importlib.util, io, json, os, re, shutil, subprocess, tempfile, unittest, urllib.parse, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location("sync_helper", os.path.join(ROOT, "tools", "sync.py"))
@@ -595,19 +595,21 @@ class TestUpdateNotice(unittest.TestCase):
         self.assertIn("older than %s days" % days, self.versions)
 
     def test_lastrefresh_is_always_written_with_versions(self):
-        """SKILL.md's meta/chat line carries the rule for its own {lastRefresh…} writes (it has no room to repeat it);
-        every other place that tells Claude to write lastRefresh names versions."""
+        """Every place that tells Claude to write lastRefresh names versions, SKILL.md's steps first: they're what a
+        refresh follows (a run that wrote lastRefresh alone after one that wrote versions shows "an older copy of the
+        skill ran" on a current plugin). Step 7 says where the shape is."""
         skill = in_skill("SKILL.md")
-        meta = re.search(r"^- `meta/chat` .*$", skill, re.M).group(0)
-        self.assertIn("`lastRefresh` (always with `versions`: `references/database.md`)", meta)
-        others = {"references/" + f: in_skill("references", f) for f in REFERENCES}
-        others["scripts/catchup.py"] = in_skill("scripts", "catchup.py")
-        found = 0
-        for name, text in others.items():
+        texts = {"SKILL.md": skill, "scripts/catchup.py": in_skill("scripts", "catchup.py")}
+        texts.update({"references/" + f: in_skill("references", f) for f in REFERENCES})
+        found = collections.Counter()
+        for name, text in texts.items():
             for lit in re.findall(r"\{lastRefresh[^}]*\}", text):
-                found += 1
+                found[name] += 1
                 self.assertIn("versions", lit, name + ": " + lit)
-        self.assertGreaterEqual(found, 3)
+        self.assertGreaterEqual(found["SKILL.md"], 2, "the nothing-new path and step 7")
+        self.assertGreaterEqual(sum(found.values()), 5)
+        step7 = re.search(r"^7\. .*$", skill, re.M).group(0)
+        self.assertIn("{lastRefresh, coverage, versions}` (`references/database.md` › Versions)", step7)
         self.assertIn("{lastRefresh, coverage, versions:{page, helper, refresh, browsers:", self.versions)
 
     def test_page_version_check_goes_both_ways(self):
@@ -622,10 +624,22 @@ class TestUpdateNotice(unittest.TestCase):
         newer = re.search(r"^## `pageVersion` is newer.*", doc, re.M | re.S).group(0)
         self.assertIn("publish `assets/page.html` to that url", older)
         self.assertIn("`{pageVersion, versions:{page}}`", older)
-        for must in ("**Never republish**", "never lower `pageVersion`", "Carry on with the run", "Update the plugin"):
+        for must in ("**Never republish**", "never lower `pageVersion`", "carry on with the run", "Update the"):
             self.assertIn(must, newer)
         self.assertIn("scheduled runs included", newer)
         self.assertIn("`{pageVersion, versions:{page}}`", self.versions)
+        # a newer major stops instead of carrying on; minors can change what's stored too (R2 did, in v1.22.0)
+        self.assertNotIn("only changes in a major release", doc)
+        major = re.search(r"^- \*\*A newer major\*\*.*$", newer, re.M)
+        self.assertTrue(major, "updating-the-page.md › newer: no **A newer major** rule")
+        for must in ("stop before step 1", "write nothing", "tell the user"):
+            self.assertIn(must, major.group(0))
+        self.assertIn("Claude Code: `/plugin`", newer)
+        # setup reuses an existing page the same way: pageVersion and versions.page in one pinned update, or the page
+        # would say an older skill ran (versions.page from the last refresh below the new pageVersion)
+        reuse = re.search(r"^   - `Artifact list` .*$", in_setup("SKILL.md"), re.M).group(0)
+        self.assertIn("`{pageVersion, versions:{page}}`", reuse)
+        self.assertIn("one pinned update", reuse)
 
     def test_self_update_threshold_matches_helper_md(self):
         """The page's D notice (can't update itself) uses the same line as helper.md › Versions, which is the first
@@ -657,9 +671,32 @@ class TestUpdateNotice(unittest.TestCase):
         self.assertIn('`"none"`', which)
 
     def test_page_never_writes_versions(self):
-        """versions is Claude's: the page only reads it (dismissals stay in localStorage)."""
-        self.assertNotRegex(self.page, r"versions\s*:\s*[{\[]")
-        self.assertNotRegex(self.page, r"\.versions\s*=[^=]")
+        """versions is Claude's: the page only reads it (dismissals stay in localStorage). Catches a key with any value,
+        quoted or not, the shorthand `{versions}`, a dotted update path and an assignment."""
+        for pat in (
+            r"""[{,]\s*["'`]?versions["'`]?\s*:""",  # { versions: …, "versions": …, 'versions': … (not a ?: ternary)
+            r"[{,]\s*versions\s*[,}]",  # update({versions}), {a, versions}
+            r"""["'`]versions\.""",  # update({"versions.page": …})
+            r"\.versions\s*=[^=]",
+            r"\[\s*[\"'`]versions[\"'`]\s*\]\s*=[^=]",
+        ):
+            self.assertNotRegex(self.page, pat)
+
+    def test_page_never_writes_versions_catches_writes(self):
+        """The check above, on the writes it must catch."""
+        test = TestUpdateNotice("test_page_never_writes_versions")
+        for bad in (
+            'S.db.doc("meta/chat").update({ versions: { page: "9.9" } });',
+            'S.db.doc("meta/chat").update({ "versions": v });',
+            'S.db.doc("meta/chat").update({ versions });',
+            'S.db.doc("meta/chat").update({ lastI, versions });',
+            'S.db.doc("meta/chat").update({ "versions.page": "9.9" });',
+            "meta.versions = {};",
+            'meta["versions"] = {};',
+        ):
+            test.page = self.page + "\n" + bad
+            with self.assertRaises(AssertionError, msg=bad):
+                test.test_page_never_writes_versions()
 
 
 class TestHelper2(unittest.TestCase):

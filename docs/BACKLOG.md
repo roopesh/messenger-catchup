@@ -30,6 +30,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up |
 | R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 715 and adds about 55 a day (to design) |
 | R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
+| R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
@@ -362,6 +363,10 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **What:** when the helper can't fetch a photo (`FAILED #…` in the capture summary), the capture has no slot for it, so the page never marks it owed and no backfill retries it.
 - **Fix:** the helper lists them (`phfail:[{i,k}]`, helper 2.1) and the page records them as owed `null` slots, so the next run's backfill retries them like any other owed photo.
 
+### R17 · P3 · The helper notice runs ahead of the release
+- **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.
+- **Options:** run `tools/release.sh` straight after every merge that bumps the helper (today's practice, so the gap is usually minutes); or have the page hold E until a day after `versions.helper` first appears (a `since` the skill keeps), which the owner turned down for F5 ("flagged right away").
+
 ### R3 · P3 · Messenger markup dependency (known) · done (v1.20.0, option B)
 - English UI labels, `[role="log"]`, `data-message-id`, "Go to replied message", "Reply to this message", the `At <time>, <name>: ` aria-label shape. See F4.
 - **Silent failures found in a review of helper 1.9:** a reply whose "X replied to Y" line can't be read accepted any focused message as a photo-reply parent; both reply markers reworded at once read as no replies; time-only labels became "today" whatever the day; photo selectors (`messenger_media`, `fbcdn`, the GIF size rule); the avatar picking the wrong image; the scroller being the first scrollable div; the top of the chat declared after 8 tries; English label lists.
@@ -586,6 +591,13 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - Dismissals stay in the browser's `localStorage`, keyed to the version that would fix it, so they come back with the next release; with storage blocked, Dismiss works for that page load. The page writes nothing to the database.
   - An older skill that finds a newer `pageVersion` never republishes (that would downgrade the page): it carries on, writes its lower `versions.page` (so C shows) and tells the user to update the plugin (`references/updating-the-page.md`).
 - **Tests:** page section `notices` (U1–U20: every notice and its wording, number-by-number comparison, the running-refresh rule, the 30-day window, unreadable versions, order, Dismiss and its return on a new version, blocked storage, live updates, a browser name with markup, phone width, dark mode, no database, and the last release's page reading data that has `versions`); 41 of its 42 checks fail on page 2.6 (the last is the backward-compatibility check, run on the old page itself). `test_tools.TestUpdateNotice`: every `versions` key the page reads is documented, `lastRefresh` is always written with `versions`, the page-version check goes both ways, the self-update threshold matches `helper.md` and the changelog, one install URL. `test_catchup`: bootstrap ignores `versions`.
+- **Review fixes (PR #42):**
+  - SKILL.md's steps named only `{lastRefresh}` (nothing new) and `{lastRefresh, coverage}` (step 7), so a run that followed them after one that wrote `versions` made every page say "an older copy of the skill ran" on a current plugin. Both now name `versions`, and step 7 points at `references/database.md` › Versions. The test that checked this had skipped SKILL.md.
+  - Setup's reuse of an existing page set `pageVersion` alone, which made notice C show (`versions.page` below it); it now writes `{pageVersion, versions:{page}}` in one pinned update.
+  - E showed for every Chrome in `browsers`, "at the last refresh", including ones used days before that had most likely updated themselves. Now E is only for the newest `at`; D for an older Chrome says the day it was last used; the unnamed key `"Chrome"` counts only while it's the newest, and when it is, an older entry on the same helper shows nothing (probably the same browser).
+  - "The database layout only changes in a major release" (`updating-the-page.md`) wasn't true: R2 changed `photos/*` in this minor release. A newer page with a newer major now means stop before the lock and write nothing; the same major carries on. A 2.9 → 3.0 bump only to keep minors one digit also stops older copies, which is the safe side. `catchup.py` refuses a threading or summary `layout` it doesn't know, instead of reading it as the old single document.
+  - C now names Claude Code's `/plugin` as well as claude.ai's menu. `test_page_never_writes_versions` also catches quoted keys, `{versions}` shorthand, dotted paths and bracket assignment; U14b covers a throwing `window.localStorage` getter. Filed R17.
+  - Not done: having `catchup.py`'s manifest prefill `versions.page` and `helper`. The nothing-new path and troubleshooting's "nothing left to build" have no manifest, so Claude reads the two versions from the skill's files either way.
 - **Live checks still to do:** whether an open tab reloads by itself after a republish (notice A's wording), the claude.ai menu path for plugins ("Customize › Plugins"), and what `list_connected_browsers` calls a single Chrome.
 
 ### F6 · P3 · Ask Claude over long histories · done (v1.22.0)

@@ -221,7 +221,7 @@ Nothing here ships: only `plugin/` reaches users, and a test keeps it to the shi
 | Thing | Where | Now |
 |---|---|---|
 | Plugin | `plugin/.claude-plugin/plugin.json` `version`, always the release version; installs update when it changes | 1.20.0 |
-| Page | `PAGE_VERSION` in page.html; stored as `meta/chat.pageVersion`; Claude republishes when it's behind, and never when it's ahead (an older skill: it reports it instead; `references/updating-the-page.md`). The page compares its own version with `pageVersion` and `meta/chat.versions` and shows update notices (F5) | 2.5 |
+| Page | `PAGE_VERSION` in page.html; stored as `meta/chat.pageVersion`; Claude republishes when it's behind, and never when it's ahead (an older skill: it reports it instead, and with a newer major it stops before the lock; `references/updating-the-page.md`). The page compares its own version with `pageVersion` and `meta/chat.versions` and shows update notices (F5) | 2.5 |
 | Helper | 4 places in `helper.user.js`; the page's bookmarklet is generated from it | 2.0 |
 | Summary schema | `summary.version` | 2 (the "v3" cards are a display change, same schema) |
-| Storage layout | `layout` in `threading/current` and `summary/current` | 2 (block documents, v1.17.0); absent = the single documents before it |
+| Storage layout | `layout` in `threading/current` and `summary/current` | 2 (block documents, v1.17.0); absent = the single documents before it; `catchup.py` refuses any other value (a newer copy wrote it) |
