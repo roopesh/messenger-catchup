@@ -3337,6 +3337,7 @@ async function history() {
       await p.close();
     }
   });
+}
 
 /* ---------- R2: photos stored as they upload ----------
    Each photo is indexed (photos/b<start>) the moment it lands, refresh/lastImport says "uploading" with a heartbeat

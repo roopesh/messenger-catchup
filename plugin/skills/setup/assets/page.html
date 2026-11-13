@@ -1504,7 +1504,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.6";
+  const PAGE_VERSION = "2.7";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -4749,7 +4749,6 @@
   const owedSummary = o =>
     o.length ? { n: o.length, fromI: o[0].i, toI: o[o.length - 1].i, at: new Date().toISOString() } : null;
   const fmtBytes = b => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
-  const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
   /* Fresh reads under the lease: the old index, the blocks this capture's photos and GIFs fall in, and the blocks the
      owed range covers. todo = the capture's slots not stored and not given up. */
   async function planPhotos(P) {
