@@ -2,6 +2,16 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.20.1] - 2026-11-12
+**Date-range mode no longer stalls the page** (BACKLOG R4, first part). PATCH: a fix with no new behavior. Page **`PAGE_VERSION` 2.6** (from 2.5); the helper stays 2.0.
+
+### Fixed
+- **Date-range catch-up mode was quadratic.** `inWin()` worked the window out again for every message and every citation, each time looping over every stored message: 5–6 s per update and about 20 s to load at 6,400 messages, and growing with the square of the history. The window is now worked out once per message list and marker (both are only ever replaced, never changed in place), and conversation lookups by id use a map instead of scanning the list.
+
+### Tests
+- New page section `speed`: in date-range mode at 1,500 and 6,000 synthetic messages, a full render works the window out at most twice, and moving the marker still moves the window. Counted, not timed, so it can't flake. On 1.20.0's page the same render worked it out 7,292 and 30,817 times.
+- New page section `standIn` checks the test runtime itself. Its `update` now merges nested objects and replaces arrays (and drops `{__delete__: true}` fields), in page writes and in Claude's batches, as the real runtime does; it was a shallow merge. Its `sample` gains `limits()` and enforces the prompt cap in UTF-8 bytes (`prompt_too_large`), with switches for a missing, failing or nonsense `limits()`. The whole suite passes on both.
+
 ## [1.20.0] - 2026-11-12
 **Helper 2.0: Reply on photo-only messages, warnings instead of silent misreads, full names on every message, and an opt-in `post`** (GitHub issue #32 §1, §2 and §5; BACKLOG R3, B41, B48, B49, F12, F13). MINOR: new helper behavior and skill procedure changes. Helper **2.0** (from 1.9), page **`PAGE_VERSION` 2.5** (its jump bookmarklet is generated from the helper). No re-setup; installed helpers (1.5+) update themselves from this release.
 
