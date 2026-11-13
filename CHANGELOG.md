@@ -2,6 +2,29 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.21.0] - 2026-11-12
+**Scheduling without hard-coded tool names, and a chain that can't double up or die unnoticed** (BACKLOG R6). MINOR: setup and refresh procedure changes. Page and helper unchanged (`PAGE_VERSION` 2.5, helper 2.0). No re-setup: an existing schedule (`mode` `"A"`, `"loop"` or any other older value) is read as an old-style chain and converts to `"chain"` the first time the new procedure arms.
+
+### Added
+- New `references/scheduling.md` in the refresh skill (setup carries a copy, kept by `npm run sync`): the scheduling tools by what they do, with the names seen in each Claude app as of November 2026. Claude uses only a tool it can see in its tool list, and it's the only file in the plugin that names one.
+- `refresh/schedule` `{armId, nextAt, tool, lastRunAt, misses, problem}`: the schedule's live state, in its own document so arming never collides with a build's pinned `meta/chat` writes. Each follow-up carries an `armId` and only the matching one continues, so duplicate, late or superseded deliveries stop without doing anything. Arming writes the new `armId` with `if_version` before calling the tool, so there's only ever one chain.
+- After a refresh the user asked for: scheduling problems are reported (`problem`), as are scheduled runs that couldn't reach Chrome (`misses`). A chain found stopped (now inside the chosen hours, more than 30 minutes past `nextAt`) is restarted from that conversation **only if the user says yes**. A scheduled run never asks: that it runs shows the chain is alive. A recurring task that has gone quiet is checked.
+- The Claude Code CLI is a supported scheduling surface (one-time `CronCreate` follow-ups), with a warning that the session must stay open.
+- Requirements (setup skill and README): the Claude Desktop app must be open on the computer when Claude runs from anywhere else. The page's own wording waits for the next page change (BACKLOG R10).
+
+### Changed
+- Setup's Scheduling is a ladder: a one-time follow-up into this conversation; otherwise a recurring task tied to this computer, kept only if the tool's result confirms the tie (otherwise Claude disables it and the user creates it in the app with "Require this computer" on); otherwise manual. `mode` is `"chain"`, `"recurring"` or `"manual"`.
+- A follow-up is armed `every` minus 5 minutes after a run, so it lands while the conversation's cached context is warm. Runs that can't reach Chrome keep the chosen interval (no backoff).
+- Setup's "Change or stop the schedule" goes to the new Stop or change step: `mode` set, `armId` cleared, and the pending follow-up or task cancelled where a tool allows; a follow-up that still fires finds the schedule changed and stops. "Stop scheduled refreshes" replaces "stop the loop" (both work).
+- The refresh skill's Scheduled runs section names no tools and sends Claude to the reference; `SKILL.md` is 19,750 bytes (from 19,761).
+- `references/database.md` (and setup's copy): `meta/chat.schedule`'s shape and `refresh/schedule`. The outbox line now says `references/outbox.md` is the refresh skill's, since setup's copy can't open it.
+
+### Removed
+- The agent-created `requires_local_device` task that could silently run in the cloud only, and the "if the first run can't reach Chrome, switch to Option A" fallback.
+
+### Tests
+- `test_tools.TestScheduling` (20 tests, each failing before this change): tool names only in the reference (with a pattern guard for new names); the reference shared with setup and every file a setup copy names present there; both skills point at it; "reschedule" defined; the follow-up templates; every schedule field and mode documented; setup writes only `chain`, `recurring` and `manual`; arming pinned before the tool call; recurring kept only when bound; only visible tools; the no-scheduler path; stale runs do nothing; the reference under 7,000 bytes; the Desktop requirement; Stop or change clears `armId`; and the owner's calls: a dead chain is restarted only after asking and never during a scheduled run, no backoff, the CLI as a chain tool, and older modes converted by the first Arm.
+
 ## [1.20.0] - 2026-11-12
 **Helper 2.0: Reply on photo-only messages, warnings instead of silent misreads, full names on every message, and an opt-in `post`** (GitHub issue #32 §1, §2 and §5; BACKLOG R3, B41, B48, B49, F12, F13). MINOR: new helper behavior and skill procedure changes. Helper **2.0** (from 1.9), page **`PAGE_VERSION` 2.5** (its jump bookmarklet is generated from the helper). No re-setup; installed helpers (1.5+) update themselves from this release.
 

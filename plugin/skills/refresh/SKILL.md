@@ -11,7 +11,7 @@ Files that ship with this skill, relative to its folder `${CLAUDE_SKILL_DIR}` (i
 - `assets/page.html`: the page template (version in `PAGE_VERSION`).
 - `assets/helper.user.js`: the optional Messenger helper (userscript), also used as injectable code.
 - `scripts/catchup.py`: builds threading and summary JSON and checks every rule.
-- `references/`: first-run, updating-the-page, outbox, posting-with-helper, open-message, people, database, writing-the-build, helper and troubleshooting. Read each only when the section below or a step says so.
+- `references/`: first-run, updating-the-page, outbox, posting-with-helper, open-message, people, database, writing-the-build, helper, scheduling and troubleshooting. Read each only when the section below or a step says so.
 
 ## Which part to follow
 - **No page yet for this chat**, or the user asks to set one up: use the `messenger-catchup:setup` skill. A scheduled run never starts setup: it stops.
@@ -94,4 +94,4 @@ The page promises the user that Claude sees these, so act on them:
 - **Method ideas** (`views` with `kind:"idea"`): at the end of each refresh, query `views` for ideas whose `at` is newer than `meta/chat.ideasSeenAt` (all of them if it's unset). List each in the report in one line and offer to apply it, for example a different grouping or a new kind of call-out. Change how catch-ups are built only after the user says yes. Then set `ideasSeenAt` to the newest `at` (pinned). During a scheduled run, just list them.
 
 ## Scheduled runs
-The schedule itself is set up by `messenger-catchup:setup` › Scheduling, and its choice is stored in `meta/chat.schedule` (`{mode, every, hours, tz}`: `mode` "A" is this chain, `every` the interval, `hours` the window in `tz`). When this run came from the self-scheduling chain (Option A), finish by scheduling the next one-shot follow-up into this conversation (`send_later`, the chosen interval) with the same message. Outside the chosen hours, don't run: schedule it for the start of the next window instead, so the chain never dies overnight. Check existing scheduled tasks first, so there's never more than one chain.
+Setup creates the schedule; it lives in `meta/chat.schedule` and `refresh/schedule` (`references/database.md`). A run whose message starts "Scheduled catch-up run", or an older message asking you to schedule the next run, came from it: read `references/scheduling.md` before step 1. It says whether to run (the chosen hours, stale follow-ups) and how every ending, skips and errors included, arms the next run, so there's only ever one: that is what "reschedule" means above. After a refresh the user asked for, read it too unless `schedule.mode` is `"manual"`: it checks that the schedule still runs.

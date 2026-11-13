@@ -63,12 +63,22 @@ Each entry has what was decided, why, and what was rejected.
 | Generic skill: auto-posting is a setup choice (`outboxAuto`); otherwise confirm each one in chat | Other users may want the extra check |
 
 ## Scheduling
-| Decision | Why |
-|---|---|
-| Hourly by default | Small backlogs are fast (3 messages ≈ 2 min vs 183 ≈ 17 min) |
-| Claude creates and owns the schedule; the skill walks new users through it | The user doesn't want to manage scheduled tasks |
-| Two options in the skill: an in-session loop, or a scheduled task that requires the local computer | Refreshes need the computer awake with Chrome open |
-| A missed run is skipped; the next run catches up | No pile-up |
+| Decision | Why | Rejected |
+|---|---|---|
+| Hourly by default | Small backlogs are fast (3 messages ≈ 2 min vs 183 ≈ 17 min) | |
+| Claude creates and owns the schedule; the skill walks new users through it | The user doesn't want to manage scheduled tasks | |
+| A ladder (v1.21.0, R6): a one-time follow-up into this conversation (the chain); otherwise a recurring task tied to this computer; otherwise manual | Refreshes need the computer awake with Chrome open. A chain runs where Claude in Chrome already works; a device-bound task gets paused after one run on a sleeping computer, so it's second | Two fixed options naming `send_later` and `create_trigger` (pre-1.21) |
+| Scheduling tools are named only in the refresh skill's `references/scheduling.md`, each by what it does, and Claude uses only a tool it can see (v1.21.0) | The names are undocumented, differ by app and change; one file to update, and a renamed tool can still be recognized by what it does | Names in SKILL.md; probing for tools by calling them |
+| Keep a recurring task only if the tool's result confirms it's tied to this computer; otherwise disable it and the user creates it in the app with "Require this computer" on (owner's call, Nov 12) | A task that comes back "cloud only" can't reach Chrome and would fail every run without telling anyone | Only "create it yourself in the app"; dropping recurring tasks (chain or manual only) |
+| Each follow-up carries an `armId`; only the one matching `refresh/schedule.armId` continues, and arming writes the new id with `if_version` before calling the tool (v1.21.0) | Only ever one chain: duplicate deliveries, late fires, superseded chains and stopped schedules all find a stale id and stop | Checking the app's list of scheduled tasks (fired one-shots can keep a future run time; the listing differs by app or is missing) |
+| Live state in its own document, `refresh/schedule`; the user's choice stays in `meta/chat.schedule` (v1.21.0) | Arming must not bump `meta/chat`'s version under a running build's pinned writes | `meta/chat.schedule.nextAt` |
+| A refresh the user asked for that finds the chain dead (more than 30 minutes past `nextAt`, inside the chosen hours) asks before restarting it from that conversation; a scheduled run never asks (owner's call, Nov 12) | The user chooses which conversation the chain lives in. A scheduled run that is running is itself proof the chain is alive | Restarting silently and saying so (the design's recommendation); only reporting it |
+| No backoff: runs that can't reach Chrome keep the chosen interval; `misses` and `problem` are recorded and reported by the next refresh the user asks for (owner's call, Nov 12) | Catch up as soon as the computer is back | Doubling the delay per miss up to 4 hours (the design's recommendation); stopping after a day of misses |
+| A follow-up is armed `every` minus 5 minutes after a run (v1.21.0) | A user report measured most of a 60-minute chain's cost in prompt-cache rewrites when wakes landed just after the cache expired | Exactly `every` |
+| The Claude Code CLI is a supported surface: one-time `CronCreate` follow-ups, with a warning that the session must stay open (owner's call, Nov 12) | The CLI has Claude in Chrome, and it costs one line | Manual only in the CLI |
+| `mode` `"A"`, `"loop"` or any unknown value is an old-style chain, converted to `"chain"` the first time the new procedure arms (owner's call, Nov 12) | No re-setup; the owner's own `"loop"` keeps working | A bulk migration; asking users to set up again |
+| The page's Desktop requirement waits for the next page change (R10); the setup skill and README say it now (owner's call, Nov 12) | One sentence isn't worth republishing every page | `PAGE_VERSION` 2.6 now |
+| A missed run is skipped; the next run catches up | No pile-up | |
 
 ## Seen in the code, not written down before
 Recorded during the Nov 6 handoff review. The reasons are inferred from the code and earlier docs.

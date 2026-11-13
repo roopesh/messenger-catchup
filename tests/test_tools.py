@@ -35,6 +35,7 @@ REFERENCES = [
     "people.md",
     "posting-with-helper.md",
     "restoring-a-summary.md",
+    "scheduling.md",
     "troubleshooting.md",
     "updating-the-page.md",
     "writing-the-build.md",
@@ -44,7 +45,7 @@ SHIPPED = ["SKILL.md", "assets/page.html", "assets/helper.user.js", "scripts/cat
 ]
 # keys of a JS object literal, shorthand ones included ({text, state: "x"})
 OBJ_KEYS = r"(?:^|[{,])\s*(\w+)\s*(?=[:,}])"
-SETUP_SHIPPED = ["SKILL.md", "assets/page.html", "references/database.md"]
+SETUP_SHIPPED = ["SKILL.md", "assets/page.html", "references/database.md", "references/scheduling.md"]
 
 
 class TestHelperCopies(unittest.TestCase):
@@ -604,7 +605,7 @@ class TestSetupSkill(unittest.TestCase):
     def test_every_file_setup_names_exists(self):
         text = in_setup("SKILL.md")
         refs = set(re.findall(r"`((?:assets|scripts|references)/[\w.\-]+)`", text))
-        self.assertEqual(refs, {"assets/page.html", "references/database.md"})
+        self.assertEqual(refs, {"assets/page.html", "references/database.md", "references/scheduling.md"})
         for r in refs:
             self.assertTrue(os.path.exists(os.path.join(ROOT, SETUP, r)), r)
 
@@ -645,6 +646,199 @@ class TestSetupSkill(unittest.TestCase):
 
     def test_setup_stays_small(self):
         self.assertLess(len(in_setup("SKILL.md").encode()), 20000)
+
+
+def section(text, heading):
+    """The markdown section that starts with `## <heading>`, up to the next `## ` heading."""
+    m = re.search(r"^## %s.*?(?=^## |\Z)" % re.escape(heading), text, re.M | re.S)
+    assert m, "no section ## " + heading
+    return m.group(0)
+
+
+class TestScheduling(unittest.TestCase):
+    """R6 (v1.21.0): scheduling tools are named only in references/scheduling.md, which says to use only a visible
+    tool; every follow-up carries an armId and arming is a pinned write, so there's only ever one chain."""
+
+    NAMES = [
+        "send_later",
+        "create_trigger",
+        "requires_local_device",
+        "CronCreate",
+        "CronList",
+        "CronDelete",
+        "ScheduleWakeup",
+        "list_triggers",
+        "update_trigger",
+    ]
+
+    def ref(self):
+        return in_skill("references", "scheduling.md")
+
+    def setup_scheduling(self):
+        return section(in_setup("SKILL.md"), "Scheduling")
+
+    def test_tool_names_only_in_the_scheduling_reference(self):
+        others = {
+            "refresh SKILL.md": in_skill("SKILL.md"),
+            "setup SKILL.md": in_setup("SKILL.md"),
+            "page.html": in_skill("assets", "page.html"),
+            "helper.user.js": in_skill("assets", "helper.user.js"),
+        }
+        for f in REFERENCES:
+            if f != "scheduling.md":
+                others["references/" + f] = in_skill("references", f)
+        for where, text in others.items():
+            for name in self.NAMES:
+                self.assertNotIn(name, text, "%s names %s; only references/scheduling.md may" % (where, name))
+            self.assertNotRegex(
+                text, r"\b(send|create|list|update|delete|fire)_(later|triggers?|scheduled_tasks?)\b", where
+            )
+        for name in ("send_later", "create_trigger", "requires_local_device", "CronCreate"):
+            self.assertIn("`%s" % name, self.ref())
+
+    def test_scheduling_reference_is_shared(self):
+        self.assertIn(os.path.join("references", "scheduling.md"), sync.SHARED)
+        self.assertEqual(in_setup("references", "scheduling.md"), self.ref(), "run npm run sync")
+
+    def test_files_named_in_setup_copies_exist(self):
+        """A copy in setup can only point at files setup has, unless it says the file is the refresh skill's."""
+        copies = [f for f in sync.SHARED if f.endswith(".md")]
+        self.assertIn(os.path.join("references", "scheduling.md"), copies)
+        for f in copies:
+            for prefix, r in re.findall(
+                r"(the refresh skill's )?`((?:assets|scripts|references)/[\w.\-]+)`", in_setup(f)
+            ):
+                if not prefix:
+                    self.assertTrue(os.path.exists(os.path.join(ROOT, SETUP, r)), "setup's %s names %s" % (f, r))
+
+    def test_both_skills_send_claude_to_the_reference(self):
+        runs = section(in_skill("SKILL.md"), "Scheduled runs")
+        for must in ("`references/scheduling.md`", '"Scheduled catch-up run"', 'that is what "reschedule" means'):
+            self.assertIn(must, runs)
+        self.assertIn("`references/scheduling.md`", self.setup_scheduling())
+        which = re.search(r"^- \*\*Change or stop the schedule:\*\*.*$", in_setup("SKILL.md"), re.M)
+        self.assertTrue(which, "setup's Which part to follow has no line for changing or stopping the schedule")
+        self.assertIn("Scheduling › Stop or change", which.group(0))
+
+    def test_every_reschedule_is_defined(self):
+        skill = in_skill("SKILL.md")
+        steps = section(skill, "Refresh steps")
+        self.assertGreaterEqual(steps.count("reschedule"), 1)
+        self.assertIn('that is what "reschedule" means', section(skill, "Scheduled runs"))
+        self.assertIn('that\'s what "reschedule" means', section(self.ref(), "A scheduled run"))
+
+    def test_follow_up_messages_match(self):
+        templates = re.findall(r"`(Scheduled catch-up run[^`]*)`", self.ref())
+        self.assertEqual(len(templates), 2, templates)
+        chain, recurring = templates
+        self.assertIn("(chain <armId>)", chain)
+        self.assertIn("messenger-catchup:refresh", chain)
+        # a recurring run is a fresh session: its prompt must say which page and chat
+        for must in ("(recurring)", "messenger-catchup:refresh", "<page url>", "<chatUrl>", "<thread>"):
+            self.assertIn(must, recurring)
+        self.assertIn('"Scheduled catch-up run"', in_skill("SKILL.md"))
+
+    def test_schedule_fields_documented(self):
+        db = in_skill("references", "database.md")
+        meta = re.search(r"^- `meta/chat`:(.*)$", db, re.M).group(1)
+        self.assertIn("`schedule` (`{mode, every, hours, tz}`", meta)
+        live = re.search(r"`refresh/schedule` \(([^)]*)\)", db)
+        self.assertTrue(live, "database.md doesn't document refresh/schedule")
+        stored = section(self.ref(), "Where it's stored")
+        for field in ("armId", "nextAt", "tool", "lastRunAt", "misses", "problem"):
+            self.assertIn("`%s`" % field, live.group(1), field)
+            self.assertIn("`%s`" % field, stored, field)
+        for mode in ("chain", "recurring", "manual", "A", "loop"):
+            self.assertIn('`"%s"`' % mode, stored, mode)
+
+    def test_setup_writes_only_documented_modes(self):
+        setup = in_setup("SKILL.md")
+        modes = set(re.findall(r'mode:"(\w+)"', setup + self.ref()))
+        self.assertLessEqual(modes, {"chain", "recurring", "manual"}, modes)
+        self.assertEqual(set(re.findall(r'mode:"(\w+)"', setup)), {"chain", "recurring", "manual"})
+        self.assertNotRegex(in_skill("SKILL.md"), r'`?mode`? "A"', 'refresh still treats mode "A" as current')
+
+    def test_arming_is_a_compare_and_swap(self):
+        arm = section(self.ref(), "Arm")
+        self.assertIn("only ever one", arm)
+        self.assertIn("`if_version`", arm)
+        self.assertIn("refused, another session armed first", arm)
+        self.assertLess(arm.index("Write `refresh/schedule`"), arm.index("Call the tool"), "armId first, then the call")
+
+    def test_recurring_task_kept_only_when_bound(self):
+        tools = section(self.ref(), "Tools")
+        self.assertIn('"cloud only"', tools)
+        self.assertIn('"not bound"', tools)
+        setup = self.setup_scheduling()
+        self.assertIn("Keep it only if the result says it's tied to this computer.", setup)
+        self.assertIn("disable it", setup)
+        self.assertIn('"Require this computer"', setup)
+
+    def test_only_visible_tools(self):
+        self.assertIn("Use only a tool you can see", self.ref())
+        self.assertIn("Never call a name from this file that you can't see", self.ref())
+
+    def test_no_scheduler_path(self):
+        setup = self.setup_scheduling()
+        none = re.search(r"^  3\. \*\*No scheduling tool here:\*\*.*$", setup, re.M)
+        self.assertTrue(none, "setup's ladder has no step for an app without scheduling")
+        self.assertIn('mode:"manual"', none.group(0))
+        self.assertIn("<refreshPhrase>", none.group(0))
+        pick = re.search(r"^2\. .*$", section(self.ref(), "Arm"), re.M).group(0)
+        self.assertIn("None:", pick)
+        self.assertIn("`refresh/schedule.problem`", pick)
+
+    def test_stale_runs_do_nothing(self):
+        stale = re.search(r"^2\. \*\*Stale run:\*\*.*$", section(self.ref(), "A scheduled run"), re.M)
+        self.assertTrue(stale)
+        self.assertIn("Stop without refreshing, arming or writing anything", stale.group(0))
+
+    def test_scheduling_reference_stays_small(self):
+        """Read on every scheduled run (hourly)."""
+        self.assertLess(len(self.ref().encode()), 7000)
+
+    def test_desktop_requirement(self):
+        self.assertIn("**The Claude Desktop app is open**", section(in_setup("SKILL.md"), "Requirements"))
+        self.assertIn("**Claude Desktop app**", section(read("README.md"), "Requirements"))
+
+    def test_stop_and_change_replace(self):
+        stop = re.search(r"^- \*\*Stop or change:\*\*.*$", self.setup_scheduling(), re.M)
+        self.assertTrue(stop)
+        self.assertIn("`refresh/schedule.armId` to null", stop.group(0))
+        self.assertIn("only ever one", stop.group(0))
+
+    def test_dead_chain_asks_before_rearming(self):
+        """Owner's call (Nov 12): a refresh the user asked for asks before restarting a dead chain; a scheduled run
+        never asks (that it runs shows the chain is alive)."""
+        after = section(self.ref(), "After a refresh the user asked for")
+        dead = re.search(r"^- \*\*Chain stopped:\*\*.*$", after, re.M)
+        self.assertTrue(dead)
+        for must in ("over 30 minutes past", "inside the chosen hours", "**Ask first:**", "Without a yes, arm nothing"):
+            self.assertIn(must, dead.group(0))
+        self.assertIn("Never ask the user anything about the schedule", section(self.ref(), "A scheduled run"))
+
+    def test_no_backoff_when_chrome_is_unreachable(self):
+        """Owner's call (Nov 12): runs that can't reach Chrome keep the chosen interval; misses are only reported."""
+        for where, text in (("scheduling.md", self.ref()), ("setup's Scheduling", self.setup_scheduling())):
+            self.assertNotRegex(text, r"(?i)doubl|back ?off", where)
+        delay = re.search(r"^3\. .*$", section(self.ref(), "Arm"), re.M).group(0)
+        self.assertIn("`every` minus 5 minutes", delay)
+        self.assertIn("whatever `misses` says", delay)
+        self.assertRegex(section(self.ref(), "After a refresh the user asked for"), r"(?m)^- \*\*`misses` above 0")
+
+    def test_claude_code_cli_is_a_chain_tool(self):
+        """Owner's call (Nov 12): the Claude Code CLI is supported, with a warning that the session must stay open."""
+        chain = re.search(r"^- \*\*One-time follow-up into this conversation\*\*.*$", self.ref(), re.M).group(0)
+        for must in ("`CronCreate` with `recurring:false`", "Claude Code CLI", "stays open"):
+            self.assertIn(must, chain)
+        self.assertIn("in Claude Code the session must stay open", self.setup_scheduling())
+
+    def test_older_modes_convert_on_first_arm(self):
+        """Owner's call (Nov 12): "loop", "A" and anything unknown are an old-style chain, converted by the first Arm."""
+        self.assertIn("any other value", section(self.ref(), "Where it's stored"))
+        write = re.search(r"^4\. .*$", section(self.ref(), "Arm"), re.M).group(0)
+        self.assertIn('If `schedule.mode` is an older value, then also set it to `"chain"`', write)
+        self.assertIn("keeping `every`, `hours` and `tz`", write)
 
 
 class TestPrePushHook(unittest.TestCase):

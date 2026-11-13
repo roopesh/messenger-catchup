@@ -15,6 +15,17 @@ Platform limits, gotchas, and what was changed because of them.
 - **A hidden tab** (`visibilityState: hidden`) stalls scrolling. Mark the run as an error and retry next hour.
 - **Tab IDs change.** Look them up fresh each run.
 
+## Scheduling tools (checked on the web, Nov 12, 2026; R6)
+- **No Anthropic doc names `send_later`, `create_trigger` or `requires_local_device`.** They appear only in user bug reports, and the names differ by app. Hence `references/scheduling.md`: the tools by what they do, used only when visible.
+- **Claude Code** ([scheduled tasks](https://code.claude.com/docs/en/scheduled-tasks)): `CronCreate` (recurring or one-shot), `CronList`, `CronDelete`. Tasks fire only while the session is open and idle; one-shots delete themselves after firing and can fire up to 90 s early at :00 or :30; recurring ones expire after 7 days.
+- **`ScheduleWakeup` only resumes a self-paced `/loop`.** Outside one it returns a wake time and never fires ([#82633](https://github.com/anthropics/claude-code/issues/82633)).
+- **A device-bound task can silently run in the cloud only:** `create_trigger` with `requires_local_device:true` returned "not bound: no_signed_approval — this task will run in the cloud only" ([#92268](https://github.com/anthropics/claude-code/issues/92268)). Check the result text, never assume the tie.
+- **A device-bound task is paused for good** (`device_absent`, no notice) the first time it fires while the computer sleeps ([#94415](https://github.com/anthropics/claude-code/issues/94415)).
+- **One-shots aren't exactly once:** a fired `send_later` can keep a future `next_run_at` and fire again ([#86903](https://github.com/anthropics/claude-code/issues/86903)); a task's prompt has been delivered twice into one session ([#109016](https://github.com/anthropics/claude-code/issues/109016)); `send_later` can report success while nothing runs when the session's sign-in has expired ([#103724](https://github.com/anthropics/claude-code/issues/103724)). Hence the `armId`.
+- **Unattended arms can stall:** for a few days `send_later` and `create_trigger` raised an approval card even in auto mode ([#107454](https://github.com/anthropics/claude-code/issues/107454)).
+- **Cost:** a 60-minute `send_later` chain cost about $285 over 9.5 days, mostly prompt-cache rewrites, because wakes at 61–62 minutes always missed the cache ([#104736](https://github.com/anthropics/claude-code/issues/104736)). Hence arming at `every` minus 5 minutes.
+- **Cowork scheduled tasks now run remotely** unless they need local apps ([help](https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork)). **Claude in Chrome from another surface** needs the Claude Desktop app open and connected ([help](https://support.claude.com/en/articles/12012173)).
+
 ## Messenger DOM
 - Messages carry `data-message-id`, and the log is `[role="log"]`.
 - **Names (checked live Nov 7):** the name line and the `At <time>, <name>: ` label show what Messenger displays: the member's nickname in that chat if one is set, otherwise the **first name only**. The **full name** is the alt text of the sender's avatar, a 28×28 image at the message's left edge, present on nearly every message. Reaction emoji (14–16 px) and "seen" faces are smaller. In about 150 messages, each displayed name mapped to exactly one full name. A nickname shows up as a label that isn't the start of the full name.
