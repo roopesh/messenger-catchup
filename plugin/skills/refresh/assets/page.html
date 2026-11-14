@@ -866,6 +866,37 @@
   .upd p button.link {
     margin-left: 4px;
   }
+  /* The schedule (F14): its summary and next run as quiet as the status line; a stopped chain or missed runs as a
+     calm line like the update notices */
+  .sched {
+    display: grid;
+    gap: 6px;
+  }
+  .sched[hidden] {
+    display: none;
+  }
+  .sched p {
+    margin: 0;
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;
+  }
+  .sched .line {
+    color: var(--muted);
+  }
+  .sched .warn {
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--warn-soft);
+    color: var(--fg);
+  }
+  /* Claims on a deal (F19): "Claimed: Ben, Cy (2), Dee", each name opening its message */
+  .callout .claims {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .callout .claims a {
+    color: var(--accent);
+  }
   .marker {
     display: flex;
     flex-wrap: wrap;
@@ -1309,6 +1340,7 @@
     <div class="refresh">
       <span class="st" id="refresh-st" role="status"></span><span class="st" id="storage-st" hidden></span>
     </div>
+    <div class="sched" id="sched" role="status" hidden></div>
     <div class="upd" id="upd" role="status" hidden></div>
     <p class="note" id="layout-st" role="status" hidden></p>
     <div class="strip" id="strip"></div>
@@ -2945,6 +2977,37 @@
     }
     return d;
   }
+  /* F19: a deal's claims [{i, who, n}] as "Claimed: Ben, Cy (2), Dee", first come first, each name opening its message
+     (go(i)). Entries without a message number or a name are skipped; null when none is left. */
+  function claimsLine(claims, go) {
+    if (!Array.isArray(claims)) return null;
+    const ok = claims
+      .filter(
+        c =>
+          c && typeof c === "object" && Number.isInteger(c.i) && c.i >= 0 && typeof c.who === "string" && c.who.trim(),
+      )
+      .sort((a, b) => a.i - b.i);
+    if (!ok.length) return null;
+    const p = el("p", "claims note");
+    p.append("Claimed: ");
+    ok.forEach((c, k) => {
+      const who = c.who.trim();
+      const m = S.byI.get(c.i);
+      /* the name as the page shows it elsewhere: from the message when it's theirs, else from the stored name */
+      const name = m && (m.f === who || m.fn === who) ? nameOf(m) : nameOf({ f: who });
+      if (k) p.append(", ");
+      const a = el("a", null, name);
+      a.href = "#messages";
+      a.title = "Show this message (#" + c.i + ")";
+      a.onclick = e => {
+        e.preventDefault();
+        go(c.i);
+      };
+      p.append(a);
+      if (Number.isInteger(c.n) && c.n > 1) p.append(" (" + c.n + ")");
+    });
+    return p;
+  }
   function convCard(c, ctx) {
     const mem = convMembers(c.id).filter(ctx.after);
     const a = S.byI.get(mem[0]),
@@ -3053,6 +3116,9 @@
         });
         b.append(p);
       }
+      /* a claim in this card opens the thread at it; one elsewhere goes to Messages */
+      const cl = claimsLine(x.claims, i => (mem.includes(i) ? show([i]) : goMsg(i)));
+      if (cl) b.append(cl);
       d.append(b);
     });
     ans.forEach(x => {
@@ -5576,6 +5642,7 @@
   setInterval(() => {
     if (S.refresh) renderRefresh();
     renderUpdates();
+    renderSchedule();
   }, 60000);
 
   /* ---------- update notices (F5) ----------
@@ -5725,6 +5792,147 @@
       box.append(p);
     });
     box.hidden = !list.length;
+  }
+
+  /* ---------- the schedule (F14) ----------
+     meta/chat.schedule {mode, every, hours:{from,to}, tz} is the user's choice and refresh/schedule {nextAt, lastRunAt,
+     misses, problem, …} its live state (the refresh skill's references/scheduling.md). The page only reads them: a
+     summary, the next run, and a calm line when the chain has stopped (scheduling.md's "Chain stopped") or runs keep
+     missing Chrome. Anything missing, older or odd shows nothing. Times are in the schedule's time zone. */
+  const SCHED_MODES = ["chain", "recurring", "manual"];
+  /* "HH:MM" → minutes since midnight ("24:00" is the end of the day), or null */
+  function hhmm(s) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(typeof s === "string" ? s.trim() : "");
+    if (!m) return null;
+    const h = +m[1],
+      mi = +m[2];
+    if (mi > 59 || h > 24 || (h === 24 && mi)) return null;
+    return h * 60 + mi;
+  }
+  function validTz(tz) {
+    if (typeof tz !== "string" || !tz) return undefined;
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: tz });
+      return tz;
+    } catch (e) {
+      return undefined;
+    }
+  }
+  /* " (PST)" when the schedule's zone isn't this browser's, so its times aren't read as local */
+  function tzLabel(tz, now) {
+    if (!tz || tz === Intl.DateTimeFormat().resolvedOptions().timeZone) return "";
+    const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" }).formatToParts(new Date(now));
+    const n = p.find(x => x.type === "timeZoneName");
+    return n ? " (" + n.value + ")" : "";
+  }
+  const clock12 = min => {
+    const h = Math.floor(min / 60) % 24,
+      mi = min % 60;
+    return (h % 12 || 12) + (mi ? ":" + String(mi).padStart(2, "0") : "") + (h < 12 ? " AM" : " PM");
+  };
+  function minuteOfDay(now, tz) {
+    const p = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+    }).formatToParts(new Date(now));
+    const g = t => Number((p.find(x => x.type === t) || {}).value) || 0;
+    return (g("hour") % 24) * 60 + g("minute");
+  }
+  /* {all:true} with no hours, {from, to} in minutes, or null for a form the page can't read */
+  function schedHours(h) {
+    if (h == null) return { all: true };
+    if (!isObj(h)) return null;
+    const f = hhmm(h.from),
+      t = hhmm(h.to);
+    if (f == null || t == null || f % 1440 === t % 1440) return null;
+    return { from: f % 1440, to: t % 1440 };
+  }
+  /* from included, to excluded, up to 5 minutes early counts as inside; a `to` before `from` wraps past midnight */
+  function inHours(w, now, tz) {
+    if (w.all) return true;
+    const m = minuteOfDay(now, tz);
+    const start = (w.from - 5 + 1440) % 1440;
+    const len = ((w.to - w.from + 1440) % 1440) + 5;
+    return (m - start + 1440) % 1440 < len;
+  }
+  function everyText(v) {
+    const n = typeof v === "number" || (typeof v === "string" && /^\d+$/.test(v)) ? Number(v) : NaN;
+    if (!Number.isInteger(n) || n <= 0 || n > 10080) return null;
+    if (n === 60) return "Hourly";
+    return n % 60 ? "Every " + n + " minutes" : "Every " + n / 60 + " hours";
+  }
+  /* the time alone today, else with the date */
+  function schedTime(ms, now, tz) {
+    const d = new Date(ms);
+    const day = x => x.toLocaleDateString("en-US", { timeZone: tz });
+    const o = { hour: "numeric", minute: "2-digit", timeZone: tz };
+    if (day(d) === day(new Date(now))) return d.toLocaleTimeString("en-US", o);
+    return d.toLocaleString("en-US", Object.assign({ month: "short", day: "numeric" }, o));
+  }
+  /* Pure: meta/chat, refresh/schedule, refresh/status, the time and the refresh phrase in; {line, warns} out */
+  function scheduleView(meta, sched, status, now, rp) {
+    const out = { line: "", warns: [] };
+    const sc = isObj(meta) && isObj(meta.schedule) ? meta.schedule : null;
+    const mode = sc && SCHED_MODES.includes(sc.mode) ? sc.mode : null;
+    if (mode === "manual") {
+      out.line = "Refreshes only when you ask.";
+      return out;
+    }
+    const st = isObj(sched) ? sched : null;
+    const tz = validTz(sc && sc.tz) || validTz(isObj(meta) ? meta.tz : null);
+    const lab = tzLabel(tz, now);
+    const w = sc ? schedHours(sc.hours) : null;
+    const ev = mode ? everyText(sc.every) : null;
+    const parts = [];
+    if (ev && w) parts.push(ev + ", " + (w.all ? "all day" : clock12(w.from) + "–" + clock12(w.to) + lab) + ".");
+    const next = st && typeof st.nextAt === "string" ? Date.parse(st.nextAt) : NaN;
+    if (mode && next > now) parts.push("Next refresh about " + schedTime(next, now, tz) + lab + ".");
+    out.line = parts.join(" ");
+    if (!st) return out;
+    /* Chain stopped: inside the hours, nextAt missing or over 30 minutes past, and no run going (refresh/status isn't
+       "running" from the last 20 minutes, and lastRunAt isn't from the last 30) */
+    const ago = v => (typeof v === "string" ? (now - Date.parse(v)) / 60000 : NaN);
+    const running = isObj(status) && status.state === "running" && ago(status.startedAt) < 20;
+    const stopped =
+      mode === "chain" &&
+      !!w &&
+      inHours(w, now, tz) &&
+      !(next > now - 30 * 60000) &&
+      !running &&
+      !(ago(st.lastRunAt) < 30);
+    const problem = typeof st.problem === "string" ? st.problem.trim() : "";
+    if (stopped || problem) {
+      let t = stopped
+        ? "Scheduled refreshes have stopped" +
+          (Number.isFinite(next) ? " (the next run was due " + schedTime(next, now, tz) + lab + ")" : "")
+        : "Scheduled refreshes hit a problem";
+      t += problem ? ": " + problem + (/[.!?]$/.test(problem) ? "" : ".") : ".";
+      out.warns.push(t + " Ask Claude in chat to “" + rp + "”, and it offers to restart them.");
+    }
+    const mi = st.misses;
+    if (mode === "chain" && Number.isInteger(mi) && mi >= 2)
+      out.warns.push(
+        "The last " +
+          mi +
+          " scheduled runs couldn't reach Chrome. Each run needs the computer awake and Chrome open, with Claude in Chrome connected.",
+      );
+    return out;
+  }
+  /* rebuilt only when something changed, so the status region isn't announced again every minute */
+  let schedShown = null;
+  function renderSchedule() {
+    const box = $("#sched");
+    if (!box) return;
+    const v = scheduleView(S.meta, S.sched, S.refresh, Date.now(), RP());
+    const sig = JSON.stringify(v);
+    if (sig === schedShown) return;
+    schedShown = sig;
+    box.textContent = "";
+    if (v.line) box.append(el("p", "line", v.line));
+    v.warns.forEach(t => box.append(el("p", "warn", t)));
+    box.hidden = !v.line && !v.warns.length;
   }
 
   /* ---------- threading and summary documents (v1.17) ----------
@@ -5887,6 +6095,7 @@
           rebuild();
           renderRefresh();
           renderUpdates();
+          renderSchedule();
         });
       },
       () => {},
@@ -5941,6 +6150,14 @@
         S.refresh = s.exists ? s.data() : null;
         renderRefresh();
         renderUpdates();
+        renderSchedule();
+      },
+      () => {},
+    );
+    db.doc("refresh/schedule").onSnapshot(
+      s => {
+        S.sched = s.exists ? s.data() : null;
+        renderSchedule();
       },
       () => {},
     );
