@@ -2022,9 +2022,11 @@ class TestZip(unittest.TestCase):
                 shutil.copy2(os.path.join(ROOT, "plugin", f), os.path.join(dst, "plugin", f))
             shutil.copy2(os.path.join(ROOT, "make-zip.sh"), dst)
             sk = os.path.join(dst, "plugin", "skills", "refresh")
-            open(os.path.join(sk, "assets", ".DS_Store"), "w").write("junk")
+            with open(os.path.join(sk, "assets", ".DS_Store"), "w") as f:
+                f.write("junk")
             os.makedirs(os.path.join(sk, "scripts", "__pycache__"))
-            open(os.path.join(sk, "scripts", "__pycache__", "x.pyc"), "w").write("junk")
+            with open(os.path.join(sk, "scripts", "__pycache__", "x.pyc"), "w") as f:
+                f.write("junk")
             subprocess.run(["sh", os.path.join(dst, "make-zip.sh")], check=True, capture_output=True)
             names = sorted(
                 n
@@ -2104,6 +2106,25 @@ class TestPlugin(unittest.TestCase):
                 [exe, "plugin", "validate", "--strict", target], cwd=ROOT, capture_output=True, text=True
             )
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+
+class TestNoUnclosedFiles(unittest.TestCase):
+    def test_no_open_read_or_write_one_liners(self):
+        """Reading or writing straight off `open()` leaves the file to the garbage collector, which prints "Exception ignored … ResourceWarning"
+        that `-W error::ResourceWarning` can't fail on (BACKLOG C8). Use `with open(...)`."""
+        one_liner = re.compile(r"open\([^()]*(\([^()]*\)[^()]*)*\)\.(read|write)\(")
+        found = []
+        for d, _, files in os.walk(ROOT):
+            if any(x in d for x in (".git", "node_modules", ".venv", ".claude")):
+                continue
+            for name in files:
+                if name.endswith(".py"):
+                    path = os.path.join(d, name)
+                    with open(path, encoding="utf-8") as f:
+                        for n, line in enumerate(f, 1):
+                            if one_liner.search(line) and "one_liner" not in line:
+                                found.append("%s:%d" % (os.path.relpath(path, ROOT), n))
+        self.assertEqual(found, [])
 
 
 if __name__ == "__main__":

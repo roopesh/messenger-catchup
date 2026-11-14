@@ -3304,7 +3304,10 @@ class TestManifestDocs(unittest.TestCase):
         return sorted(e["collection"] for bt in man["batches"] for e in bt if e.get("pin"))
 
     def test_references_name_what_each_manifest_pins(self):
-        ref = lambda *p: open(os.path.join(ROOT, "plugin", "skills", "refresh", *p), encoding="utf-8").read()
+        def ref(*p):
+            with open(os.path.join(ROOT, "plugin", "skills", "refresh", *p), encoding="utf-8") as f:
+                return f.read()
+
         live = small_live(self.t.name)
         _, run = live_relink(live, {"relink": {"10": [7, "i"]}}, "rl")
         relink_only = self.pins(run)

@@ -42,7 +42,8 @@ def generate(page, src):
 
 def read(p):
     try:
-        return open(p, encoding="utf-8").read()
+        with open(p, encoding="utf-8") as f:
+            return f.read()
     except FileNotFoundError:
         return None
 
@@ -53,8 +54,10 @@ def stale_copies():
 
 
 if __name__ == "__main__":
-    src = open(HELPER, encoding="utf-8").read()
-    page = open(PAGE, encoding="utf-8").read()
+    with open(HELPER, encoding="utf-8") as f:
+        src = f.read()
+    with open(PAGE, encoding="utf-8") as f:
+        page = f.read()
     new = generate(page, src)
     if "--check" in sys.argv:
         if new != page:
@@ -64,9 +67,11 @@ if __name__ == "__main__":
         print("bookmarklet and setup copies in sync")
         sys.exit(0)
     if new != page:
-        open(PAGE, "w", encoding="utf-8").write(new)
+        with open(PAGE, "w", encoding="utf-8") as f:
+            f.write(new)
         print("page.html updated")
     for f in stale_copies():
         os.makedirs(os.path.dirname(os.path.join(SETUP, f)), exist_ok=True)
-        open(os.path.join(SETUP, f), "w", encoding="utf-8").write(read(os.path.join(SKILL, f)))
+        with open(os.path.join(SETUP, f), "w", encoding="utf-8") as out:
+            out.write(read(os.path.join(SKILL, f)))
         print("setup/" + f + " updated")

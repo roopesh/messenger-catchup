@@ -14,7 +14,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
-| R9 | P3 | risk | Outbox name matching assumes Messenger's "Replying to …" and stored sender names agree. Live (Nov 7): labels are the nickname or the first name, and `to` uses the same; the reply bar itself is still unverified |
 | R10 | P3 | risk | Unchecked live: does a refresh from claude.ai in a browser need the Claude Desktop app open? The page, setup and README say it does |
 | R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
@@ -22,7 +21,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 876 (Nov 14) and adds 55–80 a day (to design) |
 | R19 | P3 | risk | Claude's own maintenance writes (link cleanup, digest backfill) hold the refresh lock while the user's approval waits, often past the lock's 20 minutes |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
-| C8 | P3 | cleanup | `tools/sync.py` leaves files open: the Python suite prints "Exception ignored … ResourceWarning" noise that `-W error::ResourceWarning` doesn't catch |
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F21 | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
@@ -73,11 +71,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### R19 · P3 · Claude's maintenance writes hold the refresh lock through slow approvals
 - **Found (Nov 14, live):** the cross-conversation link cleanup and the F16 digest backfill take the `refresh/status` lock, then write, and each write waits for the user's approval in the UI. Approvals took from minutes to 5.5 hours. Once the lock is 20 minutes old, scheduled refreshes treat it as stale and take over. Pinned writes kept the database whole: the cleanup was refused twice (`version_mismatch`) and landed on the third try, and the backfill's digest write landed, but its lock release was refused because a refresh had already replaced the status.
 - **Options:** writes that only touch documents refreshes never write (the backfill's `digests/m…` while refreshes run an older skill; a refresh on v1.25+ does write them) could skip the lock and rely on the pin; or the lock, the write and its release go in one batch, so there's one approval and no stale window; or `references/digests.md` and the cleanup procedure say to re-read and re-pin after a slow approval instead of assuming the lock held.
-
-## Cleanup
-
-### C8 · P3 · `tools/sync.py` leaves files open
-- **Found:** R18. The Python suite prints "Exception ignored while finalizing file … ResourceWarning: unclosed file" for `tools/sync.py`'s `read()` (`open(p).read()`), once per copied file. The warning is raised in a finalizer, so `-W error::ResourceWarning` doesn't fail on it. Use `with open(...)`.
 
 ## Features and opportunities
 
