@@ -309,6 +309,59 @@
   details.item[open] summary h3::after {
     content: " –";
   }
+  /* F26: a saved question is a card holding its details and a quiet Remove link */
+  .item.qa {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px 12px;
+  }
+  .item.qa > details {
+    min-width: 0;
+  }
+  .item.qa > details > .txt {
+    margin-top: 8px;
+  }
+  .item.qa > details > summary {
+    cursor: pointer;
+    list-style: none;
+    display: grid;
+    gap: 5px;
+  }
+  .item.qa > details > summary::-webkit-details-marker {
+    display: none;
+  }
+  .item.qa > details > summary h3 {
+    overflow-wrap: anywhere;
+  }
+  .item.qa > details > summary h3::after {
+    content: " +";
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .item.qa > details[open] > summary h3::after {
+    content: " –";
+  }
+  button.link.qa-rm {
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 0.82rem;
+    padding: 2px 0;
+  }
+  .qa-undo {
+    display: grid;
+    gap: 6px;
+  }
+  .qa-undo:not(:empty) {
+    margin-bottom: 10px;
+  }
+  .qa-undo p {
+    font-size: 0.9rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .qa-undo p.err {
+    color: var(--warn);
+  }
   .tablewrap {
     overflow-x: auto;
     border: 1px solid var(--line);
@@ -1423,7 +1476,9 @@
       <div class="sec-head">
         <h2>Earlier questions</h2>
         <p>Saved here so Claude can see what you asked.</p>
+        <button type="button" class="link qa-rm" id="qa-clear" hidden>Clear all</button>
       </div>
+      <div class="qa-undo" id="qa-undo" role="status" aria-live="polite"></div>
       <div class="list" id="qa-list"></div>
     </div>
   </section>
@@ -5902,18 +5957,99 @@
       }[c] || "Something went wrong. Try again."
     );
   }
+  /* ---------- removing saved questions (F26) ----------
+     Remove (or Clear all, from 2 saved questions) hides them at once and puts "Removed … · Undo" in #qa-undo, a
+     polite live region, for QA_UNDO_MS; then each qa/<id> is deleted, one at a time. Undo within the delay keeps
+     them; a failed delete puts that question back with a short line saying so. Each removal has its own line and
+     timer, so several in a row each work on their own. No dialogs. A deleted id stays in qaGone, so a late snapshot
+     can't show it again. Closing the page during the delay deletes at once (best effort). Tests shorten the delay
+     with window.__mcUndoMs; nothing in production sets it. */
+  const QA_UNDO_MS = window.__mcUndoMs || 6000;
+  const qaGone = new Set(); /* ids hidden: waiting to be deleted, or deleted */
+  const qaPending = new Set(); /* {ids, row, timer} */
+  const qaShort = q => {
+    const s = String(q ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return s.length > 48 ? s.slice(0, 47) + "…" : s;
+  };
+  const qaVisible = () => S.qa.filter(x => x._id && !qaGone.has(x._id));
+  function qaLine(text, err) {
+    const row = el("p", err ? "err" : null, text);
+    $("#qa-undo").append(row);
+    if (err) setTimeout(() => row.remove(), 8000);
+    return row;
+  }
+  function qaRemove(ids) {
+    ids = ids.filter(id => !qaGone.has(id));
+    if (!ids.length || !S.db) return;
+    const one = ids.length === 1 ? S.qa.find(x => x._id === ids[0]) : null;
+    const what = one ? "“" + qaShort(one.q) + "”" : ids.length + " questions";
+    ids.forEach(id => qaGone.add(id));
+    const row = qaLine("Removed " + what + " · ");
+    const u = el("button", "link", "Undo");
+    u.type = "button";
+    u.setAttribute("aria-label", "Undo: keep " + what);
+    row.append(u);
+    const P = { ids, row, what };
+    P.timer = setTimeout(() => qaCommit(P), QA_UNDO_MS);
+    qaPending.add(P);
+    u.onclick = () => {
+      if (!qaPending.delete(P)) return;
+      clearTimeout(P.timer);
+      ids.forEach(id => qaGone.delete(id));
+      row.remove();
+      renderQA();
+      const back = [...$("#qa-list").querySelectorAll(".item.qa")].find(c => c.dataset.id === ids[0]);
+      if (back) back.querySelector("summary").focus();
+    };
+    renderQA();
+    u.focus();
+  }
+  async function qaCommit(P) {
+    if (!qaPending.delete(P)) return;
+    clearTimeout(P.timer);
+    P.row.remove();
+    const failed = [];
+    for (const id of P.ids) {
+      try {
+        await S.db.doc("qa/" + id).delete();
+      } catch (e) {
+        failed.push(id);
+      }
+    }
+    if (!failed.length) return;
+    failed.forEach(id => qaGone.delete(id));
+    renderQA();
+    qaLine(
+      failed.length === 1 && P.ids.length === 1
+        ? "Couldn't remove " + P.what + ". It's back in the list."
+        : "Couldn't remove " + failed.length + " of " + P.ids.length + " questions. They're back in the list.",
+      true,
+    );
+  }
+  addEventListener("pagehide", () => [...qaPending].forEach(qaCommit));
+  $("#qa-clear").onclick = () => qaRemove(qaVisible().map(x => x._id));
   function renderQA() {
     const l = $("#qa-list");
+    const open = new Set([...l.querySelectorAll(".item.qa > details[open]")].map(d => d.parentNode.dataset.id));
     l.textContent = "";
-    if (!S.qa.length) {
+    const list = qaVisible();
+    const clr = $("#qa-clear");
+    clr.hidden = list.length < 2;
+    clr.setAttribute("aria-label", "Clear all " + list.length + " saved questions");
+    if (!list.length) {
       l.append(el("p", "note", "No questions yet."));
       return;
     }
-    S.qa
+    list
       .slice()
       .sort((a, b) => (b.at || "").localeCompare(a.at || ""))
       .forEach(x => {
-        const d = el("details", "item");
+        const c = el("div", "item qa");
+        c.dataset.id = x._id;
+        const d = el("details");
+        d.open = open.has(x._id);
         const s = el("summary");
         s.append(
           el("h3", null, x.q),
@@ -5930,7 +6066,12 @@
         t.style.whiteSpace = "pre-wrap";
         renderCites(t, x.a || "");
         d.append(s, t);
-        l.append(d);
+        const rm = el("button", "link qa-rm", "Remove");
+        rm.type = "button";
+        rm.setAttribute("aria-label", "Remove the question “" + qaShort(x.q) + "”");
+        rm.onclick = () => qaRemove([x._id]);
+        c.append(d, rm);
+        l.append(c);
       });
   }
 
@@ -7551,7 +7692,7 @@
     );
     db.collection("qa").onSnapshot(
       q => {
-        S.qa = q.docs.map(d => d.data());
+        S.qa = q.docs.map(d => Object.assign({}, d.data(), { _id: d.id }));
         renderQA();
       },
       () => {},
