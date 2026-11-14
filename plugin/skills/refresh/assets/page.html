@@ -897,6 +897,23 @@
   .callout .claims a {
     color: var(--accent);
   }
+  /* A deal's status (F22): a small calm pill beside its tag */
+  .callout .lab .dstat {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 0 6px;
+    border: 1px solid currentColor;
+    border-radius: 9px;
+    font-family: var(--body);
+    font-size: 0.72rem;
+    letter-spacing: 0;
+    text-transform: none;
+    text-decoration: none;
+    color: var(--muted);
+  }
+  .callout .lab a.dstat {
+    color: var(--accent);
+  }
   .marker {
     display: flex;
     flex-wrap: wrap;
@@ -2977,9 +2994,37 @@
     }
     return d;
   }
+  /* a link that opens message i through go(i) (the deal card's claims and status) */
+  function goLink(text, i, go, cls) {
+    const a = el("a", cls || null, text);
+    a.href = "#messages";
+    a.title = "Show this message (#" + i + ")";
+    a.onclick = e => {
+      e.preventDefault();
+      go(i);
+    };
+    return a;
+  }
+  /* F22 (A2): a deal's status, "sold" or "pending" (absent or null: open), with statusAt, the message that closed it.
+     Unknown values are ignored: null. */
+  const DEAL_STATUS = {
+    sold: { label: "Sold", after: "after it was sold" },
+    pending: { label: "Pending", after: "after pending" },
+  };
+  function dealStatus(x) {
+    const s = x && Object.prototype.hasOwnProperty.call(DEAL_STATUS, x.status) ? DEAL_STATUS[x.status] : null;
+    if (!s) return null;
+    return Object.assign({ at: Number.isInteger(x.statusAt) && x.statusAt >= 0 ? x.statusAt : null }, s);
+  }
+  /* the calm label next to the deal's tag, linking to statusAt when there is one */
+  function statusTag(st, go) {
+    if (st.at == null) return el("span", "dstat", st.label);
+    return goLink(st.label, st.at, go, "dstat");
+  }
   /* F19: a deal's claims [{i, who, n}] as "Claimed: Ben, Cy (2), Dee", first come first, each name opening its message
-     (go(i)). Entries without a message number or a name are skipped; null when none is left. */
-  function claimsLine(claims, go) {
+     (go(i)); a claim after the deal's statusAt says so. Entries without a message number or a name are skipped; null
+     when none is left. */
+  function claimsLine(claims, go, st) {
     if (!Array.isArray(claims)) return null;
     const ok = claims
       .filter(
@@ -2996,15 +3041,9 @@
       /* the name as the page shows it elsewhere: from the message when it's theirs, else from the stored name */
       const name = m && (m.f === who || m.fn === who) ? nameOf(m) : nameOf({ f: who });
       if (k) p.append(", ");
-      const a = el("a", null, name);
-      a.href = "#messages";
-      a.title = "Show this message (#" + c.i + ")";
-      a.onclick = e => {
-        e.preventDefault();
-        go(c.i);
-      };
-      p.append(a);
+      p.append(goLink(name, c.i, go));
       if (Number.isInteger(c.n) && c.n > 1) p.append(" (" + c.n + ")");
+      if (st && st.at != null && c.i > st.at) p.append(" (" + st.after + ")");
     });
     return p;
   }
@@ -3107,7 +3146,12 @@
     });
     deals.forEach(x => {
       const b = el("div", "callout deal");
-      b.append(el("div", "lab", x.tag || "Deal"), el("p", null, x.text));
+      /* a claim, or the message that closed the deal, in this card opens the thread at it; one elsewhere goes to Messages */
+      const go = i => (mem.includes(i) ? show([i]) : goMsg(i));
+      const st = dealStatus(x);
+      const lab = el("div", "lab", x.tag || "Deal");
+      if (st) lab.append(" ", statusTag(st, go));
+      b.append(lab, el("p", null, x.text));
       if ((x.links || []).length) {
         const p = el("p", "note");
         x.links.forEach(([lab, u], k) => {
@@ -3116,8 +3160,7 @@
         });
         b.append(p);
       }
-      /* a claim in this card opens the thread at it; one elsewhere goes to Messages */
-      const cl = claimsLine(x.claims, i => (mem.includes(i) ? show([i]) : goMsg(i)));
+      const cl = claimsLine(x.claims, go, st);
       if (cl) b.append(cl);
       d.append(b);
     });

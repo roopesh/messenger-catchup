@@ -5356,7 +5356,21 @@ async function claims() {
     deal('lend'),
     deal('gone', { claims: [] }),
     deal('t6', { claims: [{ i: 52 }, null, 'x'] }),
-    deal('t5', { claims: { i: 40, who: 'Ana' } }),
+    deal('t5', { claims: { i: 40, who: 'Ana' }, status: 'toString', statusAt: 39 }),
+    /* F22 (A2): status "sold" | "pending" with statusAt */
+    deal('t2', {
+      status: 'pending',
+      statusAt: 13,
+      claims: [
+        { i: 13, who: 'Cy' },
+        { i: 16, who: 'Ben', n: 2 },
+        { i: 25, who: 'Ana' },
+      ],
+    }),
+    deal('t3', { status: 'sold', statusAt: 'x', claims: [{ i: 20, who: 'Ana' }] }),
+    deal('t4', { status: 'SOLD', statusAt: 24, claims: [{ i: 26, who: 'Ben' }] }),
+    deal('t0', { status: null, statusAt: 2, claims: [{ i: 3, who: 'Cy' }] }),
+    deal('t1', { status: 'sold', statusAt: 8 }),
   ];
   const p = await open(SEED());
   await paste(p, JSON.stringify(cap(V.msgs)));
@@ -5398,18 +5412,60 @@ async function claims() {
       JSON.stringify(got.others) +
       ')',
   );
-  /* C3: a claim in the card opens its thread at that message; one in another conversation goes to Messages */
-  await p.click('[data-conv="packs"] .callout.deal .claims a:nth-of-type(2)');
-  const inCard = await until(p, () => {
-    const d = document.querySelector('[data-conv="packs"] details.thr');
-    return d && d.open && location.hash === '#summary';
-  });
-  await p.click('[data-conv="packs"] .callout.deal .claims a:nth-of-type(4)');
-  const away = await until(
-    p,
-    () =>
-      location.hash === '#messages' && !document.getElementById('v-messages').hidden && document.getElementById('m54'),
+  /* C4 (F22): "Sold" or "Pending" beside the deal, linking to statusAt; claims after it say so; unknown values ignored */
+  const sts = await p.evaluate(() =>
+    ['t2', 't3', 't4', 't0', 't1', 't5', 'packs'].map(c => {
+      const d = document.querySelector('[data-conv="' + c + '"] .callout.deal');
+      const x = d && d.querySelector('.lab .dstat');
+      const cl = d && d.querySelector('.claims');
+      return [
+        c,
+        x ? x.tagName + ':' + x.textContent + ':' + (x.getAttribute('href') || '') : null,
+        cl && cl.textContent,
+      ];
+    }),
   );
+  const wantSts = [
+    ['t2', 'A:Pending:#messages', 'Claimed: Cy, Ben (2) (after pending), Ana (after pending)'],
+    ['t3', 'SPAN:Sold:', 'Claimed: Ana'],
+    ['t4', null, 'Claimed: Ben'],
+    ['t0', null, 'Claimed: Cy'],
+    ['t1', 'A:Sold:#messages', null],
+    ['t5', null, null],
+    ['packs', null, 'Claimed: Ben Brooks, Cy (2), DD (Dee), Dee'],
+  ];
+  ok(
+    JSON.stringify(sts) === JSON.stringify(wantSts),
+    'claims C4: status shows "Pending"/"Sold" linking to statusAt (a plain label without one), claims after statusAt marked, unknown or null status ignored (' +
+      JSON.stringify(sts) +
+      ')',
+  );
+  const stClicked = await tryClick(p, '[data-conv="t2"] .callout.deal .lab a.dstat');
+  const stOpen =
+    stClicked &&
+    (await until(p, () => {
+      const d = document.querySelector('[data-conv="t2"] details.thr');
+      return d && d.open && location.hash === '#summary';
+    }));
+  ok(!!stOpen && !p.errors.length, 'claims C5: the "Pending" label opens its card\'s thread at statusAt (#13)');
+  /* C3: a claim in the card opens its thread at that message; one in another conversation goes to Messages */
+  const c2 = await tryClick(p, '[data-conv="packs"] .callout.deal .claims a:nth-of-type(2)');
+  const inCard =
+    c2 &&
+    (await until(p, () => {
+      const d = document.querySelector('[data-conv="packs"] details.thr');
+      return d && d.open && location.hash === '#summary';
+    }));
+  const c4 = await tryClick(p, '[data-conv="packs"] .callout.deal .claims a:nth-of-type(4)');
+  const away =
+    c4 &&
+    !!(await until(
+      p,
+      () =>
+        location.hash === '#messages' &&
+        !document.getElementById('v-messages').hidden &&
+        document.getElementById('m54'),
+    ));
   ok(
     inCard && away && !p.errors.length,
     'claims C3: Cy (#35, in the card) opens its thread; Dee (#54, another conversation) goes to Messages (' +

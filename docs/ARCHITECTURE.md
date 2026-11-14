@@ -101,7 +101,7 @@ The helper exists **twice**: the file itself, and its `jump()` body as a URL-enc
 Everything (summary cards, counts, mentions, open questions) filters to the window. The date inputs never rebuild while focused and save 1.5 s after the last keystroke, on Enter, or on blur (EXPERIMENTS.md §6).
 
 ### Summary (v3 cards, `renderSummaryV2`, line 757)
-"Your replies" (outbox) → "Needs you" (mentions) → filter chips (All / Open / Deals / Answered) → one card per conversation (`convCard`, line 724) with open/deal/answered call-outs (a deal's `claims` as a "Claimed:" line, `claimsLine`), outcome, bullets that open the thread at their messages, and a lazily built thread → collapsed "Links shared".
+"Your replies" (outbox) → "Needs you" (mentions) → filter chips (All / Open / Deals / Answered) → one card per conversation (`convCard`, line 724) with open/deal/answered call-outs (a deal's `claims` as a "Claimed:" line, `claimsLine`, and its `status` as a "Sold"/"Pending" label, `statusTag`), outcome, bullets that open the thread at their messages, and a lazily built thread → collapsed "Links shared".
 
 ### Threading display (`convTree`, line 703)
 One tree for cards and the Messages tab. `r`/`rq`/`rg`/`i` links nest under their parent; `c` (same person continuing) sits right after the earlier message at the same level; depth is capped at 3. **A link only nests when its parent is in the same conversation**; otherwise the message shows as a root.
@@ -179,7 +179,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | | (no longer read) | `dates` (left in old pages; the page stopped reading it in v1.7.3) |
 | `chunks/cNNNN` | Page importer | `{start, msgs}` |
 | `threading/*` | Claude (from catchup.py's manifest) | `current` + blocks (layout above); merged: `convs[{id,title,members}]`, `links{i:[parent,type]}`, `to`, `note`, `builtAt`* |
-| `summary/*` | Claude (from catchup.py's manifest) | `current` + blocks (layout above); merged: `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs,claims?[{i,who,n}]}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
+| `summary/*` | Claude (from catchup.py's manifest) | `current` + blocks (layout above); merged: `version:2`, `convs[{id,tag,synopsis[{t,refs}],outcome,key}]`, `open[{conv,ask,to,note}]`, `answered[{conv,ask,answer,refs}]`, `deals[{kind,tag,conv,text,links?,refs,claims?[{i,who,n}],status?,statusAt?}]`, `mentions[{note,refs:[[i]]}]`, `toI`, `generatedAt`; optional `mentionsNote`, `fromI` |
 | `people/index` | Page importer; Claude's one-time scan (`scannedAt`, `scanned`; entries without positions) | `people{"<full name>":{shown:[names Messenger showed],firstI,lastI}}`. The page names people from it: the first name, the full name when two share a first name, and a nickname as "nickname (first or full name)". Real names live only in each user's page database, never in the repo |
 | `photos/b<start>` | Page importer (v1.22.0) | one per 500 messages: `start`, `byK{i:{k: "/_blob/<id>" \| null \| {e}}}` (stored, owed, given up: by capture slot, so a re-paste skips the right ones), `gifs[i]` |
 | `photos/index` | Page importer before v1.22.0; read only now | `byI{i:["/_blob/<id>",…]}`, `byK{i:{k:"/_blob/<id>"}}`, `gifs[i]` |
