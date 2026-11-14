@@ -966,16 +966,26 @@ class TestSkillRoom(unittest.TestCase):
             self.assertIn(must, warnings)
 
     def test_nothing_new_with_unbuilt_messages(self):
+        """Review of release A: the condition is WORK's base below meta/chat.lastI, not bootstrap's message. A chain
+        conversation reuses WORK without bootstrapping, so messages a dead run imported would never be built."""
         step3 = step(self.skill, 3)
         self.assertIn(
-            '**Nothing new** (`err:null, win:0`), unless bootstrap said "stored but not built yet" (then `references/troubleshooting.md`)',
+            "**Nothing new** (`err:null, win:0`), unless WORK is behind (its `base` below `meta/chat.lastI`: `references/troubleshooting.md`)",
             step3,
         )
+        self.assertNotIn("unless bootstrap said", step3)
         self.assertIn(
             'bootstrap says so as "stored but not built yet"', self.skill, "Before each run names the message"
         )
-        line = re.search(r'^- bootstrap says messages are "stored but not built yet".*$', self.trouble, re.M).group(0)
-        for must in ("`base` is below `meta/chat.lastI`", "skip only step 4, not 4–6", "then build and write as usual"):
+        line = re.search(
+            r"^- WORK is behind: its `state.json` `base` is below `meta/chat.lastI`.*$", self.trouble, re.M
+        ).group(0)
+        for must in (
+            '"stored but not built yet"',
+            "a conversation that reuses WORK doesn't bootstrap, so compare them yourself",
+            "skip only step 4, not 4–6",
+            "then build and write as usual",
+        ):
             self.assertIn(must, line)
 
     def test_selfcheck_failure_and_copy_failed(self):
@@ -1322,7 +1332,7 @@ class TestScheduling(unittest.TestCase):
         for where, text in (("scheduling.md", self.ref()), ("setup's Scheduling", self.setup_scheduling())):
             self.assertNotRegex(text, r"(?i)\bdoubl(e|es|ed|ing)\b(?!-)|\bback ?off\b|\bexponential", where)
         delay = step(self.arm(), 3)
-        self.assertIn("`every` minus 5 minutes", delay)
+        self.assertIn("`every` minutes from now", delay)
         self.assertIn("whatever `misses` says: no waiting longer", delay)
 
     def test_misses_are_counted_reported_and_cleared(self):
@@ -1471,8 +1481,9 @@ class TestScheduling(unittest.TestCase):
         self.assertIn("<refreshPhrase>", none)
 
     def test_scheduling_reference_stays_small(self):
-        """Read on every scheduled run (hourly). 9,500 since R14 (v1.23.0) added the end-of-run step (9,444)."""
-        self.assertLess(len(self.ref().encode()), 9500)
+        """Read on every scheduled run (hourly). 10,500 since R14 (v1.23.0) added the end-of-run step, the overlap and the
+        early arm's approval note."""
+        self.assertLess(len(self.ref().encode()), 10500)
 
     def test_desktop_requirement(self):
         self.assertIn("**The Claude Desktop app is open**", section(in_setup("SKILL.md"), "Requirements"))
@@ -1567,15 +1578,48 @@ class TestScheduling(unittest.TestCase):
         self.assertNotRegex(six, r"\bArms\b|\bArm\b(?! (wrote|left))", "the end of a run never arms")
 
     def test_overlapping_runs_keep_one_chain(self):
-        """R14: the early-armed next run can start while this one runs: it arms its own successor, skips for the lock
-        and records the reach; this run's end then writes nothing."""
-        overlap = bullet(self.run_steps(), "Overlap:")
+        """R14, review of release A: the early-armed next run starts `every` after this one, so it finds a running
+        run's lock fresh only when `every` is under 20 minutes (the lock's stale age). For usual settings it takes the
+        lock over (BACKLOG R18), and pinned writes stop the run whose write is refused. Either way it arms its own
+        successor first, so this run's end writes nothing."""
+        overlap = bullet(self.run_steps(), "Overlap")
+        stale = int(re.search(r"its `startedAt` is less than (\d+) minutes old", in_skill("SKILL.md")).group(1))
         for must in (
-            "it Arms its own successor, skips for the run lock and sets `misses` to 0",
-            "this run's step 6 then finds `armId` changed and writes nothing",
+            "(BACKLOG R18)",
+            "the run this one armed starts `every` after this one did",
+            "That run Arms its own successor.",
+            "With `every` under %d minutes, this run's lock is still fresh: it skips for the lock and sets `misses` to 0."
+            % stale,
+            "Otherwise the lock is over %d minutes old: it takes it over as stale and refreshes beside this run"
+            % stale,
+            "a run whose write is refused while another run's `running` is in `refresh/status` stops",
+            "`references/writing-the-build.md` › Refused writes",
+            "Either way this run's step 6 finds `armId` changed and writes nothing",
             "one chain, no miss counted twice",
         ):
             self.assertIn(must, overlap)
+        self.assertIn("### R18", read("docs", "BACKLOG.md"))
+        refused = section(in_skill("references", "writing-the-build.md"), "Refused writes")
+        self.assertIn("if `refresh/status` now shows another run's `running`", refused)
+
+    def test_runs_start_every_apart(self):
+        """Review of release A: the early arm counts the delay from the run's start, so it is `every` itself (minus 5
+        would start runs 5 minutes more often than the user chose)."""
+        delay = step(self.arm(), 3)
+        self.assertIn("A chain run arms as it starts, so runs start `every` apart.", delay)
+        self.assertNotIn("minus", delay)
+        self.assertNotRegex(self.ref(), r"`every` minus \d")
+        self.assertIn("A follow-up is armed `every` after a run starts", read("docs", "DECISIONS.md"))
+
+    def test_an_early_arm_stuck_on_approval(self):
+        """Review of release A: an approval on the early arm holds the refresh up, and only a run with the user present
+        meets one."""
+        five = step(self.arm(), 5)
+        for must in (
+            "A chain run arms before its refresh, so such a call holds the refresh up too until the user answers it.",
+            "Only a run with the user present (setup, a refresh they asked for) meets an approval: unattended chain runs already need none.",
+        ):
+            self.assertIn(must, five)
 
     def test_superseded_and_failed_early_arms(self):
         """R14: losing the arm to another session stops the run; a failed arm (no tool, a tool error) follows Arm's
