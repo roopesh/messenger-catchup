@@ -122,6 +122,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F20 | P2 | feature | A `move` spec key: put an already-built message into another conversation (`relink` can only change its link) (issue #41) · **done** (v1.23.0) |
 | F21 | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
 | F22 | P3 | feature | The page could show a deal's `status` ("sold", "pending"), which v1.23.0 stores; release B shows `claims` only · **done** (v1.24.0: "Sold" or "Pending" beside the deal, linking to `statusAt`, and in the card's header chip) |
+| F23 | P3 | feature | A Messenger reply mid-conversation to a message in another conversation shows no "replying to…" line (27 on the owner's page) |
 
 ---
 
@@ -825,4 +826,8 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - `references/restoring-a-summary.md` noted and pinned only `summary/current` and said threading wasn't touched; following it left the page refusing every bootstrap. It now pins both, and `TestManifestDocs` checks every reference describing a manifest write against what that command's manifest pins.
   - A pair from different writes no longer locks a page whose writing session is gone: bootstrap accepts it when it fits together (`_problems`), and `--rollback` refiles the summary to fit threading (`_heal`) when it doesn't; `relink` with `{}` writes it when there's nothing new to build. The same check catches a half-landed write on pages without `rev`.
   - `dealEdit` `index` is refused on the conversation a move took a deal out of, and in the build after a standalone move (`state.json` `moved`); the "deals in X now" lines cover the source; `ref` and `index` together are refused.
+
+### F23 · P3 · Show cross-conversation replies mid-conversation
+- **Found:** cleaning up the owner's page (Nov 13). Of 122 links whose parent sat in another conversation, 52 were wrong guesses (fixed live with `relink` and `move`). The 70 left are real Messenger replies where the topic drifted. 43 start a conversation, and the page shows their parent as context (B40). 27 sit mid-conversation, where the page draws no link at all.
+- **Fix:** for a message whose link crosses conversations, show a short "replying to Ben: …" line that opens the parent, like B40's context line. Moving these would misfile them, so the page should show them instead.
 
