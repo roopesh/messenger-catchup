@@ -1,6 +1,6 @@
 # Outbox (replies queued with "Reply here" on the page)
 
-Read this in full before handling any outbox row. The bridge commands (`jump`) are in SKILL.md › Helper. The row's fields are in `references/database.md` (the `outbox/r<ms>` line).
+Read this in full before handling any outbox row. The bridge is in SKILL.md › Helper, and its commands (`jump`) in `references/helper.md` › Commands. The row's fields are in `references/database.md` (the `outbox/r<ms>` line).
 
 - `ArtifactData query outbox` where `state=="queued"`. For each, check `to` and `snip` against the stored message (`i`, `mid`).
 - If `meta/chat.outboxAuto` is true, post each one. Otherwise list them for the user (who it's to, their message, the exact reply) and post only the ones they say yes to in chat. During a scheduled run with no one there, list them in the report and leave them queued.

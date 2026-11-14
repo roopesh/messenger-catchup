@@ -27,7 +27,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R10 | P3 | risk | The page's requirements text doesn't say the Claude Desktop app must be open |
 | R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
-| R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up |
+| R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up · **done** (v1.23.0) |
+| R18 (A3) | P3 | risk | Now that a chain run arms as it starts, a run still going when the next one fires (over `every` minus 5 minutes) has a lock older than 20 minutes, which the next run takes over |
 | R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 715 and adds about 55 a day (to design) |
 | R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
 | R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again |
@@ -459,9 +460,28 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Also:** a claude.ai conversation has a hard length limit. Once a chain's conversation reaches it, follow-ups can't be delivered and the chain stops (a refresh the user asks for then finds it stopped).
 - **Fix:** measure a chain's cost per run after a week or two; if it climbs, or the conversation nears its limit, have a run move the chain to a fresh conversation now and then (setup's Stop or change, then arm from the new one).
 
-### R14 · P3 · Arming at the end of a run
+### R14 · P3 · Arming at the end of a run · done (v1.23.0)
 - **What:** a chain run arms the next one after the refresh steps, however they end. A run that dies mid-refresh (the session is cut off, a tool call never returns) arms nothing, and the chain stops until a refresh the user asks for offers to restart it.
 - **Option:** arm early, right after the stale and hours checks, so the next run is already pending; the run would then only update `misses` at the end. Kept at the end for v1.21.0 (owner's call after the second PR #39 review: less churn).
+- **Done in v1.23.0** (owner's call: arm early). `references/scheduling.md` › A scheduled run:
+  - **Step 5:** after `lastRunAt`, a chain run Arms before the refresh steps. The early arm writes a new `armId` and `nextAt` and leaves `misses` alone (Arm step 4).
+  - **Losing or failing the arm:** if Arm stops because another session armed (a duplicate delivery), the run is superseded and stops without refreshing. If Arm fails (no tool, or a tool error), it writes `problem` and `nextAt:null` as before, and the refresh still goes ahead.
+  - **Step 6, the end of a chain run** (what "reschedule" means in the refresh steps): get `refresh/schedule`. If `armId` is still the last token this run wrote, set `misses`, pinned: 0 if Chrome was reached (a lock skip counts as reached), otherwise its current value plus 1. `nextAt` and `problem` stay as Arm left them, so a failed early arm is still reported. If `armId` changed, write nothing.
+  - **Overlap:** the early-armed next run can fire while this one is going. It arms its own successor, skips for the lock and records `misses:0`. This run's end then finds `armId` changed and writes nothing, so there's one chain and no miss is counted twice.
+  - **Other paths:** a run outside the hours arms for the window and stops, skipping step 6. Stale runs, older messages and recurring runs are unchanged.
+  - **The dead-chain check** (After a refresh the user asked for) is unchanged. Its "no run going" guards now cover the moments before a run arms, and runs by older copies of the skill. A live chain's `nextAt` is ahead even mid-run.
+  - **Delay:** still `every` minus 5 minutes, now counted from a run's start rather than its end. Runs start every 55 minutes for `every` 60, and each wake stays inside the prompt cache, since the cache counts from the end of the last run.
+  - **Sizes:** the reference's cap rose to 9,500 bytes (9,444).
+- **Also in v1.23.0 (A3), room in the refresh `SKILL.md`** (19,847 → 18,293 bytes) for F19/F20 and release C's per-day digests. Text that only some refreshes need moved out, and SKILL.md names its new place in the step where it was:
+  - **To `references/helper.md`:** the command list (new › Commands, read before the first command in each conversation), the install link (› Versions), the `DATES-GUESSED` rule (› Warnings) and `extra>0`.
+  - **To `references/troubleshooting.md`:** what to do with nothing new while messages are "stored but not built yet", the `selfcheck` failure message, and COPY FAILED (› Import toasts).
+  - **To `references/writing-the-build.md`:** the list of what `catchup.py` checks (new › What catchup.py checks).
+  - **Shortened:** the reference list, the quote-match CHECK note (the line prints its reason), and the relink's refused write (step 7's rule covers it).
+  - **Tests:** `test_tools.TestSkillRoom`, plus seven new `TestScheduling` tests. Each failed before the change.
+
+### R18 (A3) · P3 · A run older than the lock's 20 minutes when the next one fires
+- **What:** since R14, a chain run arms as it starts, so the next run fires `every` minus 5 minutes after this one started, not after it ended. If this run is still going then (a large backlog, a long photo wait, a slow outbox), its `refresh/status` lock is more than 20 minutes old, and the next run treats it as stale and takes over. That run scans in the same Messenger tab. The first run's pinned step 7 writes are then refused, and writing-the-build.md › Refused writes stops it, but the two can disturb each other's scan first. Before R14 this could only happen with a refresh the user asked for.
+- **Fix (if it shows up):** have a run that finds the lock 20+ minutes old check `lastRunAt` and the lock's `step` before taking over, or renew `startedAt` at each step.
 
 ## Doc and instruction gaps (SKILL.md / page text vs code)
 

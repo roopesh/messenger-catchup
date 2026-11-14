@@ -773,9 +773,13 @@ class TestHelper2(unittest.TestCase):
             "helperPost:true",
         ):
             self.assertIn(s, doc)
+        commands = section(in_skill("references", "helper.md"), "Commands")
         self.assertRegex(
-            self.skill, r"`post` only when `meta/chat.helperPost` is true \(`references/posting-with-helper.md`\)"
+            commands, r"`post` only when `meta/chat.helperPost` is true \(`references/posting-with-helper.md`\)"
         )
+        line = re.search(r"^- Commands \(.*$", self.skill, re.M).group(0)
+        self.assertIn("`post`", line, "SKILL.md names post and where it's described")
+        self.assertIn("`references/helper.md` › Commands", line)
         self.assertIn("a.helperPost !== true", self.src, "the helper itself refuses without the opt-in")
 
     def test_post_maps_every_result_to_an_outbox_state(self):
@@ -859,7 +863,9 @@ class TestHelper2(unittest.TestCase):
         self.assertIn('[aria-label="More actions"]', self.jump_code())
 
     def test_stall_and_navigation_are_explained(self):
-        self.assertIn('"Inspected target navigated": expected', self.skill)
+        self.assertIn(
+            '"Inspected target navigated": expected', section(in_skill("references", "helper.md"), "Commands")
+        )
         step3 = re.search(r"^3\. .*$", self.skill, re.M).group(0)
         self.assertIn('`"stalled"` or `"top-spinner"`: retry once, `references/helper.md` › Scan results', step3)
         for e in ('err:"stalled"', 'err:"top-spinner"'):
@@ -895,6 +901,126 @@ class TestHelper2(unittest.TestCase):
             "Once the helper is 1.7 or later, the next refresh runs the scan",
         ):
             self.assertIn(s, people)
+
+
+class TestSkillRoom(unittest.TestCase):
+    """R14 (A3, v1.23.0): text only some refreshes need moved out of SKILL.md to make room. Each moved fact is asserted
+    in its new place, and SKILL.md names that place, saying when to read it, in the step where the fact was."""
+
+    def setUp(self):
+        self.skill = in_skill("SKILL.md")
+        self.helper = in_skill("references", "helper.md")
+        self.trouble = in_skill("references", "troubleshooting.md")
+
+    def test_helper_commands_live_in_helper_md(self):
+        line = re.search(r"^- Commands \(.*$", section(self.skill, "Helper"), re.M).group(0)
+        self.assertIn(
+            "`references/helper.md` › Commands. Read it before your first command in each conversation.", line
+        )
+        self.assertNotIn("probe{anchor}", self.skill, "the command list moved")
+        self.assertIn("Commands (before your first command in each conversation)", self.helper.split("\n## ")[0])
+        commands = section(self.helper, "Commands")
+        src = in_skill("assets", "helper.user.js")
+        table = src[src.index("const CMDS = {") : src.index("\n  };", src.index("const CMDS = {"))]
+        names = re.findall(r"^    (\w+):", table, re.M)
+        self.assertGreaterEqual(len(names), 10, names)
+        for n in names:
+            self.assertIn("`%s" % n, commands, "helper.md › Commands doesn't describe " + n)
+        for must in (
+            "`ping` → `{v}`",
+            "`probe{anchor}` → `{vis,n,found,after}`",
+            "`scan{stops}` or `scan{first:{count}}`; `verify`; `capture{base}`",
+            "`full{stops|first, base, run}`: scan, reload, verify, capture. Pass a fresh `run` id",
+            "poll `sessionStorage.mc_result` in new calls",
+            "accept it only when its `run` equals yours: `stage:'captured'`, `'verify-failed'`, or `'scan'`",
+            "with `err:null, win:0` = nothing new since the last run",
+            "Results carry `warn`, `top` and `scroller`",
+            "Messages that arrive during the run (`extra>0`) wait for the next run.",
+            "`selfcheck` → `{ok,missing,warn,counts}`",
+            "`jump{mid,reply}`",
+            "`people{count}`: `references/people.md`",
+        ):
+            self.assertIn(must, commands)
+        self.assertIn("`references/helper.md` › Commands", in_skill("references", "outbox.md"))
+
+    def test_install_link_lives_in_helper_md(self):
+        url = "https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js"
+        self.assertNotIn(url, self.skill)
+        self.assertIn("(install link: `references/helper.md` › Versions)", section(self.skill, "Helper"))
+        versions = section(self.helper, "Versions")
+        self.assertIn("Install link (also on the page; steps in the setup skill): " + url, versions)
+        self.assertIn("open the install link (below)", versions)
+
+    def test_dates_guessed_reaches_the_report(self):
+        step3 = step(self.skill, 3)
+        self.assertIn(
+            "a capture summary ending `DATES-GUESSED #…`, in the report (`references/helper.md` › Warnings)", step3
+        )
+        warnings = section(self.helper, "Warnings")
+        for must in (
+            "`DATES-GUESSED #…`",
+            "`mc_result.capture`, or the `capture` command's result",
+            "couldn't be read and took the previous message's date",
+            "List them in the report, since Messenger may have changed its labels.",
+        ):
+            self.assertIn(must, warnings)
+
+    def test_nothing_new_with_unbuilt_messages(self):
+        step3 = step(self.skill, 3)
+        self.assertIn(
+            '**Nothing new** (`err:null, win:0`), unless bootstrap said "stored but not built yet" (then `references/troubleshooting.md`)',
+            step3,
+        )
+        self.assertIn(
+            'bootstrap says so as "stored but not built yet"', self.skill, "Before each run names the message"
+        )
+        line = re.search(r'^- bootstrap says messages are "stored but not built yet".*$', self.trouble, re.M).group(0)
+        for must in ("`base` is below `meta/chat.lastI`", "skip only step 4, not 4–6", "then build and write as usual"):
+            self.assertIn(must, line)
+
+    def test_selfcheck_failure_and_copy_failed(self):
+        self.assertIn("(the message: `references/troubleshooting.md`, its `selfcheck` line)", step(self.skill, 2))
+        line = re.search(r"^- `selfcheck` says `ok:false`.*$", self.trouble, re.M).group(0)
+        for must in ('"Messenger changed: " and the `missing` items', "names the page language, say that instead"):
+            self.assertIn(must, line)
+        step4 = re.search(r"^4\. Import by paste:.*?(?=^5\. )", self.skill, re.M | re.S).group(0)
+        self.assertIn("(COPY FAILED: `references/troubleshooting.md` › Import toasts)", step4)
+        self.assertIn("allow clipboard access for facebook.com", section(self.trouble, "Import toasts"))
+
+    def test_catchup_checks_are_listed_where_a_failure_sends_claude(self):
+        self.assertIn(
+            "(all its checks: `references/writing-the-build.md` › What catchup.py checks)",
+            section(self.skill, "catchup.py"),
+        )
+        self.assertNotIn("It asserts:", self.skill)
+        ref = in_skill("references", "writing-the-build.md")
+        self.assertIn("a listing or a broken rule", ref.split("\n## ")[0])
+        checks = section(ref, "What catchup.py checks")
+        for must in (
+            "bullets ≤15 words, outcomes ≤12, each message in exactly one conversation",
+            "links point backwards with a known type",
+            "every reference belongs to its conversation (bullets, keys, open, answered, deal refs and `dealEdit` additions)",
+            "mentions point at stored messages by someone else",
+            "`closeOpen` matches an open question, no question is opened twice",
+            "the import updated `meta/chat`",
+            "before anything is written or WORK moves",
+        ):
+            self.assertIn(must, checks)
+
+    def test_a_refused_relink_write(self):
+        relink = re.search(r"^- \*\*Fixing a link with nothing new to build:\*\*.*$", self.skill, re.M).group(0)
+        self.assertIn("as in step 7 (a refused write included)", relink)
+        self.assertIn("`references/writing-the-build.md` › Refused writes", step(self.skill, 7))
+        refused = section(in_skill("references", "writing-the-build.md"), "Refused writes")
+        self.assertIn("**A relink:** `catchup.py restore WORK` and bootstrap again.", refused)
+
+    def test_quote_match_check_carries_its_reason(self):
+        """SKILL.md no longer spells out the two doubtful quote matches: the CHECK line prints the reason."""
+        self.assertIn("`CHECK quote match (…)` (a doubtful quote match, the reason in brackets", step(self.skill, 6))
+        py = in_skill("scripts", "catchup.py")
+        self.assertIn('"CHECK quote match (%s)" % doubt', py)
+        for reason in ("short quote, same text", "quote found inside the text, not at its start"):
+            self.assertIn('"%s"' % reason, py)
 
 
 class TestSetupSkill(unittest.TestCase):
@@ -1078,13 +1204,14 @@ class TestScheduling(unittest.TestCase):
         uses = re.findall(r"reschedule", skill[:runs_at])
         self.assertGreaterEqual(len(uses), 3, "Before each run and step 2 reschedule")
         self.assertIn('that is what "reschedule" means above', skill[runs_at:])
-        ends = step(self.run_steps(), 5)
+        ends = step(self.run_steps(), 6)
         for must in (
+            "**End of a chain run**, however it ends",
             "done, nothing new, skipped because another run holds the lock, an error, Chrome unreachable",
-            "a chain run then Arms",
             'that\'s what "reschedule" means in the refresh steps',
         ):
             self.assertIn(must, ends)
+        self.assertIn("A chain run then Arms, before the refresh steps", step(self.run_steps(), 5))
 
     def test_follow_up_messages_match(self):
         """H2: the recurring prompt carries a token too, so stopping or changing the schedule makes old tasks stale."""
@@ -1202,12 +1329,16 @@ class TestScheduling(unittest.TestCase):
         """L3: every arm sets misses; a lock skip reached Chrome; a report clears it."""
         write = step(self.arm(), 4)
         for must in (
-            "from a chain run, its value plus 1 if this run couldn't reach Chrome, otherwise 0",
-            "a run skipped for the lock counts as reaching it",
-            "from a run outside the hours, unchanged",
+            "from a chain run (its early arm, or outside the hours), unchanged: the run's end sets it",
             "from setup or a refresh the user asked for, 0",
         ):
             self.assertIn(must, write)
+        end = step(self.run_steps(), 6)
+        for must in (
+            "0 if this run reached Chrome (a run skipped for the lock counts as reaching it)",
+            "otherwise its current value plus 1",
+        ):
+            self.assertIn(must, end)
         self.assertTrue(bullet(self.after(), "`misses` above 0").endswith("then set it to 0."))
 
     def test_stale_runs_do_nothing(self):
@@ -1340,8 +1471,8 @@ class TestScheduling(unittest.TestCase):
         self.assertIn("<refreshPhrase>", none)
 
     def test_scheduling_reference_stays_small(self):
-        """Read on every scheduled run (hourly)."""
-        self.assertLess(len(self.ref().encode()), 8500)
+        """Read on every scheduled run (hourly). 9,500 since R14 (v1.23.0) added the end-of-run step (9,444)."""
+        self.assertLess(len(self.ref().encode()), 9500)
 
     def test_desktop_requirement(self):
         self.assertIn("**The Claude Desktop app is open**", section(in_setup("SKILL.md"), "Requirements"))
@@ -1400,6 +1531,72 @@ class TestScheduling(unittest.TestCase):
         stored = section(self.ref(), "Where it's stored")
         self.assertIn("UTC time plus 4 random characters", stored)
         self.assertRegex(stored, r"`\d{8}T\d{6}Z-[a-z0-9]{4}`")
+
+    def test_chain_run_arms_before_the_refresh(self):
+        """R14: a chain run arms right after the stale and hours checks, so a run that dies mid-refresh still leaves
+        the next one armed."""
+        five = step(self.run_steps(), 5)
+        self.assertIn(
+            "A chain run then Arms, before the refresh steps, so the next run is armed even if this one dies.", five
+        )
+        self.assertLess(five.index("{lastRunAt}"), five.index("Arms"))
+        self.assertLess(five.index("Arms"), five.index("Then do the refresh steps."))
+        self.assertTrue(five.endswith("Then do the refresh steps."), five)
+        runs = section(in_skill("SKILL.md"), "Scheduled runs")
+        self.assertIn("arms the next run before the refresh (only ever one, even if this run dies)", runs)
+
+    def test_early_arm_counts_nothing_yet(self):
+        """R14: the early arm writes a new armId and nextAt and leaves misses as it was."""
+        write = step(self.arm(), 4)
+        self.assertIn("from a chain run (its early arm, or outside the hours), unchanged", write)
+        self.assertNotIn("plus 1", write)
+        self.assertIn("A scheduled run, step 6", write)
+
+    def test_end_of_run_records_only_misses(self):
+        """R14: the end of a chain run gets refresh/schedule and, only while armId is still its token, sets misses,
+        pinned; it never arms again or touches nextAt and problem."""
+        six = step(self.run_steps(), 6)
+        for must in (
+            "Get `refresh/schedule`.",
+            "If `armId` is still the last token this run wrote (its early arm's, or its own if Arm wrote none), set `misses`, pinned",
+            "Leave `nextAt` and `problem` as Arm left them.",
+            "If refused, do this step again.",
+            "If `armId` has changed, another session armed: write nothing.",
+        ):
+            self.assertIn(must, six)
+        self.assertNotRegex(six, r"\bArms\b|\bArm\b(?! (wrote|left))", "the end of a run never arms")
+
+    def test_overlapping_runs_keep_one_chain(self):
+        """R14: the early-armed next run can start while this one runs: it arms its own successor, skips for the lock
+        and records the reach; this run's end then writes nothing."""
+        overlap = bullet(self.run_steps(), "Overlap:")
+        for must in (
+            "it Arms its own successor, skips for the run lock and sets `misses` to 0",
+            "this run's step 6 then finds `armId` changed and writes nothing",
+            "one chain, no miss counted twice",
+        ):
+            self.assertIn(must, overlap)
+
+    def test_superseded_and_failed_early_arms(self):
+        """R14: losing the arm to another session stops the run; a failed arm (no tool, a tool error) follows Arm's
+        problem/nextAt:null rule and the refresh goes ahead."""
+        five = step(self.run_steps(), 5)
+        self.assertIn(
+            "If Arm stops because another session armed, this run is superseded: stop without refreshing or writing anything more.",
+            five,
+        )
+        self.assertIn("If Arm fails (no tool, or the tool returns an error), the refresh still goes ahead.", five)
+        self.assertIn("write `problem` (what happened) and `nextAt:null`", step(self.arm(), 5))
+
+    def test_outside_hours_runs_skip_the_end_step(self):
+        """R14: a run outside the hours arms for the window and stops; it reached nothing, so it counts nothing."""
+        outside = step(self.run_steps(), 4)
+        self.assertIn("Chain: Arm (it aims for the window's start), then stop, skipping step 6.", outside)
+
+    def test_dead_chain_check_reads_an_early_armed_next_at(self):
+        """R14: nextAt is now set as a run starts, so a live chain's nextAt is ahead even mid-run."""
+        dead = bullet(self.after(), "Chain stopped:")
+        self.assertIn("(a chain run arms as it starts, so a live chain's `nextAt` is ahead even mid-run)", dead)
 
     def test_recurring_quiet_counts_from_the_window_start(self):
         """L1: a recurring task isn't called quiet just because the night had no runs."""

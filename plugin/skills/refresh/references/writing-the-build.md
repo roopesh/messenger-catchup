@@ -1,6 +1,6 @@
 # Writing a build to the page
 
-Read this the first time you write a build or a relink in a session; when bootstrap says a collection is "in the single-document layout", warns about block documents no current names, or stops; when a write is refused or stops partway; and when `catchup.py` stops on a document's size or a listing.
+Read this the first time you write a build or a relink in a session; when bootstrap says a collection is "in the single-document layout", warns about block documents no current names, or stops; when a write is refused or stops partway; and when `catchup.py` stops on a document's size, a listing or a broken rule.
 
 ## The manifest
 A page database document holds at most 256 KiB (262,144 bytes), and threading and summary grow with every refresh (about 25 and 50 bytes a message; a busy chat adds hundreds of messages a day). So each is a collection: `threading/current` and `summary/current` name block documents (`blocks`), each covering 1,000 messages (the layout: `references/database.md`). The page merges them back into one and shows everything. `catchup.py build` (and `relink`) reads step 5's listing of the whole collections in RUN (it stops if RUN holds only the `current` documents), writes only the documents that changed into `RUN/out/` and lists them in `RUN/out/manifest.json`:
@@ -10,6 +10,9 @@ A page database document holds at most 256 KiB (262,144 bytes), and threading an
 - `RUN/out/merged/` holds the whole merged state, for reading only. Never write it to the database.
 
 A changed block gets a new document id (its name carries a hash of its content), and the old one stays until `current` stops naming it. So a run that stops partway changes nothing the page reads. The next run bootstraps from what's there and rebuilds, finds the blocks it already wrote (it doesn't write them again), and finishes.
+
+## What catchup.py checks
+Before it writes anything, `build` (and `relink`) asserts: bullets ≤15 words, outcomes ≤12, each message in exactly one conversation, links point backwards with a known type, every reference belongs to its conversation (bullets, keys, open, answered, deal refs and `dealEdit` additions), mentions point at stored messages by someone else, `closeOpen` matches an open question, no question is opened twice, and the import updated `meta/chat`. A failed check stops with what's wrong, before anything is written or WORK moves: fix the spec and build again.
 
 ## Never drop anything to save space
 Never delete, shorten or prune conversations, bullets, answers, deals, mentions, links or messages to make a document smaller, and never invent a window or cut-off of your own. Sessions before v1.17 did, and the summaries they dropped are gone unless the page kept a backup (`references/restoring-a-summary.md`, only when the user asks). `catchup.py` splits the documents so each fits, with room to spare. If a build stops with "… would be N bytes, over the 245760-byte limit", nothing was written and WORK didn't move (there's nothing to restore). Do what the message says, usually: start a new conversation for the new messages instead of joining the one it names, then build again. Tell the user. Never edit block documents by hand.
