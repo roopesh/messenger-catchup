@@ -3,7 +3,8 @@
    The real page in Chromium with page.test.js's stand-in runtime, seeded from tests/synth.py (mock cast, block layout).
    For each size it prints, per full render (header + summary + messages) in date-range and caught mode, the reads of
    S.msgs and the milliseconds, then one Ask with "include older" at the real cap: bytes sent, messages word for word,
-   summary lines, lineFor calls and milliseconds. Default sizes: 6400 25000 50000. */
+   summary lines, lineFor calls and milliseconds. Before them, Show older messages (F15): the rows and msgRow calls and
+   milliseconds of turning it on, and of one more day loaded above. Default sizes: 6400 25000 50000. */
 const { chromium } = require('playwright');
 const fs = require('fs');
 const os = require('os');
@@ -86,6 +87,35 @@ const META = {
       polling: 200,
     });
     await p.waitForTimeout(300);
+    /* F15: Show older messages (date-range mode, the window's last 2 days): what opening it draws, then one step up */
+    const older = await p.evaluate(async () => {
+      location.hash = '#messages';
+      await new Promise(r => setTimeout(r, 50));
+      scrollTo(0, 0);
+      let calls = 0;
+      const orig = window.msgRow;
+      window.msgRow = function () {
+        calls++;
+        return orig.apply(this, arguments);
+      };
+      const rows = () => document.querySelectorAll('#msgs .msg[id]').length;
+      const all = document.getElementById('msg-all');
+      let t = performance.now();
+      all.checked = true;
+      all.dispatchEvent(new Event('change'));
+      document.body.offsetHeight;
+      const open = { rows: rows(), msgRow: calls, ms: Math.round(performance.now() - t) };
+      calls = 0;
+      t = performance.now();
+      if (typeof olderStep === 'function') olderStep(-1); /* what the top edge's observer calls */
+      document.body.offsetHeight;
+      const step = { rows: rows() - open.rows, msgRow: calls, ms: Math.round(performance.now() - t) };
+      window.msgRow = orig;
+      all.checked = false;
+      all.dispatchEvent(new Event('change'));
+      location.hash = '#summary';
+      return { open, step };
+    });
     const render = await p.evaluate(() => {
       const real = S.msgs;
       const out = {};
@@ -136,7 +166,7 @@ const META = {
         ms,
       };
     });
-    console.log(JSON.stringify({ n, render, ask }));
+    console.log(JSON.stringify({ n, older, render, ask }));
     await ctx.close();
   }
   fs.rmSync(tmp, { recursive: true, force: true });

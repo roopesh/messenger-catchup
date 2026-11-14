@@ -3591,6 +3591,282 @@ async function history2() {
   });
 }
 
+/* ---------- digests: per-day digests in Ask's older history (F16) ----------
+   catchup.py writes digests/m<YYYY-MM> {month, days:{day: {bullets:[{t, refs}], fromI, toI, n, at}}}; the page only
+   reads them. A day line takes its digest when it covers the whole day the digest was written for; title-only day lines
+   stay the floor, so every older message is still in some line, within the same budget. */
+/* digest documents for the days of msgs that keep(k, day, ids) picks; make(k, ids) gives a day's bullets */
+function hdigests(msgs, keep = () => true, make) {
+  const by = new Map();
+  msgs.forEach(m => (by.has(m.d) ? by.get(m.d).push(m.i) : by.set(m.d, [m.i])));
+  const docs = {};
+  [...by].forEach(([d, ids], k) => {
+    if (!keep(k, d, ids)) return;
+    const id = 'digests/m' + d.slice(0, 7);
+    docs[id] = docs[id] || { month: d.slice(0, 7), days: {} };
+    docs[id].days[d] = {
+      bullets: make
+        ? make(k, ids)
+        : [
+            { t: 'Ana sold a stove on day ' + k, refs: [ids[1], ids[2]] },
+            { t: 'Ben asked about permits on day ' + k, refs: [ids[5]] },
+          ],
+      fromI: ids[0],
+      toI: ids[ids.length - 1],
+      n: ids.length,
+      at: 'Thu Nov 12, 9:00 AM',
+    };
+  });
+  return docs;
+}
+/* the day of each message and each day's first and last number */
+function hdays(msgs) {
+  const span = new Map();
+  msgs.forEach(m => {
+    const s = span.get(m.d);
+    if (s) s[1] = m.i;
+    else span.set(m.d, [m.i, m.i]);
+  });
+  return span;
+}
+/* the page has read n days' digests (an older page has no S.digests: go on, so its checks fail on what it sends) */
+const dgLoaded = (p, n) => until(p, n => !S.digests || S.digests.size === n, n);
+const digestLines = dig => dig.filter(([, , l]) => /\] [\d,]+ messages?\. Digest: /.test(l));
+const citedIn = l => (l.match(/\[#\d+(?:, #\d+)*\]/g) || []).flatMap(x => x.match(/\d+/g).map(Number));
+
+async function digests() {
+  /* D1: no digests: title-only day lines as before; digests written later are used by the next question, within the
+     same cap, every older message still in a line, and the note and the saved row say so */
+  await hcase('D1', async () => {
+    const msgs = hmsgs(800, { perDay: 134 });
+    const span = hdays(msgs);
+    const p = await hopen(hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: 16384 } }), 800);
+    let r = await hask(p, 'Anything about permits?', true);
+    let { dig, raw } = parts(r.prompt);
+    ok(
+      dig.length > 0 &&
+        digestLines(dig).length === 0 &&
+        dig.some(([, , l]) => /\] \d+ messages\. Busiest: /.test(l)) &&
+        !/Digest:|Day digests/.test(r.prompt + r.note),
+      'D1: with no digests, the day lines are title-only as before ("Busiest: …") and nothing mentions digests',
+    );
+    await p.evaluate(docs => Object.entries(docs).forEach(([k, v]) => __rt.write(k, v)), hdigests(msgs));
+    await dgLoaded(p, 6);
+    const w0 = await p.evaluate(() => __rt.writes.length);
+    r = await hask(p, 'Who sold a stove?', true);
+    ({ dig, raw } = parts(r.prompt));
+    const c = raw[0];
+    const dl = digestLines(dig);
+    ok(
+      r.calls.length === 1 && r.calls[0].bytes <= 16384 - HMARGIN && dl.length > 0,
+      'D1: with digests, ' +
+        dl.length +
+        ' day lines carry one, in one call of ' +
+        r.calls[0].bytes +
+        ' bytes (cap 16 KiB less the margin)',
+    );
+    ok(
+      dl.every(([a, b, l]) => {
+        const d = msgs[a].d,
+          k = Math.floor(a / 134);
+        const cites = citedIn(l.slice(l.indexOf('Digest: ')));
+        return (
+          span.get(d)[0] === a &&
+          span.get(d)[1] === b &&
+          l.includes('Ana sold a stove on day ' + k + ' [#' + (a + 1) + ', #' + (a + 2) + ']') &&
+          l.includes(' | Ben asked about permits on day ' + k + ' [#' + (a + 5) + ']') &&
+          cites.length === 3 &&
+          cites.every(i => i >= a && i <= b)
+        );
+      }),
+      "D1: each digest line spans its whole day and cites that day's messages after each bullet",
+    );
+    const missing = uncovered(dig, hthreads(800).threading.convs, c);
+    ok(
+      dig[0][0] === 0 && missing.length === 0 && dig.every(([, b]) => b < c),
+      'D1: every message before #' + c + ' is still in a line (' + missing.length + ' missing), none reaches #' + c,
+    );
+    const n = dl.length,
+      from = n ? dl[0][0] : -1,
+      to = n ? dl[n - 1][1] : -1;
+    const days = (a, b) => {
+      if (a < 0) return '';
+      const x = msgs[a].d.slice(5).split('-').map(Number),
+        y = msgs[b].d.slice(5).split('-').map(Number);
+      const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return x.join() === y.join()
+        ? M[x[0] - 1] + ' ' + x[1]
+        : M[x[0] - 1] + ' ' + x[1] + '–' + (x[0] === y[0] ? '' : M[y[0] - 1] + ' ') + y[1];
+    };
+    ok(
+      r.prompt.includes(
+        'The day lines from #' + from + ' to #' + to + ' that say Digest: carry a few bullets on that day',
+      ) && r.note.includes(' Day digests for ' + n + ' day' + (n === 1 ? '' : 's') + ' (' + days(from, to) + ').'),
+      'D1: "What you have" and the note say which day lines carry digests ("' + r.note + '")',
+    );
+    const qa = await until(p, () =>
+      Object.entries(Object.fromEntries(__rt.store)).find(
+        ([k, v]) => k.startsWith('qa/a') && v.q === 'Who sold a stove?',
+      ),
+    );
+    const sent = qa && qa[1].sent;
+    ok(
+      sent &&
+        sent.from === c &&
+        sent.digests &&
+        sent.digests.n === n &&
+        sent.digests.from === from &&
+        sent.digests.to === to,
+      'D1: the qa row saves sent.digests ' + JSON.stringify(sent && sent.digests),
+    );
+    ok(
+      (await p.textContent('#qa-list')).includes(', day digests #' + from + '–#' + to),
+      'D1: Earlier questions says digests were used',
+    );
+    ok(
+      !(await p.evaluate(w0 => __rt.writes.slice(w0).some(w => w.p.startsWith('digests/')), w0)),
+      'D1: the page never writes digests',
+    );
+    ok(p.errors.length === 0, 'D1: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* D2: a day without a digest, one written for another span, one citing only other days or unstored numbers, and
+     one with a bad bullet: each falls back to title-only or keeps only what it may cite */
+  await hcase('D2', async () => {
+    const msgs = hmsgs(800, { perDay: 100 });
+    const docs = hdigests(
+      msgs,
+      k => k !== 1,
+      (k, ids) =>
+        k === 2
+          ? [{ t: 'Too early', refs: [ids[1]] }]
+          : k === 4
+            ? [{ t: 'Elsewhere', refs: [5, 99999] }]
+            : k === 5
+              ? [
+                  { t: 'Mixed refs', refs: [5, ids[3], ids[3] + 1000] },
+                  { t: 'No list', refs: 'x' },
+                  { t: 7, refs: [ids[1]] },
+                ]
+              : [{ t: 'Plain day ' + k, refs: [ids[2]] }],
+    );
+    const d2 = msgs[200].d;
+    docs['digests/m' + d2.slice(0, 7)].days[d2].fromI = 199; /* claims a day that started a message earlier */
+    const p = await hopen(
+      hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: 12288 }, docs }),
+      800,
+    );
+    await dgLoaded(p, 7);
+    const r = await hask(p, 'What happened?', true);
+    const { dig } = parts(r.prompt);
+    const dayLine = k => dig.find(([a, b, l]) => a === k * 100 && b === k * 100 + 99 && /\] 100 messages\./.test(l));
+    const kinds = [0, 1, 2, 3, 4, 5].map(k => {
+      const x = dayLine(k);
+      return x ? (/Digest: /.test(x[2]) ? 'D' : /Busiest: |Not grouped/.test(x[2]) ? 'T' : '?') : '-';
+    });
+    ok(
+      kinds.join('') === 'DTTDTD',
+      'D2: days 0, 3 and 5 carry their digest; day 1 (none), 2 (written for another span) and 4 (cites nothing of its own) are title-only: ' +
+        kinds.join(''),
+    );
+    const five = dayLine(5);
+    ok(
+      five && five[2].endsWith('100 messages. Digest: Mixed refs [#503]'),
+      'D2: a bullet keeps only the numbers of its own day, and bullets with bad fields are left out: ' +
+        (five && five[2]),
+    );
+    ok(r.calls.length === 1 && r.calls[0].bytes <= 12288 - HMARGIN, 'D2: one call within the cap');
+    ok(p.errors.length === 0, 'D2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* D3: long digests at a small cap: within the cap, and they never push older days out: the first line is the same
+     as without digests (title-only lines are the floor) */
+  await hcase('D3', async () => {
+    const msgs = hmsgs(800, { perDay: 20 });
+    const long = (k, ids) =>
+      Array.from({ length: 8 }, (_, j) => ({
+        t: ('Day ' + k + ' bullet ' + j + ' about the long ridge trail permits and the spare tent poles ')
+          .repeat(3)
+          .slice(0, 238),
+        refs: ids.slice(j, j + 10),
+      }));
+    const first = {};
+    for (const [label, docs] of [
+      ['without', {}],
+      ['with', hdigests(msgs, () => true, long)],
+    ]) {
+      for (const cap of [12288, 32768]) {
+        const p = await hopen(
+          hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: cap }, docs }),
+          800,
+        );
+        if (label === 'with') await dgLoaded(p, 40);
+        const r = await hask(p, 'Anything about permits?', true);
+        const { dig, raw } = parts(r.prompt);
+        first[label + cap] = dig.length ? dig[0][0] : null;
+        ok(
+          r.calls.length === 1 && r.calls[0].bytes <= cap - HMARGIN,
+          'D3: ' + label + ' digests at ' + cap + ': one call of ' + r.calls[0].bytes + ' bytes',
+        );
+        if (label === 'with') {
+          const dl = digestLines(dig);
+          /* at 12 KiB the digests' room (half the summaries' share) is smaller than one of these long ones */
+          ok(
+            (cap < 32768 || dl.length > 0) &&
+              dl.every(([a, b, l]) => citedIn(l.slice(l.indexOf('Digest: '))).every(i => i >= a && i <= b)),
+            'D3: at ' +
+              cap +
+              ', ' +
+              dl.length +
+              ' of ' +
+              dig.filter(([, , l]) => /\] \d+ messages\./.test(l)).length +
+              ' day lines carry a digest, each citing only its day',
+          );
+          const missing = first['without' + cap] === 0 ? uncovered(dig, hthreads(800).threading.convs, raw[0]) : [];
+          ok(
+            first['with' + cap] === first['without' + cap] && missing.length === 0,
+            'D3: at ' +
+              cap +
+              ' the summaries start at #' +
+              first['with' + cap] +
+              ' with digests, #' +
+              first['without' + cap] +
+              ' without; ' +
+              missing.length +
+              ' messages missing',
+          );
+        }
+        await p.close();
+      }
+    }
+  });
+
+  /* D4: dayLines(fromI, toI), for other prompts that summarize a stretch by day */
+  await hcase('D4', async () => {
+    const msgs = hmsgs(300, { perDay: 100 });
+    const p = await hopen(hseed(msgs, { threads: true, docs: hdigests(msgs, k => k === 1) }), 300);
+    await dgLoaded(p, 1);
+    const ls = await p.evaluate(() =>
+      typeof dayLines === 'function' ? [dayLines(0, 299), dayLines(150, 299), dayLines(5, 3)] : [[], [], []],
+    );
+    ok(
+      ls[0].length === 3 &&
+        ls[0].map(l => (l.dg ? 'D' : 'T')).join('') === 'TDT' &&
+        ls[0][1].a === 100 &&
+        ls[0][1].b === 199 &&
+        ls[0][1].text.startsWith('[#100–#199, Oct 2] 100 messages. Digest: Ana sold a stove on day 1 [#101, #102]') &&
+        ls[0].every(l => l.kind === 'day' && l.bytes === new TextEncoder().encode(l.text).length + 1),
+      'D4: dayLines gives a line per day, the digest where a day has one: ' +
+        ls[0].map(l => l.text.slice(0, 40)).join(' / '),
+    );
+    ok(
+      ls[1].length === 2 && !ls[1][0].dg && ls[1][0].a === 150 && ls[2].length === 0,
+      'D4: a stretch starting mid-day gets that day title-only (the digest covers the whole day); an empty stretch, nothing',
+    );
+    ok(p.errors.length === 0, 'D4: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
 /* ---------- R2: photos stored as they upload ----------
    Each photo is indexed (photos/b<start>) the moment it lands, refresh/lastImport says "uploading" with a heartbeat
    while they store, owed slots are on record (null, and meta/chat.photosOwed), every upload error code has its own
@@ -5966,10 +6242,11 @@ async function deepPress(p) {
   );
 }
 const DEEP_Q = 'Who sold a stove?';
-async function deepOpen(opts = {}) {
+async function deepOpen(opts = {}, digests = false) {
   const msgs = hmsgs(800, { perDay: 130 });
   const p = await hopen(
     hseed(msgs, {
+      docs: digests ? hdigests(msgs) : {},
       threads: { interleave: true, long: [50, 700] },
       meta: { caughtUpI: 769 },
       opts: Object.assign({ promptMax: 32768, answer: 'From a summary: Ana sold the stove early on [#5].' }, opts),
@@ -6190,6 +6467,36 @@ async function deeper() {
         st +
         '", the empty answer goes, nothing is saved, and Ask and the button work again',
     );
+    await p.close();
+  });
+
+  /* D8: with per-day digests (F16), step 1 sees the digest lines Ask sent; a citation in the deeper answer opens its
+     message, loading its day (F15) */
+  await hcase('D8', async () => {
+    const { p, r } = await deepOpen({ promptMax: 16384 }, true);
+    await scriptJson(p, [{ stretches: [{ from: 100, to: 160 }] }]);
+    await deepPress(p);
+    const j = await p.evaluate(() => __json[__json.length - 1].prompt);
+    const dg = (r.prompt.match(/^\[#\d+(?:–#\d+)?, [A-Z][a-z]{2} \d+\] [\d,]+ messages\. Digest: .*$/gm) || []).slice(
+      0,
+      3,
+    );
+    ok(
+      dg.length > 0 && dg.every(l => j.includes(l)),
+      'D8: step 1 carries the digest day lines Ask sent (' +
+        dg.length +
+        ' checked, e.g. "' +
+        (dg[0] || '').slice(0, 80) +
+        '")',
+    );
+    await p.evaluate(() =>
+      [...document.querySelectorAll('#chat .turn.assistant')].pop().querySelector('a.cite').click(),
+    );
+    ok(
+      await until(p, () => location.hash === '#messages' && document.getElementById('m5')),
+      'D8: a citation in the deeper answer (#5, before the window) opens that message',
+    );
+    ok(p.errors.length === 0, 'D8: no page errors ' + JSON.stringify(p.errors));
     await p.close();
   });
 }
@@ -6489,6 +6796,438 @@ async function longRanges() {
   });
 }
 
+/* ---------- olderByDay: "Show older messages" by day (F15) ----------
+   With Show older on, the Messages tab holds the window and the day before it; an edge near the top of the screen loads
+   the previous day (an IntersectionObserver) and keeps the message on screen where it was. Counted, never timed: rows
+   drawn (.msg[id] and msgRow calls). synth.py writes about 460 messages a day from 7 AM Sep 1, so a day is far taller
+   than the screen and one scroll to the top loads exactly one day. The browser's own scroll anchoring is off (Safari has
+   none), so the page has to keep the place itself. */
+const OP = [];
+async function ocase(name, fn) {
+  try {
+    await fn();
+  } catch (e) {
+    ok(false, name + ' crashed: ' + ((e && e.stack) || e).toString().split('\n').slice(0, 3).join(' '));
+  }
+  while (OP.length)
+    await OP.pop()
+      .context()
+      .close()
+      .catch(() => {});
+}
+/* meta(msgs): what to add to meta/chat */
+async function oopen(n, meta, ctx) {
+  const { seed, msgs } = synthSeed(n, 1000);
+  Object.assign(seed['meta/chat'], meta(msgs));
+  const p = await open(seed, PAGE, ctx);
+  OP.push(p);
+  await until(p, n => S.msgs.length === n && S.threading, n, 120000);
+  await p.addStyleTag({ content: '* { overflow-anchor: none !important; }' });
+  await p.evaluate(() => {
+    location.hash = '#messages';
+    scrollTo(0, 0);
+  });
+  await p.waitForTimeout(200);
+  return { p, msgs };
+}
+const oRows = p => p.evaluate(() => document.querySelectorAll('#msgs .msg[id]').length);
+/* day d: the index of its first and last message, and how many */
+function oDay(msgs, d) {
+  const a = msgs.findIndex(m => m.d === d);
+  let b = a;
+  while (b + 1 < msgs.length && msgs[b + 1].d === d) b++;
+  return { a, b, n: b - a + 1 };
+}
+/* (after scrolling to y, when given) the first message row or conversation on screen below the tabs and the toolbar
+   when it sticks: a selector and its height on screen. Taken in the same task as the scroll, before any day loads. */
+const oSpot = (p, y) =>
+  p.evaluate(y => {
+    if (y != null) scrollTo(0, y);
+    const v = document.getElementById('v-messages');
+    const tb = v.querySelector('.toolbar').getBoundingClientRect();
+    const sticks = getComputedStyle(v.querySelector('.toolbar')).position === 'sticky';
+    const top = Math.max(document.querySelector('nav.tabs').getBoundingClientRect().bottom, sticks ? tb.bottom : 0);
+    for (const x of document.querySelectorAll('#msgs .msg[id], #msgs details.conv > summary')) {
+      const r = x.getBoundingClientRect();
+      if (r.height > 0 && r.bottom > top && r.top < innerHeight)
+        return {
+          key: x.id ? '#' + x.id : '#msgs details.conv[data-conv="' + x.parentElement.dataset.conv + '"] > summary',
+          y: Math.round(r.top),
+        };
+    }
+    return null;
+  }, y);
+const oY = (p, key) =>
+  p.evaluate(k => {
+    const x = document.querySelector(k);
+    return x ? Math.round(x.getBoundingClientRect().top) : null;
+  }, key);
+/* count msgRow calls from now on (window.__rows) */
+const oCount = p =>
+  p.evaluate(() => {
+    window.__rows = 0;
+    if (!window.__wrapped) {
+      const o = window.msgRow;
+      window.msgRow = function () {
+        window.__rows++;
+        return o.apply(this, arguments);
+      };
+      window.__wrapped = true;
+    }
+  });
+/* scroll to the top and wait for the next day (or 3 s); then a moment more, in case another loads */
+async function oUp(p) {
+  const r0 = await oRows(p);
+  const spot = await oSpot(p, 0);
+  await until(p, r0 => document.querySelectorAll('#msgs .msg[id]').length !== r0, r0, 3000);
+  await p.waitForTimeout(400);
+  const r1 = await oRows(p);
+  return { r0, r1, spot, y: spot && (await oY(p, spot.key)), made: await p.evaluate(() => window.__rows) };
+}
+/* the threaded layout's conversations: none twice, in order of their first message shown, and every row once */
+const oConvs = p =>
+  p.evaluate(() => {
+    const ids = [...document.querySelectorAll('#msgs > details.conv:not([data-conv="_rest"])')];
+    const firsts = ids.map(d => Math.min(...[...d.querySelectorAll('.msg[id]')].map(x => +x.id.slice(1))));
+    const rows = [...document.querySelectorAll('#msgs .msg[id]')].map(x => x.id);
+    return {
+      convs: ids.map(d => d.dataset.conv),
+      unique: new Set(ids.map(d => d.dataset.conv)).size === ids.length,
+      sorted: firsts.every((x, k) => k === 0 || x > firsts[k - 1]),
+      rowsOnce: new Set(rows).size === rows.length,
+      rows: rows.sort().join(),
+    };
+  });
+const lastTwoDays = n => msgs => ({ markerMode: 'time', markerFrom: msgs[n - 920].d + 'T00:00' });
+
+async function olderByDay() {
+  /* O1: at 6,400 and 25,000 messages, Show older draws the window and the day before it, nothing more */
+  await ocase('O1', async () => {
+    for (const n of [6400, 25000]) {
+      const { p, msgs } = await oopen(n, lastTwoDays(n));
+      const wa = msgs.findIndex(m => m.d === msgs[n - 920].d);
+      const prev = oDay(msgs, msgs[wa - 1].d);
+      const win = await oRows(p);
+      await oCount(p);
+      await p.click('#msg-all');
+      await p.waitForTimeout(600);
+      const got = await oRows(p);
+      const made = await p.evaluate(() => window.__rows);
+      ok(
+        win === n - wa && got === n - prev.a && made < 1.2 * got,
+        'F15 O1: at ' +
+          n +
+          ' messages Show older draws the window (' +
+          (n - wa) +
+          ') and the day before it (' +
+          prev.n +
+          '): ' +
+          got +
+          ' rows, ' +
+          made +
+          ' msgRow calls with context lines (was every stored message)',
+      );
+      await OP.pop().context().close();
+    }
+  });
+
+  /* O2: each scroll to the top adds the previous day, keeps the message on screen in place and loads nothing more */
+  await ocase('O2', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    await p.click('#lay-flat');
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const res = [];
+    for (let k = 0; k < 2; k++) {
+      await oCount(p);
+      const r = await oUp(p);
+      const d = oDay(msgs, msgs[Math.max(0, n - r.r0 - 1)].d);
+      res.push({ added: r.r1 - r.r0, day: d.n, made: r.made, dy: r.y == null ? null : r.y - r.spot.y });
+    }
+    ok(
+      res.every(r => r.added === r.day && r.made === r.day),
+      'F15 O2: in the timeline, each scroll to the top loads one more day, drawing only that day ' +
+        JSON.stringify(res),
+    );
+    ok(
+      res.every(r => r.dy != null && Math.abs(r.dy) <= 3),
+      'F15 O2: the message on screen stays put as a day is added above it (moved ' +
+        res.map(r => r.dy).join(', ') +
+        ' px)',
+    );
+    ok(
+      (await p.evaluate(() => scrollY)) > 2000 && !(await p.$('#msgs > .edge.top:not(.more)')),
+      'F15 O2: after loading, the reader is still deep in the page, with more days above',
+    );
+    ok(p.errors.length === 0, 'F15 O2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O3: the threaded layout: a day added at the top redraws only the conversations it touches, every message shows
+     once, conversations stay in order, and a full redraw (new data) shows the same */
+  await ocase('O3', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    await p.click('#lay-thread');
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const res = [];
+    for (let k = 0; k < 2; k++) {
+      await oCount(p);
+      const r = await oUp(p);
+      const d = oDay(msgs, msgs[Math.max(0, n - r.r0 - 1)].d);
+      res.push({ added: r.r1 - r.r0, day: d.n, made: r.made, dy: r.y == null ? null : r.y - r.spot.y });
+    }
+    const c1 = await oConvs(p);
+    ok(
+      res.every(r => r.added === r.day && r.made <= 2 * r.day),
+      'F15 O3: threaded, each scroll to the top adds one day, redrawing only what it touches ' + JSON.stringify(res),
+    );
+    ok(
+      res.every(r => r.dy != null && Math.abs(r.dy) <= 3),
+      'F15 O3: threaded, the conversation or message on screen stays put (moved ' +
+        res.map(r => r.dy).join(', ') +
+        ' px)',
+    );
+    await p.evaluate(() => renderMessages());
+    const c2 = await oConvs(p);
+    ok(
+      c1.unique && c1.sorted && c1.rowsOnce && c1.convs.join() === c2.convs.join() && c1.rows === c2.rows,
+      'F15 O3: threaded, conversations show once each, in order, every message once, and a full redraw shows the same ' +
+        JSON.stringify([c1.unique, c1.sorted, c1.rowsOnce, c1.convs.length, c2.convs.length]),
+    );
+    ok(p.errors.length === 0, 'F15 O3: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O4: a jump to a message that isn't loaded loads its day; next to the span it joins it; a filter searches everything */
+  await ocase('O4', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    const wa = msgs.findIndex(m => m.d === msgs[n - 920].d);
+    const t = msgs[n - 10 * 460].i;
+    const td = oDay(msgs, msgs[n - 10 * 460].d);
+    await p.evaluate(t => goMsg(t), t);
+    await p.waitForTimeout(600);
+    const j = await p.evaluate(
+      ([t, wa]) => {
+        const x = document.getElementById('m' + t);
+        const r = x && x.getBoundingClientRect();
+        return {
+          shown: !!x && r.top >= 0 && r.bottom <= innerHeight,
+          banner: !document.getElementById('msg-older').hidden,
+          win: !!document.getElementById('m' + wa),
+        };
+      },
+      [t, msgs[wa].i],
+    );
+    const rows = await oRows(p);
+    ok(
+      j.shown && j.banner && !j.win && rows === td.n,
+      'F15 O4: a jump to #' +
+        t +
+        ' (10 days back) loads its day only (' +
+        rows +
+        ' rows, the day has ' +
+        td.n +
+        ') and shows it ' +
+        JSON.stringify(j),
+    );
+    await p.fill('#msg-q', '#5');
+    await p.waitForTimeout(400);
+    const f = await p.evaluate(() => [
+      !!document.getElementById('m5'),
+      document.querySelectorAll('#msgs .msg[id]').length,
+    ]);
+    await p.fill('#msg-q', '');
+    await p.waitForTimeout(400);
+    ok(
+      f[0] && f[1] < 100 && (await oRows(p)) >= td.n && (await p.$('#m' + t)),
+      'F15 O4: the filter searches every stored message (#5 found, ' +
+        f[1] +
+        ' rows), and clearing it brings the loaded days back',
+    );
+    await p.click('#msg-older button.link');
+    await p.waitForTimeout(300);
+    const back = await oRows(p);
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const r0 = await oRows(p);
+    const a0 = n - r0;
+    const prev = oDay(msgs, msgs[a0 - 1].d);
+    const t2 = msgs[prev.b - 5].i; /* late in that day, so the reader isn't near its top */
+    await p.evaluate(t => goMsg(t), t2);
+    await p.waitForTimeout(600);
+    ok(
+      back === n - wa &&
+        (await oRows(p)) === r0 + prev.n &&
+        (await p.evaluate(i => !!document.getElementById('m' + i), msgs[wa].i)),
+      'F15 O4: Back to my window shows the window (' +
+        back +
+        '); a jump into the day just before the loaded days adds that day to them (' +
+        r0 +
+        ' + ' +
+        prev.n +
+        ')',
+    );
+    ok(p.errors.length === 0, 'F15 O4: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O5: turning Show older on and off keeps the message on screen; off is the window only (the timeline) */
+  await ocase('O5', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    const wa = msgs.findIndex(m => m.d === msgs[n - 920].d);
+    await p.click('#lay-flat');
+    /* the toolbar just under the tabs, the window's first messages below it */
+    await p.evaluate(() => {
+      const t = document.querySelector('#v-messages .toolbar');
+      scrollTo(
+        0,
+        scrollY + t.getBoundingClientRect().top - document.querySelector('nav.tabs').getBoundingClientRect().bottom,
+      );
+    });
+    const s0 = await oSpot(p);
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const y1 = await oY(p, s0.key);
+    const on = await oRows(p);
+    await p.evaluate(i => document.getElementById('m' + i).scrollIntoView({ block: 'center' }), msgs[wa + 200].i);
+    const s2 = await oSpot(p);
+    await p.click('#msg-all');
+    await p.waitForTimeout(400);
+    const off = await p.evaluate(() => ({
+      edges: document.querySelectorAll('#msgs .edge').length,
+      older: document.getElementById('v-messages').classList.contains('older'),
+    }));
+    const y3 = await oY(p, s2.key);
+    ok(
+      s0.key === '#m' + msgs[wa].i && Math.abs(y1 - s0.y) <= 3 && on > n - wa,
+      'F15 O5: turning Show older on keeps ' +
+        s0.key +
+        " (the window's first) where it was (" +
+        s0.y +
+        ' → ' +
+        y1 +
+        ')',
+    );
+    ok(
+      (await oRows(p)) === n - wa && !off.edges && !off.older && y3 != null && Math.abs(y3 - s2.y) <= 3,
+      'F15 O5: turning it off shows the window only, with no edges, and keeps ' +
+        s2.key +
+        ' in place (' +
+        s2.y +
+        ' → ' +
+        y3 +
+        ')',
+    );
+    ok(p.errors.length === 0, 'F15 O5: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O6: scrolling up to the first stored message ends with a calm "Start of stored history" line, and loads no more */
+  await ocase('O6', async () => {
+    const n = 1500;
+    const { p } = await oopen(n, () => ({ markerMode: 'caught', caughtUpI: n - 50 }));
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    for (let k = 0; k < 6 && !(await p.$('#msgs > .edge.top:not(.more)')); k++) await oUp(p);
+    const top = await p.evaluate(() => {
+      const e = document.querySelector('#msgs > .edge.top');
+      return e && { text: e.textContent, first: e === document.getElementById('msgs').firstElementChild };
+    });
+    const r = await oUp(p);
+    ok(
+      top && top.first && /^Start of stored history · Sep 1$/.test(top.text) && r.r0 === n && r.r1 === n,
+      'F15 O6: at the first stored message the top says "' + (top && top.text) + '" and nothing more loads',
+    );
+    ok(
+      /Loaded from Sep 1, the start of stored history\./.test(await p.textContent('#msg-note')),
+      'F15 O6: the note says the start of stored history is loaded',
+    );
+  });
+
+  /* O7: a date range with an end: the next day after it loads at the bottom */
+  await ocase('O7', async () => {
+    const n = 1500;
+    const { p, msgs } = await oopen(n, msgs => ({
+      markerMode: 'time',
+      markerFrom: msgs[400].d + 'T00:00',
+      markerTo: msgs[400].d + 'T23:59',
+    }));
+    const d1 = oDay(msgs, msgs[400].d),
+      d2 = oDay(msgs, msgs[d1.b + 1].d);
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const r0 = await oRows(p);
+    const bot = !!(await p.$('#msgs > .edge.bot.more'));
+    await p.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
+    await until(p, r0 => document.querySelectorAll('#msgs .msg[id]').length !== r0, r0, 3000);
+    await p.waitForTimeout(300);
+    const r1 = await oRows(p);
+    ok(
+      r0 === d1.b + 1 && bot && r1 === r0 + d2.n,
+      'F15 O7: a one-day range shows it and the day before (' +
+        r0 +
+        '); scrolling to the bottom loads the next day (' +
+        (r1 - r0) +
+        ' of ' +
+        d2.n +
+        ')',
+    );
+  });
+
+  /* O8: at phone width: no sideways scroll, and the toolbar stays under the tabs so Show older can be turned off */
+  await ocase('O8', async () => {
+    const n = 1500;
+    const { p } = await oopen(n, () => ({ markerMode: 'caught', caughtUpI: n - 50 }), {
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    await p.tap('#msg-all');
+    await p.waitForTimeout(500);
+    await p.evaluate(() => scrollTo(0, scrollY + 3000));
+    await p.waitForTimeout(200);
+    const r = await p.evaluate(() => ({
+      sw: document.documentElement.scrollWidth <= innerWidth,
+      gap: Math.round(
+        document.querySelector('#v-messages .toolbar').getBoundingClientRect().top -
+          document.querySelector('nav.tabs').getBoundingClientRect().bottom,
+      ),
+    }));
+    await p.tap('#msg-all');
+    await p.waitForTimeout(300);
+    ok(
+      r.sw && Math.abs(r.gap) <= 2 && !(await p.$('#msgs .edge')) && (await oRows(p)) === 49,
+      'F15 O8: at phone width nothing scrolls sideways, the toolbar sits under the tabs (' +
+        r.gap +
+        ' px), and tapping Show older there turns it off',
+    );
+    ok(p.errors.length === 0, 'F15 O8: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O9: dark mode: the start line and the sticky toolbar use the dark colors */
+  await ocase('O9', async () => {
+    const n = 1500;
+    const { p, msgs } = await oopen(n, msgs => ({ markerMode: 'time', markerFrom: msgs[400].d + 'T00:00' }), {
+      colorScheme: 'dark',
+    });
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const c = await p.evaluate(() => {
+      const e = document.querySelector('#msgs > .edge.top:not(.more)');
+      return {
+        line: e && getComputedStyle(e).color,
+        bar: getComputedStyle(document.querySelector('#v-messages .toolbar')).backgroundColor,
+        bg: getComputedStyle(document.body).backgroundColor,
+      };
+    });
+    ok(
+      c.line === 'rgb(163, 166, 152)' && c.bar === 'rgb(25, 26, 23)',
+      'F15 O9: in dark mode the start line is muted and the toolbar dark ' + JSON.stringify(c),
+    );
+  });
+}
+
 const SECTIONS = {
   importer,
   robustness,
@@ -6506,11 +7245,13 @@ const SECTIONS = {
   standIn,
   history,
   history2,
+  digests,
   notices,
   schedule,
   claims,
   deeper,
   longRanges,
+  olderByDay,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1
@@ -6520,7 +7261,17 @@ const SECTIONS = {
    next. */
 const PAGE_JOBS = Math.max(1, +process.env.PAGE_JOBS || os.cpus().length);
 /* the slowest sections first, so they don't start last */
-const SLOW_FIRST = ['photos', 'layouts', 'photos2', 'notices', 'history2', 'history', 'messagesView', 'pipeline'];
+const SLOW_FIRST = [
+  'photos',
+  'layouts',
+  'photos2',
+  'notices',
+  'history2',
+  'history',
+  'olderByDay',
+  'messagesView',
+  'pipeline',
+];
 async function inProcess(names) {
   browser = await chromium.launch();
   try {
