@@ -1242,7 +1242,7 @@ def tail_spec(th, new, nid="tail1111"):
 
 
 def without_times(o):
-    return {k: v for k, v in o.items() if k not in ("builtAt", "generatedAt")}
+    return {k: v for k, v in o.items() if k not in ("builtAt", "generatedAt", "rev", "summaryRev")}
 
 
 class TestLayout(unittest.TestCase):
@@ -2011,7 +2011,11 @@ class TestRestoreSummary(unittest.TestCase):
         self.assertIn("restore ok", out)
         man = T.write(run)  # pinned from the listing; refresh/status (the lock) in the last batch
         self.assertTrue(man["batches"][-1][-1]["pin"] and man["batches"][-1][-1]["doc_id"] == "current")
-        self.assertTrue(all(e["collection"] == "summary" for bt in man["batches"] for e in bt), "threading untouched")
+        self.assertEqual(
+            [e["doc_id"] for bt in man["batches"] for e in bt if e["collection"] == "threading"],
+            ["current"],
+            "threading: only its current, for the shared rev; no block changes",
+        )
         # restored, T is U: the backup plus everything built after it
         t_t, t_s = T.db.merged()
         u_t, u_s = U.db.merged()
@@ -2324,7 +2328,7 @@ class TestClaims(unittest.TestCase):
         ):
             self.assertIsNone(catchup.claim_word(text), text)
         self.assertEqual(
-            [catchup.close_word(x) for x in ("Sold", "SPF", "spf!", "Pending", "sale pending", "In", "pending?? lol")],
+            [catchup.close_word(x) for x in ("Sold", "SPF", "spf!", "Pending", "sale pending", "In", "Sold out")],
             ["sold", "pending", "pending", "pending", "pending", None, None],
         )
 
@@ -2388,8 +2392,8 @@ class TestClaims(unittest.TestCase):
         self.assertEqual(
             react_lines(out),
             [
-                'REACT? 10 (Ben: "In!!") -> 7, 4, 3',  # newest first, three at most; not Ben's own photo
-                'REACT? 11 (Dee: "in for 2") -> 8, 4, 3',  # not Dee's own posts; claims are never posts
+                'REACT? 10 (Ben: "In!!") -> 7, 2, 4',  # photos first, then offers, newest first; three at most
+                'REACT? 11 (Dee: "in for 2") -> 8, 4, 3',  # not Dee's own posts (7, 2); claims are never posts
             ],
         )
         links = r(os.path.join(self.e.work, "base", "threading.json"))["links"]
@@ -2440,7 +2444,7 @@ class TestClaims(unittest.TestCase):
     def test_messenger_reply_is_named(self):
         self.seed_history()
         out = self.e.build(self.e.run([msg(10, "Ben", "In", pi=2, h=9, mi=10)], topic=TRADE), {"join": {"a": [10]}})
-        self.assertEqual(react_lines(out), ['REACT? 10 (Ben: "In") -> 7, 4, 3 (Messenger reply to 2)'])
+        self.assertEqual(react_lines(out), ['REACT? 10 (Ben: "In") -> 7, 2, 4 (Messenger reply to 2)'])
 
     def claims_env(self):
         hist = [msg(0, "Ana", "WTS pack $90", p="1"), msg(1, "Ben", "hi")]
@@ -2513,9 +2517,9 @@ class TestClaims(unittest.TestCase):
             ({"addClaims": [{"i": 2, "who": "Cy", "n": True}]}, "claim n must be a positive whole number"),
             ({"addClaims": [{"i": 2, "who": "Cy"}, {"i": 2, "who": "Cy", "n": 2}]}, "claims a deal only once"),
             ({"addClaims": [{"i": 2, "who": "Cy", "x": 1}]}, r"a claim is \{i, who, n\}"),
-            ({"status": "gone"}, "deal status is sold or pending"),
-            ({"status": "sold", "statusAt": 99}, "deal statusAt must be a stored message"),
-            ({"claims": []}, "dealEdit takes text, addRefs, index, addClaims, status and statusAt"),
+            ({"status": "gone", "statusAt": 4}, "deal status is sold or pending"),
+            ({"status": "sold", "statusAt": 99}, "deal statusAt must be the stored message that closed it"),
+            ({"claims": []}, "dealEdit takes text, addRefs, index, ref, addClaims, removeClaims, status, statusAt"),
         ):
             with self.subTest(edit=edit):
                 p = os.path.join(self.t.name, "bad.json")
@@ -2551,7 +2555,7 @@ MOVE_MSGS = [
 MOVE_SPEC = {
     "newconvs": [
         {"id": "sale", "title": "Blue pack", "tag": "For sale", "outcome": "Ana selling", "key": [0, 3]},
-        {"id": "dee", "title": "Dee in", "tag": "Claim", "outcome": "Dee is in", "key": [4, 5]},
+        {"id": "dee", "title": "Dee in", "tag": "Claim", "outcome": "Dee claimed the pack", "key": [4, 5]},
         {"id": "hike", "title": "Saturday hike", "tag": "Trip", "outcome": "", "key": [6, 8]},
     ],
     "join": {"sale": [0, 1, 2, 3], "dee": [4, 5], "hike": [6, 7, 8, 9, 10]},
@@ -2602,16 +2606,26 @@ class TestMove(unittest.TestCase):
         out, t, s, d = self.move({"move": {"4": "sale"}, "relink": {"4": [0, "i"]}})
         self.assertIn("RELINK 4 -> 0 i", out)
         self.assertNotIn("crosses conversations", out)
-        self.assertIn("MOVE 4 (with 5) dee -> sale", out)
-        self.assertIn('DROP dee ("Dee in"): no messages left; its summary went to sale', out)
-        self.assertIn("moved to sale from dee: 1 bullet, 2 key, 1 open", out)
+        self.assertIn("MOVE 4 (with its Messenger replies 5) dee -> sale", out)
+        self.assertIn(
+            'DROP dee (title "Dee in", tag "Claim", outcome "Dee claimed the pack"): no messages left; its summary went '
+            "to sale",
+            out,
+        )
+        self.assertIn("moved to sale from dee: 1 bullet, 2 key, 1 open, 1 outcome as a bullet", out)
         self.assertIn("relink ok: 1 change(s), 1 move(s), dropped dee", out)
         mem = {c["id"]: c["members"] for c in t["convs"]}
         self.assertEqual(mem, {"sale": [0, 1, 2, 3, 4, 5], "hike": [6, 7, 8, 9, 10]})
         sc = {c["id"]: c for c in s["convs"]}
         self.assertNotIn("dee", sc)
         self.assertEqual(
-            [b["t"] for b in sc["sale"]["synopsis"]], ["Ana sells a blue pack for $120", "It's 30L", "Dee is in"]
+            [(b["t"], b["refs"]) for b in sc["sale"]["synopsis"]],
+            [
+                ("Ana sells a blue pack for $120", [0]),
+                ("It's 30L", [2, 3]),
+                ("Dee is in", [4]),
+                ("Dee claimed the pack", [5]),  # the dropped conversation's outcome, kept as a bullet
+            ],
         )
         self.assertEqual(sc["sale"]["key"], [0, 3, 4, 5])
         self.assertEqual(
@@ -2630,7 +2644,7 @@ class TestMove(unittest.TestCase):
 
     def test_the_rest_stays_and_loses_only_the_moved_refs(self):
         out, t, s, _ = self.move({"move": {"8": "sale"}, "relink": {"8": [0, "i"]}})
-        self.assertIn("MOVE 8 (with 9) hike -> sale", out)
+        self.assertIn("MOVE 8 (with its Messenger replies 9) hike -> sale", out)
         self.assertNotIn("DROP", out)
         self.assertIn("moved to sale from hike: 1 answered, 1 bullet, 1 key", out)
         self.assertIn("refs 8 dropped from hike: 1 bullet", out)
@@ -2676,7 +2690,7 @@ class TestMove(unittest.TestCase):
     def test_into_new(self):
         out, t, s, _ = self.move({"move": {"8": "new"}, "relink": {"8": None}})
         self.assertIn('NEW conversation mv8 "In"', out)
-        self.assertIn("MOVE 8 (with 9) hike -> mv8", out)
+        self.assertIn("MOVE 8 (with its Messenger replies 9) hike -> mv8", out)
         mem = {c["id"]: c["members"] for c in t["convs"]}
         self.assertEqual((mem["mv8"], mem["hike"]), ([8, 9], [6, 7, 10]))
         self.assertNotIn("8", t["links"])
@@ -2690,7 +2704,7 @@ class TestMove(unittest.TestCase):
             "relink": {"8": None},
         }
         out, t, s, _ = self.move(spec)
-        self.assertIn("MOVE 8 (with 9) hike -> benin1106", out)
+        self.assertIn("MOVE 8 (with its Messenger replies 9) hike -> benin1106", out)
         c = next(c for c in t["convs"] if c["id"] == "benin1106")
         self.assertEqual((c["title"], c["members"]), ("Ben's claim", [8, 9]))
         sc = next(c for c in s["convs"] if c["id"] == "benin1106")
@@ -2712,7 +2726,7 @@ class TestMove(unittest.TestCase):
             "bullets": {"sale": [["Dee is in, then it sold", [4, 11]]]},
         }
         out = self.e.build(run, spec)
-        self.assertIn("MOVE 4 (with 5) dee -> sale", out)
+        self.assertIn("MOVE 4 (with its Messenger replies 5) dee -> sale", out)
         self.assertNotIn("WARN", out)
         self.assertIn('REACT? 12 (Ben: "Mine") -> 0', out)  # the open deal's post; Dee's In is no post
         s = r(os.path.join(run, "out", "merged", "summary.json"))
@@ -2758,10 +2772,11 @@ class TestMove(unittest.TestCase):
         )
         dst = max((c for c in t0["convs"] if c["id"] != src["id"]), key=lambda c: max(c["members"]))
         mem = set(src["members"])
-        roots = [i for i in src["members"] if t0["links"].get(str(i), [None])[0] not in mem]
+        L0 = lambda i: t0["links"].get(str(i), [None, None])  # every message not a Messenger reply within it moves
+        roots = [i for i in src["members"] if not (L0(i)[1] in catchup.REPLY_TYPES and L0(i)[0] in mem)]
         spec = {
             "move": {str(i): dst["id"] for i in roots},
-            "relink": {str(i): None for i in roots if str(i) in t0["links"]},
+            "relink": {str(i): None for i in roots if str(i) in t0["links"] and L0(i)[0] not in mem},
         }
         p = os.path.join(self.t.name, "move.json")
         w(p, spec)
@@ -2781,7 +2796,10 @@ class TestMove(unittest.TestCase):
         for name in ("open", "answered", "deals"):
             self.assertFalse([x for x in s[name] if x["conv"] == src["id"]], name)
             self.assertEqual(len(s[name]), len(s0[name]), "nothing dropped: " + name)
-        self.assertEqual(sum(len(c["synopsis"]) for c in s["convs"]), sum(len(c["synopsis"]) for c in s0["convs"]))
+        bonus = int("1 outcome as a bullet" in out)  # the dropped conversation's outcome, when the target has its own
+        self.assertEqual(
+            sum(len(c["synopsis"]) for c in s["convs"]), sum(len(c["synopsis"]) for c in s0["convs"]) + bonus
+        )
         self.assertEqual(sorted(where), sorted(i for c in t["convs"] for i in c["members"]), "every message kept")
         self.assertEqual(t, r(os.path.join(live.work, "base", "threading.json")))
         self.assertEqual(s, r(os.path.join(live.work, "base", "summary.json")))
