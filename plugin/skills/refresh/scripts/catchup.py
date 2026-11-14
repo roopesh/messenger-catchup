@@ -823,7 +823,9 @@ def _move(t, s, sp, stored, base):
                 d = gone[min(refs)]
             else:
                 d = first if empty else None
-            keep = [r for r in refs if where.get(r) == (d or old)]
+            # only refs that moved away from the item go: one that was never in this conversation is left as it was
+            stays = set(T[old]["members"])
+            keep = [r for r in refs if (gone[r] == d if r in gone else not (d and r in stays))]
             return d, keep
 
         def note(d, what, refs, keep):
@@ -849,7 +851,7 @@ def _move(t, s, sp, stored, base):
                 d = gone.get(r) or (first if empty else None)
                 if d:
                     sc["key"].remove(r)
-                    if r in gone and r not in S[d]["key"]:
+                    if r in gone and r not in (S[d].get("key") or []):
                         S[d]["key"] = list(S[d].get("key") or []) + [r]
                         told["to " + d]["key"] += 1
             if empty:

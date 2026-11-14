@@ -2649,6 +2649,30 @@ class TestMove(unittest.TestCase):
         self.assertEqual(sorted((a["conv"], a["ask"]) for a in s["answered"]), [("hike", 6), ("sale", 8)])
         self.assertEqual([c["id"] for c in s["convs"]], ["hike", "sale", "dee"], "newest activity first")
 
+    def test_deals_follow_their_messages(self):
+        """A deal whose refs all moved goes along; one with refs left behind stays and loses only the moved refs; a
+        ref an older session left outside the conversation is left as it was."""
+        p = os.path.join(self.e.work, "base", "summary.json")
+        sm = r(p)
+        deal = lambda text, refs: {"kind": "sale", "tag": "For sale", "conv": "hike", "text": text, "refs": refs}
+        sm["deals"] += [deal("moves", [8, 9]), deal("stays", [7, 8]), deal("legacy", [6, 3])]
+        next(c for c in sm["convs"] if c["id"] == "sale").pop("key")  # a summary written without key
+        w(p, sm)
+        out, t, s, _ = self.move({"move": {"8": "sale"}, "relink": {"8": [0, "i"]}})
+        self.assertIn("moved to sale from hike: 1 answered, 1 bullet, 1 deal, 1 key", out)
+        self.assertIn("refs 8 dropped from hike: 1 bullet, 1 deal", out)
+        got = {d["text"]: (d["conv"], d["refs"]) for d in s["deals"]}
+        self.assertEqual(
+            got,
+            {
+                "Blue pack $120": ("sale", [0]),
+                "moves": ("sale", [8, 9]),
+                "stays": ("hike", [7]),
+                "legacy": ("hike", [6, 3]),
+            },
+        )
+        self.assertEqual(next(c for c in s["convs"] if c["id"] == "sale")["key"], [8])
+
     def test_into_new(self):
         out, t, s, _ = self.move({"move": {"8": "new"}, "relink": {"8": None}})
         self.assertIn('NEW conversation mv8 "In"', out)
