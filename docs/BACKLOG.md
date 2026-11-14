@@ -115,8 +115,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
 | F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
 | F18 | P3 | feature | Range summaries longer than one request: split into parts and merge |
-| F19 | P2 | feature | Short claims ("In", "dibs", "in for 2") in buy/sell chats thread to the latest open offer, not to whatever came before (issue #41) |
-| F20 | P2 | feature | A `move` spec key: put an already-built message into another conversation (`relink` can only change its link) (issue #41) |
+| F19 | P2 | feature | Short claims ("In", "dibs", "in for 2") in buy/sell chats thread to the latest open offer, not to whatever came before (issue #41) · **done** (v1.23.0: `REACT?` lines, Claude decides; deal `claims` and `status`) |
+| F20 | P2 | feature | A `move` spec key: put an already-built message into another conversation (`relink` can only change its link) (issue #41) · **done** (v1.23.0) |
+| F21 (A2) | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
+| F22 (A2) | P3 | feature | The page could show a deal's `status` ("sold", "pending"), which v1.23.0 stores; release B shows `claims` only |
 
 ---
 
@@ -732,7 +734,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **What:** a span before `summary.fromI` too long for one request (about 1,990 live-sized messages, 4.3 days) is refused since v1.22.0. Splitting it into parts and merging (conversations joined by id, bullets concatenated, lists joined) would let any span work, at k× the usage and time, with a merge to test.
 - **Trigger:** the owner wants long spans summarized and `catchup.py restore-summary` (which moves `fromI` back on the owner's page) hasn't removed the need.
 
-### F19 · P2 · Short claims thread to the latest open offer
+### F19 · P2 · Short claims thread to the latest open offer · done (v1.23.0)
 - **Found:** GitHub issue #41, a field report from a buy/sell/trade chat. A short message is often a claim on an item just offered ("In", "I'm in", "in for 1", "Dibs", "Mine", "I'll take it", "PM'd", "Interested", a raffle spot like "In for 2" or "#7"). These are rarely sent as Messenger replies, so the build links them by position (usually `i` to the message before), or Claude files them as a new conversation. Either way the page shows them with no context.
 - **Proposed rule** (SKILL.md step 6's GUESS review and `writing-the-spec.md`):
   - In a chat whose `meta/chat.topic` suggests buying, selling or trading, a short claim-type message (any case, optionally with a count) is a claim on the most recent open offer by someone else.
@@ -741,9 +743,15 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - If there's no open offer in about the last day, or two are equally likely, keep the build's guess and list it in the report as a possible claim. Never invent an offer.
 - **Meanwhile:** the owner's scheduled refresh prompt carries the rule.
 - **Design questions:** the word list (fixed list, or Claude's judgment with examples); how "open" is decided (deals' state, or "sold" in later messages); whether the page shows claims on a deal.
+- **Owner's calls (Nov 13):** a fixed word list in the tool, but the tool only flags and Claude decides, because "In" often just means "I like that bag" and the bag may not be for sale. A window of 3 days, not 1. Raffle spot claims ("#7", "in for 2 spots") stay as they are. The page shows claims on a deal (release B).
+- **Done in v1.23.0:**
+  - `catchup.py build`, only when `meta/chat.topic` suggests buying, selling or trading (read from RUN's `meta/chat`), prints `REACT? i (who: "text") -> a, b, c` for each new short claim: up to 3 posts by someone else in the 3 days before it (by timestamp), newest first, that are photo posts, look like offers (`looks_like_offer`: offer words, "let me know if you're interested…", a price) or belong to an open deal. The seller's own "Sold", "SPF" or "pending" prints `CLOSE?`. The lines link nothing.
+  - The rules for Claude are in the refresh skill's `references/writing-the-build.md` › Claims (a pointer in SKILL.md step 6): link to the post; on an offer or deal it's a claim (a bullet and the deal's `claims`), otherwise appreciation; the seller's close sets the deal's `status`; no candidate or a tie: keep the guess and list it in the report.
+  - A deal gains optional `claims: [{i, who, n}]` (ordered by `i`, one per message, `who` as `f` on the message, `n` a positive whole number, default 1) and `status` (`sold` | `pending`) with `statusAt`. `dealEdit` takes `addClaims`, `status` (`null` reopens) and `statusAt`, and now refuses keys it doesn't know.
 
-### F20 · P2 · `move` an already-built message to another conversation
+### F20 · P2 · `move` an already-built message to another conversation · done (v1.23.0)
 - **Found:** GitHub issue #41. `relink` (F3) changes a built message's link, but its conversation stays the same, so fixing a misfiled claim gives `WARN link … crosses conversations` and the page still shows the message as its own thread.
 - **Proposed:** a spec key `{"move": {"i": "convId"}}` for messages already built. It updates membership in the threading blocks, keeps summary refs valid (a conversation left empty is dropped or merged, its summary items moved), lands through the manifest like any build, and `restore` can undo it.
 - **Pairs with F19:** F19 stops new misfiles; `move` fixes the ones already on pages.
+- **Done in v1.23.0:** `move: {"<i>": "<conv id>" | "new"}` in a build spec, or on its own through `catchup.py relink` (which takes `relink`, `move` and `newconvs`; with a move it reads the summary listing too and writes both collections). The target is an existing conversation, one in the same spec's `newconvs` (title and tag), or `"new"` (`mv<i>`, titled with the message's text). The message moves with everything threaded under it in its old conversation; its own link must end up in the target or be null (a `relink` in the same spec), or the move is refused. A conversation left empty is dropped and its summary items (bullets merged in message order, key messages, open, answered, deals; tag and outcome where the target has none) go to the target; otherwise items whose refs all moved go along (questions follow their ask) and the rest lose the moved refs. It prints `MOVE`, `DROP` and what moved, goes through `layout_docs`, `_roundtrip`, `_plan` and the manifest like a build, and `restore` undoes it. Routed from SKILL.md (next to relink) and `references/writing-the-build.md` › Moving a message.
 
