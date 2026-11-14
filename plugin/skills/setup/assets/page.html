@@ -3061,7 +3061,11 @@
     const h = el("div", "cv-head");
     const chips = el("div", "row");
     if (opens.length) chips.append(el("span", "chip open", "open question"));
-    deals.forEach(x => chips.append(el("span", "chip deal", x.tag || x.kind || "deal")));
+    /* a sold or pending deal's chip says so, not its offer tag ("For sale") */
+    deals.forEach(x => {
+      const st = dealStatus(x);
+      chips.append(el("span", "chip deal", st ? st.label : x.tag || x.kind || "deal"));
+    });
     if (!deals.length && c.tag && !/^(Open|Answered)$/.test(c.tag))
       chips.append(
         el(
@@ -6010,7 +6014,9 @@
     if (!isObj(h)) return null;
     const f = hhmm(h.from),
       t = hhmm(h.to);
-    if (f == null || t == null || f % 1440 === t % 1440) return null;
+    if (f == null || t == null) return null;
+    /* equal ends: "00:00"–"24:00" is the whole day; any other pair (such as "07:00"–"07:00") can't be read */
+    if (f % 1440 === t % 1440) return f === 1440 || t === 1440 ? { all: true } : null;
     return { from: f % 1440, to: t % 1440 };
   }
   /* from included, to excluded, up to 5 minutes early counts as inside; a `to` before `from` wraps past midnight */
@@ -6035,24 +6041,30 @@
     if (day(d) === day(new Date(now))) return d.toLocaleTimeString("en-US", o);
     return d.toLocaleString("en-US", Object.assign({ month: "short", day: "numeric" }, o));
   }
-  /* Pure: meta/chat, refresh/schedule, refresh/status, the time and the refresh phrase in; {line, warns} out */
+  /* Pure: meta/chat, refresh/schedule, refresh/status, the time and the refresh phrase in; {line, warns} out.
+     sched is undefined until its snapshot arrives (nothing about the live state yet) and null when the document doesn't
+     exist (a chain then has nothing armed). Nothing at all until meta/chat has loaded. */
   function scheduleView(meta, sched, status, now, rp) {
     const out = { line: "", warns: [] };
-    const sc = isObj(meta) && isObj(meta.schedule) ? meta.schedule : null;
+    if (!isObj(meta)) return out;
+    const sc = isObj(meta.schedule) ? meta.schedule : null;
     const mode = sc && SCHED_MODES.includes(sc.mode) ? sc.mode : null;
     if (mode === "manual") {
       out.line = "Refreshes only when you ask.";
       return out;
     }
-    const st = isObj(sched) ? sched : null;
-    const tz = validTz(sc && sc.tz) || validTz(isObj(meta) ? meta.tz : null);
+    const st = isObj(sched) ? sched : sched === null && mode === "chain" ? {} : null;
+    const tz = validTz(sc && sc.tz) || validTz(meta.tz);
     const lab = tzLabel(tz, now);
     const w = sc ? schedHours(sc.hours) : null;
     const ev = mode ? everyText(sc.every) : null;
     const parts = [];
     if (ev && w) parts.push(ev + ", " + (w.all ? "all day" : clock12(w.from) + "–" + clock12(w.to) + lab) + ".");
     const next = st && typeof st.nextAt === "string" ? Date.parse(st.nextAt) : NaN;
-    if (mode && next > now) parts.push("Next refresh about " + schedTime(next, now, tz) + lab + ".");
+    /* the zone's name at that time (it can differ from now's across a daylight-saving change) */
+    const at = ms => schedTime(ms, now, tz) + tzLabel(tz, ms);
+    /* a wake-up outside the hours only arms the next one, so it isn't shown as a refresh */
+    if (mode && next > now && (!w || inHours(w, next, tz))) parts.push("Next refresh about " + at(next) + ".");
     out.line = parts.join(" ");
     if (!st) return out;
     /* Chain stopped: inside the hours, nextAt missing or over 30 minutes past, and no run going (refresh/status isn't
@@ -6069,11 +6081,16 @@
     const problem = typeof st.problem === "string" ? st.problem.trim() : "";
     if (stopped || problem) {
       let t = stopped
-        ? "Scheduled refreshes have stopped" +
-          (Number.isFinite(next) ? " (the next run was due " + schedTime(next, now, tz) + lab + ")" : "")
+        ? "Scheduled refreshes have stopped" + (Number.isFinite(next) ? " (the next run was due " + at(next) + ")" : "")
         : "Scheduled refreshes hit a problem";
       t += problem ? ": " + problem + (/[.!?]$/.test(problem) ? "" : ".") : ".";
-      out.warns.push(t + " Ask Claude in chat to “" + rp + "”, and it offers to restart them.");
+      /* scheduling.md: Claude offers a restart only for a stopped chain; a problem alone is reported and cleared */
+      out.warns.push(
+        t +
+          (stopped
+            ? " Ask Claude in chat to “" + rp + "”, and it offers to restart them."
+            : " Claude reports it on the next refresh you ask for."),
+      );
     }
     const mi = st.misses;
     if (mode === "chain" && Number.isInteger(mi) && mi >= 2)
