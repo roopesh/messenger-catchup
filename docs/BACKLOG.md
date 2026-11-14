@@ -115,7 +115,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
 | F14 | P3 | feature | The page shows when the next scheduled refresh is due (`refresh/schedule.nextAt`) · **done** (v1.24.0) |
 | F15 | P3 | perf | "Show older messages" renders the whole history at once; page it by day (R4's remainder) |
-| F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
+| F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach · **done** (v1.25.0: `digests/m<YYYY-MM>`, `catchup.py days`, a backfill procedure; Ask's day lines use them) |
 | F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
 | F18 | P3 | feature | Range summaries longer than one request: split into parts and merge |
 | F19 | P2 | feature | Short claims ("In", "dibs", "in for 2") in buy/sell chats thread to the latest open offer, not to whatever came before (issue #41) · **done** (v1.23.0: `REACT?` lines, Claude decides; deal `claims` and `status`) |
@@ -123,6 +123,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F21 | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
 | F22 | P3 | feature | The page could show a deal's `status` ("sold", "pending"), which v1.23.0 stores; release B shows `claims` only · **done** (v1.24.0: "Sold" or "Pending" beside the deal, linking to `statusAt`, and in the card's header chip) |
 | F23 | P3 | feature | A Messenger reply mid-conversation to a message in another conversation shows no "replying to…" line (27 on the owner's page) |
+| F24 (C2) | P3 | feature | Optional views of the per-day digests (F16), such as a "By day" tab; today only Ask reads them |
 
 ---
 
@@ -771,11 +772,12 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Fix:** load the previous day on demand ("Load the previous day"), the smaller change. Virtualizing threaded rows of varying height isn't worth it.
 - **Trigger:** about 15,000 stored messages (roughly 17 days after 6,933 at 460 a day), or Show older taking over 1 s on the owner's machine.
 
-### F16 · P3 · Per-day digests written during refresh
+### F16 · P3 · Per-day digests written during refresh · done (v1.25.0)
 - **What:** older than the conversation lines reach (2–3 weeks at every size), F6's prompt has one line per day built on the page from threading titles. A refresh could write a real digest per day (`digests/dYYYY-MM-DD`) for those lines to use.
 - **Cost:** a spec key, `catchup.py` checks, a new collection and a backfill: a MINOR with a skill change.
 - **Also here:** older open questions, answers and deals as their own lines (the design's "level 1b"); they're mostly in conversation outcomes today.
 - **Trigger:** live answers about things older than 3 weeks turn out poor (F6's live check L4), or the owner asks.
+- **Done in v1.25.0 (owner's call, release C):** one document per month, `digests/m<YYYY-MM>` `{month, days:{day: {bullets:[{t, refs}], fromI, toI, n, at}}}`, not one per day: a refresh writes one or two, the page reads a few dozen for years (one per day would pass the listing's 1,000 in under three years), and with the caps (8 bullets a day, 15 words and 240 bytes each, 10 refs) a full month is under 90 KB of the 240 KiB a build allows. `catchup.py days WORK RUN` lists the days due and writes each day's messages to `RUN/out/days/<day>.txt`: finished days after the newest digest (none yet: only the newest finished day), oldest first, 3 a refresh, plus a digested day whose stored messages now reach past its `toI` (written too early, such as when the browser's time zone differs from `meta/chat.tz`). A day is a message's date label `d`; it has finished when it's before today in `meta/chat.tz` or a later day is stored. The build spec's `digests` key is checked (a real day with stored messages, finished, not already digested, 1–8 bullets, each citing 1–10 messages of that day) and lands in the manifest's first batch, pinned when the month exists. The backfill (`references/digests.md` › Backfill, only on request) runs in batches of up to 10 days and 2,000 messages, newest first: `days --backfill`, `catchup.py digests` (backs up the listed months in `RUN/out/backup/` first, never changes a day that has a digest), the manifest, then `catchup.py check-digests` against a fresh listing, which also says how many days are left; an interrupted batch is found again by the next `days`. On the page, a day line covering the whole day a digest was written for carries its bullets (`[#a–#b, Oct 3] 460 messages. Digest: … [#12, #15] | …`), else the title-only line; title-only lines stay the floor, conversation lines leave up to half the summaries' share for digests, and digests swap in newest day first while they fit. The prompt, the note ("Day digests for 12 days (Oct 2–20).") and `sent.digests` `{n, from, to}` say when they were used. `dayLines(fromI, toI)` gives the same lines to other prompts. "Level 1b" (older open questions, answers and deals as their own lines) stays undone. Optional views of the digests: F24.
 
 ### F17 · P3 · A two-step or tool-using Ask
 - **What:** Claude first sees the digest, names the stretch it needs, and the page sends that stretch word for word in a second call (or a tool call does it).
@@ -831,3 +833,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Found:** cleaning up the owner's page (Nov 13). Of 122 links whose parent sat in another conversation, 52 were wrong guesses (fixed live with `relink` and `move`). The 70 left are real Messenger replies where the topic drifted. 43 start a conversation, and the page shows their parent as context (B40). 27 sit mid-conversation, where the page draws no link at all.
 - **Fix:** for a message whose link crosses conversations, show a short "replying to Ben: …" line that opens the parent, like B40's context line. Moving these would misfile them, so the page should show them instead.
 
+### F24 (C2) · P3 · Optional views of the per-day digests
+- **What:** since v1.25.0 (F16) each finished day has a few bullets citing its messages (`digests/m<YYYY-MM>`), but only Ask reads them. The owner wants other ways to use them recorded for later: a "By day" view (one card per day, newest first, each bullet opening its messages), digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
+- **Cost:** page only; the data is there (after the backfill, for every day).
+- **Trigger:** the owner asks.
