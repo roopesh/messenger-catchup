@@ -3494,6 +3494,390 @@ class TestClaimsReview(unittest.TestCase):
             quiet(catchup.build, self.e.work, run, p)
 
 
+def day_msgs(start, days, per=10, first="2026-11-01"):
+    """per messages a day for `days` days from `first`, 8 AM onwards, numbered from start."""
+    d0 = catchup.datetime.date.fromisoformat(first)
+    out = []
+    for k in range(days):
+        d = (d0 + catchup.datetime.timedelta(days=k)).isoformat()
+        for j in range(per):
+            out.append(
+                msg(start + len(out), ["Ana", "Ben", "Cy", "Dee"][j % 4], "note %d" % j, h=8 + j // 6, mi=j, d=d)
+            )
+    return out
+
+
+def utc(s):
+    return catchup.datetime.datetime.fromisoformat(s).replace(tzinfo=catchup.datetime.timezone.utc)
+
+
+def land(run, into):
+    """What the database's digests collection holds once RUN's manifest landed: the listing plus the documents written."""
+    os.makedirs(os.path.join(into, "digests"), exist_ok=True)
+    for f in glob_json(os.path.join(run, "digests")):
+        shutil.copy(f, os.path.join(into, "digests"))
+    for f in glob_json(os.path.join(run, "out", "digests")):
+        shutil.copy(f, os.path.join(into, "digests"))
+    return into
+
+
+def glob_json(d):
+    return sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".json")) if os.path.isdir(d) else []
+
+
+class TestDigests(unittest.TestCase):
+    """F16: per-day digests in the build spec and the backfill, stored one document per month."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+        catchup.NOW = utc("2026-11-13T18:00:00")  # 10 AM on Nov 13 in Los Angeles
+        catchup.TZ = "America/Los_Angeles"
+
+    def tearDown(self):
+        catchup.NOW = None
+        catchup.TZ = "America/Los_Angeles"
+        self.t.cleanup()
+
+    def seeded(self, old, new):
+        """old built; a RUN importing new into one conversation; returns (run, spec)"""
+        th = {
+            "convs": [{"id": "a", "title": "Talk", "members": [m["i"] for m in old]}],
+            "links": {},
+            "to": old[-1]["i"],
+        }
+        sm = {
+            "version": 2,
+            "convs": [{"id": "a", "tag": "", "synopsis": [], "outcome": "", "key": []}],
+            "open": [],
+            "answered": [],
+            "deals": [],
+            "mentions": [],
+            "toI": old[-1]["i"],
+        }
+        self.e.seed(old, threading=th, summary=sm)
+        run = self.e.run(new)
+        os.makedirs(os.path.join(run, "digests"))  # step 5's `list digests` of an empty collection
+        return run, {"join": {"a": [m["i"] for m in new]}}
+
+    def build(self, run, spec):
+        return self.e.build(run, spec)
+
+    def manifest(self, run):
+        return r(os.path.join(run, "out", "manifest.json"))
+
+    def test_a_build_writes_the_days_digest_through_the_manifest(self):
+        ms = day_msgs(0, 3, first="2026-11-11")  # Nov 11 #0-#9, Nov 12 #10-#19, Nov 13 #20-#29 (today)
+        run, spec = self.seeded(ms[:15], ms[15:])
+        spec["digests"] = {"2026-11-12": [["Ana and Ben swapped notes", [12, 13]], {"t": "Cy asked", "refs": [19]}]}
+        out = self.build(run, spec)
+        self.assertIn("1 digest(s)", out)
+        man = self.manifest(run)
+        first = man["batches"][0]
+        dg = [x for x in first if x["collection"] == "digests"]
+        self.assertEqual([(x["doc_id"], x["op"], x.get("pin")) for x in dg], [("m2026-11", "set", None)])
+        doc = r(dg[0]["file_path"])
+        day = doc["days"]["2026-11-12"]
+        self.assertEqual(doc["month"], "2026-11")
+        self.assertEqual((day["fromI"], day["toI"], day["n"]), (10, 19, 10))
+        self.assertEqual(
+            day["bullets"], [{"t": "Ana and Ben swapped notes", "refs": [12, 13]}, {"t": "Cy asked", "refs": [19]}]
+        )
+        self.assertTrue(day["final"], "Nov 13 was already stored")
+        self.assertIn("digests/m2026-11", man["sizes"])
+        # the next build: the month exists, so it's pinned, and the day already written stays
+        os.makedirs(os.path.join(self.t.name, "next"), exist_ok=True)
+        catchup.NOW = utc("2026-11-14T18:00:00")
+        more = day_msgs(30, 1, first="2026-11-14")
+        run2 = self.e.run(more)
+        land(run, run2)
+        out = self.build(
+            run2, {"join": {"a": [m["i"] for m in more]}, "digests": {"2026-11-13": [["Dee closed it", [29]]]}}
+        )
+        dg = [x for x in self.manifest(run2)["batches"][0] if x["collection"] == "digests"]
+        self.assertEqual([(x["doc_id"], x.get("pin")) for x in dg], [("m2026-11", True)])
+        self.assertEqual(sorted(r(dg[0]["file_path"])["days"]), ["2026-11-12", "2026-11-13"])
+        self.assertEqual(r(dg[0]["file_path"])["days"]["2026-11-12"], day)
+
+    def test_a_build_without_digests_says_whats_due(self):
+        ms = day_msgs(0, 3, first="2026-11-11")
+        run, spec = self.seeded(ms[:15], ms[15:])
+        out = self.build(run, spec)
+        self.assertIn("0 digest(s); still due: 2026-11-12 (catchup.py days", out)
+        self.assertFalse([x for bt in self.manifest(run)["batches"] for x in bt if x["collection"] == "digests"])
+
+    def test_day_boundaries_in_the_chats_time_zone(self):
+        ms = [
+            msg(0, "Ana", "late", h=23, mi=59, d="2026-11-12"),
+            msg(1, "Ben", "after midnight", h=0, mi=0, d="2026-11-13"),
+            msg(2, "Cy", "no date label"),
+        ]
+        del ms[2]["d"]  # belongs to the day before it, as on the page
+        pool = {m["i"]: m for m in ms}
+        self.assertEqual(catchup._days(ms), {"2026-11-12": [0], "2026-11-13": [1, 2]})
+        with self.assertRaisesRegex(AssertionError, r"digests 2026-11-12: #1 is not a stored message from that day"):
+            catchup._digest_entries({"2026-11-12": [["Ana", [0, 1]]]}, pool, {})
+        self.assertIn("2026-11-12", catchup._digest_entries({"2026-11-12": [["Ana", [0]]]}, pool, {}))
+        # 9 PM on Nov 13 in Los Angeles is 5 AM on Nov 14 in London: Nov 13 has finished only in London
+        catchup.NOW = utc("2026-11-14T05:00:00")
+        with self.assertRaisesRegex(AssertionError, "hasn't finished in America/Los_Angeles"):
+            catchup._digest_entries({"2026-11-13": [["Ben", [1, 2]]]}, pool, {})
+        catchup.TZ = "Europe/London"
+        self.assertEqual(catchup._digest_entries({"2026-11-13": [["Ben", [1, 2]]]}, pool, {})["2026-11-13"]["toI"], 2)
+        # a later day stored finishes a day whatever the clock says
+        catchup.TZ, catchup.NOW = "America/Los_Angeles", utc("2026-11-12T20:00:00")
+        self.assertIn("2026-11-12", catchup._digest_entries({"2026-11-12": [["Ana", [0]]]}, pool, {}))
+
+    def test_bad_specs_are_refused(self):
+        ms = day_msgs(0, 2, first="2026-11-11")  # Nov 11 #0-#9, Nov 12 #10-#19
+        pool = {m["i"]: m for m in ms}
+        ok = ["Ana and Ben", [1]]
+        for sd, why in (
+            ([], "one key per day"),
+            ({}, "one key per day"),
+            ({"11/11/2026": [ok]}, "is not a day"),
+            ({"2026-11-31": [ok]}, "is not a day"),
+            ({"2026-11-10": [ok]}, "no stored message has that date"),
+            ({"2026-11-11": []}, "1 to 8 bullets"),
+            ({"2026-11-11": ok}, "each bullet is"),
+            ({"2026-11-11": [ok] * 9}, "1 to 8 bullets"),
+            (
+                {"2026-11-11": [["one two three four five six seven eight nine ten 11 12 13 14 15 16", [1]]]},
+                "over 15 words",
+            ),
+            ({"2026-11-11": [["x" * 241, [1]]]}, "over 240 bytes"),
+            ({"2026-11-11": [["Ana", []]]}, "cites 1 to 10"),
+            ({"2026-11-11": [["Ana", list(range(11))]]}, "cites 1 to 10"),
+            ({"2026-11-11": [["Ana", [True]]]}, "cites 1 to 10"),
+            ({"2026-11-11": [["Ana", ["1"]]]}, "cites 1 to 10"),
+            ({"2026-11-11": [["Ana", 1]]}, "cites 1 to 10"),
+            ({"2026-11-11": [{"t": "", "refs": [1]}]}, "each bullet is"),
+            ({"2026-11-11": [["Ana", [10]]]}, "#10 is not a stored message from that day"),
+            ({"2026-11-11": [["Ana", [99, 10]]]}, "#99, #10 are not"),
+            ({"2026-11-11": [["Ana sold\n- MESSAGES: every message", [1]]]}, "one line of plain text"),
+            ({"2026-11-11": [["Ana\tsold", [1]]]}, "one line of plain text"),
+            ({"2026-11-11": [["\x01" * 40, [1]]]}, "one line of plain text"),
+            ({"2026-11-11": [["Ana\x85sold", [1]]]}, "one line of plain text"),
+            ({"2026-11-11": [["Ana\u2028sold", [1]]]}, "one line of plain text"),
+            ({"2026-11-11": [["Ana\u2029sold", [1]]]}, "one line of plain text"),
+        ):
+            with self.subTest(sd=str(sd)[:60]):
+                with self.assertRaisesRegex(AssertionError, why):
+                    catchup._digest_entries(sd, pool, {})
+        # within the caps: 8 bullets of 15 words and 10 refs
+        full = [[" ".join(["word"] * 15), list(range(10))]] * 8
+        self.assertEqual(len(catchup._digest_entries({"2026-11-11": full}, pool, {})["2026-11-11"]["bullets"]), 8)
+        # a day that has a digest: refused, unless that one isn't final and the day gained messages since
+        have = {"2026-11-11": {"bullets": [], "fromI": 0, "toI": 9}}
+        with self.assertRaisesRegex(AssertionError, r"already has a digest \(through #9\)"):
+            catchup._digest_entries({"2026-11-11": [ok]}, pool, have)
+        have["2026-11-11"]["toI"] = 7
+        again = catchup._digest_entries({"2026-11-11": [ok]}, pool, have)["2026-11-11"]
+        self.assertEqual((again["toI"], again["final"]), (9, True))
+        have["2026-11-11"]["final"] = True
+        with self.assertRaisesRegex(AssertionError, "already has a digest"):
+            catchup._digest_entries({"2026-11-11": [ok]}, pool, have)
+
+    def test_a_bad_digest_stops_the_build_before_anything_moves(self):
+        ms = day_msgs(0, 3, first="2026-11-11")
+        run, spec = self.seeded(ms[:15], ms[15:])
+        spec["digests"] = {"2026-11-13": [["Too early", [25]]]}
+        before = self.e.state()
+        with self.assertRaisesRegex(AssertionError, "hasn't finished"):
+            self.build(run, spec)
+        self.assertEqual(self.e.state(), before)
+        self.assertFalse(os.path.exists(os.path.join(run, "out", "manifest.json")))
+
+    def test_whats_due_at_a_refresh(self):
+        ms = day_msgs(0, 6, first="2026-11-08")  # Nov 8-13, today Nov 13
+        due = lambda have, **k: catchup._due(ms, have, **k)[:2]
+        self.assertEqual(due({}), (["2026-11-12"], 0), "no digest yet: only the newest finished day")
+        dg = lambda toI: {"bullets": [], "fromI": 0, "toI": toI}
+        self.assertEqual(due({"2026-11-10": dg(29)}), (["2026-11-11", "2026-11-12"], 0))
+        self.assertEqual(due({"2026-11-08": dg(9)}), (["2026-11-09", "2026-11-10", "2026-11-11"], 1), "3 at most")
+        stale = {"2026-11-09": dg(15), "2026-11-12": dg(49)}  # Nov 9 runs to #19 now
+        self.assertEqual(due(stale), (["2026-11-09"], 0), "a digest written too early is due again")
+        stale["2026-11-09"]["final"] = True
+        self.assertEqual(due(stale), ([], 0), "but not once it's final")
+        self.assertEqual(due(stale, backfill=True)[0], ["2026-11-11", "2026-11-10", "2026-11-08"], "nor in a backfill")
+        self.assertEqual(
+            due({}, backfill=True), (["2026-11-12", "2026-11-11", "2026-11-10", "2026-11-09", "2026-11-08"], 0)
+        )
+        self.assertEqual(due({}, backfill=True, most=2), (["2026-11-12", "2026-11-11"], 3))
+        big = day_msgs(0, 6, per=900, first="2026-11-08")
+        self.assertEqual(catchup._due(big, {}, backfill=True)[:2], (["2026-11-12", "2026-11-11"], 3), "2,000 messages")
+        huge = day_msgs(0, 2, per=2500, first="2026-11-11")
+        self.assertEqual(catchup._due(huge, {}, backfill=True)[:2], (["2026-11-12"], 1), "one day at least")
+
+    def test_a_chat_tz_ahead_of_the_browser_digests_a_day_twice_at_most(self):
+        """The helper dates messages in the browser's zone. With meta/chat.tz in Tokyo and the browser in Los Angeles,
+        Nov 13 has ended in Tokyo while LA messages still carry Nov 13: the first digest isn't final, and the day is
+        digested once more after Nov 14 begins, not at every hourly refresh."""
+        catchup.TZ = "Asia/Tokyo"
+        have, msgs, writes = {}, day_msgs(0, 1, per=40, first="2026-11-12"), []
+
+        def hour(at, d, n=5):
+            i0 = len(msgs)
+            msgs.extend(msg(i0 + k, "Ana", "x", d=d) for k in range(n))
+            catchup.NOW = utc(at)
+            todo, _, days = catchup._due(msgs, have)
+            if todo:
+                pool = {m["i"]: m for m in msgs}
+                have.update(catchup._digest_entries({d: [["Ana talked", [days[d][0]]]] for d in todo}, pool, have))
+                writes.extend(todo)
+
+        for h in range(24):  # every hour of Nov 13 in LA (UTC-8)
+            hour("2026-11-%02dT%02d:30:00" % (13 + (h + 8) // 24, (h + 8) % 24), "2026-11-13")
+        self.assertEqual(writes.count("2026-11-13"), 1)
+        self.assertFalse(have["2026-11-13"]["final"])
+        for h in range(3):  # Nov 14 in LA
+            hour("2026-11-14T%02d:30:00" % (8 + h), "2026-11-14")
+        self.assertEqual(writes.count("2026-11-13"), 2, writes)
+        self.assertTrue(have["2026-11-13"]["final"])
+        self.assertEqual(have["2026-11-13"]["toI"], msgs[-16]["i"])
+
+    def test_without_a_tz_database_a_day_finishes_when_a_later_day_is_stored(self):
+        ms = day_msgs(0, 2, first="2026-11-12")  # Nov 12, Nov 13
+        pool = {m["i"]: m for m in ms}
+        catchup.NOW = utc("2026-11-15T18:00:00")
+        catchup.TZ = "Nowhere/No_Such_Zone"  # as when this Python has no tz database
+        self.assertIsNone(catchup._today())
+        self.assertEqual(catchup._due(ms, {})[0], ["2026-11-12"])
+        with self.assertRaisesRegex(AssertionError, "hasn't finished"):
+            catchup._digest_entries({"2026-11-13": [["Ben", [12]]]}, pool, {})
+
+    def test_a_day_never_goes_back(self):
+        """The browser's zone changed between captures: #2 is dated before #1. It counts in #1's day, as on the page,
+        so every day is one run of numbers the page can match."""
+        ms = [msg(0, "Ana", "a", d="2026-11-10"), msg(1, "Ben", "b", d="2026-11-11")]
+        ms += [msg(2, "Cy", "c", d="2026-11-10"), msg(3, "Dee", "d", d="2026-11-12")]
+        self.assertEqual(catchup._days(ms), {"2026-11-10": [0], "2026-11-11": [1, 2], "2026-11-12": [3]})
+        pool = {m["i"]: m for m in ms}
+        with self.assertRaisesRegex(AssertionError, "#2 is not a stored message from that day"):
+            catchup._digest_entries({"2026-11-10": [["Ana and Cy", [0, 2]]]}, pool, {})
+        e = catchup._digest_entries({"2026-11-11": [["Ben and Cy", [1, 2]]]}, pool, {})["2026-11-11"]
+        self.assertEqual((e["fromI"], e["toI"]), (1, 2))
+
+    def test_a_missing_digests_listing_is_refused(self):
+        ms = day_msgs(0, 3, first="2026-11-11")
+        run, spec = self.seeded(ms[:15], ms[15:])
+        os.rmdir(os.path.join(run, "digests"))
+        with self.assertRaisesRegex(AssertionError, "has no digests/ folder: list the digests collection"):
+            catchup.days_cmd(self.e.work, run)
+        with self.assertRaisesRegex(AssertionError, "has no digests/ folder"):
+            self.build(run, dict(spec, digests={"2026-11-12": [["Ana", [12]]]}))
+        self.assertIn("0 digest(s); RUN has no digests/ folder", self.build(run, spec))
+
+    def test_document_sizes_for_years_of_history(self):
+        """A month at every cap fits a document many times over; years of history are one document a month; a
+        refresh touches at most two; a backfill batch is one ArtifactData batch."""
+        word = "ñandú" * 2  # 12 bytes in UTF-8
+        bullet = " ".join([word] * 15)[: catchup.DIGEST_BYTES]
+        while len(bullet.encode()) > catchup.DIGEST_BYTES:
+            bullet = bullet[:-1]
+        entry = lambda d, k: {
+            "bullets": [{"t": bullet, "refs": list(range(9999990 - 10 * k, 10000000 - 10 * k))}]
+            * catchup.DIGEST_BULLETS,
+            "fromI": 9000000,
+            "toI": 9999999,
+            "n": 999999,
+            "at": "Wed Sep 30, 11:59 PM",
+        }
+        d0 = catchup.datetime.date(2026, 1, 1)
+        days = [(d0 + catchup.datetime.timedelta(days=k)).isoformat() for k in range(3 * 365)]
+        docs = catchup._digest_docs({d: entry(d, k) for k, d in enumerate(days)}, {})
+        self.assertEqual(len(docs), 36)
+        biggest = max(catchup._size(x) for x in docs.values())
+        self.assertLess(biggest, 90 * 1024, "a full month")
+        self.assertLess(biggest * 2, catchup.DOC_LIMIT)
+        refresh = catchup._digest_docs({d: entry(d, 0) for d in ("2026-10-31", "2026-11-01", "2026-11-02")}, {})
+        self.assertEqual(len(refresh), 2, "a refresh's days (3 at most) touch two months at most")
+        batch = {d: entry(d, 0) for d in days[25 : 25 + catchup.BACKFILL_DAYS]}
+        bts, _ = catchup._plan(catchup._digest_docs(batch, {}), {"digests": {}})
+        self.assertEqual(len(bts), 1)
+
+    def backfill_env(self, n_days=25):
+        ms = day_msgs(0, n_days, per=12, first="2026-10-18")  # Oct 18 - Nov 11, all finished
+        self.e.seed(ms)
+        db = os.path.join(self.t.name, "dg0")
+        os.makedirs(os.path.join(db, "digests"))
+        return ms, db
+
+    def one_batch(self, db, k, land_it=True):
+        """The backfill's steps on a listing `db`: days, digests (a bullet per day), check. -> the next listing."""
+        out = quiet(catchup.days_cmd, self.e.work, db, True, None)
+        todo = re.findall(r"^DIGEST (\S+) #(\d+)", out, re.M)
+        if not todo:
+            return out, None
+        for d, i in todo:
+            with open(os.path.join(db, "out", "days", d + ".txt"), encoding="utf-8") as fh:
+                self.assertTrue(fh.read().startswith(d + ": #" + i))
+        spec = os.path.join(self.t.name, "bf%d.json" % k)
+        w(spec, {"digests": {d: [["Ana and Ben talked", [int(i)]]] for d, i in todo}})
+        quiet(catchup.digests_cmd, self.e.work, db, spec)
+        after = os.path.join(self.t.name, ("dg%d" if land_it else "lost%d") % (k + 1))
+        os.makedirs(os.path.join(after, "digests"))
+        if land_it:
+            land(db, after)
+        else:
+            for f in glob_json(os.path.join(db, "digests")):
+                shutil.copy(f, os.path.join(after, "digests"))
+        return out, after
+
+    def test_the_backfill_is_resumable_and_checked(self):
+        ms, db = self.backfill_env()
+        out, after = self.one_batch(db, 0)
+        self.assertIn("days ok: 10 days to digest; 15 more day", out)
+        self.assertIn(
+            "check ok: 10 days written, 0 kept; 15 finished days still",
+            quiet(catchup.check_digests, self.e.work, db, after),
+        )
+        self.assertTrue(os.path.exists(os.path.join(db, "out", "backup", "days.json")))
+        # a batch whose write never landed: the check says so, and the next `days` finds the same days again
+        out2, lost = self.one_batch(after, 1, land_it=False)
+        with self.assertRaisesRegex(AssertionError, "not as written: 2026-10-23"):
+            catchup.check_digests(self.e.work, after, lost)
+        self.assertEqual(
+            re.findall(r"^DIGEST (\S+)", quiet(catchup.days_cmd, self.e.work, lost, True, None), re.M),
+            re.findall(r"^DIGEST (\S+)", out2, re.M),
+        )
+        # resumed from the last good listing, it runs to the end
+        cur, k = after, 1
+        while True:
+            out, nxt = self.one_batch(cur, k)
+            if nxt is None:
+                break
+            quiet(catchup.check_digests, self.e.work, cur, nxt)
+            cur, k = nxt, k + 1
+        self.assertIn("the backfill is complete", out)
+        have = catchup._digest_index(catchup._digest_listing(cur))
+        self.assertEqual(sorted(have), sorted(catchup._days(ms)))
+        self.assertEqual(sorted(os.listdir(os.path.join(cur, "digests"))), ["m2026-10.json", "m2026-11.json"])
+
+    def test_the_check_finds_a_day_lost_since_the_backup(self):
+        ms, db = self.backfill_env()
+        _, after = self.one_batch(db, 0)
+        _, after2 = self.one_batch(after, 1)
+        doc = os.path.join(after2, "digests", "m2026-11.json")
+        x = r(doc)
+        del x["days"]["2026-11-10"]  # written by the first batch, gone after the second
+        w(doc, x)
+        with self.assertRaisesRegex(AssertionError, "changed or missing since the backup: 2026-11-10"):
+            catchup.check_digests(self.e.work, after, after2)
+        # and the backfill write itself never drops a day the listing holds
+        spec = os.path.join(self.t.name, "again.json")
+        w(spec, {"digests": {"2026-11-10": [["Again", [276]]]}})
+        with self.assertRaisesRegex(AssertionError, "already has a digest"):
+            catchup.digests_cmd(self.e.work, after, spec)
+
+    def test_digests_spec_takes_only_digests(self):
+        ms, db = self.backfill_env(3)
+        spec = os.path.join(self.t.name, "bad.json")
+        w(spec, {"digests": {"2026-10-18": [["Ana", [0]]]}, "join": {}})
+        with self.assertRaisesRegex(AssertionError, 'takes only "digests"'):
+            catchup.digests_cmd(self.e.work, db, spec)
+
+
 def read_page():
     with open(os.path.join(ROOT, "plugin", "skills", "refresh", "assets", "page.html"), encoding="utf-8") as fh:
         return fh.read()

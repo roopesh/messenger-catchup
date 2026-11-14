@@ -28,6 +28,7 @@ def in_setup(*p):
 
 REFERENCES = [
     "database.md",
+    "digests.md",
     "first-run.md",
     "helper.md",
     "open-message.md",
@@ -208,6 +209,11 @@ class TestSkillReferences(unittest.TestCase):
         self.assertIn("afterFrom:", page)
         for part in ("`from`", "`to`", "`sumFrom`", "`afterFrom`"):
             self.assertIn(part.strip("`"), line.group(0))
+        # F17: a Look deeper answer saves another shape; a later Claude must not read #from-#to as all read
+        self.assertIn("stretches:", page)
+        self.assertIn("wanted:", page)
+        for part in ('scope:"deeper"', "{from, to, stretches, wanted}", "outer bounds, not all read"):
+            self.assertIn(part, line.group(0))
 
     def test_every_meta_chat_field_the_page_writes_is_documented(self):
         """Anchored on each doc("meta/chat").update(...): an object literal, or a variable traced back to its literal,
@@ -282,12 +288,17 @@ class TestSkillReferences(unittest.TestCase):
             self.assertIn(l, ref)
 
     def test_every_catchup_command_is_documented(self):
-        """Every refresh command in SKILL.md; restore-summary, run only when the user asks, in its own reference."""
+        """Every refresh command in SKILL.md; restore-summary and the digest backfill, run only when the user asks, in
+        their own references."""
         py = in_skill("scripts", "catchup.py")
         cmds = re.findall(r'cmd == "([\w-]+)"', py)
-        self.assertEqual(sorted(cmds), ["bootstrap", "build", "relink", "restore", "restore-summary"])
+        self.assertEqual(
+            sorted(cmds),
+            ["bootstrap", "build", "check-digests", "days", "digests", "relink", "restore", "restore-summary"],
+        )
+        rare = {"restore-summary": "restoring-a-summary.md", "digests": "digests.md", "check-digests": "digests.md"}
         for c in cmds:
-            where = in_skill("references", "restoring-a-summary.md") if c == "restore-summary" else in_skill("SKILL.md")
+            where = in_skill("references", rare[c]) if c in rare else in_skill("SKILL.md")
             self.assertIn("catchup.py " + c, where, c)
             self.assertIn("catchup.py " + c, py.split('"""')[1], "the usage text names " + c)
 
@@ -335,7 +346,7 @@ class TestSkillReferences(unittest.TestCase):
         skill = in_skill("SKILL.md")
         step5 = re.search(r"^5\. .*$", skill, re.M).group(0)
         step7 = re.search(r"^7\. .*$", skill, re.M).group(0)
-        self.assertIn("`list threading` and `list summary` (limit 1000) into RUN", step5)
+        self.assertIn("`list threading`, `list summary` and `list digests` (limit 1000) into RUN", step5)
         for must in (
             "`RUN/out/manifest.json`",
             "one `batch` per entry of `batches`, in order",
@@ -797,6 +808,107 @@ class TestUpdateNotice(unittest.TestCase):
             test.page = self.page + "\n" + bad
             with self.assertRaises(AssertionError, msg=bad):
                 test.test_page_never_writes_versions()
+
+
+class TestDigests(unittest.TestCase):
+    """F16: per-day digests. The refresh lists and writes them, the backfill is bounded, backed up and checked, the
+    reference states catchup.py's own caps, and the page only reads them."""
+
+    def setUp(self):
+        self.skill = in_skill("SKILL.md")
+        self.ref = in_skill("references", "digests.md")
+        self.py = in_skill("scripts", "catchup.py")
+        self.page = in_skill("assets", "page.html")
+
+    def const(self, name):
+        return int(re.search(r"^%s = (\d+)" % name, self.py, re.M).group(1))
+
+    def test_a_refresh_lists_the_collection_and_asks_for_the_days(self):
+        self.assertIn("`list threading`, `list summary` and `list digests` (limit 1000) into RUN", step(self.skill, 5))
+        six = step(self.skill, 6)
+        self.assertLess(six.index("catchup.py days WORK RUN"), six.index("catchup.py build WORK RUN spec.json"))
+        self.assertIn("`references/digests.md`", six)
+        self.assertIn("`digests`", section(self.skill, "catchup.py"))
+        self.assertIn("`references/digests.md` › Backfill", section(self.skill, "Which part to follow"))
+
+    def test_the_reference_states_catchups_caps(self):
+        rules = section(self.ref, "Writing the bullets") + section(self.ref, "What catchup.py checks")
+        for name, text in (
+            ("DIGEST_BULLETS", "1 to %d bullets"),
+            ("DIGEST_WORDS", "≤%d words"),
+            ("DIGEST_BYTES", "%d bytes"),
+            ("DIGEST_REFS", "1 to %d messages"),
+        ):
+            self.assertIn(text % self.const(name), rules, name)
+        self.assertIn("1–%d bullets" % self.const("DIGEST_BULLETS"), rules)
+        self.assertIn("%d at most" % self.const("DUE_MAX"), section(self.ref, "During a refresh"))
+
+    def test_the_backfill_is_on_request_bounded_backed_up_and_checked(self):
+        bf = section(self.ref, "Backfill")
+        self.assertTrue(bf.startswith("## Backfill\nOnly when the user asks"))
+        self.assertIn(
+            "up to %d days and %s messages" % (self.const("BACKFILL_DAYS"), "{:,}".format(self.const("BACKFILL_MSGS"))),
+            bf,
+        )
+        order = [
+            "catchup.py days WORK RUN --backfill",
+            "catchup.py digests WORK RUN spec.json",
+            "Take the run lock just before the write",
+            "`RUN/out/manifest.json`",
+            "Release the lock right after",
+            "catchup.py check-digests WORK RUN AFTER",
+        ]
+        self.assertEqual([bf.index(x) for x in order], sorted(bf.index(x) for x in order))
+        self.assertIn("`RUN/out/backup/`", bf)
+        self.assertNotIn("never changes a day that already has a digest", bf, "a non-final day can be digested again")
+        self.assertIn("stop, write nothing more, and tell the user", bf)
+        self.assertIn("found again by the next `days`", bf)
+
+    def test_the_backfill_locks_each_write_and_retries_a_refused_one(self):
+        """A pinned write refused because a refresh wrote the current month is routine: back to step 2, no check. The
+        lock is taken just before each batch's write (an approval wait can outlast the 20-minute stale window)."""
+        bf = section(self.ref, "Backfill")
+        lock = re.search(r"^4\. Take the run lock.*$", bf, re.M).group(0)
+        for must in (
+            '`{state:"running",startedAt,step:"digests",by:"digest backfill"}`, pinned',
+            "under 20 minutes old",
+            "`get` it again",
+            'update `refresh/status` (pinned) to `{state:"done",finishedAt}`',
+        ):
+            self.assertIn(must, lock)
+        refused = re.search(r"^   - \*\*A refused write\*\*.*$", bf, re.M).group(0)
+        self.assertIn("Don't run the check", refused)
+        self.assertIn("go back to step 2 with a fresh folder", refused)
+        self.assertIn("Do 2 or 3 batches in a session, then stop and tell the user how many days are left", bf)
+        self.assertIn("`offset` and `limit`", bf)
+
+    def test_days_are_the_browsers_dates(self):
+        """The helper dates messages in the browser's zone, not meta/chat.tz; days never go back; final digests."""
+        db = in_skill("references", "database.md")
+        for text in (self.ref, db):
+            self.assertIn("browser's time zone", text)
+            self.assertNotIn("in the chat's time zone (`meta/chat.tz`)", text)
+            self.assertIn("final", text)
+        self.assertIn("A day never goes back", self.ref)
+        self.assertIn("create an empty", section(self.ref, "During a refresh"))
+        wb = in_skill("references", "writing-the-build.md")
+        self.assertIn("a `digests/m<YYYY-MM>` month step 5's listing holds", wb)
+        self.assertNotIn("(only the `current` documents)", wb)
+        self.assertIn("or two when its days (DUE_MAX at", self.py)
+
+    def test_database_md_documents_digests(self):
+        db = in_skill("references", "database.md")
+        line = re.search(r"^- `digests/m<YYYY-MM>`.*$", db, re.M)
+        self.assertTrue(line)
+        for part in ("`{month, days:", "bullets:[{t, refs}]", "fromI", "toI", "the page's Ask reads them"):
+            self.assertIn(part, line.group(0))
+        self.assertIn("`digests` (when present) `{n, from, to}`", db)
+        self.assertIn("digests: P.digests", self.page)
+
+    def test_the_page_never_writes_digests(self):
+        uses = re.findall(r'collection\(\s*"digests"\s*\)\s*\.(\w+)', self.page)
+        self.assertEqual(uses, ["onSnapshot"])
+        self.assertNotRegex(self.page, r'doc\(\s*["`]digests/')
 
 
 class TestHelper2(unittest.TestCase):
@@ -1537,6 +1649,10 @@ class TestScheduling(unittest.TestCase):
     def test_desktop_requirement(self):
         self.assertIn("**The Claude Desktop app is open**", section(in_setup("SKILL.md"), "Requirements"))
         self.assertIn("**Claude Desktop app**", section(read("README.md"), "Requirements"))
+        # R10 (v1.25.0): the page's own requirements say it too, in the same words as setup (claude.ai, the phone, Cowork, a schedule)
+        page = re.sub(r"\s+", " ", read("plugin", "skills", "refresh", "assets", "page.html"))
+        self.assertIn("Keep the Claude Desktop app open on that computer too", page)
+        self.assertIn("when a refresh runs from claude.ai, the phone, Cowork or a schedule", page)
 
     def test_stop_and_change_leave_one_schedule(self):
         """H1 and H2: stopping clears the token, so every old follow-up and task goes stale; a recurring task that

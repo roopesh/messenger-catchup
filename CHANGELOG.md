@@ -2,6 +2,56 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.25.0] - 2026-11-14
+**Long histories: older messages a day at a time, per-day digests, Look deeper, and range summaries of any length** (BACKLOG F15 and R4, F16, F17, F18, R10). MINOR: new page features and refresh procedure changes. Page **`PAGE_VERSION` 2.9** (from 2.8); helper unchanged (2.1). No re-setup: Claude republishes your page on its next refresh.
+
+### Added
+- **"Show older messages" loads a day at a time (F15, closes R4).**
+  - It starts with the catch-up window and the day before it. Scrolling near the top loads one more day, and the message you're reading stays put, like Messenger.
+  - **Speed:** it used to draw every stored message at once (25,000 rows at 25,000 messages); now about 1,700, and about 460 per step.
+  - **Jumps:** jumping to an older message (links, "Show #n", Ask citations) loads that message's day.
+  - **Other cases:**
+    - A date range with an end loads newer days at the bottom.
+    - The top reads "Start of stored history" at the first message.
+    - With Show older on, the Messages toolbar stays under the tabs.
+    - A run of bubbles across midnight shows as one block, whether its day loaded by scrolling or with the page.
+- **Per-day digests (F16).**
+  - **Writing:** each refresh writes a few bullets for each finished day, citing that day's messages, stored one document per month (`digests/m<YYYY-MM>`; only `catchup.py` writes them). At most 3 days per refresh, oldest first. A day is digested at most twice: `final` is set when a later day was already stored.
+  - **Ask:** older history uses digests in place of the title-only day lines where a day has one. The prompt, the note under the answer ("Day digests for N days (…)") and `sent.digests` say when they were used.
+  - **`catchup.py`:** a `digests` spec key with its checks (finished days only, refs from that day, caps, no control characters, `RUN/digests/` required), and the commands `days`, `digests` and `check-digests`.
+  - **New `references/digests.md`:**
+    - A one-time backfill, run only on request, in batches that are bounded, backed up and checked after each, and resumable.
+    - It takes the run lock just before each write; 2–3 batches per session.
+- **Look deeper (F17).** Under an Ask answer that rested partly on summaries, a Look deeper button makes two plain requests:
+  1. Claude names the stretches it needs, which are checked, clamped to stored messages and limited to 3.
+  2. The page sends them word for word with the question.
+
+  It retries once on `prompt_too_large`, and Stop cancels it. It's saved in `qa/*` with `scope:"deeper"` and `sent:{from,to,stretches,wanted}`.
+- **Range summaries of any length (F18).** A span too long for one request is no longer refused. It is read in as many parts as it needs, with "Writing part n of N" and Stop, then merged.
+  - **Condensing:** merges from more than 4 parts, or over 64 KB, are condensed by one more request per batch of conversations. They're always saved under the 256 KiB document limit, and a failed save is shown with "Save it again".
+  - **Across parts:** later parts can answer earlier parts' open questions.
+  - **Never partial:** nothing is saved until every part is done, and "Write the rest" carries on.
+  - **New messages during a run:** a run whose window gains new messages is shown with Stop, and the window then uses that summary and says how far it covers.
+
+### Changed
+- **The page names the Claude Desktop app (R10).** "Your computer has to be online" now says to keep it open, signed in to the same account, as setup and the README say: Claude in Chrome needs it when a refresh runs from claude.ai, the phone, Cowork or a schedule. The README now names Cowork too. Whether a claude.ai tab in the same Chrome needs it is still unchecked live.
+- **Which links answer a question:** only `r`, `rq`, `rg` or `i` links from someone other than the asker count. A "same person continuing" link no longer closes a question.
+- **Refresh skill:** `SKILL.md` 18,747 bytes. Step 5 lists `digests`, step 6 runs `catchup.py days`, plus a pointer to the backfill. `references/database.md` (and setup's copy) documents digests, the `deeper` scope and its `sent` shape, `parts` and `condensed`.
+- **Tests:**
+  - Page sections `olderByDay` (O1–O11), `digests` (D1–D6), `deeper` (D1–D8), `deeperBudget` (D9), `longRanges` (L1–L8) and `longRanges2` (L9–L12).
+  - `TestDigests` in `test_catchup.py` and `test_tools.py`.
+
+### Review
+- An independent review of the release and a separate adversarial review of the digests found real defects, all fixed before merge, each with a test that fails without the fix. A mutation run then confirmed the tests catch each rule:
+  - a long range summary could be shown but silently not saved (over 256 KiB);
+  - a refresh during a long run left the button doing nothing;
+  - questions answered in a later part stayed open;
+  - a day was re-digested every hour when the chat's time zone was ahead of the browser's;
+  - a refused backfill write ended the backfill;
+  - room held for digests that didn't fit cost Ask its conversation lines;
+  - special conversation ids from a model reply crashed a part.
+- Filed: F24 (optional views of the digests, such as "By day").
+
 ## [1.24.0] - 2026-11-13
 **The schedule and deal claims on the page, and photos that are retried and keep their slots** (BACKLOG F14, F19's display, F22, R15, R16). MINOR: new page features and refresh procedure changes. Page **`PAGE_VERSION` 2.8** (from 2.7), helper **2.1** (from 2.0). No re-setup: Claude republishes your page on its next refresh, and installed helpers (1.5+) update themselves from this release.
 
