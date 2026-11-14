@@ -1598,7 +1598,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.9";
+  const PAGE_VERSION = "3.0";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -7113,7 +7113,9 @@
     const running =
       isObj(status) && status.state === "running" && (now - Date.parse(status.startedAt || 0)) / 60000 < 25;
     const c1 = vcmp(V.page, M) === -1;
-    const c2 = !!V.refresh && !!meta.lastRefresh && meta.lastRefresh !== V.refresh;
+    /* compared without a leading weekday: a refresh that copied an example without one isn't an older skill (#43) */
+    const noDay = x => String(x).replace(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun),? /, "");
+    const c2 = !!V.refresh && !!meta.lastRefresh && noDay(meta.lastRefresh) !== noDay(V.refresh);
     if ((c1 || c2) && !running)
       add("C:" + (M || P), [
         "The last refresh ran an older copy of the Messenger Catch-up skill than this page was made for. Until it's updated, new photos may not be stored or shown. Update the plugin wherever Claude runs your refreshes (claude.ai or Claude Desktop: Customize › Plugins; Claude Code: /plugin), and remove any copy of the skill you uploaded yourself. ",
@@ -7186,7 +7188,7 @@
     list.forEach(n => {
       const p = el("p");
       p.dataset.key = n.key;
-      const msg = el("span", "msg");
+      const msg = el("span", "upd-msg");
       n.parts.forEach(x => {
         if (typeof x === "string") return msg.append(x);
         const a = el("a", null, x.t);

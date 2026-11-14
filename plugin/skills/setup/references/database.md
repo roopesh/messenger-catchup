@@ -39,7 +39,7 @@ A document holds at most 256 KiB, so since v1.17 threading and summary are colle
 ## Versions
 `meta/chat.versions` tells the page what to update: it can't see the helper (that lives in the Messenger tab) or fetch releases, so it compares these with its own `PAGE_VERSION` and `pageVersion`, and shows a short notice the user can dismiss.
 ```json
-"versions": {"page": "2.7", "helper": "2.0", "refresh": "Nov 20, 9:04 AM", "browsers": {"Work Mac": {"helper": "2.0", "at": "2026-11-20T17:04:00Z"}}}
+"versions": {"page": "2.7", "helper": "2.0", "refresh": "Fri Nov 20, 9:04 AM", "browsers": {"Work Mac": {"helper": "2.0", "at": "2026-11-20T17:04:00Z"}}}
 ```
 - `page`: `PAGE_VERSION` in this skill's `assets/page.html`.
 - `helper`: `@version` in the refresh skill's `assets/helper.user.js`.
