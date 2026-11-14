@@ -25,7 +25,7 @@ The full reference. The refresh skill's SKILL.md lists what a refresh needs.
 
 ## Threading and summary documents
 A document holds at most 256 KiB, so since v1.17 threading and summary are collections. Only `catchup.py` writes them, through the manifest its build prints (the refresh skill's `references/writing-the-build.md`). The page and `catchup.py bootstrap` merge them into the single documents above.
-- `threading/current`: `layout:2`, `block` (messages per block, 1000), `blocks` (the ids of its block documents), `to`, `note`, `builtAt`, `rev` (the write's revision, shared with `summary/current`; a relink with no move sets `summaryRev` to summary's instead), and `convs` holding only conversations with no messages yet.
+- `threading/current`: `layout:2`, `block` (messages per block, 1000), `blocks` (the ids of its block documents), `to`, `note`, `builtAt`, `rev` (the write's revision, shared with `summary/current`; a relink with no move, `bullets` or `dealEdit` sets `summaryRev` to summary's instead), and `convs` holding only conversations with no messages yet.
 - `threading/b<start>-<hash>`: `start`, `convs:[{id,title}]` (conversations whose first message is in the block), `members:{conv:[i,…]}` and `links:{i:[parent,type]}` for the block's messages.
 - `summary/current`: `layout:2`, `block`, `blocks`, `activeFrom`, `version`, `toI`, `generatedAt`, `rev`, `fromI`, `mentionsNote`, and the conversations, `open`, `answered`, `mentions` and `deals` whose messages reach `activeFrom` (recent ones).
 - `summary/b<start>-<hash>`: `start`, and the older items by the block of their messages: `convs` (by their last message), `open`, `answered`, `mentions`, `deals`, and `syn:{conv:[bullets]}` (a conversation's bullets from that block).

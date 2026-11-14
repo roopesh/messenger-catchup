@@ -18,8 +18,11 @@
                                      rebuild the same RUN with a corrected spec.
   catchup.py relink WORK RUNDIR SPEC Correct links (relink) or conversations (move) of messages already built, when
                                      there's nothing new to build. RUNDIR holds the whole threading collection (list),
-                                     and summary too for a move; SPEC holds only "relink", "move" and newconvs for the
-                                     move, or is {} after bootstrap --rollback refiled the summary (it writes both). Writes RUNDIR/out/manifest.json and the documents it names, then advances
+                                     and summary too for a move, bullets or dealEdit; SPEC holds only "relink", "move"
+                                     (with newconvs for it), "bullets" and "dealEdit" (checked as a build checks them,
+                                     after the move: a claim moved to its offer gets its bullet and claims entry in the
+                                     same write), or is {} after bootstrap --rollback refiled the summary (it writes
+                                     both). Writes RUNDIR/out/manifest.json and the documents it names, then advances
                                      WORK's threading (and summary), keeping the previous WORK in WORK/prev.
   catchup.py restore-summary WORK RUNDIR BACKUPDIR [DECISIONS] [--dry-run] [--backup=NAME]
                                      Put back what sessions before v1.17 dropped from the summary, from the copy they saved
@@ -63,8 +66,8 @@ LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summ
   summary.fromI (optional, pages from before v1.17): the first message the stored summary covers. Earlier sessions
   dropped older conversations and moved it; the page offers to summarize spans before it. A build keeps it as is;
   restore-summary moves it back to what the backup covered (or removes it when the summary covers everything).
-  rev: every write puts one new revision token in both `current` documents (a relink with no move writes only
-  threading, naming summary's rev in summaryRev). Bootstrap refuses a pair from different writes (one that only
+  rev: every write puts one new revision token in both `current` documents (a relink with no move, bullets or
+  dealEdit writes only threading, naming summary's rev in summaryRev). Bootstrap refuses a pair from different writes (one that only
   partly landed) unless it fits together, and a build or relink refuses a database whose rev isn't the one WORK was
   built from.
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
@@ -531,8 +534,8 @@ SEEN = {"threading": ("to", "builtAt", "rev"), "summary": ("toI", "generatedAt",
 
 def _stamp(t, s, srev=None):
     """A revision token shared by both `current` documents of one write (seconds, then a random part), so bootstrap
-    can tell a write that only partly landed and _fresh any other writer. A relink with no move writes only
-    threading: its `summaryRev` names the summary it goes with."""
+    can tell a write that only partly landed and _fresh any other writer. A relink with no move, bullets or dealEdit
+    writes only threading: its `summaryRev` names the summary it goes with."""
     rev = "%x-%s" % (int(time.time()), os.urandom(3).hex())
     t["rev"] = rev
     t.pop("summaryRev", None)
@@ -1067,6 +1070,93 @@ def _check_summary(t, s, pool):  # every summary ref belongs to its conversation
     return cm
 
 
+def _not_dropped(sp, dropped):  # nothing else in the spec may name a conversation its move empties and drops
+    names = [(k, cid) for k in ("join", "bullets", "outcome", "key", "dealEdit") for cid in sp.get(k) or {}]
+    names += [(k, x.get("conv")) for k in ("deals", "open", "answered") for x in sp.get(k) or []]
+    for k, cid in names:
+        assert cid not in dropped, (
+            '%s names %s, which this spec\'s move empties and drops (its summary went to %s): use "%s" instead'
+            % (k, cid, dropped.get(cid), dropped.get(cid))
+        )
+
+
+def _gained(s, homes, sp, st):
+    """The conversations whose deal indexes changed: a deal moved in or out (homes: each deal's conversation before
+    this spec's move), a new deal in this spec, or a move since WORK was bootstrapped (state.json `moved`)."""
+    went = [(d["conv"], h) for d, h in zip(s["deals"], homes) if d["conv"] != h]
+    return (
+        {c for pair in went for c in pair} | {d.get("conv") for d in sp.get("deals") or []} | set(st.get("moved") or [])
+    )
+
+
+def _add_bullets(sp, s, C):
+    """The spec's `bullets` {conv: [[text, [refs]], ...]} appended to the summary (C: threading's conversations by id).
+    _check_summary then checks that every ref is in its conversation."""
+    SC = {c["id"]: c for c in s["convs"]}
+    for cid, bs in (sp.get("bullets") or {}).items():
+        assert cid in C, ("bullets: unknown conv", cid)
+        assert isinstance(bs, list), ("bullets %s must be a list of [text, [refs]]" % cid, bs)
+        if cid not in SC:  # its summary was dropped by a session before v1.17: start it again
+            SC[cid] = {"id": cid, "tag": "", "synopsis": [], "outcome": "", "key": []}
+            s["convs"].append(SC[cid])
+        if not isinstance(SC[cid]["synopsis"], list):  # an old string synopsis: bullets as the page reads it
+            SC[cid]["synopsis"] = _syn_items(SC[cid]["synopsis"])
+        for b in bs:
+            assert isinstance(b, list) and len(b) == 2 and isinstance(b[0], str) and isinstance(b[1], list), (
+                "a bullet is [text, [refs]]",
+                cid,
+                b,
+            )
+            tx, refs = b
+            assert len(tx.split()) <= 15, ("bullet over 15 words", tx)
+            assert refs, ("bullet ref not in conv: a new bullet needs refs", cid, tx)
+            SC[cid]["synopsis"].append({"t": tx, "refs": refs})
+
+
+DEAL_EDIT_KEYS = ("text", "addRefs", "index", "ref", "addClaims", "removeClaims", "status", "statusAt")
+
+
+def _deal_edits(sp, s, C, pool, gained):
+    """The spec's `dealEdit` {conv: {...}} applied to the summary's deals (C: threading's conversations by id, after
+    any move; gained: _gained, where "index" is refused)."""
+    for cid, e in (sp.get("dealEdit") or {}).items():
+        ds = [d for d in s["deals"] if d["conv"] == cid]
+        assert ds, ("dealEdit: no deal in conversation", cid)
+        bad = sorted(set(e) - set(DEAL_EDIT_KEYS))
+        assert not bad, ("dealEdit takes %s" % ", ".join(DEAL_EDIT_KEYS), cid, bad)
+        assert not ("ref" in e and "index" in e), 'dealEdit %s: "ref" or "index", not both' % cid
+        if "ref" in e:  # the deal whose refs hold this message
+            pick = [d for d in ds if e["ref"] in (d.get("refs") or [])]
+            assert len(pick) == 1, 'dealEdit %s: "ref" %s is in %d of its deals: %s' % (
+                cid,
+                e["ref"],
+                len(pick),
+                _deal_list(ds),
+            )
+            d = pick[0]
+        else:
+            assert len(ds) == 1 or "index" in e, 'dealEdit: %d deals in %s; add "index" (or "ref"): %s' % (
+                len(ds),
+                cid,
+                _deal_list(ds),
+            )
+            assert "index" not in e or cid not in gained, (
+                "dealEdit %s: a move (in this spec or since WORK was bootstrapped) or new deals changed its deals, so "
+                '"index" may name another deal than you read. Name it by "ref" (one of its messages) instead. Its '
+                "deals now: %s" % (cid, _deal_list(ds))
+            )
+            assert isinstance(e.get("index", 0), int) and 0 <= e.get("index", 0) < len(ds), (
+                'dealEdit %s: no deal at "index" %s: %s' % (cid, e.get("index"), _deal_list(ds))
+            )
+            d = ds[e.get("index", 0)]
+        if "text" in e:
+            d["text"] = e["text"]
+        mem = set(C[cid]["members"]) if cid in C else set()
+        assert all(r in mem for r in e.get("addRefs", [])), ("dealEdit addRefs must be in the conversation", cid)
+        d["refs"] = sorted(set(d.get("refs", []) + e.get("addRefs", [])))
+        _deal_edit(d, e, pool, cid)
+
+
 def _problems(t, s):
     """What a build's _check_summary would refuse in this pair, as messages (never raises): a summary item whose
     conversation threading lacks, or whose refs lie outside its conversation."""
@@ -1175,17 +1265,20 @@ def _heal(t, s):
 
 
 def relink(work, run, specp):
-    """`catchup.py relink`: correct links (relink) and conversations (move) of messages already built."""
+    """`catchup.py relink`: correct links (relink) and conversations (move) of messages already built, with the
+    bullets and dealEdit that go with them (F21: a claim moved to its offer gets its bullet and claims entry in the
+    same write), checked as a build checks them."""
     global TZ
     sp = _load(specp)
     lay = _layout(work)
+    edits = sp.get("bullets") or sp.get("dealEdit")
     assert (
-        set(sp) <= {"relink", "move", "newconvs"}
-        and (sp.get("relink") or sp.get("move") or lay.get("repair") and not sp)
+        set(sp) <= {"relink", "move", "newconvs", "bullets", "dealEdit"}
+        and (sp.get("relink") or sp.get("move") or edits or lay.get("repair") and not sp)
         and (sp.get("move") or "newconvs" not in sp)
     ), (
-        'relink SPEC takes only a non-empty "relink" and/or "move" (newconvs only for a move; {} only to write what '
-        "bootstrap --rollback refiled; use build for the rest)"
+        'relink SPEC takes only a non-empty "relink", "move", "bullets" and/or "dealEdit" (newconvs only for a move; '
+        "{} only to write what bootstrap --rollback refiled; use build for the rest)"
     )
     for nc in sp.get("newconvs", []):
         assert nc.get("id") in (sp.get("move") or {}).values(), (
@@ -1193,7 +1286,7 @@ def relink(work, run, specp):
         )
     st = _load(work + "/state.json")
     TZ = st.get("tz") or TZ
-    both = sp.get("move") or lay.get("repair")  # a move, or a summary bootstrap refiled: write both documents
+    both = sp.get("move") or edits or lay.get("repair")  # the summary changes too: write both documents
     colls = ("threading", "summary") if both else ("threading",)
     listing = {c: _listing(run, c) for c in colls}  # a fresh read: which blocks exist, and that WORK is current
     _fresh(listing, lay)
@@ -1203,9 +1296,15 @@ def relink(work, run, specp):
     before = copy.deepcopy(t["links"])
     relinked = _relink(t, sp, stored, st["base"])
     moves, dropped, touched = 0, {}, set()
-    if sp.get("move"):
-        _newconvs(t, s, sp)
-        moves, dropped, touched = _move(t, s, sp, stored, st["base"], before)
+    if sp.get("move") or edits:
+        homes = [d["conv"] for d in s["deals"]]
+        if sp.get("move"):
+            _newconvs(t, s, sp)
+            moves, dropped, touched = _move(t, s, sp, stored, st["base"], before)
+        _not_dropped(sp, dropped)
+        C = {cv["id"]: cv for cv in t["convs"]}
+        _add_bullets(sp, s, C)
+        _deal_edits(sp, s, C, stored, _gained(s, homes, sp, st))
         seen = collections.Counter(x for cv in t["convs"] for x in cv["members"])
         assert all(v == 1 for v in seen.values()), ("internal error: a message in two conversations", seen)
         _check_summary(t, s, stored)
@@ -1232,10 +1331,18 @@ def relink(work, run, specp):
     if touched:  # the next build refuses a dealEdit "index" there: deals may have changed places since they were read
         _dump(dict(st, moved=sorted(set(st.get("moved") or []) | touched)), work + "/state.json")
     print(
-        "relink ok: %d change(s)%s. Write it as in step 7: %s"
+        "relink ok: %d change(s)%s%s. Write it as in step 7: %s"
         % (
             len(sp.get("relink") or {}),
             ", %d move(s)%s" % (moves, ", dropped %s" % ", ".join(sorted(dropped)) if dropped else "") if moves else "",
+            "".join(
+                ", %d %s" % (n, w)
+                for n, w in (
+                    (sum(len(b) for b in (sp.get("bullets") or {}).values()), "bullet(s)"),
+                    (len(sp.get("dealEdit") or {}), "dealEdit(s)"),
+                )
+                if n
+            ),
             told,
         )
     )
@@ -1492,24 +1599,8 @@ def build(work, run, specp):
     homes = [d["conv"] for d in s["deals"]]
     _, dropped, touched = _move(t, s, sp, byi, base, before)  # before new messages join, so they can join the target
     _cross_warn(t, relinked)
-    for k in ("join", "bullets", "outcome", "key", "dealEdit"):
-        for cid in sp.get(k) or {}:
-            assert cid not in dropped, (
-                '%s names %s, which this spec\'s move empties and drops (its summary went to %s): use "%s" instead'
-                % (k, cid, dropped.get(cid), dropped.get(cid))
-            )
-    for k in ("deals", "open", "answered"):
-        for x in sp.get(k) or []:
-            assert x.get("conv") not in dropped, (
-                '%s names %s, which this spec\'s move empties and drops (its summary went to %s): use "%s" instead'
-                % (k, x.get("conv"), dropped.get(x.get("conv")), dropped.get(x.get("conv")))
-            )
-    gained = (  # conversations whose deal indexes changed: a deal moved in or out, a new deal, an earlier move
-        {d["conv"] for d, h in zip(s["deals"], homes) if d["conv"] != h}
-        | {h for d, h in zip(s["deals"], homes) if d["conv"] != h}
-        | {d.get("conv") for d in sp.get("deals", [])}
-        | set(st.get("moved") or [])
-    )
+    _not_dropped(sp, dropped)
+    gained = _gained(s, homes, sp, st)
     C = {cv["id"]: cv for cv in t["convs"]}
     for k in ("bullets", "outcome", "key"):
         for cid in sp.get(k) or {}:
@@ -1592,13 +1683,7 @@ def build(work, run, specp):
         if cid in C and cid not in SC:  # its summary was dropped by a session before v1.17: start it again
             SC[cid] = {"id": cid, "tag": "", "synopsis": [], "outcome": "", "key": []}
             s["convs"].append(SC[cid])
-    for cid, bs in sp.get("bullets", {}).items():
-        if not isinstance(SC[cid]["synopsis"], list):  # an old string synopsis: bullets as the page reads it
-            SC[cid]["synopsis"] = _syn_items(SC[cid]["synopsis"])
-        for tx, refs in bs:
-            assert len(tx.split()) <= 15, ("bullet over 15 words", tx)
-            assert refs, ("bullet ref not in conv: a new bullet needs refs", cid, tx)
-            SC[cid]["synopsis"].append({"t": tx, "refs": refs})
+    _add_bullets(sp, s, C)
     for cid, o in sp.get("outcome", {}).items():
         assert len(o.split()) <= 12, ("outcome over 12 words", o)
         SC[cid]["outcome"] = o
@@ -1626,42 +1711,7 @@ def build(work, run, specp):
     for o in sp.get("open", []):
         assert o["ask"] not in open_asks or o["ask"] in sp.get("closeOpen", []), ("already open", o["ask"])
     s["deals"] += sp.get("deals", [])
-    for cid, e in sp.get("dealEdit", {}).items():
-        ds = [d for d in s["deals"] if d["conv"] == cid]
-        assert ds, ("dealEdit: no deal in conversation", cid)
-        keys = ("text", "addRefs", "index", "ref", "addClaims", "removeClaims", "status", "statusAt")
-        bad = sorted(set(e) - set(keys))
-        assert not bad, ("dealEdit takes %s" % ", ".join(keys), cid, bad)
-        assert not ("ref" in e and "index" in e), 'dealEdit %s: "ref" or "index", not both' % cid
-        if "ref" in e:  # the deal whose refs hold this message
-            pick = [d for d in ds if e["ref"] in (d.get("refs") or [])]
-            assert len(pick) == 1, 'dealEdit %s: "ref" %s is in %d of its deals: %s' % (
-                cid,
-                e["ref"],
-                len(pick),
-                _deal_list(ds),
-            )
-            d = pick[0]
-        else:
-            assert len(ds) == 1 or "index" in e, 'dealEdit: %d deals in %s; add "index" (or "ref"): %s' % (
-                len(ds),
-                cid,
-                _deal_list(ds),
-            )
-            assert "index" not in e or cid not in gained, (
-                "dealEdit %s: a move (in this spec or since WORK was bootstrapped) or new deals changed its deals, so "
-                '"index" may name another deal than you read. Name it by "ref" (one of its messages) instead. Its '
-                "deals now: %s" % (cid, _deal_list(ds))
-            )
-            assert isinstance(e.get("index", 0), int) and 0 <= e.get("index", 0) < len(ds), (
-                'dealEdit %s: no deal at "index" %s: %s' % (cid, e.get("index"), _deal_list(ds))
-            )
-            d = ds[e.get("index", 0)]
-        if "text" in e:
-            d["text"] = e["text"]
-        assert all(r in cmem(cid) for r in e.get("addRefs", [])), ("dealEdit addRefs must be in the conversation", cid)
-        d["refs"] = sorted(set(d.get("refs", []) + e.get("addRefs", [])))
-        _deal_edit(d, e, pool, cid)
+    _deal_edits(sp, s, C, pool, gained)
     s["open"] = sp.get("open", []) + [o for o in s["open"] if o["ask"] not in sp.get("closeOpen", [])]
     s["answered"] = sp.get("answered", []) + s["answered"]
     s["mentions"] = sp.get("mentions", []) + s["mentions"]
