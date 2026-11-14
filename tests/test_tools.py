@@ -1332,7 +1332,7 @@ class TestScheduling(unittest.TestCase):
         for where, text in (("scheduling.md", self.ref()), ("setup's Scheduling", self.setup_scheduling())):
             self.assertNotRegex(text, r"(?i)\bdoubl(e|es|ed|ing)\b(?!-)|\bback ?off\b|\bexponential", where)
         delay = step(self.arm(), 3)
-        self.assertIn("`every` minutes from now", delay)
+        self.assertIn("`every` minus 3 minutes from now", delay)
         self.assertIn("whatever `misses` says: no waiting longer", delay)
 
     def test_misses_are_counted_reported_and_cleared(self):
@@ -1579,16 +1579,16 @@ class TestScheduling(unittest.TestCase):
 
     def test_overlapping_runs_keep_one_chain(self):
         """R14, review of release A: the early-armed next run starts `every` after this one, so it finds a running
-        run's lock fresh only when `every` is under 20 minutes (the lock's stale age). For usual settings it takes the
+        run's lock fresh only when that delay is under 20 minutes (the lock's stale age). For usual settings it takes the
         lock over (BACKLOG R18), and pinned writes stop the run whose write is refused. Either way it arms its own
         successor first, so this run's end writes nothing."""
         overlap = bullet(self.run_steps(), "Overlap")
         stale = int(re.search(r"its `startedAt` is less than (\d+) minutes old", in_skill("SKILL.md")).group(1))
         for must in (
             "(BACKLOG R18)",
-            "the run this one armed starts `every` after this one did",
+            "the run this one armed starts `every` minus 3 minutes after this one did",
             "That run Arms its own successor.",
-            "With `every` under %d minutes, this run's lock is still fresh: it skips for the lock and sets `misses` to 0."
+            "If that delay is under %d minutes, this run's lock is still fresh: it skips for the lock and sets `misses` to 0."
             % stale,
             "Otherwise the lock is over %d minutes old: it takes it over as stale and refreshes beside this run"
             % stale,
@@ -1603,13 +1603,14 @@ class TestScheduling(unittest.TestCase):
         self.assertIn("if `refresh/status` now shows another run's `running`", refused)
 
     def test_runs_start_every_apart(self):
-        """Review of release A: the early arm counts the delay from the run's start, so it is `every` itself (minus 5
-        would start runs 5 minutes more often than the user chose)."""
+        """Review of release A: the early arm counts the delay from the run's start. `every` minus 3 minutes keeps starts
+        close to the user's choice (57 minutes for hourly; minus 5 ran 5 minutes early), while a wake 1-2 minutes late
+        after a short run still lands inside the prompt cache (LEARNINGS › Cost)."""
         delay = step(self.arm(), 3)
-        self.assertIn("A chain run arms as it starts, so runs start `every` apart.", delay)
-        self.assertNotIn("minus", delay)
-        self.assertNotRegex(self.ref(), r"`every` minus \d")
-        self.assertIn("A follow-up is armed `every` after a run starts", read("docs", "DECISIONS.md"))
+        self.assertIn("A chain run arms as it starts, so runs start `every` minus 3 minutes apart", delay)
+        self.assertIn("a wake a minute or two late still finds the prompt cache warm", delay)
+        self.assertEqual(set(re.findall(r"`every` minus (\d+)", self.ref())), {"3"}, "one delay everywhere")
+        self.assertIn("A follow-up is armed `every` minus 3 minutes after a run starts", read("docs", "DECISIONS.md"))
 
     def test_an_early_arm_stuck_on_approval(self):
         """Review of release A: an approval on the early arm holds the refresh up, and only a run with the user present
