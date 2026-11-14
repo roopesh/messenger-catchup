@@ -83,6 +83,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B49 | P3 | bug | A scan that stops growing hangs (stops) or reads as the top of the chat (first run) (#32 §5) · **done** (v1.20.0) |
 | B50 | P3 | bug | `troubleshooting.md` says the skill's version is in `VERSION`, "shipped with it"; `VERSION` is at the repo root, outside `plugin/` · **done** (v1.22.0) |
 | B51 | P3 | bug | A built view's reply could set its own `kind`: `{kind:"view", ...v}` let `kind:"idea"` from the model through, posing as a method idea Claude acts on after a refresh · **done** (v1.22.0) |
+| B52 | P2 | bug | Update notices render as a squeezed message-row grid (`span.msg` collides with `.msg`); `database.md`'s `versions.refresh` example lacks the weekday, which can raise a false "older copy" notice (issue #43) |
 | B1 | P3 | bug | Threading `note` is never filled in for new pages · **done** (v1.2.1) |
 | B3 | P3 | bug | `dealEdit` crashes when the conversation has no deal · **done** (v1.2.1) |
 | B5 | P3 | bug | Reply with no parent found gets an auto `i` link, contrary to SKILL.md · **done** (v1.2.1) |
@@ -334,6 +335,13 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### B51 · P3 · A view reply could pose as a method idea · done (v1.22.0)
 - **Where:** `page.html`, Views › Build view: the model's JSON was saved as `{ kind: "view", ...v }`, so a reply carrying `kind: "idea"` replaced `kind: "view"`. Method ideas (`views/*` with `kind:"idea"`) are what Claude checks and acts on after each refresh (the refresh skill's SKILL.md › Method ideas). Found in the review of PR #42; it predates F6.
 - **Fix:** `{ ...v, kind: "view" }`. Test: page `history` › `B51` (a reply with `kind:"idea"` is saved as a view); it fails on the page before the fix.
+
+### B52 · P2 · Update notices render as a message-row grid; `versions.refresh` example lacks the weekday (issue #43)
+- **Found:** by the owner on the live page after the 2.7 update (Nov 13). Still in v1.25.0 (page 2.9).
+- **Grid:** `renderUpdates()` wraps each notice's text in `el("span", "msg")`, and `.msg` is the message row's grid (`3.2em 5.4em 1fr`), so the text squeezes into the first column and the link into the second.
+- **Weekday:** `references/database.md` › Versions shows `"refresh": "Nov 20, 9:04 AM"`, while `lastRefresh` values start with a weekday ("Fri Nov 20, 9:04 AM"). A refresh that copied the example's shape raised notice C2 ("older copy of the skill") falsely.
+- **Fix:** rename the span's class (`upd-msg`); fix the example to the real format; optionally compare ignoring a leading weekday.
+- **Test:** a page test that renders an update notice and checks its text isn't laid out as a grid; a notice test where `versions.refresh` lacks the weekday but otherwise equals `lastRefresh` raises no C2 (if the loose compare is done).
 
 ## Risks
 
