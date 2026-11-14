@@ -495,6 +495,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### R12 · P3 · A chain conversation keeps growing
 - **What:** every hourly run adds tool output to the same conversation, so each run costs more over weeks. Predates v1.21.0. Arming at `every` minus 5 minutes (minus 3 from a run's start since v1.23.0) keeps runs inside the prompt cache, but the context still grows.
 - **Also:** a claude.ai conversation has a hard length limit. Once a chain's conversation reaches it, follow-ups can't be delivered and the chain stops (a refresh the user asks for then finds it stopped).
+- **Also (seen live, Nov 14):** a chain conversation seems to keep the skill version it started with. The owner's account had 1.25.0 installed (Customize › Plugins), but the hourly runs of the old `"loop"` chain still left the page at 2.7 and wrote no digests. A refresh started in a new conversation gets the installed version. Not yet confirmed how claude.ai loads a skill into a conversation that's already running. If that's how it works, every release only reaches a chain once it moves to a new conversation, so moving the chain now and then also serves updates.
 - **Fix:** measure a chain's cost per run after a week or two; if it climbs, or the conversation nears its limit, have a run move the chain to a fresh conversation now and then (setup's Stop or change, then arm from the new one).
 
 ### R14 · P3 · Arming at the end of a run · done (v1.23.0)
