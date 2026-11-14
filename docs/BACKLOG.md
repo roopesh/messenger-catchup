@@ -116,8 +116,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F14 | P3 | feature | The page shows when the next scheduled refresh is due (`refresh/schedule.nextAt`) · **done** (v1.24.0) |
 | F15 | P3 | perf | "Show older messages" renders the whole history at once; page it by day (R4's remainder) |
 | F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
-| F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
-| F18 | P3 | feature | Range summaries longer than one request: split into parts and merge |
+| F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word · **done** (v1.25.0: a Look deeper button, two plain requests) |
+| F18 | P3 | feature | Range summaries longer than one request: split into parts and merge · **done** (v1.25.0) |
 | F19 | P2 | feature | Short claims ("In", "dibs", "in for 2") in buy/sell chats thread to the latest open offer, not to whatever came before (issue #41) · **done** (v1.23.0: `REACT?` lines, Claude decides; deal `claims` and `status`) |
 | F20 | P2 | feature | A `move` spec key: put an already-built message into another conversation (`relink` can only change its link) (issue #41) · **done** (v1.23.0) |
 | F21 | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
@@ -777,15 +777,17 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Also here:** older open questions, answers and deals as their own lines (the design's "level 1b"); they're mostly in conversation outcomes today.
 - **Trigger:** live answers about things older than 3 weeks turn out poor (F6's live check L4), or the owner asks.
 
-### F17 · P3 · A two-step or tool-using Ask
+### F17 · P3 · A two-step or tool-using Ask · done (v1.25.0)
 - **What:** Claude first sees the digest, names the stretch it needs, and the page sends that stretch word for word in a second call (or a tool call does it).
 - **Cost:** about twice the time and usage (30–90 s on the default model); `limits().tools` isn't guaranteed; more ways to fail. Today the manual version works: pick the stretch as a date range and ask with it as the window.
 - **Also considered:** a keyword prefilter (an earlier live sample: common words matched 30–93 KB, "?" 480 KB); it still needs the budget and misses synonyms.
 - **Trigger:** L4 shows answers saying "only summarized" often for questions people care about.
+- **Done in v1.25.0:** a **Look deeper** button under an Ask answer whose prompt carried summary lines (older or newer). Pressed, it makes two plain requests (no `tools`): step 1 (`sample.json`) sends the question, the first answer and the summary lines and asks for `{"stretches":[{from,to,focus,why}]}`; the page validates it (anything else: "couldn't be read", nothing more sent), clamps each stretch to stored messages, cuts out what was already read word for word and overlaps, and keeps 3. Step 2 sends them word for word with the question and the first answer; a stretch too long goes in as the part around its `focus` that fits, and the note says so. Both retry once on `prompt_too_large`; the Ask tab's Stop cancels either step. Saved in `qa/*` as `scope:"deeper"` with `sent: {from, to, stretches, wanted}`. Live answers only: an earlier question in the list has no button (its summary lines aren't saved).
 
-### F18 · P3 · Split long range summaries
+### F18 · P3 · Split long range summaries · done (v1.25.0)
 - **What:** a span before `summary.fromI` too long for one request (about 1,990 live-sized messages, 4.3 days) is refused since v1.22.0. Splitting it into parts and merging (conversations joined by id, bullets concatenated, lists joined) would let any span work, at k× the usage and time, with a merge to test.
 - **Trigger:** the owner wants long spans summarized and `catchup.py restore-summary` (which moves `fromI` back on the owner's page) hasn't removed the need.
+- **Done in v1.25.0:** the box offers the button for any span and says how many parts; each part is one request whose prompt fits (`rangeParts`), with no cap, and the box shows "Writing part n of N" and a Stop button. `mergeRange` joins conversations by id (bullets in order, newest outcome, key numbers without repeats) and the lists without duplicates (deals with the same conversation, kind and text become one with every part's numbers). A failed part is tried once more (`prompt_too_large` splits what's left again at 80%); a second failure names the part's span. Parts done stay only in the tab and nothing is saved until every part is, so Stop, a failure or a closed tab leaves nothing half-written; "Write the rest" goes on from the first part not done. The saved document carries `parts`.
 
 ### F19 · P2 · Short claims thread to the latest open offer · done (v1.23.0)
 - **Found:** GitHub issue #41, a field report from a buy/sell/trade chat. A short message is often a claim on an item just offered ("In", "I'm in", "in for 1", "Dibs", "Mine", "I'll take it", "PM'd", "Interested", a raffle spot like "In for 2" or "#7"). These are rarely sent as Messenger replies, so the build links them by position (usually `i` to the message before), or Claude files them as a new conversation. Either way the page shows them with no context.

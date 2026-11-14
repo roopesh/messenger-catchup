@@ -3535,65 +3535,7 @@ async function history2() {
     await p.close();
   });
 
-  /* H15: a range summary too long for one call is refused, saying how much fits and from when */
-  await hcase('H15', async () => {
-    const n = 600;
-    const TH = {
-      convs: [{ id: 'a', title: 'Packs', members: range(0, n - 1, i => i) }],
-      links: {},
-      to: n - 1,
-      note: '',
-    };
-    const SM = {
-      version: 2,
-      convs: [{ id: 'a', tag: '', synopsis: [{ t: 'Later part', refs: [400] }], outcome: '', key: [400] }],
-      open: [],
-      answered: [],
-      deals: [],
-      mentions: [],
-      fromI: 300,
-      toI: n - 1,
-      generatedAt: 'now',
-    };
-    const msgs = range(0, n - 1);
-    const p = await hopen(
-      hseed(msgs, {
-        meta: { markerMode: 'time', markerFrom: ymd(TODAY) + 'T00:00', markerTo: null },
-        docs: { 'threading/current': TH, 'summary/current': SM },
-        opts: { promptMax: 24576 },
-      }),
-      n,
-    );
-    const box = await until(p, () => {
-      const t = (document.querySelector('#v-summary .rangebox') || {}).textContent || '';
-      return /This span has/.test(t) && t;
-    });
-    const m = (box || '').match(
-      /This span has 600 messages, more than Claude can read at once \(about (\d+) fit\)\. ?Pick a shorter span: from (.+?) through the same end fits\./,
-    );
-    ok(
-      !!m && !(await p.$('#v-summary .rangebox button')) && (await p.evaluate(() => __rt.sampleLog.length)) === 0,
-      'H15: a 600-message span at a 24 KiB cap is refused with no button and no call: "' +
-        (box || '').slice(0, 150) +
-        '…"',
-    );
-    if (m) {
-      const fit = +m[1];
-      const from = mk(n - fit);
-      const t = from.t.match(/(\d+):(\d+) ([AP]M)/);
-      const ts = from.d + 'T' + String((+t[1] % 12) + (t[3] === 'PM' ? 12 : 0)).padStart(2, '0') + ':' + t[2];
-      await p.evaluate(ts => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { markerFrom: ts })), ts);
-      const box2 = await until(p, () => {
-        const b = document.querySelector('#v-summary .rangebox');
-        return b && b.querySelector('button') && b.textContent;
-      });
-      ok(
-        !!box2 && box2.includes('All ' + fit + ' messages in this span'),
-        'H15: the start it suggests fits: from ' + m[2] + ', ' + fit + ' messages, and the button is offered',
-      );
-    }
-    await p.close();
-  });
+  /* H15 (a range summary too long for one call was refused) is gone since F18: see longRanges, which reads it in parts */
 
   /* H16: scale, counted: 25,000 messages (50,000 too with PERF=1) */
   await hcase('H16', async () => {
@@ -5927,6 +5869,626 @@ async function claims() {
   await p.context().close();
 }
 
+/* Scripts the page's sample.json, one reply per call: a value; {__throw: code}; {__auto: true}, a range-summary reply
+   made from the prompt (each conversation listed gets a bullet citing its first number and an outcome citing its last;
+   one mention, one open question, the same deal in every part); {__wait: ms}, then the next reply (rejects cancelled
+   when the call's signal aborts). The stand-in still checks the cap and logs each call first. Each call is kept in
+   __json as {prompt, nums (the message numbers it sends), status (the range box's or Look deeper's line then)}. */
+async function scriptJson(p, replies) {
+  await p.evaluate(rs => {
+    const orig = window.__origJson || (window.__origJson = S.sample.json);
+    window.__json = window.__json || [];
+    window.__replies = rs;
+    const auto = prompt => {
+      const conv = (prompt.split('CONVERSATIONS (id: title: message numbers):\n')[1] || '').split('\n\nMESSAGES:')[0];
+      const convs = conv
+        .split('\n')
+        .filter(Boolean)
+        .map(l => {
+          const k = l.split(': ');
+          return { id: k[0], members: k[k.length - 1].split(',').map(Number) };
+        });
+      const nums = ((prompt.split('\n\nMESSAGES:\n')[1] || '').match(/^#\d+/gm) || []).map(x => +x.slice(1));
+      const first = convs[0];
+      const ment = nums.find(i => i % 5 !== 2);
+      return {
+        mentions: [{ note: 'Mentioned at #' + ment, refs: [ment] }],
+        mentionsNote: 'n/a',
+        open: [{ conv: first.id, ask: first.members[0], to: 'anyone', note: 'Asked at #' + first.members[0] }],
+        answered: [],
+        deals: [
+          { kind: 'sale', tag: 'For sale', conv: 'a', text: 'Stove for $40', refs: [nums.find(i => i % 2 === 0)] },
+        ],
+        convs: convs.map(c => ({
+          id: c.id,
+          tag: 'Gear',
+          synopsis: [{ t: c.id + ' bullet from #' + c.members[0], refs: [c.members[0]] }],
+          outcome: c.id + ' as of #' + c.members[c.members.length - 1],
+          key: [c.members[0], c.members[c.members.length - 1]],
+        })),
+      };
+    };
+    S.sample.json = async (prompt, o) => {
+      const st = document.querySelector('#v-summary .rangebox .range-st, #chat .deeper:last-child .note');
+      const nums = ((String(prompt).split('\n\nMESSAGES:\n')[1] || '').match(/^#\d+/gm) || []).map(x => +x.slice(1));
+      __json.push({ prompt, nums, status: st ? st.textContent : '' });
+      await orig(prompt, o);
+      let r = __replies.length ? __replies.shift() : { __auto: true };
+      if (r && r.__wait) {
+        const ms = r.__wait;
+        await new Promise((res, rej) => {
+          const t = setTimeout(res, ms);
+          if (o && o.signal)
+            o.signal.addEventListener('abort', () => {
+              clearTimeout(t);
+              rej(Object.assign(new Error('cancelled'), { code: 'cancelled' }));
+            });
+        });
+        r = __replies.length ? __replies.shift() : { __auto: true };
+      }
+      if (r && r.__throw) throw Object.assign(new Error(r.__throw), { code: r.__throw });
+      return r && r.__auto ? auto(prompt) : r;
+    };
+  }, replies);
+}
+
+/* ---------- deeper: Look deeper under an answer that rested on summaries (F17) ---------- */
+/* Presses the newest Look deeper and waits for it to settle; returns the calls it made and what it showed */
+async function deepPress(p) {
+  const n0 = await p.evaluate(() => __rt.sampleLog.length);
+  const s0 = await p.evaluate(() => __rt.samples.length);
+  await p.evaluate(() => [...document.querySelectorAll('#chat .deeper button')].pop().click());
+  await until(p, () => {
+    const r = [...document.querySelectorAll('#chat .deeper')].pop();
+    const b = r.querySelector('button');
+    return (b.hidden || !b.disabled) && !/^Step/.test(r.querySelector('.note').textContent);
+  });
+  await sleep(100);
+  return p.evaluate(
+    ([n0, s0]) => {
+      const r = [...document.querySelectorAll('#chat .deeper')].pop();
+      const t = [...document.querySelectorAll('#chat .turn.assistant')].pop();
+      const sent = __rt.samples.slice(s0);
+      const last = sent.filter(Array.isArray).pop();
+      return {
+        calls: __rt.sampleLog.slice(n0),
+        plain: sent.filter(Array.isArray).length,
+        json: sent.filter(x => !Array.isArray(x)).length,
+        status: r.querySelector('.note').textContent,
+        hidden: r.querySelector('button').hidden,
+        prompt: last ? last[0].content : null,
+        turns: last ? last.length : 0,
+        note: (t.querySelector('.sent') || {}).textContent || '',
+        answer: t.querySelector('.txt').textContent,
+      };
+    },
+    [n0, s0],
+  );
+}
+const DEEP_Q = 'Who sold a stove?';
+async function deepOpen(opts = {}) {
+  const msgs = hmsgs(800, { perDay: 130 });
+  const p = await hopen(
+    hseed(msgs, {
+      threads: { interleave: true, long: [50, 700] },
+      meta: { caughtUpI: 769 },
+      opts: Object.assign({ promptMax: 32768, answer: 'From a summary: Ana sold the stove early on [#5].' }, opts),
+    }),
+    800,
+  );
+  const r = await hask(p, DEEP_Q, true);
+  const rawLo = +((r.note.match(/^Read #(\d+)–#799/) || [])[1] ?? NaN);
+  return { p, r, rawLo };
+}
+async function deeper() {
+  /* D1: the button shows only under an answer that rested on summaries */
+  await hcase('D1', async () => {
+    let p = await hopen(hseed(hmsgs(20), { meta: { markerMode: null } }), 20);
+    await hask(p, 'What was for sale?');
+    ok(!(await p.$('#chat .deeper')), 'D1: an answer that read everything word for word has no Look deeper button');
+    await p.close();
+    const o = await deepOpen();
+    p = o.p;
+    const b = await p.$('#chat .turn.assistant .deeper button');
+    ok(
+      !!b && (await b.textContent()) === 'Look deeper' && o.r.note.includes('summaries only') && o.r.calls.length === 1,
+      'D1: an answer whose note says "summaries only" has a Look deeper button, and nothing more was sent (' +
+        o.r.calls.length +
+        ' call)',
+    );
+    await p.close();
+  });
+
+  /* D2: step 1 picks a stretch; step 2 sends it word for word with the question; saved with sent */
+  await hcase('D2', async () => {
+    const { p, rawLo } = await deepOpen();
+    await scriptJson(p, [{ stretches: [{ from: 100, to: 160, focus: 130, why: 'the stove sale' }] }]);
+    const d = await deepPress(p);
+    const j = await p.evaluate(() => __json[0]);
+    const lines = await p.evaluate(() => S.msgs.slice(0, 800).map(lineFor));
+    ok(
+      d.json === 1 && d.plain === 1 && d.calls.every(c => c.code === null),
+      'D2: two plain requests, one sample.json then one sample, and nothing else (' + JSON.stringify(d.calls) + ')',
+    );
+    ok(
+      j.prompt.includes('QUESTION: ' + DEEP_Q) &&
+        j.prompt.includes('FIRST ANSWER:\nFrom a summary: Ana sold the stove early on [#5].') &&
+        /\nSUMMARY LINES \(oldest first; each starts with the message numbers it covers\):\n\[#0/.test(j.prompt) &&
+        j.prompt.includes('"stretches"') &&
+        j.prompt.includes('#' + rawLo + ' to #799') &&
+        /^Step 1 of 2/.test(j.status),
+      'D2: step 1 carries the question, the first answer and the summary lines, names what was read, asks for JSON, and the line says "' +
+        j.status +
+        '"',
+    );
+    ok(
+      d.turns === 1 &&
+        d.prompt.includes('QUESTION: ' + DEEP_Q) &&
+        d.prompt.includes('MESSAGES #100 to #160 (oldest first):\n' + lines.slice(100, 161).join('\n')) &&
+        !d.prompt.includes(lines[99]) &&
+        !d.prompt.includes(lines[161]) &&
+        d.calls[1].bytes <= 32768 - HMARGIN,
+      'D2: step 2 sends #100–#160 word for word, every line in order and nothing either side, with the question, in ' +
+        (d.calls[1] || {}).bytes +
+        ' bytes',
+    );
+    ok(
+      d.note.startsWith('Looked deeper: read #100–#160 (Oct 1–2) word for word.') &&
+        !/too long/.test(d.note) &&
+        d.hidden &&
+        d.answer === 'From a summary: Ana sold the stove early on #5.',
+      'D2: the new answer shows, the note says "' + d.note + '", and the button goes',
+    );
+    const qa = await until(p, () =>
+      Object.values(Object.fromEntries(__rt.store)).find(v => v && v.q === 'Who sold a stove?' && v.scope === 'deeper'),
+    );
+    ok(
+      qa &&
+        JSON.stringify(qa.sent) ===
+          JSON.stringify({ from: 100, to: 160, stretches: [[100, 160]], wanted: [[100, 160]] }),
+      'D2: saved in qa with scope "deeper" and sent ' + JSON.stringify(qa && qa.sent),
+    );
+    ok(
+      (await p.textContent('#qa-list')).includes('looked deeper · #100–#160 word for word'),
+      'D2: Earlier questions says it looked deeper, and what it read',
+    );
+    ok(p.errors.length === 0, 'D2: no page errors ' + JSON.stringify(p.errors));
+    await p.close();
+  });
+
+  /* D3, D4: malformed replies, nothing named, or only what was already read: no second request */
+  await hcase('D3, D4', async () => {
+    const { p, rawLo } = await deepOpen();
+    const cases = [
+      ['plain text', 'Read #100 to #160.', /couldn't be read/],
+      ['stretches not a list', { stretches: 'all of it' }, /couldn't be read/],
+      ['numbers that are not numbers', { stretches: [{ from: 'abc', to: null }, 7] }, /couldn't be read/],
+      ['no stretches key', { pick: [100, 160] }, /couldn't be read/],
+      ['invalid_json from the runtime', { __throw: 'invalid_json' }, /couldn't be read/],
+      ['an empty list', { stretches: [] }, /found no stretch/],
+      ['only what was read word for word', { stretches: [{ from: rawLo + 5, to: 799 }] }, /already read/],
+    ];
+    for (const [label, reply, want] of cases) {
+      await scriptJson(p, [reply]);
+      const d = await deepPress(p);
+      ok(
+        d.json === 1 && d.plain === 0 && want.test(d.status) && !d.hidden,
+        'D3: ' + label + ': no second request, the button stays, and "' + d.status + '"',
+      );
+    }
+    ok(p.errors.length === 0, 'D3: no page errors ' + JSON.stringify(p.errors));
+    await p.close();
+  });
+
+  /* D5: clamped to stored messages, outside what was read, and to the budget around its focus */
+  await hcase('D5', async () => {
+    const { p, rawLo } = await deepOpen();
+    await scriptJson(p, [
+      {
+        stretches: [
+          { from: -50, to: 999999, focus: 200 },
+          { from: '#120', to: '#130' },
+        ],
+      },
+    ]);
+    const d = await deepPress(p);
+    const m = (d.prompt || '').match(/MESSAGES #(\d+) to #(\d+) \(oldest first\):\n([\s\S]*)$/);
+    const nums = m ? (m[3].match(/^#\d+/gm) || []).map(x => +x.slice(1)) : [];
+    const qa = await until(p, () => Object.values(Object.fromEntries(__rt.store)).find(v => v && v.scope === 'deeper'));
+    ok(
+      !!m &&
+        contiguous(nums) &&
+        nums.includes(200) &&
+        nums[0] > 0 &&
+        nums[nums.length - 1] < rawLo - 1 &&
+        d.calls[1].bytes <= 32768 - HMARGIN &&
+        (d.prompt.match(/\nMESSAGES #/g) || []).length === 1,
+      'D5: from -50 to 999999 becomes #0–#' +
+        (rawLo - 1) +
+        ' (stored, before the word-for-word part); too long, it goes in as #' +
+        nums[0] +
+        '–#' +
+        nums[nums.length - 1] +
+        ' around #200 within the cap (' +
+        (d.calls[1] || {}).bytes +
+        ' bytes); #120–#130 is inside it and not sent twice',
+    );
+    ok(
+      d.note.includes('#0–#' + (rawLo - 1) + ' was too long to send whole: read the part around #200 that fits.') &&
+        qa &&
+        JSON.stringify(qa.sent.wanted) === JSON.stringify([[0, rawLo - 1]]) &&
+        JSON.stringify(qa.sent.stretches) === JSON.stringify([[nums[0], nums[nums.length - 1]]]),
+      'D5: the note says so ("' + d.note + '"), and sent keeps what was wanted and what was read',
+    );
+    await p.close();
+  });
+
+  /* D6: prompt_too_large on step 2: one retry with 80% of the bytes, as Ask does */
+  await hcase('D6', async () => {
+    const { p } = await deepOpen({ enforce: 24000 });
+    await scriptJson(p, [{ stretches: [{ from: 0, to: 400, focus: 200 }] }]);
+    const d = await deepPress(p);
+    const big = d.calls.filter((c, k) => k > 0);
+    ok(
+      d.json === 1 &&
+        big.length === 2 &&
+        big[0].code === 'prompt_too_large' &&
+        big[1].code === null &&
+        big[1].bytes <= Math.floor(big[0].bytes * 0.8) &&
+        d.note.endsWith('(sent a smaller set: the first was too large)'),
+      'D6: refused once, sent again smaller (' +
+        big.map(c => c.bytes + ' ' + c.code).join(', ') +
+        '): "' +
+        d.note +
+        '"',
+    );
+    await p.close();
+  });
+
+  /* D7: progress and Stop during step 2 */
+  await hcase('D7', async () => {
+    const { p } = await deepOpen();
+    await scriptJson(p, [{ stretches: [{ from: 100, to: 160 }] }]);
+    await p.evaluate(() => {
+      const o = S.sample;
+      const w = (m, opt) =>
+        new Promise((res, rej) => {
+          const t = setTimeout(() => o(m, opt).then(res, rej), 5000);
+          opt.signal.addEventListener('abort', () => {
+            clearTimeout(t);
+            rej(Object.assign(new Error('cancelled'), { code: 'cancelled' }));
+          });
+        });
+      w.json = o.json;
+      w.limits = o.limits;
+      S.sample = w;
+    });
+    await p.evaluate(() => [...document.querySelectorAll('#chat .deeper button')].pop().click());
+    const step2 = await until(p, () => {
+      const t = [...document.querySelectorAll('#chat .deeper')].pop().querySelector('.note').textContent;
+      return /^Step 2 of 2/.test(t) && !document.getElementById('ask-stop').hidden && t;
+    });
+    const turns0 = await p.evaluate(() => document.querySelectorAll('#chat .turn.assistant').length);
+    await p.click('#ask-stop');
+    const st = await until(p, () => {
+      const t = [...document.querySelectorAll('#chat .deeper')].pop().querySelector('.note').textContent;
+      return !/^Step/.test(t) && t;
+    });
+    await sleep(200);
+    const r = await p.evaluate(() => ({
+      turns: document.querySelectorAll('#chat .turn.assistant').length,
+      saved: Object.values(Object.fromEntries(__rt.store)).filter(v => v && v.scope === 'deeper').length,
+      enabled:
+        !document.getElementById('ask-go').disabled &&
+        ![...document.querySelectorAll('#chat .deeper button')].pop().disabled,
+    }));
+    ok(
+      !!step2 && step2.includes('#100–#160') && st === 'Stopped.' && r.turns === turns0 - 1 && !r.saved && r.enabled,
+      'D7: "' +
+        step2 +
+        '", then Stop: "' +
+        st +
+        '", the empty answer goes, nothing is saved, and Ask and the button work again',
+    );
+    await p.close();
+  });
+}
+
+/* ---------- longRanges: a range summary longer than one request, in parts (F18) ---------- */
+/* 600 messages today with longer lines; conversations a (even numbers), b (odd, before #300) and c (odd, from #300);
+   the saved summary starts at #300, so a window from today's start asks for a span summary of #0–#599 */
+function lrSeed(n, opts) {
+  const msgs = range(0, n - 1, i =>
+    mk(i, { b: 'message ' + i + ' about the ridge trail, tent poles and a spare stove' }),
+  );
+  const half = n >> 1;
+  const TH = {
+    convs: [
+      { id: 'a', title: 'Stoves', members: range(0, n - 1, i => i).filter(i => i % 2 === 0) },
+      { id: 'b', title: 'Tents', members: range(0, half - 1, i => i).filter(i => i % 2 === 1) },
+      { id: 'c', title: 'Packs', members: range(half, n - 1, i => i).filter(i => i % 2 === 1) },
+    ],
+    links: {},
+    to: n - 1,
+    note: '',
+  };
+  const SM = {
+    version: 2,
+    convs: [{ id: 'a', tag: '', synopsis: [{ t: 'Later part', refs: [half] }], outcome: '', key: [half] }],
+    open: [],
+    answered: [],
+    deals: [],
+    mentions: [],
+    fromI: half,
+    toI: n - 1,
+    generatedAt: 'now',
+  };
+  return hseed(msgs, {
+    meta: { markerMode: 'time', markerFrom: ymd(TODAY) + 'T00:00', markerTo: null },
+    docs: { 'threading/current': TH, 'summary/current': SM },
+    opts,
+  });
+}
+async function lrOpen(opts, n = 600) {
+  const p = await hopen(lrSeed(n, opts), n);
+  const box = await until(p, () => {
+    const b = document.querySelector('#v-summary .rangebox');
+    return b && b.querySelector('button') && b.textContent;
+  });
+  return { p, box, k: +((box || '').match(/reads it in (\d+) parts/) || [])[1] || 1 };
+}
+const lrStatus = p =>
+  p.evaluate(() => (document.querySelector('#v-summary .rangebox .range-st') || {}).textContent || '');
+const lrDoc = (p, n = 600) => get(p, 'rangeSummaries/r0_' + (n - 1));
+async function lrRun(p, replies, done) {
+  await scriptJson(p, replies);
+  await p.click('#v-summary .rangebox button.primary');
+  return until(p, done, null, 60000);
+}
+/* every message of the span sent once, in order, in parts each within the cap */
+function lrCover(calls, n, lim) {
+  const all = calls.flatMap(c => c.nums);
+  return (
+    all.length === n &&
+    all.every((x, k) => x === k) &&
+    calls.every(c => c.nums.length > 0 && contiguous(c.nums)) &&
+    calls.every(c => new TextEncoder().encode(c.prompt).length <= lim)
+  );
+}
+async function longRanges() {
+  /* L1: a long span gets the button and says how many parts; nothing is sent before it's pressed */
+  await hcase('L1', async () => {
+    const { p, box, k } = await lrOpen({ promptMax: 24576 });
+    ok(
+      k >= 3 &&
+        /This span has 600 messages \(Fri 9:00 AM to Fri 6:59 PM\), more than Claude can read at once/.test(box) &&
+        !/Pick a shorter span/.test(box) &&
+        (await p.evaluate(() => __rt.sampleLog.length)) === 0,
+      'L1: a 600-message span at a 24 KiB cap offers the button, read in ' +
+        k +
+        ' parts, with no call yet: "' +
+        box.slice(0, 220) +
+        '…"',
+    );
+    await p.close();
+  });
+
+  /* L2: parts under the cap, progress, and the merge */
+  await hcase('L2', async () => {
+    const { p, k } = await lrOpen({ promptMax: 24576 });
+    const doc = await lrRun(p, [], () => __rt.get('rangeSummaries/r0_599'));
+    const calls = await p.evaluate(() => __json);
+    ok(
+      calls.length === k && lrCover(calls, 600, 24576 - HMARGIN),
+      'L2: ' +
+        k +
+        ' requests, each within the cap less the margin, sending every message of #0–#599 once, in order (' +
+        calls.map(c => c.nums[0] + '–' + c.nums[c.nums.length - 1]).join(', ') +
+        ')',
+    );
+    ok(
+      calls.every((c, x) => c.status === 'Writing part ' + (x + 1) + ' of ' + k + '… keep this tab open.'),
+      'L2: progress says "Writing part n of ' +
+        k +
+        '" for each part (' +
+        calls.map(c => c.status.slice(0, 22)).join(' | ') +
+        ')',
+    );
+    const ids = doc.convs.map(c => c.id);
+    const a = doc.convs.find(c => c.id === 'a') || {};
+    const firstA = calls.map(c => c.nums.find(i => i % 2 === 0));
+    ok(
+      JSON.stringify(ids) === '["a","b","c"]' &&
+        JSON.stringify(a.synopsis.map(x => x.t)) === JSON.stringify(firstA.map(i => 'a bullet from #' + i)) &&
+        a.outcome === 'a as of #598' &&
+        a.key.length === 4 &&
+        a.key[0] === 0 &&
+        a.key[3] === 598,
+      'L2: conversations joined by id in order (' +
+        ids +
+        '); a has one bullet per part, in order, the last outcome and key ' +
+        JSON.stringify(a.key),
+    );
+    const b = doc.convs.find(c => c.id === 'b');
+    const c = doc.convs.find(c => c.id === 'c');
+    const partsWith = f => calls.filter(x => x.nums.some(f)).length;
+    ok(
+      b.synopsis.length === partsWith(i => i % 2 && i < 300) &&
+        c.synopsis.length === partsWith(i => i % 2 && i >= 300) &&
+        b.outcome === 'b as of #299' &&
+        c.outcome === 'c as of #599',
+      'L2: b and c, each in the parts that hold them, keep one bullet per part (' +
+        b.synopsis.length +
+        ', ' +
+        c.synopsis.length +
+        ')',
+    );
+    ok(
+      doc.deals.length === 1 &&
+        JSON.stringify(doc.deals[0].refs) === JSON.stringify(firstA) &&
+        doc.mentions.length === k &&
+        ascending(doc.mentions.map(m => m.refs[0][0])) &&
+        doc.open.length === new Set(doc.open.map(o => o.ask)).size &&
+        doc.open.length === k,
+      "L2: the same deal in every part is one deal with every part's number; " +
+        doc.mentions.length +
+        ' mentions in order; open questions without repeats',
+    );
+    ok(
+      doc.by === 'page' && doc.version === 2 && doc.fromI === 0 && doc.toI === 599 && doc.parts === k,
+      'L2: saved as one summary of #0–#599 (by page, version 2, parts ' + doc.parts + ')',
+    );
+    ok(
+      (await until(p, () => !document.querySelector('#v-summary .rangebox'))) &&
+        /a as of #598/.test(await p.textContent('#v-summary')),
+      'L2: the merged summary replaces the box and renders',
+    );
+    ok(p.errors.length === 0, 'L2: no page errors ' + JSON.stringify(p.errors));
+    await p.close();
+  });
+
+  /* L3: a part that fails once is tried again */
+  await hcase('L3', async () => {
+    const { p, k } = await lrOpen({ promptMax: 24576 });
+    const doc = await lrRun(p, [{ __auto: true }, { __throw: 'unavailable' }], () => __rt.get('rangeSummaries/r0_599'));
+    const calls = await p.evaluate(() => __json);
+    ok(
+      doc &&
+        doc.parts === k &&
+        calls.length === k + 1 &&
+        JSON.stringify(calls[1].nums) === JSON.stringify(calls[2].nums),
+      'L3: part 2 failed once and was sent again, the same messages; ' +
+        calls.length +
+        ' requests for ' +
+        k +
+        ' parts, saved',
+    );
+    await p.close();
+  });
+
+  /* L4: a part that fails twice: the span is named, nothing is saved, and Write the rest goes on from it */
+  await hcase('L4', async () => {
+    const { p, k } = await lrOpen({ promptMax: 24576 });
+    const st = await lrRun(p, [{ __auto: true }, { __throw: 'unavailable' }, { __throw: 'unavailable' }], () => {
+      const t = (document.querySelector('#v-summary .rangebox .range-st') || {}).textContent || '';
+      return /failed twice/.test(t) && t;
+    });
+    const calls = await p.evaluate(() => __json);
+    const p2 = calls[1].nums;
+    const btn = await p.textContent('#v-summary .rangebox button.primary');
+    ok(
+      calls.length === 3 &&
+        st.startsWith('Part 2 of ' + k + ', #' + p2[0] + '–#' + p2[p2.length - 1] + ' (') &&
+        st.includes("failed twice (unavailable), so that span isn't summarized.") &&
+        st.includes('Part 1 is done but not saved') &&
+        btn === 'Write the rest' &&
+        !(await lrDoc(p)),
+      'L4: "' + st + '", button "' + btn + '", and nothing saved',
+    );
+    await p.evaluate(() => (__json.length = 0));
+    const doc = await lrRun(p, [], () => __rt.get('rangeSummaries/r0_599'));
+    const more = await p.evaluate(() => __json);
+    ok(
+      doc &&
+        more.length === k - 1 &&
+        more[0].nums[0] === p2[0] &&
+        doc.parts === k &&
+        JSON.stringify(doc.convs.find(c => c.id === 'a').synopsis[0].t) === '"a bullet from #0"',
+      'L4: Write the rest sends parts 2–' +
+        k +
+        ' only (' +
+        more.length +
+        ' requests, from #' +
+        (more[0] || { nums: [] }).nums[0] +
+        ') and saves the whole span, part 1 included',
+    );
+    await p.close();
+  });
+
+  /* L5: Stop mid-run: nothing half-written is saved, and no more requests go */
+  await hcase('L5', async () => {
+    const { p, k } = await lrOpen({ promptMax: 24576 });
+    await scriptJson(p, [{ __auto: true }, { __wait: 5000 }]);
+    await p.click('#v-summary .rangebox button.primary');
+    await until(
+      p,
+      () => __json.length === 2 && !document.querySelector('#v-summary .rangebox button.secondary').hidden,
+    );
+    await p.click('#v-summary .rangebox button.secondary');
+    const st = await until(p, () => {
+      const t = (document.querySelector('#v-summary .rangebox .range-st') || {}).textContent || '';
+      return /^Stopped/.test(t) && t;
+    });
+    await sleep(300);
+    const r = await p.evaluate(() => ({
+      calls: __json.length,
+      saved: [...__rt.store.keys()].filter(x => x.startsWith('rangeSummaries/')),
+    }));
+    ok(
+      st ===
+        'Stopped at part 2 of ' +
+          k +
+          '. Part 1 is done but not saved: the summary is saved only once every part is done. Press Write the rest to go on.' &&
+        r.calls === 2 &&
+        r.saved.length === 0,
+      'L5: "' + st + '"; ' + r.calls + ' requests and no rangeSummaries document',
+    );
+    await p.close();
+  });
+
+  /* L6: no cap on parts */
+  await hcase('L6', async () => {
+    const { p, k } = await lrOpen({ promptMax: 9000 });
+    const doc = await lrRun(p, [], () => __rt.get('rangeSummaries/r0_599'));
+    const calls = await p.evaluate(() => __json);
+    ok(
+      k >= 20 && doc && doc.parts === k && calls.length === k && lrCover(calls, 600, 9000 - HMARGIN),
+      'L6: at a 9,000-byte cap the span takes ' + k + ' parts, every one sent and merged',
+    );
+    await p.close();
+  });
+
+  /* L7: prompt_too_large (the runtime counts more strictly than it says): what's left is split again at 80% */
+  await hcase('L7', async () => {
+    const { p, k } = await lrOpen({ promptMax: 24576, enforce: 18000 });
+    const doc = await lrRun(p, [], () => __rt.get('rangeSummaries/r0_599'));
+    const r = await p.evaluate(() => ({ json: __json, log: __rt.sampleLog }));
+    const ok2 = r.json.filter((c, x) => r.log[x].code === null);
+    ok(
+      doc &&
+        r.log.filter(c => c.code === 'prompt_too_large').length === 1 &&
+        r.log[0].code === 'prompt_too_large' &&
+        lrCover(ok2, 600, 18000) &&
+        doc.parts === ok2.length &&
+        ok2[0].nums.length < r.json[0].nums.length,
+      'L7: refused once, then what was left split again smaller (part 1: ' +
+        (ok2[0] || { nums: [] }).nums.length +
+        ' messages, from ' +
+        r.json[0].nums.length +
+        '; ' +
+        doc.parts +
+        ' parts, ' +
+        k +
+        ' before), each within what the runtime takes, covering the span',
+    );
+    await p.close();
+  });
+
+  /* L8: a span that fits is still one request, saved without a parts count */
+  await hcase('L8', async () => {
+    const { p, box } = await lrOpen({}, 100);
+    const doc = await lrRun(p, [], () => __rt.get('rangeSummaries/r0_99'));
+    ok(
+      /All 100 messages in this span/.test(box) &&
+        doc &&
+        doc.parts === undefined &&
+        (await p.evaluate(() => __json.length)) === 1,
+      'L8: a 100-message span at the full cap: one request, saved without parts',
+    );
+    await p.close();
+  });
+}
+
 const SECTIONS = {
   importer,
   robustness,
@@ -5947,6 +6509,8 @@ const SECTIONS = {
   notices,
   schedule,
   claims,
+  deeper,
+  longRanges,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1
