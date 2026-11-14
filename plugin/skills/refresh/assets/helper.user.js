@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      2.0
+// @version      2.1
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -11,8 +11,8 @@
 // ==/UserScript==
 (function () {
   if (window.__mcHelper || document.documentElement.hasAttribute('data-mc-helper')) return;
-  window.__mcHelper = '2.0';
-  document.documentElement.setAttribute('data-mc-helper', '2.0');
+  window.__mcHelper = '2.1';
+  document.documentElement.setAttribute('data-mc-helper', '2.1');
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener(
     'click',
@@ -134,6 +134,12 @@
   }
   const TOP_TRIES = 8;
   const TOP_MS = 12000;
+  /* The top-of-chat wait: TOP_TRIES steps and TOP_MS with nothing new. A test option, topMs, shortens it: topMs with
+     nothing new, and at least 2 steps at the top (the steps scale with it, 8 at the default 12 s). */
+  const topWait = o => {
+    const ms = +(o && o.topMs) || TOP_MS;
+    return { ms, tries: Math.max(2, Math.min(TOP_TRIES, Math.round((ms * TOP_TRIES) / TOP_MS))) };
+  };
   /* The sender's avatar (a ~28 px square image at the message's left edge) carries their full name as alt text; the
      name Messenger prints is a nickname or the first name. Reaction emoji and "seen" faces are smaller. Messenger shows
      the avatar once per run of messages from one sender; the scan gives the run's other messages its name (avr). */
@@ -152,6 +158,49 @@
     return !Array.from(e.querySelectorAll('a[href*="messenger_media"] img, [aria-label^="Open photo"] img')).some(i =>
       /fbcdn/.test(i.currentSrc || i.getAttribute('src') || ''),
     );
+  }
+  /* R16: a message's photos, one per photo link ("tile") in page order, so a photo keeps its slot k even when an image
+     before it hasn't loaded yet (a quick backfill scan). Each tile: u = its loaded Facebook image ('' while it hasn't
+     loaded) and aid = Messenger's attachment id from the link's attachment_id (the same on every visit; '' when there is
+     none). A tile holding only a small Facebook image (a GIF's still) or an image from elsewhere (GIPHY) is no photo;
+     one whose image has no source yet, or only a data:/blob: placeholder, is a photo that hasn't loaded. */
+  function photoTiles(e) {
+    const links = Array.from(e.querySelectorAll('a[href*="messenger_media"]'));
+    let cands = links.length ? links : Array.from(e.querySelectorAll('[aria-label^="Open photo"]'));
+    cands = cands.filter(x => !cands.some(y => y !== x && y.contains(x)));
+    const out = [];
+    for (const t of cands) {
+      const a = t.matches('a[href*="messenger_media"]') ? t : t.querySelector('a[href*="messenger_media"]');
+      const m = a && (a.getAttribute('href') || '').match(/[?&]attachment_id=(\d+)/);
+      const aid = m ? m[1] : '';
+      const im = Array.from(t.querySelectorAll('img'));
+      const fb = im.filter(i => i.currentSrc && /fbcdn/.test(i.currentSrc));
+      const big = fb.filter(i => !(i.naturalWidth && i.naturalWidth <= 220 && i.naturalHeight <= 120));
+      const src = i => i.currentSrc || i.getAttribute('src') || '';
+      let u = '';
+      if (big.length) u = big[0].currentSrc;
+      else if (fb.length) continue;
+      else if (!im.some(i => i.alt !== 'GIF Image' && (!src(i) || /^(data|blob):/.test(src(i))))) continue;
+      if (out.some(o => (aid && o.aid === aid) || (u && o.u === u))) continue;
+      out.push({ u, aid });
+    }
+    return out;
+  }
+  /* The scan reads a message many times while it scrolls: keep what each read saw. The read with more tiles wins, and a
+     tile it saw unloaded takes the URL another read saw for the same attachment id (or the same place, when neither
+     read had ids and both saw as many tiles). */
+  function mergePh(a, b) {
+    if (!a) return b;
+    const at = a.tiles || [];
+    const bt = b.tiles || [];
+    const base = bt.length >= at.length ? bt : at;
+    const other = base === bt ? at : bt;
+    const tiles = base.map((t, j) => {
+      if (t.u) return t;
+      const o = t.aid ? other.find(x => x.aid === t.aid) : other.length === base.length && !other[j].aid && other[j];
+      return o && o.u ? { u: o.u, aid: t.aid } : t;
+    });
+    return { srcs: a.srcs.length > b.srcs.length ? a.srcs : b.srcs, tiles, gif: !!(a.gif || b.gif) };
   }
   const refList = refs => refs.slice(0, 3).join(', ') + (refs.length > 3 ? ', …' : '');
   /* Reply markers that disagree. Without this a reworded "X replied to Y" line reads as a reply to nobody, and both
@@ -371,12 +420,14 @@
     };
   }
   /* scan: scroll back from the newest message until a STOP id (or, for a first run, FIRST.count messages, or the top of
-     the chat), then settle reply parents. OPT: {base (numbers the warnings), stallMs (default 30 s)}. Stops with
-     err "stalled" when nothing new loads for stallMs, so Claude retries instead of waiting on a hung scan. */
+     the chat), then settle reply parents. OPT: {base (numbers the warnings), stallMs (default 30 s), topMs (a test
+     option: the top-of-chat wait, default 12 s)}. Stops with err "stalled" when nothing new loads for stallMs, so
+     Claude retries instead of waiting on a hung scan. */
   async function mcScan(STOPS, FIRST, OPT) {
     STOPS = STOPS || [];
     OPT = OPT || {};
     const STALL = +OPT.stallMs || 30000;
+    const TOP = topWait(OPT);
     sessionStorage.removeItem('__mcsave');
     for (let w = 0; w < 40; w++) {
       const l = document.querySelector('[role="log"]');
@@ -433,6 +484,7 @@
           const big = imgs.filter(i => !(i.naturalWidth && i.naturalWidth <= 220 && i.naturalHeight <= 120));
           return {
             srcs: [...new Set(big.map(i => i.currentSrc))],
+            tiles: photoTiles(e),
             gif: !!e.querySelector('img[alt="GIF Image"]') || (imgs.length > 0 && big.length === 0),
           };
         }
@@ -456,12 +508,12 @@
                   rx: labels.filter(l => /reactions? with/.test(l)),
                   att: labels.filter(l => /^Open Attachment|^Open photo/i.test(l)),
                   links: [...new Set(Array.from(e.querySelectorAll('a[href]')).map(a => dec(a.getAttribute('href'))))],
-                  ph: prev && prev.ph && prev.ph.srcs.length > ph.srcs.length ? prev.ph : ph,
+                  ph: mergePh(prev && prev.ph, ph),
                   av: av || (prev && prev.av) || '',
                   vid: !!e.querySelector('video') || !!(prev && prev.vid),
                 };
               else {
-                if (ph.srcs.length > prev.ph.srcs.length) prev.ph = ph;
+                prev.ph = mergePh(prev.ph, ph);
                 if (av && !prev.av) prev.av = av;
               }
             });
@@ -524,7 +576,7 @@
           }
           if (s.scrollTop < 5 && !grew && !loadingTop(s)) {
             if (!tops++) topSince = Date.now();
-            if (tops > TOP_TRIES && Date.now() - topSince >= TOP_MS) {
+            if (tops > TOP.tries && Date.now() - topSince >= TOP.ms) {
               R.atTop = true;
               if (!FIRST) break;
             }
@@ -790,6 +842,7 @@
   }
   async function mcVerify(OPT) {
     const STALL = +((OPT && OPT.stallMs) || 30000);
+    const TOPW = topWait(OPT);
     window.__v = { order: [], done: false, err: null, gap: 0 };
     await (async () => {
       const V = window.__v;
@@ -860,7 +913,7 @@
             }
             if (s.scrollTop < 5 && !grew && !loadingTop(s)) {
               if (!tops++) topSince = Date.now();
-              if (tops > TOP_TRIES && Date.now() - topSince >= TOP_MS) atTop = true;
+              if (tops > TOPW.tries && Date.now() - topSince >= TOPW.ms) atTop = true;
             } else tops = 0;
             if (!(TOP ? atTop : V.order.includes(anchor)) && Date.now() - grownAt > STALL) {
               V.stalled = true;
@@ -902,7 +955,12 @@
       mode: X.mode,
     };
   }
-  async function mcCapture(BASE) {
+  /* capture: the window's messages and photos. OPT.skip (helper 2.1, references/photos.md › Backfill) = {"<i>": [k or
+     "aid", ...]}: photos the page already holds, never fetched. Each photo is {i, k, aid?, type, b64}: k is its tile's
+     place in the message, aid its attachment id. phfail lists the photos it couldn't get ({i, k, aid?, e}: e "fetch",
+     or "unloaded" when the image never loaded), so the page keeps them owed and a later run retries them (R15); phskip
+     lists the photos skipped. */
+  async function mcCapture(BASE, OPT) {
     return await (async () => {
       const R = JSON.parse(sessionStorage.getItem('__mcsave'));
       const now = new Date();
@@ -1061,22 +1119,38 @@
       const photos = [];
       const gifs = [];
       const failed = [];
+      const phfail = [];
+      const phskip = [];
+      const SKIP = (OPT && OPT.skip) || {};
       for (const [k, id] of R.win.entries()) {
         const m = R.info[id];
         if (!m || !m.ph) continue;
         const i = BASE + 1 + k;
-        if (!m.ph.srcs.length) {
+        const tiles = m.ph.tiles || m.ph.srcs.map(u => ({ u, aid: '' }));
+        if (!tiles.length) {
           if (m.ph.gif) gifs.push(i);
           continue;
         }
-        for (const [j, u] of m.ph.srcs.entries()) {
+        const sk = Array.isArray(SKIP[i]) ? SKIP[i] : [];
+        for (const [j, t] of tiles.entries()) {
+          const at = t.aid ? { i, k: j, aid: t.aid } : { i, k: j };
+          if (sk.some(x => x === j || (t.aid && x === t.aid))) {
+            phskip.push(at);
+            continue;
+          }
+          if (!t.u) {
+            failed.push(i);
+            phfail.push(Object.assign({}, at, { e: 'unloaded' }));
+            continue;
+          }
           try {
-            const r = await fetch(u);
+            const r = await fetch(t.u);
             const bl = await r.blob();
             if (!/^image\/(jpeg|png|webp|gif)$/.test(bl.type)) throw bl.type;
-            photos.push({ i, k: j, type: bl.type, b64: await b64(bl) });
+            photos.push(Object.assign({}, at, { type: bl.type, b64: await b64(bl) }));
           } catch (e) {
             failed.push(i);
+            phfail.push(Object.assign({}, at, { e: 'fetch' }));
           }
         }
       }
@@ -1091,6 +1165,8 @@
         gifs,
         photos,
         phsha: await sha(JSON.stringify(photos)),
+        phfail,
+        phskip,
       };
       const text = JSON.stringify(cap);
       window.__capText = text;
@@ -1128,6 +1204,7 @@
         ' photos ' +
         photos.length +
         (failed.length ? ' FAILED ' + failed : '') +
+        (phskip.length ? ' skipped ' + phskip.length : '') +
         ' gifs ' +
         gifs +
         ' you ' +
@@ -1588,7 +1665,7 @@
   /* Full refresh pipeline: scan, reload, verify after the reload, then capture. State rides in sessionStorage across the reload. */
   async function full(a) {
     sessionStorage.removeItem('mc_result');
-    const r = await mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs });
+    const r = await mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs, topMs: a.topMs });
     if (r.err || !r.win) {
       const o = Object.assign({ stage: 'scan', run: a.run || null }, r);
       sessionStorage.setItem('mc_result', JSON.stringify(o));
@@ -1596,7 +1673,15 @@
     }
     sessionStorage.setItem(
       'mc_pipe',
-      JSON.stringify({ base: a.base, run: a.run || null, scan: r, stallMs: a.stallMs, t0: Date.now() }),
+      JSON.stringify({
+        base: a.base,
+        run: a.run || null,
+        scan: r,
+        stallMs: a.stallMs,
+        topMs: a.topMs,
+        skip: a.skip || null,
+        t0: Date.now(),
+      }),
     );
     setTimeout(function () {
       location.reload();
@@ -1612,11 +1697,11 @@
       await new Promise(function (r) {
         setTimeout(r, 5000);
       });
-      const v = await mcVerify({ stallMs: p.stallMs });
+      const v = await mcVerify({ stallMs: p.stallMs, topMs: p.topMs });
       out.verify = v;
       if (v.ok) {
         out.stage = 'captured';
-        out.capture = await mcCapture(p.base);
+        out.capture = await mcCapture(p.base, { skip: p.skip });
       } else out.stage = 'verify-failed';
     } catch (e) {
       out.err = String(e);
@@ -1626,9 +1711,9 @@
   }
   const CMDS = {
     probe: a => probe(a.anchor),
-    scan: a => mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs }),
+    scan: a => mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs, topMs: a.topMs }),
     verify: a => mcVerify(a),
-    capture: a => mcCapture(a.base),
+    capture: a => mcCapture(a.base, a),
     people: a => mcPeople(a),
     selfcheck: () => mcSelfcheck(),
     full: a => full(a),
@@ -1642,7 +1727,7 @@
       return { started: true };
     },
     post: (a, id) => mcPost(a, id),
-    ping: () => ({ v: '2.0' }),
+    ping: () => ({ v: '2.1' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
   document.addEventListener('mc-cmd', async function (e) {

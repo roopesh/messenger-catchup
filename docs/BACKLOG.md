@@ -29,8 +29,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
 | R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up |
 | R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 715 and adds about 55 a day (to design) |
-| R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
-| R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again |
+| R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them · **done** (v1.24.0) |
+| R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again · **done** (v1.24.0) |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
@@ -360,15 +360,28 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Now (v1.22.0):** the page records usage with each import and warns at 80%; `references/photos.md` › Cleanup removes copies and unused files on the user's say-so. That buys time, not a fix.
 - **To design:** for example keep older photos as links only (Messenger's own, which expire), move older photos to an archive page with its own quota, or store a smaller copy of old photos. Each has costs (lost photos, a second page to maintain, re-encoding the owner ruled out for now).
 
-### R15 · P3 · Photos the helper couldn't fetch aren't recorded as owed
+### R15 · P3 · Photos the helper couldn't fetch aren't recorded as owed · done (v1.24.0)
 - **What:** when the helper can't fetch a photo (`FAILED #…` in the capture summary), the capture has no slot for it, so the page never marks it owed and no backfill retries it.
-- **Fix:** the helper lists them (`phfail:[{i,k}]`, helper 2.1) and the page records them as owed `null` slots, so the next run's backfill retries them like any other owed photo.
+- **Done (helper 2.1, owner's decision: give up after 3 runs):**
+  - The capture lists them in `phfail:[{i,k,aid,e}]`: `e:"fetch"` for a failed fetch, `"unloaded"` for an image that never loaded during the scan (before, it was silently left out).
+  - The page records each as an owed `null` slot (with its id), so the next refresh's backfill retries it.
+  - Tries are counted per slot in the block (`tries[i][k] = {n, run}`), once per refresh run: `run` is the `meta/chat.lastRefresh` the import saw, so pasting again in the same run counts once. A run counts when its capture holds the message but not the photo: a `phfail` entry, or with a 2.1 capture a photo neither brought nor skipped. An older helper's capture never counts, and a photo owed only because its upload stopped never counts.
+  - The third run gives it up as `{e:"no-fetch"}`, listed in `gaveUp`; the toast and `photos.md` › Waiting report it. Photos still being tried are in `refresh/lastImport.retry`.
+- **Tests:** page K1–K3 and K8, sim H2 and H4; all fail on the 2.0 helper or the 2.7 page.
 
 ### R16 · P3 · Backfill captures can misplace a photo's slot, and fetch every photo again
 - **Found:** the review of PR #42 (v1.22.0).
 - **Slot shift:** the helper numbers a message's photos `k` = 0, 1, … in the order of the images it finds loaded. On a backfill scan (messages already stored, scrolled past quickly), an image that hasn't loaded yet is skipped, so the photos after it take a lower `k`. The page then stores a photo in another photo's slot: the owed slot stays owed and a stored slot is skipped as "already stored", or a photo lands under the wrong `k`.
 - **Refetching:** a backfill window of up to 300 messages fetches and base64-encodes every photo in it, stored ones included, only for the page to skip them. The paste grows with every stored photo in the window.
 - **Fix (to design):** key slots by something stable (the photo's Messenger attachment id from its link) instead of position, and let the helper skip photos the page says are stored (for example a `skip:[{i,k}]` or attachment-id list passed to `full`); helper 2.1 with R15.
+- **Done (helper 2.1, owner's decisions):**
+  - **Slots by tile:** the helper numbers a message's photos by their photo links in page order (`photoTiles`), loaded or not, so an unloaded image keeps its slot (and is listed in `phfail`) instead of shifting the rest.
+  - **Ids:** each photo carries Messenger's attachment id (`aid`, the link's `attachment_id`; ARCHITECTURE › Capture format says how sure that is). The page records it with each new slot (`aids[i][k]` in the block) and matches by id first, by `k` when either side has none. The entries stored by position before this keep working by `k`: no migration, nothing rewritten.
+  - **Never twice, never in another's slot:** a photo found by id is skipped wherever the capture numbers it; a slot recording another id is never taken (the photo gets the message's next free slot); no two capture entries share a slot.
+  - **Skip list:** Claude passes `skip:{"<i>":[k or "aid", …]}` to `full` on a backfill (`photos.md` › Backfill, built from the blocks); the helper doesn't fetch or encode those (`phskip`, `skipped n` in the summary). An older helper ignores it: as before, the page skips what it holds.
+  - **Left as is:** a slot stored by position from an earlier shifted capture (helper 2.0 on a backfill since v1.22.0) can't be told apart from a correct one without comparing bytes, so it keeps matching by `k` as the owner decided; at worst a photo is missing or shown twice for that message, as it would be today.
+- **Tests:** page K4–K8, sim H1–H3; all but K6 (an older helper's capture still works, a compatibility check) fail on the 2.0 helper or the 2.7 page.
+- **Also:** `topMs` (scan, verify, `full`), a test option that shortens the 12 s top-of-chat wait; sim H5.
 
 ### R17 · P3 · The helper notice runs ahead of the release
 - **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.

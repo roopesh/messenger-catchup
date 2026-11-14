@@ -4426,6 +4426,228 @@ async function photos() {
   );
   ok(p.errors.length === 0, 'photos: no page errors ' + JSON.stringify(p.errors));
   await p.close();
+  await photoKeys();
+}
+
+/* ---------- R15, R16 (helper 2.1): photos the helper couldn't get stay owed and are retried; slots by attachment id ----------
+   A 2.1 capture adds aid (Messenger's attachment id) to each photo, and phfail / phskip: the photos it couldn't get and
+   the ones it skipped. meta/chat.lastRefresh tells refresh runs apart. */
+const KEYS = path.join(__dirname, 'out/sim_cap_keys.json'); /* sim section H: {loaded, lazy}, window #100-#119 */
+/* a photo with an attachment id; its bytes name the id, so uploads show which photo went where */
+const PHA = (i, k, aid) => ({
+  i,
+  k,
+  aid,
+  type: 'image/png',
+  b64: Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from(' aid ' + aid)]).toString('base64'),
+});
+const hashOf = ph => sha(Buffer.from(ph.b64, 'base64'));
+const cap21 = (msgs, photos, phfail = [], phskip = []) =>
+  JSON.stringify(Object.assign(cap(msgs, { photos }), { phfail, phskip }));
+const tryOf = async (p, i) => ((((await get(p, 'photos/b0')) || {}).tries || {})[i] || {})['0'];
+const setRun = (p, run) =>
+  p.evaluate(
+    r => __rt.batch([{ op: 'update', p: 'meta/chat', v: { lastRefresh: r }, if_version: __rt.version('meta/chat') }]),
+    run,
+  );
+async function photoKeys() {
+  // K1 (R15): a photo the helper couldn't fetch is owed (null slot), with its id and one try
+  let p = await openR2();
+  await setRun(p, 'r1');
+  let r = await paste(p, cap21(range(0, 9), [PHA(2, 0, '200')], [{ i: 5, k: 0, aid: '500', e: 'fetch' }]));
+  let b = (await get(p, 'photos/b0')) || {};
+  const owedK1 = (await get(p, 'meta/chat')).photosOwed;
+  ok(
+    r &&
+      r.state === 'done' &&
+      JSON.stringify((b.byK || {})['5']) === '{"0":null}' &&
+      JSON.stringify(b.aids) === '{"2":{"0":"200"},"5":{"0":"500"}}' &&
+      JSON.stringify(b.tries) === '{"5":{"0":{"n":1,"run":"r1"}}}' &&
+      owedK1 &&
+      owedK1.n === 1 &&
+      owedK1.fromI === 5 &&
+      JSON.stringify(r.owed) === '[{"i":5,"k":0}]' &&
+      /1 photo Messenger didn't give \(#5\): still owed, the next refresh tries again\./.test(r.msg),
+    'K1: a photo in phfail becomes an owed slot with its aid and one try; photosOwed counts it; the toast says so (' +
+      JSON.stringify([b.byK, b.aids, b.tries, r && r.msg]) +
+      ')',
+  );
+  // K2: a try per refresh run, not per paste; 2.1 captures that hold the message but not the photo count, an older
+  // helper's capture (no phfail) and a skipped photo don't; the third run gives it up ("no-fetch") and says so
+  r = await paste(p, cap21(range(0, 9), [PHA(2, 0, '200')], [{ i: 5, k: 0, aid: '500', e: 'fetch' }]));
+  const t1 = await tryOf(p, 5);
+  await setRun(p, 'r2');
+  await paste(p, cap21(range(3, 12), []));
+  const t2 = (await tryOf(p, 5)) || {};
+  await setRun(p, 'r3');
+  await paste(p, JSON.stringify(cap(range(3, 13))));
+  await setRun(p, 'r4');
+  await paste(p, cap21(range(3, 14), [], [], [{ i: 5, k: 0, aid: '500' }]));
+  const t4 = (await tryOf(p, 5)) || {};
+  await setRun(p, 'r5');
+  r = await paste(p, cap21(range(3, 15), [], [{ i: 5, k: 0, aid: '500', e: 'unloaded' }]));
+  b = await get(p, 'photos/b0');
+  ok(
+    t1 &&
+      t1.n === 1 &&
+      t2.n === 2 &&
+      t4.n === 2 &&
+      r &&
+      r.state === 'done' &&
+      JSON.stringify((b.byK || {})['5']) === '{"0":{"e":"no-fetch"}}' &&
+      JSON.stringify(r.gaveUp) === '[{"i":5,"k":0,"e":"no-fetch"}]' &&
+      (await get(p, 'meta/chat')).photosOwed === null &&
+      /couldn't be stored \(#5, Messenger didn't give it in 3 refreshes\)/.test(r.msg) &&
+      (await uploads(p)).length === 1,
+    'K2: tries count once per run (re-paste 1, absent 2, older helper 2, skipped 2), the third failed run gives it ' +
+      'up as "no-fetch", reported (' +
+      JSON.stringify([t1, t2, t4, r && r.msg]) +
+      ')',
+  );
+  await p.close();
+  // K3: the retry that works stores the owed photo in its slot; a photo owed because its upload failed is no fetch try
+  p = await openR2();
+  await setRun(p, 'r1');
+  await failCalls(p, [0, 1]);
+  await paste(p, cap21(range(0, 9), [PHA(6, 0, '600')], [{ i: 5, k: 0, aid: '500', e: 'fetch' }]));
+  await setRun(p, 'r2');
+  r = await paste(p, cap21(range(3, 12), [PHA(5, 0, '500'), PHA(6, 0, '600')]));
+  b = await get(p, 'photos/b0');
+  const up3 = await uploads(p);
+  ok(
+    r &&
+      r.state === 'done' &&
+      typeof (b.byK['5'] || {})['0'] === 'string' &&
+      typeof (b.byK['6'] || {})['0'] === 'string' &&
+      (up3.find(u => '/_blob/' + u.id === b.byK['5']['0']) || {}).hash === hashOf(PHA(5, 0, '500')) &&
+      JSON.stringify(b.tries) === '{"5":{"0":{"n":1,"run":"r1"}}}' &&
+      (await get(p, 'meta/chat')).photosOwed === null,
+    'K3: the next run brings the photo: stored in its slot, owed cleared; #6, owed after a failed upload, counted no ' +
+      'fetch try (' +
+      JSON.stringify([b.byK, b.tries]) +
+      ')',
+  );
+  await p.close();
+  // K4 (R16): a photo found by its id is never stored under another slot, even when the capture numbers it differently
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHA(4, 1, 'B'), PHA(4, 2, 'C')], [{ i: 4, k: 0, aid: 'A', e: 'unloaded' }]));
+  r = await paste(p, cap21(range(0, 9), [PHA(4, 0, 'B')]));
+  const n4 = (await uploads(p)).length;
+  const slot0 = (await get(p, 'photos/b0')).byK['4']['0'];
+  const r4 = await paste(p, cap21(range(0, 9), [PHA(4, 0, 'A'), PHA(4, 1, 'B'), PHA(4, 2, 'C')]));
+  b = await get(p, 'photos/b0');
+  const up4 = await uploads(p);
+  const in4 = k => (up4.find(u => '/_blob/' + u.id === b.byK['4'][k]) || {}).hash;
+  ok(
+    r &&
+      /0 photos stored \(1 already stored\)/.test(r.msg) &&
+      n4 === 2 &&
+      slot0 === null &&
+      r4 &&
+      r4.state === 'done' &&
+      up4.length === 3 &&
+      in4(0) === hashOf(PHA(4, 0, 'A')) &&
+      in4(1) === hashOf(PHA(4, 1, 'B')) &&
+      in4(2) === hashOf(PHA(4, 2, 'C')) &&
+      JSON.stringify((b.aids || {})['4']) === '{"0":"A","1":"B","2":"C"}',
+    'K4: photo B (stored in slot 1) arriving as slot 0 is matched by its id: not uploaded, slot 0 stays owed for A, ' +
+      'which the next capture fills (' +
+      JSON.stringify([r && r.msg, n4, b.byK['4']]) +
+      ')',
+  );
+  await p.close();
+  // K5: old slots stored by position (no id) keep working by k; new ones record their id; a slot holding another id is
+  // never reused, so nothing is stored twice or in another photo's slot
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 9))));
+  await p.evaluate(() => {
+    __rt.write('photos/b0', { start: 0, byK: { 6: { 0: '/_blob/old60', 1: null } }, gifs: [] });
+    __rt.batch([
+      {
+        op: 'update',
+        p: 'meta/chat',
+        v: { photosOwed: { n: 1, fromI: 6, toI: 6, at: 'x' } },
+        if_version: __rt.version('meta/chat'),
+      },
+    ]);
+  });
+  r = await paste(p, cap21(range(0, 9), [PHA(6, 0, 'X0'), PHA(6, 1, 'X1')]));
+  const b5 = await get(p, 'photos/b0');
+  const n5 = (await uploads(p)).length;
+  const r5 = await paste(p, cap21(range(0, 9), [PHA(6, 0, 'X1'), PHA(6, 1, 'Y')]));
+  b = await get(p, 'photos/b0');
+  const up5 = await uploads(p);
+  ok(
+    r &&
+      r.state === 'done' &&
+      n5 === 1 &&
+      b5.byK['6']['0'] === '/_blob/old60' &&
+      JSON.stringify((b5.aids || {})['6']) === '{"1":"X1"}' &&
+      r5 &&
+      r5.state === 'done' &&
+      up5.length === 2 &&
+      b.byK['6']['0'] === '/_blob/old60' &&
+      (up5.find(u => '/_blob/' + u.id === b.byK['6']['1']) || {}).hash === hashOf(PHA(6, 1, 'X1')) &&
+      (up5.find(u => '/_blob/' + u.id === b.byK['6']['2']) || {}).hash === hashOf(PHA(6, 1, 'Y')) &&
+      JSON.stringify((b.aids || {})['6']) === '{"1":"X1","2":"Y"}' &&
+      (await get(p, 'meta/chat')).photosOwed === null,
+    'K5: an old slot 0 (no id) matches by k and is never rewritten; owed slot 1 takes X1 and records it; X1 seen ' +
+      'again as slot 0 is found by id; Y arriving as slot 1 (X1’s) gets slot 2 (' +
+      JSON.stringify([b.byK['6'], b.aids]) +
+      ')',
+  );
+  await p.close();
+  // K6: an older helper's capture (no ids, no phfail) meeting slots that have ids: by k, as before
+  p = await openR2();
+  await failCalls(p, [1, 2]);
+  await paste(p, cap21(range(0, 9), [PHA(8, 0, 'a80'), PHA(8, 1, 'a81')]));
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(8, 0), PH(8, 1)] })));
+  const st6 = await photoState(p);
+  ok(
+    r && r.state === 'done' && st6.stored(8).length === 2 && (await uploads(p)).length === 2 && !st6.owed.length,
+    'K6: an older helper’s capture fills the owed slot 1 by k and skips the stored slot 0 (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // K7: a full block with an id on every slot still fits the 256 KiB cap (17-digit ids, as Messenger's)
+  const byK7 = {};
+  const aids7 = {};
+  for (let i = 0; i < 500; i++) {
+    byK7[i] = {};
+    aids7[i] = {};
+    for (let k = 0; k < 4; k++) {
+      byK7[i][k] = '/_blob/' + 'a'.repeat(32);
+      aids7[i][k] = String(10000000000000000 + i * 4 + k);
+    }
+  }
+  const size7 = Buffer.byteLength(JSON.stringify({ start: 0, byK: byK7, aids: aids7, gifs: [] }));
+  ok(size7 < 262144, 'K7: 500 messages × 4 photos with ids in one block is ' + size7 + ' bytes, under 256 KiB');
+  // K8: the real helper's captures (sim section H): the lazy capture leaves #104's first photo owed, and the capture
+  // with every image loaded stores just that one
+  if (!fs.existsSync(KEYS)) ok(false, 'K8: ' + path.relative(ROOT, KEYS) + ' missing: run tests/sim.js first');
+  else {
+    const K = JSON.parse(fs.readFileSync(KEYS, 'utf8'));
+    p = await openR2();
+    await paste(p, JSON.stringify(cap(range(0, 99))));
+    r = await paste(p, JSON.stringify(K.lazy));
+    const owed8 = (await photoState(p)).owed;
+    const n8 = (await uploads(p)).length;
+    const r8 = await paste(p, JSON.stringify(K.loaded));
+    b = await get(p, 'photos/b0');
+    ok(
+      r &&
+        r.state === 'done' &&
+        owed8.join() === '104.0' &&
+        r8 &&
+        r8.state === 'done' &&
+        (await uploads(p)).length - n8 === 1 &&
+        Object.values(b.byK['104'] || {}).every(v => typeof v === 'string') &&
+        JSON.stringify((b.aids || {})['104']) === '{"0":"921040","1":"921041","2":"921042"}',
+      'K8: sim captures: #104’s unloaded photo is owed after the lazy capture, and the full capture uploads only it (' +
+        JSON.stringify([owed8, r8 && r8.msg]) +
+        ')',
+    );
+    await p.close();
+  }
 }
 /* P23: a 20 MB capture through a real clipboard and a real paste keystroke */
 async function bigPaste() {

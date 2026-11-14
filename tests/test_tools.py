@@ -616,6 +616,47 @@ class TestPhotos(unittest.TestCase):
             self.assertRegex(self.page, r'doc\("meta/chat"\)\.update\(\{ %s: ' % f)
         self.assertNotRegex(self.page, r'doc\("photos/index"\)\.(set|update)', "the old index is never written")
 
+    def test_every_given_up_code_is_reported(self):
+        """R15: every code the page gives a photo up with (GIVEN, the toast's reasons) is in Waiting's report line and
+        in database.md, no-fetch included."""
+        given = re.search(r"const GIVEN = \{(.*?)\n  \};", self.page, re.S).group(1)
+        codes = set(re.findall(r'^\s*"?([\w-]+)"?:', given, re.M))
+        self.assertIn("no-fetch", codes)
+        report = [line for line in self.section("Waiting").splitlines() if line.startswith("4. `done`")][0]
+        db = in_skill("references", "database.md")
+        for c in codes:
+            self.assertIn("`%s`" % c, report, "photos.md › Waiting doesn't name " + c)
+            self.assertIn('"%s"' % c, db, "database.md doesn't name " + c)
+
+    def test_fetch_failures_give_up_after_the_pages_tries(self):
+        """R15: photos.md says how many runs the page tries an unfetchable photo, the number the page uses."""
+        n = self.tune("fetchTries")
+        self.assertEqual(n, 3, "the owner's decision: give up after 3 runs")
+        self.assertIn('After %d runs the page gives it up (`e:"no-fetch"`)' % n, self.doc)
+        self.assertIn('"no-fetch"', self.page)
+        self.assertIn("meta/chat.lastRefresh", self.doc + in_skill("references", "database.md"))
+        self.assertIn("P.meta.lastRefresh", self.page, "a try counts once per refresh run")
+
+    def test_backfill_passes_a_skip_list_the_helper_reads(self):
+        """R16: photos.md › Backfill builds `skip` for `full`; the helper carries it across the reload to the capture,
+        and skips by attachment id (a string) or slot (a number); the page documents aids in the blocks."""
+        backfill = self.section("Backfill")
+        self.assertIn("pass `skip` to `full`", backfill)
+        self.assertIn("`aids[i][k]`", backfill)
+        self.assertIn("Leave out owed (`null`) slots", backfill)
+        self.assertIn("An older helper ignores it", backfill)
+        self.assertIn("follow Waiting even if the summary shows `photos 0`", backfill)
+        helper = in_skill("assets", "helper.user.js")
+        self.assertIn("skip: a.skip || null", helper)
+        self.assertIn("mcCapture(p.base, { skip: p.skip })", helper)
+        self.assertIn("sk.some(x => x === j || (t.aid && x === t.aid))", helper)
+        db = in_skill("references", "database.md")
+        for s in ("`aids`", "`tries`", "`retry` `[{i,k,n}]`"):
+            self.assertIn(s, db)
+        # a capture that shows only FAILED still sends Claude to photos.md › Waiting
+        step4 = re.search(r"^4\. Import by paste:.*?(?=^5\. )", self.skill, re.M | re.S).group(0)
+        self.assertIn("Photos or `FAILED`: never close the page tab", step4)
+
 
 class TestUpdateNotice(unittest.TestCase):
     """F5: Claude writes meta/chat.versions with every lastRefresh, and the page compares it with its own version. The

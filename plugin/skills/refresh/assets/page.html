@@ -4786,12 +4786,22 @@
      Photos store one at a time after the messages, and each is indexed the moment it lands, so a tab closed mid-upload
      loses nothing: what landed is indexed, and what's left is owed (a null slot, counted in meta/chat.photosOwed) for a
      re-paste or the next refresh's backfill to store. photos/b<start> holds the slots of messages start..start+499:
-     byK[i][k] = "/_blob/<id>" (stored) | null (owed) | {e:code} (given up). photos/index (pages up to 2.6) is read,
-     never written. Tests shorten the timings with window.__mcImportTune; nothing in production sets it. */
+     byK[i][k] = "/_blob/<id>" (stored) | null (owed) | {e:code} (given up), aids[i][k] = Messenger's attachment id of
+     that slot (R16: captures from helper 2.1 on; older slots have none and match by k) and tries[i][k] = {n, run}, the
+     refresh runs that couldn't fetch an owed photo (R15). photos/index (pages up to 2.6) is read, never written. Tests
+     shorten the timings with window.__mcImportTune; nothing in production sets it. */
   const PHOTO_BLOCK = 500;
   const IMPORT_TUNE = Object.freeze(
     Object.assign(
-      { beatMs: 10000, leaseMs: 60000, uploadTimeoutMs: 90000, retryMs: 2000, rateWaitMs: 30000, owedWindow: 300 },
+      {
+        beatMs: 10000,
+        leaseMs: 60000,
+        uploadTimeoutMs: 90000,
+        retryMs: 2000,
+        rateWaitMs: 30000,
+        owedWindow: 300,
+        fetchTries: 3,
+      },
       window.__mcImportTune || {},
     ),
   );
@@ -4802,6 +4812,8 @@
      and a block's over the old index's. byI (what the page shows) is derived: stored photos in slot order. */
   function mergePhotos(docs) {
     const byK = {};
+    const aids = {};
+    const tries = {};
     const gifs = new Set();
     const put = (i, k, v) => {
       const m = byK[i] || (byK[i] = {});
@@ -4821,6 +4833,8 @@
       .forEach(id => {
         const d = docs[id] || {};
         Object.entries(d.byK || {}).forEach(([i, m]) => Object.entries(m || {}).forEach(([k, v]) => put(i, k, v)));
+        Object.entries(d.aids || {}).forEach(([i, m]) => Object.assign(aids[i] || (aids[i] = {}), m));
+        Object.entries(d.tries || {}).forEach(([i, m]) => Object.assign(tries[i] || (tries[i] = {}), m));
         (d.gifs || []).forEach(g => gifs.add(+g));
       });
     const byI = {};
@@ -4831,7 +4845,37 @@
         .filter(isStored);
       if (l.length) byI[i] = l;
     });
-    return { byK, byI, gifs };
+    return { byK, byI, gifs, aids, tries };
+  }
+  /* R16: the slot each capture entry (a photo, a phfail or a phskip) stands for. By Messenger's attachment id when the
+     entry and a slot of its message both have one; otherwise by k, as before helper 2.1 (slots stored before then have
+     no id). A slot whose recorded id is another photo's is never used: the photo gets the message's next free slot, so
+     a photo is never stored under another photo's slot, and one id is never given two slots. A phskip never takes a new
+     slot. Returns copies with k set to the slot (ck = the capture's k). */
+  function resolveSlots(M, items) {
+    const used = {};
+    const out = items.map(x => Object.assign({}, x, { ck: x.k }));
+    const use = (x, k) => {
+      x.k = k;
+      (used[x.i] || (used[x.i] = new Set())).add(k);
+    };
+    out.forEach(x => {
+      const a = M.aids[x.i] || {};
+      const hit = x.aid ? Object.keys(a).find(s => a[s] === x.aid) : null;
+      if (hit != null) use(x, +hit);
+      else x.k = null;
+    });
+    out.forEach(x => {
+      if (x.k != null) return;
+      const a = M.aids[x.i] || {};
+      const u = used[x.i] || new Set();
+      const k = x.ck;
+      if (!(x.aid && a[k] && a[k] !== x.aid) && !u.has(k)) return use(x, k);
+      if (x.skip) return (x.k = -1);
+      const ks = Object.keys(M.byK[x.i] || {}).concat(Object.keys(a), [...u]);
+      use(x, Math.max(-1, ...ks.map(Number)) + 1);
+    });
+    return out;
   }
   const owedOf = M => {
     const o = [];
@@ -4848,7 +4892,12 @@
   async function planPhotos(P) {
     const ig = await S.db.doc("photos/index").get();
     const idx = ig.exists ? ig.data() : null;
-    const ids = new Set(P.photos.map(ph => photoBlock(ph.i)).concat(P.gifs.map(photoBlock)));
+    const ids = new Set(
+      P.photos
+        .concat(P.phfail, P.phskip)
+        .map(ph => photoBlock(ph.i))
+        .concat(P.gifs.map(photoBlock)),
+    );
     const ow = P.meta.photosOwed;
     if (ow && ow.n)
       for (let s = Math.floor(ow.fromI / PHOTO_BLOCK) * PHOTO_BLOCK; s <= ow.toI; s += PHOTO_BLOCK) ids.add("b" + s);
@@ -4862,13 +4911,30 @@
     }
     const M = mergePhotos(Object.assign({ index: idx }, blocks));
     const val = ph => (M.byK[ph.i] || {})[ph.k];
+    const all = resolveSlots(
+      M,
+      P.photos.concat(
+        P.phfail.map(x => Object.assign({ fail: true }, x)),
+        P.phskip.map(x => Object.assign({ skip: true }, x)),
+      ),
+    );
+    const photos = all.filter(x => !x.fail && !x.skip);
     /* oldest first, so an interrupted run leaves the newest owed, nearest the next run's backfill */
-    const todo = (P.lab ? P.photos : P.photos.filter(ph => val(ph) == null))
-      .slice()
-      .sort((a, b) => a.i - b.i || a.k - b.k);
+    const todo = (P.lab ? photos : photos.filter(ph => val(ph) == null)).slice().sort((a, b) => a.i - b.i || a.k - b.k);
     const bytes = todo.reduce((n, ph) => n + Math.floor((ph.b64.length * 3) / 4), 0);
-    return { idx, blocks, exists, todo, skipped: P.photos.length - todo.length, bytes };
+    return {
+      idx,
+      blocks,
+      exists,
+      todo,
+      photos,
+      fails: all.filter(x => x.fail),
+      skips: all.filter(x => x.skip && x.k >= 0),
+      skipped: photos.length - todo.length,
+      bytes,
+    };
   }
+  const aidOk = a => a === undefined || (typeof a === "string" && /^[\w.:-]{1,64}$/.test(a));
   const GIVE_UP = ["too_large", "unsupported_type", "invalid_request"];
   const NO_ASSETS = ["not_granted", "capability_disabled", "capability_removed"];
   const stopOf = c =>
@@ -4906,18 +4972,22 @@
     R.photos = { total: P.photos.length, todo: todo.length, done: 0, skipped: L.skipped, failed: 0, bytes: L.bytes };
     R.stored = [];
     R.gaveUp = [];
+    R.retry = [];
     /* Writes go slot by slot (update merges nested objects), never the whole block: another tab that took the lease
        after ours lapsed may have indexed other slots of the same block since we read it. pend[id] holds what's still
        to write; gifs are merged with a fresh read, since update replaces an array whole. */
     const pend = {};
     const known = new Set(Object.keys(blocks).filter(id => L.exists[id]));
-    const pendOf = id => pend[id] || (pend[id] = { byK: {}, gifs: [] });
-    const slot = (i, k, v) => {
+    const pendOf = id => pend[id] || (pend[id] = { byK: {}, aids: {}, tries: {}, gifs: [] });
+    /* f: "byK" (the slot), "aids" or "tries" */
+    const put = (f, i, k, v) => {
       const id = photoBlock(i);
-      (blocks[id].byK[i] || (blocks[id].byK[i] = {}))[k] = v;
-      const p = pendOf(id);
-      (p.byK[i] || (p.byK[i] = {}))[k] = v;
+      const b = blocks[id][f] || (blocks[id][f] = {});
+      (b[i] || (b[i] = {}))[k] = v;
+      const p = pendOf(id)[f];
+      (p[i] || (p[i] = {}))[k] = v;
     };
+    const slot = (i, k, v) => put("byK", i, k, v);
     const wait = ms => new Promise(r => setTimeout(r, ms));
     /* one write at a time per document; a refused write is retried once, after renewing the lease (a tab that lost it
        writes nothing more), and one over 256 KiB never */
@@ -4928,10 +4998,17 @@
       for (let t = 0; ; t++) {
         try {
           const g = !known.has(id) || p.gifs.length ? await ref.get() : null;
-          if (g && !g.exists) await ref.set({ start: +id.slice(1), byK: p.byK, gifs: p.gifs.sort((x, y) => x - y) });
-          else {
+          if (g && !g.exists) {
+            const d = { start: +id.slice(1), byK: p.byK };
+            if (Object.keys(p.aids).length) d.aids = p.aids;
+            if (Object.keys(p.tries).length) d.tries = p.tries;
+            d.gifs = p.gifs.sort((x, y) => x - y);
+            await ref.set(d);
+          } else {
             const up = {};
             if (Object.keys(p.byK).length) up.byK = p.byK;
+            if (Object.keys(p.aids).length) up.aids = p.aids;
+            if (Object.keys(p.tries).length) up.tries = p.tries;
             if (p.gifs.length)
               up.gifs = [...new Set([...((g && g.data().gifs) || []), ...p.gifs])].sort((x, y) => x - y);
             await ref.update(up);
@@ -4969,8 +5046,34 @@
     let stop = null,
       at = null;
     if (!P.lab) {
-      /* placeholders first, so the owed slots are on record even if the tab dies before the first upload */
+      /* placeholders first, so the owed slots are on record even if the tab dies before the first upload; a photo from
+         helper 2.1 records its attachment id with its slot (R16) */
       todo.forEach(ph => val(ph.i, ph.k) !== null && slot(ph.i, ph.k, null));
+      todo.forEach(ph => ph.aid && (M.aids[ph.i] || {})[ph.k] !== ph.aid && put("aids", ph.i, ph.k, ph.aid));
+      /* R15: a photo the helper couldn't get (phfail) is owed, so the next refresh's backfill retries it. Each refresh
+         run that holds an owed photo's message but not the photo (a phfail, or with helper 2.1 neither brought nor
+         skipped) is one try; meta/chat.lastRefresh tells runs apart, so pasting again counts once. At fetchTries the
+         photo is given up ("no-fetch"). Photos brought but not uploaded yet never count. */
+      L.fails.forEach(x => {
+        if (val(x.i, x.k) !== undefined) return;
+        slot(x.i, x.k, null);
+        if (x.aid) put("aids", x.i, x.k, x.aid);
+      });
+      remerge();
+      const run = String(P.meta.lastRefresh || "");
+      const got = new Set(L.photos.concat(L.skips).map(x => x.i + "." + x.k));
+      const fail = new Set(L.fails.map(x => x.i + "." + x.k));
+      owedOf(M)
+        .filter(o => P.inCap.has(o.i) && !got.has(o.i + "." + o.k) && (P.v21 || fail.has(o.i + "." + o.k)))
+        .forEach(o => {
+          const t = (M.tries[o.i] || {})[o.k] || { n: 0, run: null };
+          if (t.run === run) return;
+          const n = (+t.n || 0) + 1;
+          put("tries", o.i, o.k, { n, run });
+          if (n < T.fetchTries) return R.retry.push({ i: o.i, k: o.k, n });
+          slot(o.i, o.k, { e: "no-fetch" });
+          R.gaveUp.push({ i: o.i, k: o.k, e: "no-fetch" });
+        });
       remerge();
       P.gifs.forEach(i => {
         const b = blocks[photoBlock(i)];
@@ -5111,7 +5214,12 @@
       await writeOwed();
     }
     remerge();
-    R.owed = P.lab ? [] : P.photos.filter(ph => val(ph.i, ph.k) === null).map(ph => ({ i: ph.i, k: ph.k }));
+    R.owed = P.lab
+      ? []
+      : L.photos
+          .concat(L.fails)
+          .filter(ph => val(ph.i, ph.k) === null)
+          .map(ph => ({ i: ph.i, k: ph.k }));
     R.backfill = P.firstI != null && P.firstI <= P.oldLastI && R.stored.some(s => s.i <= P.oldLastI);
     if (stop) R.stop = stop === "index-full" ? "index" : stop;
     R.state = stop ? "partial" : "done";
@@ -5126,6 +5234,7 @@
     invalid_request: "rejected",
     "gave-up": "too old to fetch again",
     "no-backfill": "too early in the chat to fetch again",
+    "no-fetch": "Messenger didn't give it in " + IMPORT_TUNE.fetchTries + " refreshes",
   };
   function photoNote(R, P, { stop, at, code }) {
     const ph = R.photos;
@@ -5157,6 +5266,13 @@
         "): more than " +
         IMPORT_TUNE.owedWindow +
         " messages old, too old to fetch again.";
+    if (R.retry.length)
+      s +=
+        " " +
+        plural(R.retry.length, "photo") +
+        " Messenger didn't give (" +
+        [...new Set(R.retry.map(g => "#" + g.i))].join(", ") +
+        "): still owed, the next refresh tries again.";
     const left = ph.todo - ph.done - ph.failed;
     const part = " Photos: " + ph.done + " of " + ph.todo + " stored";
     const again = " Paste again to store the rest.";
@@ -5362,10 +5478,14 @@
       if (!m.f || !m.m || !m.t || !/^\d{4}-\d\d-\d\d$/.test(m.d || ""))
         return done("#" + m.i + " is missing a field. Nothing saved.");
     const inCap = new Set(ms.map(m => m.i));
+    /* helper 2.1: aid = Messenger's attachment id (R16); phfail and phskip = photos it couldn't get or skipped */
+    const slotOk = x => x && inCap.has(x.i) && Number.isInteger(x.k) && x.k >= 0 && x.k < 100 && aidOk(x.aid);
     for (const ph of photos) {
-      if (!inCap.has(ph.i) || !/^image\/(jpeg|png|webp|gif)$/.test(ph.type || "") || !ph.b64)
+      if (!slotOk(ph) || !/^image\/(jpeg|png|webp|gif)$/.test(ph.type || "") || !ph.b64)
         return done("Photo for #" + ph.i + " is malformed. Nothing saved.");
     }
+    const phfail = cap.lab || !Array.isArray(cap.phfail) ? [] : cap.phfail.filter(slotOk);
+    const phskip = cap.lab || !Array.isArray(cap.phskip) ? [] : cap.phskip.filter(slotOk);
     const size = meta.chunkSize || 82;
     const writes = [];
     let cur;
@@ -5390,6 +5510,7 @@
     const gifsNew = cap.lab ? [] : (cap.gifs || []).filter(i => inCap.has(i));
     const plan = { photos, gifs: gifsNew, meta, inCap, firstI: ms.length ? ms[0].i : null, oldLastI: lastI };
     plan.lab = !!cap.lab;
+    Object.assign(plan, { phfail, phskip, v21: !cap.lab && Array.isArray(cap.phfail) });
     let dryPh = "";
     if (dry && photos.length) {
       const L = await planPhotos(plan);
@@ -5506,7 +5627,7 @@
       if (P && !R.dry) {
         let end = null;
         const owed = P.meta.photosOwed && P.meta.photosOwed.n;
-        if (P.photos.length || P.gifs.length || owed) end = await storePhotos(R, P, show);
+        if (P.photos.length || P.gifs.length || P.phfail.length || owed) end = await storePhotos(R, P, show);
         if (!end || end.stop !== "lease") await recordUsage(R, P);
         if (end) R.msg += photoNote(R, P, end);
         const n = usageNote(R.usage);
