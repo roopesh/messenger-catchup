@@ -92,7 +92,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | G5 | P3 | doc gap | Page install steps name only Violentmonkey; SKILL.md recommends Tampermonkey · **done** (v1.2.2) |
 | G6 | P3 | doc gap | `outbox/*` row fields and `meta/chat.coverage` aren't defined anywhere Claude reads · **done** (v1.18.0) |
 | R3 | P3 | risk | Reader depends on English labels and Messenger's markup (known) · **done** (v1.20.0, option B: silent failures warn; English labels remain) |
-| R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt · **done** (v1.20.1 date-range speed; v1.22.0 prompt size, with F6). Show older paging is F15 |
+| R4 | P3 | risk | Page and Ask Claude hold the whole history in memory / one prompt · **done** (v1.20.1 date-range speed; v1.22.0 prompt size, with F6; v1.25.0 Show older by day, F15) |
 | R7 | P3 | risk | Helper leaks a click listener per scan and polls the URL forever · **done** (v1.3.0; URL poll kept on purpose) |
 | C1 | P3 | cleanup | Unreachable code in the page (Refresh trigger, summary v1, range summaries, notes) · **done** (v1.7.3; range summaries kept, they're live) |
 | C3 | P3 | cleanup | Leftover `cc*` names and chat-specific comments · **done** |
@@ -114,7 +114,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.20.0) |
 | F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
 | F14 | P3 | feature | The page shows when the next scheduled refresh is due (`refresh/schedule.nextAt`) · **done** (v1.24.0) |
-| F15 | P3 | perf | "Show older messages" renders the whole history at once; page it by day (R4's remainder) |
+| F15 | P3 | perf | "Show older messages" renders the whole history at once; page it by day (R4's remainder) · **done** (v1.25.0: the window and the day before it; scrolling up loads a day at a time, keeping the reader's place) |
 | F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
 | F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
 | F18 | P3 | feature | Range summaries longer than one request: split into parts and merge |
@@ -423,7 +423,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Date-range mode fixed in v1.20.1:** `inWin()` worked the window out once per message and citation (5–6 s per update at 6,400 messages). It's now worked out once per message list and marker; the page section `speed` counts it.
 - **The 256 KiB per-document cap is now handled for summary and threading** (B43, v1.17.0): each is a collection of block documents, so no document grows with the history. The page still holds every chunk and block in memory.
 - **Prompt size done in v1.22.0** (F6): Ask, Views and range summaries measure their prompt in UTF-8 bytes against `sample.limits()`; "include older" works at any size. The page section `history` counts it (H1–H16).
-- **What remains is F15:** "Show older messages" still renders every stored message (0.5 s and 79k elements at 6,400 messages in an earlier bench). The default view is the window only.
+- **Show older done in v1.25.0** (F15): "Show older messages" draws the window and the day before it, then a day at a time as the reader scrolls. Nothing of R4 remains open; the page still holds every chunk and block in memory, which is small next to the elements it no longer draws.
 
 ### R5 · P2 · E2EE and messenger.com
 - **What:** `/messages/e2ee/t/` URLs are stored and used but untested against a live E2EE chat. The userscript `@match` covers only `www.facebook.com/messages/*`, so `messenger.com` isn't supported.
@@ -770,6 +770,8 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **What:** with "Show older messages" on, the Messages tab renders every stored message. An earlier bench: 0.5 s and 79k elements at 6,400 messages, 2.0 s and 307k at 25,000, 4.2 s and 2.9 GB at 50,000. The default view (the window only) is unaffected. This is what remains of R4.
 - **Fix:** load the previous day on demand ("Load the previous day"), the smaller change. Virtualizing threaded rows of varying height isn't worth it.
 - **Trigger:** about 15,000 stored messages (roughly 17 days after 6,933 at 460 a day), or Show older taking over 1 s on the owner's machine.
+- **Done in v1.25.0** (the owner's call: automatic, like Messenger, rather than a button): with Show older on and no filter, the Messages tab holds a span of whole days, kept by message number in `S.older`: to start, the window and the day before it (the rest of the window's first day, or the whole day before when the window starts a day). An edge at each end (`.edge.more`, watched by an IntersectionObserver with `root: document` so its 600 px margin counts inside the artifact's frame) loads the next day out; it also holds a "Load the previous day" / "Load the next day" button for keyboards and browsers without the observer. Only that day is drawn: the timeline inserts its rows; the threaded layout redraws just the conversations with a message in it (to the top, in order, when prepended) and adds its ungrouped messages to "Not grouped yet". The message on screen stays put (`placeOf(true)` / `restorePlace`, not the browser's scroll anchoring, which Safari lacks), also when Show older is turned on or off. At the first stored message the top reads "Start of stored history · Sep 1". A jump (`goMsg`: links, "Show #n", Ask citations) to a message outside the span loads its day, joined to the span when next to it, else on its own with both edges loading outward. A date range with an end loads newer days at the bottom. A filter still searches every stored message. While on, the toolbar sticks under the tabs, so Show older can be turned off without scrolling back up through loaded days. Counted (`npm run test:perf`, threaded): opening draws 1,474 rows at 6,400 messages and 1,674 at 25,000 (was 6,400 and 25,000; 91 → 49 ms and 379 → 37 ms in one headless run), and each step 460 rows. Tests: `page.test.js` section `olderByDay` (O1–O9); every case fails on 1.24.0 except the filter check (a filter searched everything before too) and the no-errors lines.
+- **Left as is:** a run of bubbles that crosses midnight is split at the day boundary when the day is added by scrolling, and joined again on the next full redraw. The quote-matched threaded fallback (no stored threading) redraws the whole span on each step.
 
 ### F16 · P3 · Per-day digests written during refresh
 - **What:** older than the conversation lines reach (2–3 weeks at every size), F6's prompt has one line per day built on the page from threading titles. A refresh could write a real digest per day (`digests/dYYYY-MM-DD`) for those lines to use.

@@ -614,6 +614,23 @@
     padding: 10px 8px 4px;
     border-top: 2px solid var(--accent);
   }
+  /* F15: the ends of the loaded days with Show older on */
+  .edge {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--muted);
+    padding: 10px 8px;
+  }
+  .edge.top:not(.more) {
+    border-bottom: 1px dashed var(--line);
+  }
+  #v-messages.older .toolbar {
+    position: sticky;
+    top: calc(env(safe-area-inset-top, 0px) + var(--navh, 0px));
+    z-index: 4;
+    background: var(--bg);
+    padding-block: 6px;
+  }
   .thread {
     border: 1px solid var(--line);
     border-radius: 6px;
@@ -1696,6 +1713,7 @@
   }
   function backToWindow() {
     S.autoOlder = null;
+    S.older = null;
     const all = $("#msg-all");
     if (all) all.checked = false;
     if (typeof renderMessages === "function" && S.msgs.length) renderMessages();
@@ -2166,11 +2184,14 @@
     if (n.matches(".sec-head") && b) return '.block[data-blk="' + CSS.escape(b.dataset.blk) + '"] > .sec-head';
     return null;
   }
-  function placeOf() {
+  /* any: keep the place even at the top of the page (F15: a day loaded above the reader) */
+  function placeOf(any) {
     const v = document.querySelector("section.view:not([hidden])");
-    if (!v || (v.id !== "v-messages" && v.id !== "v-summary") || scrollY < 1) return null;
+    if (!v || (v.id !== "v-messages" && v.id !== "v-summary") || (scrollY < 1 && !any)) return null;
     const nav = document.querySelector("nav.tabs");
-    const top = nav ? nav.getBoundingClientRect().bottom : 0;
+    /* with older messages on, the Messages toolbar sticks under the tabs and covers what's under it (F15) */
+    const tb = v.classList.contains("older") ? v.querySelector(".toolbar") : null;
+    const top = Math.max(nav ? nav.getBoundingClientRect().bottom : 0, tb ? tb.getBoundingClientRect().bottom : 0);
     const seen = n => {
       const r = n.getBoundingClientRect();
       return r.height > 0 && r.bottom > top && r.top < innerHeight;
@@ -2217,10 +2238,14 @@
     if (location.hash !== "#messages") history.pushState(null, "", "#messages");
     route();
     const all = $("#msg-all");
-    if (S.byI.get(i) && !inWindow(S.byI.get(i)) && !all.checked) {
+    const gm = S.byI.get(i);
+    if (gm && !inWindow(gm) && !all.checked) {
       all.checked = true;
       S.autoOlder = i;
+      S.older = null;
     }
+    /* F15: older messages are loaded by day, so load the jumped-to message's day */
+    if (gm && all.checked) olderInclude(i);
     $("#msg-q").value = "";
     clearTimeout(qT); /* a filter still waiting to apply would redraw over the jump */
     renderMessages();
@@ -3627,9 +3652,15 @@
     clearTimeout(qT);
     qT = setTimeout(renderMessages, 150);
   });
+  /* F15: the message on screen stays put. Turning it on opens the day before the window above it; turning it off goes
+     back to the window (to the top when that message was an older one). */
   $("#msg-all").onchange = () => {
     S.autoOlder = null;
+    S.older = null;
+    const a = placeOf(true);
     renderMessages();
+    if (a && a.key && document.querySelector(a.key)) restorePlace(a);
+    else if (!$("#msg-all").checked) scrollTo(0, 0);
   };
   const LK = {
     r: ["↩ reply to", "r", "Messenger reply link"],
@@ -3782,6 +3813,250 @@
     }
     return null;
   }
+  /* ---------- F15: Show older messages, by day ----------
+     With "Show older messages" on (and no filter), the Messages tab holds a span of whole days: the window and the day
+     before it to start. An edge at each end of the span (.edge.more, observed with an IntersectionObserver) loads the
+     next day out when it comes within OLDER_NEAR of the screen; a prepended day keeps the message on screen where it was
+     (placeOf/restorePlace, so it doesn't rest on the browser's own scroll anchoring, which Safari lacks). A jump to a
+     message outside the span loads that message's day: added to the span when next to it, else on its own, with both
+     edges loading outward from there. At the first stored message the top edge says so. A filter searches everything
+     stored, as before. The span is kept by message number (S.older), so a redraw for new data keeps it. A message
+     without a date belongs to the day before it, as in dayScan. */
+  const OLDER_NEAR = "600px 0px";
+  function dayFirst(j) {
+    let d = "";
+    for (let k = j; k >= 0 && !d; k--) d = S.msgs[k].d || "";
+    if (!d) return 0;
+    let s = j;
+    for (let k = j - 1; k >= 0; k--) {
+      const x = S.msgs[k].d;
+      if (x && x !== d) break;
+      if (x) s = k;
+    }
+    return s;
+  }
+  function dayLast(j) {
+    let d = "";
+    for (let k = j; k >= 0 && !d; k--) d = S.msgs[k].d || "";
+    let e = j;
+    while (e + 1 < S.msgs.length && (!S.msgs[e + 1].d || S.msgs[e + 1].d === d)) e++;
+    return e;
+  }
+  /* the loaded span, as indices a..b in S.msgs; a new window starts it again */
+  function olderSpan() {
+    const n = S.msgs.length,
+      R = winRange();
+    let o = S.older;
+    if (!o || o.lo !== R.lo || o.hi !== R.hi) {
+      const wa = Math.min(idxOf(R.lo + 1), n);
+      const wb = R.hi === Infinity ? n - 1 : idxOf(R.hi + 1) - 1;
+      const a = wa > 0 ? dayFirst(wa - 1) : 0;
+      o = S.older = {
+        ai: S.msgs[a].i,
+        bi: wb >= n - 1 ? Infinity : S.msgs[Math.max(a, wb)].i,
+        lo: R.lo,
+        hi: R.hi,
+      };
+    }
+    const a = Math.min(idxOf(o.ai), n - 1);
+    const b = o.bi === Infinity ? n - 1 : Math.max(a, idxOf(o.bi + 1) - 1);
+    return { a, b };
+  }
+  function olderInclude(i) {
+    const r = olderSpan(),
+      t = idxOf(i),
+      n = S.msgs.length,
+      o = S.older;
+    if (t >= n || S.msgs[t].i !== i || (t >= r.a && t <= r.b)) return;
+    const s = dayFirst(t),
+      e = dayLast(t);
+    const end = e >= n - 1 ? Infinity : S.msgs[e].i;
+    if (t < r.a) {
+      o.ai = S.msgs[s].i;
+      if (e + 1 < r.a) o.bi = end;
+    } else {
+      o.bi = end;
+      if (s - 1 > r.b) o.ai = S.msgs[s].i;
+    }
+  }
+  /* the conversations open by default with older messages shown: the first four in the window, as without them */
+  function winOpen() {
+    const T = S.threading,
+      R = winRange(),
+      k = winOpen.k;
+    if (k && k.T === T && k.R === R) return k.s;
+    const first = [];
+    (T.convs || []).forEach(cv => {
+      let f = Infinity;
+      cv.members.forEach(i => {
+        if (i < f && inWin(i) && S.byI.get(i)) f = i;
+      });
+      if (f < Infinity) first.push([f, cv.id]);
+    });
+    const s = new Set(
+      first
+        .sort((p, q) => p[0] - q[0])
+        .slice(0, 4)
+        .map(x => x[1]),
+    );
+    winOpen.k = { T, R, s };
+    return s;
+  }
+  let edgeIO = null;
+  function watchEdges() {
+    if (edgeIO) edgeIO.disconnect();
+    const edges = document.querySelectorAll("#msgs > .edge.more");
+    if (!edges.length || typeof IntersectionObserver !== "function") return; /* the edges' buttons still work */
+    if (!edgeIO) {
+      const cb = es => {
+        const e = es.find(x => x.isIntersecting && x.target.isConnected);
+        if (e) olderStep(e.target.classList.contains("top") ? -1 : 1);
+      };
+      /* root: document makes the margin count inside the artifact's frame too (it's ignored for an implicit root
+         across origins) */
+      try {
+        edgeIO = new IntersectionObserver(cb, { root: document, rootMargin: OLDER_NEAR });
+      } catch (e) {
+        edgeIO = new IntersectionObserver(cb, { rootMargin: OLDER_NEAR });
+      }
+    }
+    /* observed afresh after every step: an edge still near the screen reports again, so a short day loads the next */
+    edges.forEach(x => edgeIO.observe(x));
+  }
+  function olderEdges(r) {
+    const box = $("#msgs");
+    box.querySelectorAll(":scope > .edge").forEach(x => x.remove());
+    const top = el("div", "edge top");
+    if (r.a > 0) {
+      const b = el("button", "link", "Load the previous day");
+      b.onclick = () => olderStep(-1);
+      top.append(b);
+      top.classList.add("more");
+    } else top.textContent = "Start of stored history" + (dayOf(S.msgs[0].d) ? " · " + dayOf(S.msgs[0].d) : "");
+    box.prepend(top);
+    if (r.b < S.msgs.length - 1) {
+      const bot = el("div", "edge bot more");
+      const b = el("button", "link", "Load the next day");
+      b.onclick = () => olderStep(1);
+      bot.append(b);
+      box.append(bot);
+    }
+    const nav = document.querySelector("nav.tabs");
+    document.documentElement.style.setProperty("--navh", (nav ? nav.offsetHeight : 0) + "px");
+    const n = r.b - r.a + 1,
+      mode = box.dataset.mode;
+    let s = null;
+    if (mode === "flat") s = n.toLocaleString("en-US") + " messages";
+    else if (mode === "conv") {
+      const rest = box.querySelector(':scope > details.conv[data-conv="_rest"]');
+      const k = box.querySelectorAll(':scope > details.conv:not([data-conv="_rest"])').length;
+      s = k + " conversations covering " + (n - (rest ? +rest.dataset.n : 0)) + " messages";
+      if (S.threading.note) s += ". " + S.threading.note.replace(/\.$/, "");
+    }
+    if (s)
+      $("#msg-note").textContent =
+        s +
+        ". Loaded from " +
+        (dayOf(S.msgs[r.a].d) || "#" + S.msgs[r.a].i) +
+        (r.a > 0 ? "; scroll up for earlier days." : ", the start of stored history.");
+    watchEdges();
+  }
+  /* one more day at the top (dir -1) or the bottom (dir 1) of the span, drawn on its own */
+  function olderStep(dir) {
+    const box = $("#msgs");
+    if (!$("#msg-all").checked || $("#msg-q").value.trim() || !S.msgs.length) return;
+    if (!box.querySelector(":scope > .edge")) return;
+    const r = olderSpan(),
+      n = S.msgs.length;
+    let x, y;
+    if (dir < 0) {
+      if (r.a <= 0) return;
+      x = dayFirst(r.a - 1);
+      y = r.a - 1;
+      S.older.ai = S.msgs[x].i;
+    } else {
+      if (r.b >= n - 1) return;
+      x = r.b + 1;
+      y = dayLast(x);
+      S.older.bi = y >= n - 1 ? Infinity : S.msgs[y].i;
+    }
+    const place = placeOf(true);
+    const add = S.msgs.slice(x, y + 1);
+    const mode = box.dataset.mode;
+    if (mode === "flat") {
+      const f = document.createDocumentFragment();
+      const ws = windowStart();
+      flatRows(add, f, m => (m.i === ws + 1 ? el("div", "divider", "Catch-up window starts") : null));
+      if (dir < 0) box.querySelector(":scope > .edge.top").after(f);
+      else box.querySelector(":scope > .edge.bot").before(f);
+    } else if (mode === "conv") convStep(add, dir);
+    else renderMessages(); /* replies matched by quote (no stored threading): the span drawn again */
+    const act = document.activeElement;
+    const btn = act && act.closest && act.closest("#msgs > .edge") ? (dir < 0 ? ".top" : ".bot") : null;
+    olderEdges(olderSpan());
+    restorePlace(place);
+    /* a keyboard user who pressed "Load the previous day" stays on it */
+    const nb = btn && box.querySelector(":scope > .edge" + btn + " button");
+    if (nb) nb.focus({ preventScroll: true });
+  }
+  /* A day added to the threaded layout. Only the conversations with a message in that day are drawn again: added at the
+     top they all start before every other one shown, so they go first, in order; added at the bottom they stay where
+     they were, or go last when new. Messages no conversation holds join "Not grouped yet". */
+  function convStep(add, dir) {
+    const box = $("#msgs");
+    const r = olderSpan();
+    const lo = S.msgs[r.a].i,
+      hi = S.msgs[r.b].i;
+    const find = id => box.querySelector(':scope > details.conv[data-conv="' + CSS.escape(id) + '"]');
+    const op = winOpen();
+    const cvs = new Set(),
+      loose = [];
+    add.forEach(m => {
+      const c = convOfMsg(m.i);
+      if (c) cvs.add(c);
+      else loose.push(m);
+    });
+    const built = [...cvs]
+      .map(cv => ({ cv, mem: cv.members.filter(i => i >= lo && i <= hi && S.byI.get(i)).sort((p, q) => p - q) }))
+      .filter(x => x.mem.length)
+      .sort((p, q) => p.mem[0] - q.mem[0]);
+    const rest = find("_rest");
+    const bot = box.querySelector(":scope > .edge.bot");
+    if (dir < 0) {
+      const f = document.createDocumentFragment();
+      built.forEach(({ cv, mem }) => {
+        const o = find(cv.id);
+        if (o) o.remove();
+        f.append(convEl(cv, mem, op.has(cv.id)));
+      });
+      (box.querySelector(":scope > .legend") || box.querySelector(":scope > .edge.top")).after(f);
+    } else
+      built.forEach(({ cv, mem }) => {
+        const d = convEl(cv, mem, op.has(cv.id));
+        const o = find(cv.id);
+        if (o) o.replaceWith(d);
+        else if (rest || bot) (rest || bot).before(d);
+        else box.append(d);
+      });
+    if (!loose.length) return;
+    if (!rest) {
+      const d = restEl(loose);
+      if (bot) bot.before(d);
+      else box.append(d);
+      return;
+    }
+    const f = document.createDocumentFragment();
+    flatRows(loose, f);
+    const t = rest.querySelector(":scope > .msgs");
+    if (dir < 0) t.prepend(f);
+    else t.append(f);
+    restCount(rest, +rest.dataset.n + loose.length);
+  }
+  function restCount(d, n) {
+    d.dataset.n = n;
+    d.querySelector(":scope > summary .note").textContent =
+      n + " messages outside the grouped window (older, or newer than the last refresh)";
+  }
   function renderMessages() {
     const box = $("#msgs");
     box.textContent = "";
@@ -3807,7 +4082,11 @@
       bb.onclick = backToWindow;
       ob.append(bb);
     }
-    let list = S.msgs.filter(m => all || inWindow(m));
+    /* F15: with older messages on and no filter, only the loaded days */
+    const span = all && !q && S.msgs.length ? olderSpan() : null;
+    $("#v-messages").classList.toggle("older", !!span);
+    if (!span && edgeIO) edgeIO.disconnect();
+    let list = span ? S.msgs.slice(span.a, span.b + 1) : S.msgs.filter(m => all || inWindow(m));
     /* "#123" finds message 123 */
     const qn = /^#\d+$/.test(q) ? +q.slice(1) : null;
     const match = m =>
@@ -3826,9 +4105,16 @@
       const shown = list.filter(match);
       flatRows(shown, box, m => (m.i === ws + 1 && all ? el("div", "divider", "Catch-up window starts") : null));
       $("#msg-note").textContent = shown.length + " messages" + (q ? " matching" : "") + ".";
+      box.dataset.mode = "flat";
+      if (span) olderEdges(span);
       return;
     }
-    if (S.threading && renderConversations(list, match)) return;
+    if (S.threading && renderConversations(list, match, !!span)) {
+      box.dataset.mode = "conv";
+      if (span) olderEdges(span);
+      return;
+    }
+    box.dataset.mode = "tree";
     // threaded fallback (no stored threading): attach replies to parents by quote; roots in time order
     const kids = new Map(),
       parentOf = new Map();
@@ -3872,12 +4158,13 @@
       " reply threads (" +
       linked +
       " replies matched to the message they answer). Replies whose original isn't stored show on their own.";
+    if (span) olderEdges(span);
   }
 
   /* Conversations: stored threading (Messenger's own reply links + Claude's read of the rest). */
-  function renderConversations(list, match) {
+  /* paged: older messages by day (F15), where the conversations open by default are the window's first four */
+  function renderConversations(list, match, paged) {
     const T = S.threading,
-      L = T.links || {},
       box = $("#msgs");
     const inList = new Set(list.map(m => m.i));
     const convs = (T.convs || [])
@@ -3892,6 +4179,7 @@
       });
     box.append(lg);
     const assigned = new Set();
+    const op = paged ? winOpen() : null;
     let n = 0,
       shown = 0;
     convs
@@ -3899,56 +4187,60 @@
       .forEach(({ cv, mem }) => {
         mem.forEach(i => assigned.add(i));
         if (!mem.some(i => match(S.byI.get(i)))) return;
-        const d = el("details", "item conv");
-        d.dataset.conv = cv.id;
-        rememberOpen(d, n < 4);
+        box.append(convEl(cv, mem, op ? op.has(cv.id) : n < 4));
         n++;
-        const s = el("summary");
-        const who = [...new Set(mem.map(i => nameOf(S.byI.get(i))))];
-        const a = S.byI.get(mem[0]),
-          z = S.byI.get(mem[mem.length - 1]);
-        s.append(
-          el("h3", null, cv.title),
-          el(
-            "div",
-            "note",
-            a.t +
-              (z !== a ? " – " + z.t.replace(/^\w+ /, "") : "") +
-              " · " +
-              mem.length +
-              " message" +
-              (mem.length > 1 ? "s" : "") +
-              " · " +
-              who.slice(0, 6).join(", ") +
-              (who.length > 6 ? " +" + (who.length - 6) + " more" : ""),
-          ),
-        );
-        d.append(s);
-        const cx = ctxLine(mem, cv.id);
-        if (cx) d.append(cx);
-        const tree = convTree(mem, (i, lk, showQ, pos) => msgRow(S.byI.get(i), lk, showQ, pos));
-        d.append(tree);
-        box.append(d);
         shown += mem.length;
       });
     const rest = list.filter(m => !assigned.has(m.i) && match(m));
-    if (rest.length) {
-      const d = el("details", "item conv");
-      d.dataset.conv = "_rest";
-      rememberOpen(d, false);
-      const s = el("summary");
-      s.append(
-        el("h3", null, "Not grouped yet"),
-        el("div", "note", rest.length + " messages outside the grouped window (older, or newer than the last refresh)"),
-      );
-      d.append(s);
-      const t = el("div", "msgs");
-      flatRows(rest, t);
-      d.append(t);
-      box.append(d);
-    }
+    if (rest.length) box.append(restEl(rest));
     $("#msg-note").textContent = n + " conversations covering " + shown + " messages" + (T.note ? ". " + T.note : ".");
     return true;
+  }
+  /* one conversation of the threaded layout: mem, its shown members in order; open, its default */
+  function convEl(cv, mem, open) {
+    const d = el("details", "item conv");
+    d.dataset.conv = cv.id;
+    rememberOpen(d, open);
+    const s = el("summary");
+    const who = [...new Set(mem.map(i => nameOf(S.byI.get(i))))];
+    const a = S.byI.get(mem[0]),
+      z = S.byI.get(mem[mem.length - 1]);
+    s.append(
+      el("h3", null, cv.title),
+      el(
+        "div",
+        "note",
+        a.t +
+          (z !== a ? " – " + z.t.replace(/^\w+ /, "") : "") +
+          " · " +
+          mem.length +
+          " message" +
+          (mem.length > 1 ? "s" : "") +
+          " · " +
+          who.slice(0, 6).join(", ") +
+          (who.length > 6 ? " +" + (who.length - 6) + " more" : ""),
+      ),
+    );
+    d.append(s);
+    const cx = ctxLine(mem, cv.id);
+    if (cx) d.append(cx);
+    const tree = convTree(mem, (i, lk, showQ, pos) => msgRow(S.byI.get(i), lk, showQ, pos));
+    d.append(tree);
+    return d;
+  }
+  /* "Not grouped yet": the shown messages no conversation holds */
+  function restEl(rest) {
+    const d = el("details", "item conv");
+    d.dataset.conv = "_rest";
+    rememberOpen(d, false);
+    const s = el("summary");
+    s.append(el("h3", null, "Not grouped yet"), el("div", "note"));
+    d.append(s);
+    const t = el("div", "msgs");
+    flatRows(rest, t);
+    d.append(t);
+    restCount(d, rest.length);
+    return d;
   }
 
   /* ---------- prompt budget (R4, F6) ----------

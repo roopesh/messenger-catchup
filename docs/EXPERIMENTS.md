@@ -230,3 +230,14 @@ print(us == open('assets/helper.user.js').read())
 - **Live (owner's page, read only, Nov 12):** about 0.5 s per upload, about 54 KB per photo; 715 asset files (38.8 MB) against limits of 5,000 files and 1 GiB, growing about 55 files a day; 549 messages with photos in the old `photos/index` `byI`, so some files are copies (BACKLOG R13).
 - **Block size:** 500 messages with 4 photos each at real id length is 95,919 bytes (P16a), well under 262,144.
 - **Tests (page section `photos`, run against page 2.6 with `PAGE_FILE`):** every case that checks the new behavior fails on 2.6 (P1–P3, P5 except the "another import" check, P6–P14, P15c, P16a/b, P17–P20, the usage checks); P15a/b (the old index is still read) passes on both. P23 (a 26 MB capture through a real paste: 200 photos stored in about 1.3 s with the stand-in) imports on both and fails on 2.6 only for the missing `state` and `photos` fields.
+
+## 16. Show older messages by day (F15, v1.25.0, Nov 13)
+- **`npm run test:perf`** (`tests/perf.js`, synth.py data, about 460 messages a day; one headless run on the builder's machine, not the owner's laptop): turning Show older on in date-range mode (the last 2 days), threaded, then one more day loaded above. Rows are `.msg[id]` elements; `msgRow` calls include context lines and, for a step, the conversations it redraws.
+
+| Messages | Before: rows, ms | After: rows (`msgRow`), ms | One step: rows (`msgRow`), ms |
+|---|---|---|---|
+| 6,400 | 6,400, 91 ms | 1,474 (1,476), 49 ms | 460 (587), 28 ms |
+| 25,000 | 25,000, 379 ms | 1,674 (1,681), 37 ms | 460 (580), 30 ms |
+| 50,000 | 50,000, 757 ms | 1,834 (1,859), 45 ms | 460 (685), 52 ms |
+
+- **Tests:** the page section `olderByDay` (O1–O9) counts rows, never time; every case fails on page 2.8 except the filter check and the no-errors lines.

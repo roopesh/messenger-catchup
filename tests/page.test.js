@@ -5927,6 +5927,438 @@ async function claims() {
   await p.context().close();
 }
 
+/* ---------- olderByDay: "Show older messages" by day (F15) ----------
+   With Show older on, the Messages tab holds the window and the day before it; an edge near the top of the screen loads
+   the previous day (an IntersectionObserver) and keeps the message on screen where it was. Counted, never timed: rows
+   drawn (.msg[id] and msgRow calls). synth.py writes about 460 messages a day from 7 AM Sep 1, so a day is far taller
+   than the screen and one scroll to the top loads exactly one day. The browser's own scroll anchoring is off (Safari has
+   none), so the page has to keep the place itself. */
+const OP = [];
+async function ocase(name, fn) {
+  try {
+    await fn();
+  } catch (e) {
+    ok(false, name + ' crashed: ' + ((e && e.stack) || e).toString().split('\n').slice(0, 3).join(' '));
+  }
+  while (OP.length)
+    await OP.pop()
+      .context()
+      .close()
+      .catch(() => {});
+}
+/* meta(msgs): what to add to meta/chat */
+async function oopen(n, meta, ctx) {
+  const { seed, msgs } = synthSeed(n, 1000);
+  Object.assign(seed['meta/chat'], meta(msgs));
+  const p = await open(seed, PAGE, ctx);
+  OP.push(p);
+  await until(p, n => S.msgs.length === n && S.threading, n, 120000);
+  await p.addStyleTag({ content: '* { overflow-anchor: none !important; }' });
+  await p.evaluate(() => {
+    location.hash = '#messages';
+    scrollTo(0, 0);
+  });
+  await p.waitForTimeout(200);
+  return { p, msgs };
+}
+const oRows = p => p.evaluate(() => document.querySelectorAll('#msgs .msg[id]').length);
+/* day d: the index of its first and last message, and how many */
+function oDay(msgs, d) {
+  const a = msgs.findIndex(m => m.d === d);
+  let b = a;
+  while (b + 1 < msgs.length && msgs[b + 1].d === d) b++;
+  return { a, b, n: b - a + 1 };
+}
+/* (after scrolling to y, when given) the first message row or conversation on screen below the tabs and the toolbar
+   when it sticks: a selector and its height on screen. Taken in the same task as the scroll, before any day loads. */
+const oSpot = (p, y) =>
+  p.evaluate(y => {
+    if (y != null) scrollTo(0, y);
+    const v = document.getElementById('v-messages');
+    const tb = v.querySelector('.toolbar').getBoundingClientRect();
+    const sticks = getComputedStyle(v.querySelector('.toolbar')).position === 'sticky';
+    const top = Math.max(document.querySelector('nav.tabs').getBoundingClientRect().bottom, sticks ? tb.bottom : 0);
+    for (const x of document.querySelectorAll('#msgs .msg[id], #msgs details.conv > summary')) {
+      const r = x.getBoundingClientRect();
+      if (r.height > 0 && r.bottom > top && r.top < innerHeight)
+        return {
+          key: x.id ? '#' + x.id : '#msgs details.conv[data-conv="' + x.parentElement.dataset.conv + '"] > summary',
+          y: Math.round(r.top),
+        };
+    }
+    return null;
+  }, y);
+const oY = (p, key) =>
+  p.evaluate(k => {
+    const x = document.querySelector(k);
+    return x ? Math.round(x.getBoundingClientRect().top) : null;
+  }, key);
+/* count msgRow calls from now on (window.__rows) */
+const oCount = p =>
+  p.evaluate(() => {
+    window.__rows = 0;
+    if (!window.__wrapped) {
+      const o = window.msgRow;
+      window.msgRow = function () {
+        window.__rows++;
+        return o.apply(this, arguments);
+      };
+      window.__wrapped = true;
+    }
+  });
+/* scroll to the top and wait for the next day (or 3 s); then a moment more, in case another loads */
+async function oUp(p) {
+  const r0 = await oRows(p);
+  const spot = await oSpot(p, 0);
+  await until(p, r0 => document.querySelectorAll('#msgs .msg[id]').length !== r0, r0, 3000);
+  await p.waitForTimeout(400);
+  const r1 = await oRows(p);
+  return { r0, r1, spot, y: spot && (await oY(p, spot.key)), made: await p.evaluate(() => window.__rows) };
+}
+/* the threaded layout's conversations: none twice, in order of their first message shown, and every row once */
+const oConvs = p =>
+  p.evaluate(() => {
+    const ids = [...document.querySelectorAll('#msgs > details.conv:not([data-conv="_rest"])')];
+    const firsts = ids.map(d => Math.min(...[...d.querySelectorAll('.msg[id]')].map(x => +x.id.slice(1))));
+    const rows = [...document.querySelectorAll('#msgs .msg[id]')].map(x => x.id);
+    return {
+      convs: ids.map(d => d.dataset.conv),
+      unique: new Set(ids.map(d => d.dataset.conv)).size === ids.length,
+      sorted: firsts.every((x, k) => k === 0 || x > firsts[k - 1]),
+      rowsOnce: new Set(rows).size === rows.length,
+      rows: rows.sort().join(),
+    };
+  });
+const lastTwoDays = n => msgs => ({ markerMode: 'time', markerFrom: msgs[n - 920].d + 'T00:00' });
+
+async function olderByDay() {
+  /* O1: at 6,400 and 25,000 messages, Show older draws the window and the day before it, nothing more */
+  await ocase('O1', async () => {
+    for (const n of [6400, 25000]) {
+      const { p, msgs } = await oopen(n, lastTwoDays(n));
+      const wa = msgs.findIndex(m => m.d === msgs[n - 920].d);
+      const prev = oDay(msgs, msgs[wa - 1].d);
+      const win = await oRows(p);
+      await oCount(p);
+      await p.click('#msg-all');
+      await p.waitForTimeout(600);
+      const got = await oRows(p);
+      const made = await p.evaluate(() => window.__rows);
+      ok(
+        win === n - wa && got === n - prev.a && made < 1.2 * got,
+        'F15 O1: at ' +
+          n +
+          ' messages Show older draws the window (' +
+          (n - wa) +
+          ') and the day before it (' +
+          prev.n +
+          '): ' +
+          got +
+          ' rows, ' +
+          made +
+          ' msgRow calls with context lines (was every stored message)',
+      );
+      await OP.pop().context().close();
+    }
+  });
+
+  /* O2: each scroll to the top adds the previous day, keeps the message on screen in place and loads nothing more */
+  await ocase('O2', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    await p.click('#lay-flat');
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const res = [];
+    for (let k = 0; k < 2; k++) {
+      await oCount(p);
+      const r = await oUp(p);
+      const d = oDay(msgs, msgs[Math.max(0, n - r.r0 - 1)].d);
+      res.push({ added: r.r1 - r.r0, day: d.n, made: r.made, dy: r.y == null ? null : r.y - r.spot.y });
+    }
+    ok(
+      res.every(r => r.added === r.day && r.made === r.day),
+      'F15 O2: in the timeline, each scroll to the top loads one more day, drawing only that day ' +
+        JSON.stringify(res),
+    );
+    ok(
+      res.every(r => r.dy != null && Math.abs(r.dy) <= 3),
+      'F15 O2: the message on screen stays put as a day is added above it (moved ' +
+        res.map(r => r.dy).join(', ') +
+        ' px)',
+    );
+    ok(
+      (await p.evaluate(() => scrollY)) > 2000 && !(await p.$('#msgs > .edge.top:not(.more)')),
+      'F15 O2: after loading, the reader is still deep in the page, with more days above',
+    );
+    ok(p.errors.length === 0, 'F15 O2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O3: the threaded layout: a day added at the top redraws only the conversations it touches, every message shows
+     once, conversations stay in order, and a full redraw (new data) shows the same */
+  await ocase('O3', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    await p.click('#lay-thread');
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const res = [];
+    for (let k = 0; k < 2; k++) {
+      await oCount(p);
+      const r = await oUp(p);
+      const d = oDay(msgs, msgs[Math.max(0, n - r.r0 - 1)].d);
+      res.push({ added: r.r1 - r.r0, day: d.n, made: r.made, dy: r.y == null ? null : r.y - r.spot.y });
+    }
+    const c1 = await oConvs(p);
+    ok(
+      res.every(r => r.added === r.day && r.made <= 2 * r.day),
+      'F15 O3: threaded, each scroll to the top adds one day, redrawing only what it touches ' + JSON.stringify(res),
+    );
+    ok(
+      res.every(r => r.dy != null && Math.abs(r.dy) <= 3),
+      'F15 O3: threaded, the conversation or message on screen stays put (moved ' +
+        res.map(r => r.dy).join(', ') +
+        ' px)',
+    );
+    await p.evaluate(() => renderMessages());
+    const c2 = await oConvs(p);
+    ok(
+      c1.unique && c1.sorted && c1.rowsOnce && c1.convs.join() === c2.convs.join() && c1.rows === c2.rows,
+      'F15 O3: threaded, conversations show once each, in order, every message once, and a full redraw shows the same ' +
+        JSON.stringify([c1.unique, c1.sorted, c1.rowsOnce, c1.convs.length, c2.convs.length]),
+    );
+    ok(p.errors.length === 0, 'F15 O3: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O4: a jump to a message that isn't loaded loads its day; next to the span it joins it; a filter searches everything */
+  await ocase('O4', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    const wa = msgs.findIndex(m => m.d === msgs[n - 920].d);
+    const t = msgs[n - 10 * 460].i;
+    const td = oDay(msgs, msgs[n - 10 * 460].d);
+    await p.evaluate(t => goMsg(t), t);
+    await p.waitForTimeout(600);
+    const j = await p.evaluate(
+      ([t, wa]) => {
+        const x = document.getElementById('m' + t);
+        const r = x && x.getBoundingClientRect();
+        return {
+          shown: !!x && r.top >= 0 && r.bottom <= innerHeight,
+          banner: !document.getElementById('msg-older').hidden,
+          win: !!document.getElementById('m' + wa),
+        };
+      },
+      [t, msgs[wa].i],
+    );
+    const rows = await oRows(p);
+    ok(
+      j.shown && j.banner && !j.win && rows === td.n,
+      'F15 O4: a jump to #' +
+        t +
+        ' (10 days back) loads its day only (' +
+        rows +
+        ' rows, the day has ' +
+        td.n +
+        ') and shows it ' +
+        JSON.stringify(j),
+    );
+    await p.fill('#msg-q', '#5');
+    await p.waitForTimeout(400);
+    const f = await p.evaluate(() => [
+      !!document.getElementById('m5'),
+      document.querySelectorAll('#msgs .msg[id]').length,
+    ]);
+    await p.fill('#msg-q', '');
+    await p.waitForTimeout(400);
+    ok(
+      f[0] && f[1] < 100 && (await oRows(p)) >= td.n && (await p.$('#m' + t)),
+      'F15 O4: the filter searches every stored message (#5 found, ' +
+        f[1] +
+        ' rows), and clearing it brings the loaded days back',
+    );
+    await p.click('#msg-older button.link');
+    await p.waitForTimeout(300);
+    const back = await oRows(p);
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const r0 = await oRows(p);
+    const a0 = n - r0;
+    const prev = oDay(msgs, msgs[a0 - 1].d);
+    const t2 = msgs[prev.b - 5].i; /* late in that day, so the reader isn't near its top */
+    await p.evaluate(t => goMsg(t), t2);
+    await p.waitForTimeout(600);
+    ok(
+      back === n - wa &&
+        (await oRows(p)) === r0 + prev.n &&
+        (await p.evaluate(i => !!document.getElementById('m' + i), msgs[wa].i)),
+      'F15 O4: Back to my window shows the window (' +
+        back +
+        '); a jump into the day just before the loaded days adds that day to them (' +
+        r0 +
+        ' + ' +
+        prev.n +
+        ')',
+    );
+    ok(p.errors.length === 0, 'F15 O4: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O5: turning Show older on and off keeps the message on screen; off is the window only (the timeline) */
+  await ocase('O5', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    const wa = msgs.findIndex(m => m.d === msgs[n - 920].d);
+    await p.click('#lay-flat');
+    /* the toolbar just under the tabs, the window's first messages below it */
+    await p.evaluate(() => {
+      const t = document.querySelector('#v-messages .toolbar');
+      scrollTo(
+        0,
+        scrollY + t.getBoundingClientRect().top - document.querySelector('nav.tabs').getBoundingClientRect().bottom,
+      );
+    });
+    const s0 = await oSpot(p);
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const y1 = await oY(p, s0.key);
+    const on = await oRows(p);
+    await p.evaluate(i => document.getElementById('m' + i).scrollIntoView({ block: 'center' }), msgs[wa + 200].i);
+    const s2 = await oSpot(p);
+    await p.click('#msg-all');
+    await p.waitForTimeout(400);
+    const off = await p.evaluate(() => ({
+      edges: document.querySelectorAll('#msgs .edge').length,
+      older: document.getElementById('v-messages').classList.contains('older'),
+    }));
+    const y3 = await oY(p, s2.key);
+    ok(
+      s0.key === '#m' + msgs[wa].i && Math.abs(y1 - s0.y) <= 3 && on > n - wa,
+      'F15 O5: turning Show older on keeps ' +
+        s0.key +
+        " (the window's first) where it was (" +
+        s0.y +
+        ' → ' +
+        y1 +
+        ')',
+    );
+    ok(
+      (await oRows(p)) === n - wa && !off.edges && !off.older && y3 != null && Math.abs(y3 - s2.y) <= 3,
+      'F15 O5: turning it off shows the window only, with no edges, and keeps ' +
+        s2.key +
+        ' in place (' +
+        s2.y +
+        ' → ' +
+        y3 +
+        ')',
+    );
+    ok(p.errors.length === 0, 'F15 O5: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O6: scrolling up to the first stored message ends with a calm "Start of stored history" line, and loads no more */
+  await ocase('O6', async () => {
+    const n = 1500;
+    const { p } = await oopen(n, () => ({ markerMode: 'caught', caughtUpI: n - 50 }));
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    for (let k = 0; k < 6 && !(await p.$('#msgs > .edge.top:not(.more)')); k++) await oUp(p);
+    const top = await p.evaluate(() => {
+      const e = document.querySelector('#msgs > .edge.top');
+      return e && { text: e.textContent, first: e === document.getElementById('msgs').firstElementChild };
+    });
+    const r = await oUp(p);
+    ok(
+      top && top.first && /^Start of stored history · Sep 1$/.test(top.text) && r.r0 === n && r.r1 === n,
+      'F15 O6: at the first stored message the top says "' + (top && top.text) + '" and nothing more loads',
+    );
+    ok(
+      /Loaded from Sep 1, the start of stored history\./.test(await p.textContent('#msg-note')),
+      'F15 O6: the note says the start of stored history is loaded',
+    );
+  });
+
+  /* O7: a date range with an end: the next day after it loads at the bottom */
+  await ocase('O7', async () => {
+    const n = 1500;
+    const { p, msgs } = await oopen(n, msgs => ({
+      markerMode: 'time',
+      markerFrom: msgs[400].d + 'T00:00',
+      markerTo: msgs[400].d + 'T23:59',
+    }));
+    const d1 = oDay(msgs, msgs[400].d),
+      d2 = oDay(msgs, msgs[d1.b + 1].d);
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const r0 = await oRows(p);
+    const bot = !!(await p.$('#msgs > .edge.bot.more'));
+    await p.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
+    await until(p, r0 => document.querySelectorAll('#msgs .msg[id]').length !== r0, r0, 3000);
+    await p.waitForTimeout(300);
+    const r1 = await oRows(p);
+    ok(
+      r0 === d1.b + 1 && bot && r1 === r0 + d2.n,
+      'F15 O7: a one-day range shows it and the day before (' +
+        r0 +
+        '); scrolling to the bottom loads the next day (' +
+        (r1 - r0) +
+        ' of ' +
+        d2.n +
+        ')',
+    );
+  });
+
+  /* O8: at phone width: no sideways scroll, and the toolbar stays under the tabs so Show older can be turned off */
+  await ocase('O8', async () => {
+    const n = 1500;
+    const { p } = await oopen(n, () => ({ markerMode: 'caught', caughtUpI: n - 50 }), {
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    await p.tap('#msg-all');
+    await p.waitForTimeout(500);
+    await p.evaluate(() => scrollTo(0, scrollY + 3000));
+    await p.waitForTimeout(200);
+    const r = await p.evaluate(() => ({
+      sw: document.documentElement.scrollWidth <= innerWidth,
+      gap: Math.round(
+        document.querySelector('#v-messages .toolbar').getBoundingClientRect().top -
+          document.querySelector('nav.tabs').getBoundingClientRect().bottom,
+      ),
+    }));
+    await p.tap('#msg-all');
+    await p.waitForTimeout(300);
+    ok(
+      r.sw && Math.abs(r.gap) <= 2 && !(await p.$('#msgs .edge')) && (await oRows(p)) === 49,
+      'F15 O8: at phone width nothing scrolls sideways, the toolbar sits under the tabs (' +
+        r.gap +
+        ' px), and tapping Show older there turns it off',
+    );
+    ok(p.errors.length === 0, 'F15 O8: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* O9: dark mode: the start line and the sticky toolbar use the dark colors */
+  await ocase('O9', async () => {
+    const n = 1500;
+    const { p, msgs } = await oopen(n, msgs => ({ markerMode: 'time', markerFrom: msgs[400].d + 'T00:00' }), {
+      colorScheme: 'dark',
+    });
+    await p.click('#msg-all');
+    await p.waitForTimeout(500);
+    const c = await p.evaluate(() => {
+      const e = document.querySelector('#msgs > .edge.top:not(.more)');
+      return {
+        line: e && getComputedStyle(e).color,
+        bar: getComputedStyle(document.querySelector('#v-messages .toolbar')).backgroundColor,
+        bg: getComputedStyle(document.body).backgroundColor,
+      };
+    });
+    ok(
+      c.line === 'rgb(163, 166, 152)' && c.bar === 'rgb(25, 26, 23)',
+      'F15 O9: in dark mode the start line is muted and the toolbar dark ' + JSON.stringify(c),
+    );
+  });
+}
+
 const SECTIONS = {
   importer,
   robustness,
@@ -5947,6 +6379,7 @@ const SECTIONS = {
   notices,
   schedule,
   claims,
+  olderByDay,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1
@@ -5956,7 +6389,17 @@ const SECTIONS = {
    next. */
 const PAGE_JOBS = Math.max(1, +process.env.PAGE_JOBS || os.cpus().length);
 /* the slowest sections first, so they don't start last */
-const SLOW_FIRST = ['photos', 'layouts', 'photos2', 'notices', 'history2', 'history', 'messagesView', 'pipeline'];
+const SLOW_FIRST = [
+  'photos',
+  'layouts',
+  'photos2',
+  'notices',
+  'history2',
+  'history',
+  'olderByDay',
+  'messagesView',
+  'pipeline',
+];
 async function inProcess(names) {
   browser = await chromium.launch();
   try {
