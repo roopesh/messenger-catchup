@@ -9,7 +9,7 @@
 
 ## Checks
 - [ ] `npm test` passes (paste the summary: Python / sim / page counts)
-- [ ] `docs/BACKLOG.md` updated (items closed or filed)
+- [ ] `docs/BACKLOG.md` updated: finished items removed, new ones filed; fixed issues closed (`Closes #N`), every open issue triaged
 - [ ] SKILL.md changed? Described above as a behavior change
 
 ## After merge

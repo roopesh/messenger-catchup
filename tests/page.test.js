@@ -5699,6 +5699,36 @@ async function notices() {
     'notices U23: the newest entry is "Chrome" on 2.0: an older Chrome on 1.1 still gets D (' + JSON.stringify(n) + ')',
   );
   await p.close();
+  /* U24: a notice's text is laid out as text, not as a message row's grid (#43: it shared the class .msg) */
+  p = await open(withMeta(c2));
+  const lay = await p.evaluate(() => {
+    const x = document.querySelector('#upd p');
+    const t = x && x.querySelector('span');
+    return t && { display: getComputedStyle(t).display, w: t.getBoundingClientRect().width, pw: x.clientWidth };
+  });
+  ok(
+    lay && lay.display !== 'grid' && lay.w > lay.pw / 2,
+    "notices U24: a notice's text isn't a grid and spans the line (" + JSON.stringify(lay) + ')',
+  );
+  await p.close();
+  /* U25: versions.refresh without the weekday that lastRefresh has (or the other way round) is the same refresh (#43) */
+  await none(
+    withMeta(metaWith({ lastRefresh: 'Fri ' + LAST, versions: vers({}) })),
+    'U25: lastRefresh "Fri ' + LAST + '", versions.refresh "' + LAST + '": nothing',
+  );
+  await none(
+    withMeta(metaWith({ versions: vers({ refresh: 'Fri ' + LAST }) })),
+    'U25: versions.refresh with the weekday, lastRefresh without: nothing',
+  );
+  p = await open(
+    withMeta(metaWith({ lastRefresh: 'Fri ' + LAST, versions: vers({ refresh: 'Thu Nov 19, 8:00 PM' }) })),
+  );
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && /older copy of the Messenger Catch-up skill/.test(n[0]),
+    'notices U25: a different refresh, both with weekdays, is still C (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
   /* U19: no database in this view (signed out, a preview): nothing to compare, nothing shown */
   await none(Object.assign(all(), { __opts: { noDb: true } }), 'U19: no database: no notices, no errors');
   /* U20: a page from before the notices ignores versions */

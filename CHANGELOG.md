@@ -2,6 +2,18 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.25.1] - 2026-11-14
+**Update notices laid out as text again, and the backlog trimmed to open items** (BACKLOG B52, GitHub issue #43). PATCH: a page fix. Page **`PAGE_VERSION` 3.0** (from 2.9); helper unchanged (2.1).
+
+### Fixed
+- **Update notices (B52, #43).** Each notice's text was wrapped in a span with the class `msg`, the message row's grid, so the text was squeezed into a narrow first column and the link into the second. It has its own class now (`upd-msg`). Test: page `notices` U24.
+- **False "older copy of the skill" notice (B52, #43).** `references/database.md` showed `versions.refresh` without the weekday that `lastRefresh` has, and a refresh that copied that shape raised notice C. The example now has the weekday, and the page compares the two without a leading weekday. Test: page `notices` U25. U24 and the first two U25 checks fail on 2.9.
+
+### Changed
+- **Backlog: open items only.** Finished items were removed from `docs/BACKLOG.md`; this file keeps their history by ID. Checks left open inside finished items (R6, F5, F6, B41, B49, F13) are gathered into a new item, L1. R3 and R10 are kept as their open remainders. New items: R19 (Claude's maintenance writes hold the run lock through slow approvals), B52, F25 (catch up with Facebook group posts too). Updated: R13 (corrected photo counts, the option to reuse a stored copy by fingerprint) and R12 (a scheduled chain seems to keep the skill version it started with).
+- **CLAUDE.md, the owner's rules:** a backlog review includes the GitHub issues, every open issue gets triaged (onto the backlog or closed as won't do), and the PR that finishes an item removes it from the backlog and closes its issues. The PR template asks for it.
+- **`AGENTS.md`** points other coding agents to CLAUDE.md.
+
 ## [1.25.0] - 2026-11-14
 **Long histories: older messages a day at a time, per-day digests, Look deeper, and range summaries of any length** (BACKLOG F15 and R4, F16, F17, F18, R10). MINOR: new page features and refresh procedure changes. Page **`PAGE_VERSION` 2.9** (from 2.8); helper unchanged (2.1). No re-setup: Claude republishes your page on its next refresh.
 
