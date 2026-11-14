@@ -3384,13 +3384,30 @@
     const ids = S.msgs.filter(inWindow).map(m => m.i);
     return ids.length ? "r" + ids[0] + "_" + ids[ids.length - 1] : null;
   }
+  /* The span summary for the window: the one for exactly this span; or, in a window with no end, the newest one with
+     the same start that ends earlier (written before newer messages came in), which still stands for what it covers
+     and says so (short: true). Unsaved ones (a failed save) count too, until the page reloads. */
+  function rangeSumFor(k, ids) {
+    const exact = (S.rangeSums || {})[k] || S.rangeUnsaved[k];
+    if (exact) return { doc: exact, k };
+    if (!ids.length || (S.meta || {}).markerTo) return null;
+    const a = ids[0].i,
+      z = ids[ids.length - 1].i;
+    let best = null;
+    [...Object.entries(S.rangeSums || {}), ...Object.entries(S.rangeUnsaved)].forEach(([key, d]) => {
+      if (d && d.fromI === a && Number.isInteger(d.toI) && d.toI < z && (!best || d.toI > best.doc.toI))
+        best = { doc: d, k: key, short: true };
+    });
+    return best;
+  }
   function activeSummary() {
     const R = winRange();
     const raw = S.summary;
     if (!raw) return null;
     if ((S.meta || {}).markerMode === "time" && R.lo + 1 < raw.fromI) {
       const k = rangeKey(R);
-      return (k && S.rangeSums[k]) || null;
+      const f = k && rangeSumFor(k, S.msgs.filter(inWindow));
+      return (f && f.doc) || null;
     }
     return raw;
   }
@@ -3400,12 +3417,34 @@
       renderSummaryV2(v, raw);
       return;
     }
-    if (S.rangeSums[k]) {
-      renderSummaryV2(v, S.rangeSums[k]);
+    const ids = S.msgs.filter(inWindow);
+    const f = rangeSumFor(k, ids);
+    if (f) {
+      rangeNotes(v, f, k, ids);
+      renderSummaryV2(v, f.doc);
       return;
     }
-    const ids = S.msgs.filter(inWindow);
     const box = el("div", "rangebox");
+    /* a run for another span (the window moved, or new messages came in since it began) is shown, with Stop */
+    if (RJ && RJ.state === "running" && RJ.k !== k) {
+      const a = RJ.ids[0],
+        b = RJ.ids[RJ.ids.length - 1];
+      const stop = el("button", "secondary", "Stop");
+      stop.onclick = () => RJ && RJ.ctl && RJ.ctl.abort();
+      const row = el("div", "btns");
+      row.append(stop, el("span", "note range-st", rangeStatus(RJ)));
+      box.append(
+        el("b", null, "Writing a summary for #" + a.i + "–#" + b.i + " (" + a.t + " to " + b.t + ")…"),
+        el(
+          "span",
+          "note",
+          "That's the span as it was when the button was pressed. Once it's written, this window uses it for the messages it covers.",
+        ),
+        row,
+      );
+      v.append(box);
+      return;
+    }
     const J = RJ && RJ.k === k ? RJ : null;
     const n = J ? J.parts.length : rangeFit(k, ids).parts;
     /* F18: a span too long for one request is read in parts, one request each, and merged into one summary */
@@ -3456,6 +3495,58 @@
     box.append(row);
     v.append(box);
   }
+  /* Above a span summary: how far it covers when newer messages came in since, and a save that failed */
+  function rangeNotes(v, f, k, ids) {
+    const err = S.rangeSaveErr && S.rangeSaveErr.k === f.k ? S.rangeSaveErr : null;
+    if (!f.short && !err) return;
+    const box = el("div", "rangebox");
+    if (f.short) {
+      const n = ids.filter(m => m.i > f.doc.toI).length;
+      const row = el("div", "btns");
+      const b = el("button", "secondary", "Write it again through #" + ids[ids.length - 1].i);
+      b.onclick = () => writeRangeSummary(k, ids);
+      b.disabled = !!RJ && RJ.state === "running";
+      row.append(b, el("span", "note range-st", RJ && RJ.k === k ? rangeStatus(RJ) : ""));
+      box.append(
+        el(
+          "span",
+          "note",
+          "This summary covers #" +
+            f.doc.fromI +
+            "–#" +
+            f.doc.toI +
+            ", written " +
+            (f.doc.generatedAt || "earlier") +
+            ". It doesn't include the " +
+            plural(n, "newer message") +
+            " after #" +
+            f.doc.toI +
+            ".",
+        ),
+        row,
+      );
+    }
+    if (err) {
+      const row = el("div", "btns");
+      const b = el("button", "secondary", "Save it again");
+      b.onclick = () => saveRange(f.k, f.doc);
+      row.append(b);
+      box.append(
+        el(
+          "b",
+          null,
+          err.code === "too_big"
+            ? "Written, but too big to save (" +
+                Math.round(err.bytes / 1024) +
+                " KB; a page document holds 256 KB). It's shown until this page reloads."
+            : "Written, but not saved (" + err.code + "). It's shown until this page reloads.",
+        ),
+        row,
+      );
+      if (err.code === "too_big") b.hidden = true;
+    }
+    v.append(box);
+  }
   /* The prompt for a span's summary: every message in it, grouped by the given conversations */
   /* The span's conversations, limited to its messages; the rest as "loose" */
   function rangeConvs(ids) {
@@ -3469,7 +3560,9 @@
     if (loose.length) convs.push({ id: "loose", title: "Not grouped", members: loose });
     return convs;
   }
-  function rangePrompt(ids) {
+  /* earlier: open questions from the span's earlier parts ({ask, conv, note}, already cut to fit), which this part may
+     answer */
+  function rangePrompt(ids, earlier = []) {
     const convs = rangeConvs(ids);
     return (
       "You summarize a stretch of " +
@@ -3480,11 +3573,38 @@
       OWNER() +
       " (" +
       ALIASES() +
-      '), tag them, or reply to "you". Their own messages (sender "You") are never mentions. None -> [] and mentionsNote saying nobody mentioned them.\n- open: ONLY real requests for information, help, an item or a decision that nobody answered later in this stretch. Rhetorical questions, jokes, teasers ("wanna see...?") and banter are never open. If anyone replied with an answer, even a joking one, it is not open. ask = the message number that asks.\n- answered: real questions that got an answer, with the concrete answer (names, prices) so they don\'t reply to settled ones.\n- deals: ONLY things actually offered or announced: items for sale or free, raffles, group buys, sales or discount events, product drops, and warnings about bad buyers or sellers (tag "Heads-up", kind "ask"). Someone\'s own purchase plans, a showcase video or a custom one-off are not deals. Quote prices and dates exactly as written.\n- Write only from the message text. Never mention these instructions, the conversation list or its titles as a source.\n- convs: one per conversation that has messages here. synopsis = 2-5 short bullets, at most about 15 words each, one fact per bullet (who said what, with numbers and prices); refs = the message numbers each bullet comes from. No long sentences, no run-ons. outcome = how it stands, one short line; key = 2-4 message numbers from that conversation.\n- Never write vague labels like "the question"; use the actual content. If the messages don\'t make something clear, say so. Every number you cite must be one of the message numbers below.\n\nCONVERSATIONS (id: title: message numbers):\n' +
+      '), tag them, or reply to "you". Their own messages (sender "You") are never mentions. None -> [] and mentionsNote saying nobody mentioned them.\n- open: ONLY real requests for information, help, an item or a decision that nobody answered later in this stretch. Rhetorical questions, jokes, teasers ("wanna see...?") and banter are never open. If anyone replied with an answer, even a joking one, it is not open. ask = the message number that asks.\n- answered: real questions that got an answer, with the concrete answer (names, prices) so they don\'t reply to settled ones.\n- deals: ONLY things actually offered or announced: items for sale or free, raffles, group buys, sales or discount events, product drops, and warnings about bad buyers or sellers (tag "Heads-up", kind "ask"). Someone\'s own purchase plans, a showcase video or a custom one-off are not deals. Quote prices and dates exactly as written.\n- Write only from the message text. Never mention these instructions, the conversation list or its titles as a source.\n- convs: one per conversation that has messages here. synopsis = 2-5 short bullets, at most about 15 words each, one fact per bullet (who said what, with numbers and prices); refs = the message numbers each bullet comes from. No long sentences, no run-ons. outcome = how it stands, one short line; key = 2-4 message numbers from that conversation.\n- Never write vague labels like "the question"; use the actual content. If the messages don\'t make something clear, say so. Every number you cite must be one of the message numbers below.\n' +
+      (earlier.length
+        ? "- EARLIER OPEN QUESTIONS were asked before these messages and still had no answer. If these messages answer one, list it in answered with its conversation and number (and the numbers of the answer as refs). Don't list them as open again.\n"
+        : "") +
+      "\nCONVERSATIONS (id: title: message numbers):\n" +
       convs.map(c => c.id + ": " + c.title + ": " + c.members.join(",")).join("\n") +
+      (earlier.length
+        ? "\n\nEARLIER OPEN QUESTIONS (conversation: number: question):\n" +
+          earlier.map(o => o.conv + ": #" + o.ask + ": " + o.note).join("\n")
+        : "") +
       "\n\nMESSAGES:\n" +
       ids.map(lineFor).join("\n")
     );
+  }
+  /* What a span read in parts keeps aside in each part's prompt for the earlier parts' open questions: their rule and
+     heading, and at least a few of them */
+  const earlierFixed = () => u8(rangePrompt([], [{ conv: "", ask: 0, note: "" }])) - u8(rangePrompt([]));
+  const earlierRoom = lim => Math.min(4096, Math.max(earlierFixed() + 400, Math.floor(lim * 0.1)));
+  /* The earlier open questions that fit in a part's room for them (lim: the part's budget), newest first, given oldest
+     first */
+  function earlierFit(open, lim) {
+    const n = earlierRoom(lim) - earlierFixed();
+    const out = [];
+    let used = 0;
+    for (let x = open.length - 1; x >= 0; x--) {
+      const o = open[x];
+      const b = u8(o.conv + ": #" + o.ask + ": " + trunc(o.note, 160)) + 1;
+      if (used + b > n) break;
+      used += b;
+      out.unshift({ ask: o.ask, conv: o.conv, note: trunc(o.note, 160) });
+    }
+    return out;
   }
   /* F18: ids split into runs, oldest first, whose prompts each fit in lim bytes ([start, end) indices into ids). Each
      run is estimated message by message (its line, its number in the conversation list, and the list's line for a
@@ -3513,21 +3633,25 @@
     }
     return parts;
   }
+  /* A span in parts leaves room in each for the earlier open questions */
+  const splitRange = (ids, lim) => rangeParts(ids, lim - earlierRoom(lim));
   /* How many requests a span's summary takes. Worked out once per span, cap and data. */
   let RF = null;
   function rangeFit(k, ids) {
     const key = k + "|" + S.promptCap;
     if (RF && RF.key === key && RF.msgs === S.msgs && RF.th === S.threading && RF.people === PEOPLE) return RF.r;
     const lim = S.promptCap - MARGIN;
-    const r = { parts: u8(rangePrompt(ids)) <= lim ? 1 : rangeParts(ids, lim).length };
+    const r = { parts: u8(rangePrompt(ids)) <= lim ? 1 : splitRange(ids, lim).length };
     RF = { key, msgs: S.msgs, th: S.threading, people: PEOPLE, r };
     return r;
   }
   /* The span summary being written in this tab: {k, ids, parts, outs (one normalized result per part done), lim, state
-     "running" | "stopped" | "failed", err, failed (the part that failed), ctl}. Parts done live only here: nothing is
-     saved until every part is, so a closed tab or a Stop leaves nothing half-written, and "Write the rest" goes on
-     from the first part not done. */
+     "running" | "stopped" | "failed", err, phase ("join" while the parts are condensed: joinAt of joinOf), ctl}. Parts
+     done live only here: nothing is saved until every part is, so a closed tab or a Stop leaves nothing half-written,
+     and "Write the rest" goes on from the first part not done. */
   let RJ = null;
+  S.rangeUnsaved = {}; /* k -> a written summary whose save failed: shown until the page reloads */
+  S.rangeSaveErr = null; /* {k, code, bytes?}: the last failed save */
   const RANGE_ERR = {
     not_granted: "Claude isn't allowed on this page in this view.",
     rate_limited: "Too many requests right now; try again in a few minutes.",
@@ -3545,14 +3669,37 @@
       done = J.outs.length;
     const kept =
       done > 0
-        ? (done === 1 ? " Part 1 is done" : " Parts 1–" + done + " are done") +
+        ? (done === n
+            ? "All " + n + " parts are done"
+            : done === 1
+              ? " Part 1 is done"
+              : " Parts 1–" + done + " are done") +
           " but not saved: the summary is saved only once every part is done. Press Write the rest to go on."
         : "";
-    if (J.state === "running")
+    if (J.state === "running") {
+      if (J.phase === "join")
+        return (
+          "Joining the " +
+          n +
+          " parts into one summary" +
+          (J.joinOf > 1 ? " (request " + J.joinAt + " of " + J.joinOf + ")" : "") +
+          "… keep this tab open."
+        );
       return n > 1
         ? "Writing part " + (done + 1) + " of " + n + "… keep this tab open."
         : "Writing… this takes a minute for a long span.";
-    if (J.state === "stopped") return "Stopped" + (n > 1 ? " at part " + (done + 1) + " of " + n : "") + "." + kept;
+    }
+    if (J.state === "stopped")
+      return "Stopped" + (n > 1 && done < n ? " at part " + (done + 1) + " of " + n : "") + "." + kept;
+    if (done === n && n > 1)
+      return (
+        "Joining the parts failed (" +
+        (J.err || "error") +
+        ")." +
+        (RANGE_ERR[J.err] ? " " + RANGE_ERR[J.err] : "") +
+        " " +
+        kept.trim()
+      );
     if (n === 1) return RANGE_ERR[J.err] || "Couldn't write it (" + (J.err || "error") + "). Try again.";
     return (
       "Part " +
@@ -3573,79 +3720,109 @@
     const st = document.querySelector("#v-summary .rangebox .range-st");
     if (st) keepPlace(renderSummary);
   }
-  /* One part's reply, kept to what's real: conversations of the part, numbers of the part */
-  function rangeDoc(out, ids) {
-    const inR = new Set(ids.map(m => m.i));
-    const T = S.threading || { convs: [], links: {} };
-    const answeredBy = new Set(
-      ids
-        .filter(m => {
-          const l = T.links && T.links[m.i];
-          return l && inR.has(l[0]);
-        })
-        .map(m => T.links[m.i][0]),
-    );
-    const mem = {};
-    rangeConvs(ids).forEach(c => (mem[c.id] = new Set(c.members)));
-    const ok = i => inR.has(i);
+  /* Threading links that answer a question: a Messenger reply, one matched by quote or photo, or an "answers" link,
+     from someone other than the asker. A "continues" link, or the asker following up, isn't an answer. */
+  const ANSWER_LINKS = new Set(["r", "rq", "rg", "i"]);
+  /* The messages of inR that a message of ids answers that way */
+  function repliedTo(ids, inR) {
+    const T = S.threading || {};
+    const out = new Set();
+    ids.forEach(m => {
+      const l = T.links && T.links[m.i];
+      if (!Array.isArray(l) || !ANSWER_LINKS.has(l[1]) || !inR.has(l[0])) return;
+      const q = S.byI.get(l[0]);
+      if (q && q.f !== m.f) out.add(l[0]);
+    });
+    return out;
+  }
+  /* A reply's lists, kept to what's real. c.inR: the numbers it may cite; c.mem: Map conversation id -> its numbers
+     (model output never indexes a plain object, so ids like "__proto__" are just unknown); c.answeredBy: questions a
+     link answers; c.earlier: Map ask -> conversation of earlier parts' open questions it may answer; c.mentions: whether
+     it carries mentions. */
+  function rangeClean(out, c) {
+    const ok = i => Number.isInteger(i) && c.inR.has(i);
+    const conv = id => (typeof id === "string" && c.mem.has(id) ? id : null);
+    const list = x => (Array.isArray(x) ? x.filter(y => y && typeof y === "object") : []);
+    const refs = x => (Array.isArray(x) ? x.filter(ok) : []);
+    const earlier = c.earlier || new Map();
     return {
-      mentions: (out.mentions || [])
-        .map(x => ({
-          note: String(x.note || ""),
-          refs: (x.refs || []).filter(i => ok(i) && (S.byI.get(i) || {}).f !== "You").map(i => [i]),
-        }))
-        .filter(x => x.refs.length),
-      mentionsNote: String(out.mentionsNote || ""),
-      open: (out.open || [])
-        .filter(o => mem[o.conv] && ok(o.ask) && !answeredBy.has(o.ask))
+      mentions: c.mentions
+        ? list(out.mentions)
+            .map(x => ({
+              note: String(x.note || ""),
+              refs: refs(x.refs)
+                .filter(i => (S.byI.get(i) || {}).f !== "You")
+                .map(i => [i]),
+            }))
+            .filter(x => x.refs.length)
+        : [],
+      mentionsNote: c.mentions ? String(out.mentionsNote || "") : "",
+      open: list(out.open)
+        .filter(o => conv(o.conv) && ok(o.ask) && !c.answeredBy.has(o.ask) && !earlier.has(o.ask))
         .map(o => ({ conv: o.conv, ask: o.ask, to: String(o.to || "anyone"), note: String(o.note || "") })),
-      answered: (out.answered || [])
-        .filter(a => mem[a.conv] && ok(a.ask))
+      answered: list(out.answered)
+        .filter(a => (conv(a.conv) && ok(a.ask)) || earlier.has(a.ask))
         .map(a => ({
-          conv: a.conv,
+          conv: earlier.has(a.ask) ? earlier.get(a.ask) : a.conv,
           ask: a.ask,
           answer: String(a.answer || ""),
-          refs: (a.refs || []).filter(ok),
+          refs: refs(a.refs),
         })),
-      deals: (out.deals || [])
-        .filter(d => mem[d.conv])
+      deals: list(out.deals)
+        .filter(d => conv(d.conv))
         .map(d => ({
           kind: String(d.kind || "sale"),
           tag: String(d.tag || ""),
           conv: d.conv,
           text: String(d.text || ""),
-          refs: (d.refs || []).filter(ok),
+          refs: refs(d.refs),
         }))
         .filter(d => d.refs.length),
-      convs: (out.convs || [])
-        .filter(c => mem[c.id])
-        .map(c => ({
-          id: c.id,
-          tag: String(c.tag || ""),
-          synopsis: Array.isArray(c.synopsis)
-            ? c.synopsis
-                .map(x => ({
-                  t: String((x && x.t) || x || ""),
-                  refs: ((x && x.refs) || []).filter(i => mem[c.id].has(i)),
-                }))
-                .filter(x => x.t)
-            : String(c.synopsis || ""),
-          outcome: String(c.outcome || ""),
-          key: (c.key || []).filter(i => mem[c.id].has(i)).slice(0, 4),
-        })),
+      convs: list(out.convs)
+        .filter(x => conv(x.id))
+        .map(x => {
+          const mine = c.mem.get(x.id);
+          const own = i => Number.isInteger(i) && mine.has(i);
+          return {
+            id: x.id,
+            tag: String(x.tag || ""),
+            synopsis: Array.isArray(x.synopsis)
+              ? x.synopsis
+                  .map(y => ({
+                    t: String((y && y.t) || (typeof y === "string" ? y : "")),
+                    refs: Array.isArray(y && y.refs) ? y.refs.filter(own) : [],
+                  }))
+                  .filter(y => y.t)
+              : String(x.synopsis || ""),
+            outcome: String(x.outcome || ""),
+            key: (Array.isArray(x.key) ? x.key.filter(own) : []).slice(0, 4),
+          };
+        }),
     };
   }
+  /* One part's reply: conversations of the part, numbers of the part; earlier: the open questions sent with it */
+  function rangeDoc(out, ids, earlier = []) {
+    const inR = new Set(ids.map(m => m.i));
+    const mem = new Map();
+    rangeConvs(ids).forEach(c => mem.set(c.id, new Set(c.members)));
+    return rangeClean(out, {
+      inR,
+      mem,
+      answeredBy: repliedTo(ids, inR),
+      earlier: new Map(earlier.map(o => [o.ask, o.conv])),
+      mentions: true,
+    });
+  }
+  const rangeBullets = s => (Array.isArray(s) ? s : s ? [{ t: String(s), refs: [] }] : []);
   /* F18: the parts' results (oldest first) as one summary of the span, the shape a one-request summary has.
      Conversations are joined by id in the order they first appear: bullets concatenated in order, the newest outcome
-     and tag, key numbers without repeats (the first two and last two past 4). The lists are joined in order without
-     duplicates: mentions by their numbers, answered by the question, open by the question (and dropped when a later part
-     answered it, or a reply links to it), deals by conversation, kind and text (their numbers joined). */
+     and tag, key numbers taken a rank at a time (each part's first pick, then each part's second…) up to 4. The lists
+     are joined in order without duplicates: mentions by their numbers, answered by the question, open by the question
+     (and dropped when a later part answered it, or someone else's reply links to it), deals by conversation, kind and
+     text (their numbers joined). */
   function mergeRange(docs, ids) {
-    const T = S.threading || { convs: [], links: {} };
     const inR = new Set(ids.map(m => m.i));
-    const linkedTo = new Set(
-      ids.map(m => T.links && T.links[m.i] && T.links[m.i][0]).filter(i => i != null && inR.has(i)),
-    );
+    const linked = repliedTo(ids, inR);
     const uniq = (arr, key) => {
       const seen = new Set();
       return arr.filter(x => {
@@ -3656,21 +3833,25 @@
       });
     };
     const all = f => docs.flatMap(d => d[f] || []);
-    const bullets = s => (Array.isArray(s) ? s : s ? [{ t: String(s), refs: [] }] : []);
-    const convs = new Map();
+    const convs = new Map(),
+      keys = new Map();
     all("convs").forEach(c => {
+      keys.set(c.id, (keys.get(c.id) || []).concat([c.key]));
       const o = convs.get(c.id);
       if (!o) {
-        convs.set(c.id, Object.assign({}, c, { key: c.key.slice() }));
+        convs.set(c.id, Object.assign({}, c));
         return;
       }
-      o.synopsis = bullets(o.synopsis).concat(bullets(c.synopsis));
+      o.synopsis = rangeBullets(o.synopsis).concat(rangeBullets(c.synopsis));
       if (c.outcome) o.outcome = c.outcome;
       if (c.tag) o.tag = c.tag;
-      c.key.forEach(i => !o.key.includes(i) && o.key.push(i));
     });
     convs.forEach(c => {
-      if (c.key.length > 4) c.key = c.key.slice(0, 2).concat(c.key.slice(-2));
+      const picks = keys.get(c.id);
+      const key = [];
+      for (let r = 0; key.length < 4 && picks.some(p => p.length > r); r++)
+        picks.forEach(p => p.length > r && key.length < 4 && !key.includes(p[r]) && key.push(p[r]));
+      c.key = key;
     });
     const answered = uniq(all("answered"), a => a.ask);
     const asked = new Set(answered.map(a => a.ask));
@@ -3686,13 +3867,145 @@
       mentions,
       mentionsNote: mentions.length ? "" : (docs.find(d => d.mentionsNote) || {}).mentionsNote || "",
       open: uniq(
-        all("open").filter(o => !asked.has(o.ask) && !linkedTo.has(o.ask)),
+        all("open").filter(o => !asked.has(o.ask) && !linked.has(o.ask)),
         o => o.ask,
       ),
       answered,
       deals,
       convs: [...convs.values()],
     };
+  }
+  /* A merged summary is condensed (one more request per batch of conversations) when it comes from more than
+     CONDENSE_PARTS parts or its JSON is over CONDENSE_BYTES; whatever happens, a saved one stays under SAVE_MAX (a page
+     document holds at most 256 KiB of JSON). */
+  const CONDENSE_PARTS = 4,
+    CONDENSE_BYTES = 65536,
+    SAVE_MAX = 262144 - 8192;
+  const jsonBytes = o => u8(JSON.stringify(o));
+  const refsText = r => (r && r.length ? " [#" + r.join(", #") + "]" : "");
+  /* One block of text per conversation of the merge: its bullets, outcome, key numbers, questions and deals */
+  function condenseUnits(m) {
+    return m.convs.map(c => {
+      const by = x => x.conv === c.id;
+      const title = c.id === "loose" ? "Not grouped" : (convById(c.id) || {}).title || "";
+      const L = ["CONV " + c.id + ": " + title];
+      rangeBullets(c.synopsis).forEach(x => L.push("- " + x.t + refsText(x.refs)));
+      if (c.outcome) L.push("outcome: " + c.outcome);
+      if (c.key.length) L.push("key:" + refsText(c.key));
+      m.open.filter(by).forEach(o => L.push("open #" + o.ask + " (to " + o.to + "): " + o.note));
+      m.answered.filter(by).forEach(a => L.push("answered #" + a.ask + ": " + a.answer + refsText(a.refs)));
+      m.deals
+        .filter(by)
+        .forEach(d => L.push("deal " + d.kind + (d.tag ? " (" + d.tag + ")" : "") + ": " + d.text + refsText(d.refs)));
+      return { id: c.id, text: L.join("\n") };
+    });
+  }
+  function condensePrompt(units) {
+    return (
+      "These are summaries of consecutive parts of one stretch of " +
+      CHATDESC() +
+      " for " +
+      OWNER() +
+      ', joined per conversation, oldest first. Condense each conversation into one summary of the whole stretch. Use ONLY what\'s here.\n\nReturn JSON only, this shape:\n{"open":[{"conv":id,"ask":number,"to":"anyone"|name,"note":string}],"answered":[{"conv":id,"ask":number,"answer":string,"refs":[number]}],"deals":[{"kind":"sale"|"deal"|"raffle"|"ask","tag":string,"conv":id,"text":string,"refs":[number]}],"convs":[{"id":id,"tag":string,"synopsis":[{"t":string,"refs":[number]}],"outcome":string,"key":[number]}]}\n\nRules:\n- convs: one per conversation below, ids exactly. synopsis = 3-6 short bullets covering the whole stretch, oldest first, one fact each, with the message numbers they come from. outcome = how it stands at the end, one short line. key = the 2-4 most telling message numbers of that conversation.\n- open: a question stays open only if nothing later in its conversation answers it; if a later bullet or answered line does, put it in answered with the answer.\n- answered: keep the concrete answers (names, prices).\n- deals: one per real offer; repeats of the same offer become one, with all their numbers.\n- Every number you cite must appear in that conversation\'s block below. Write only from these summaries.\n\nPART SUMMARIES (one block per conversation):\n' +
+      units.map(u => u.text).join("\n\n")
+    );
+  }
+  /* Conversations kept short without Claude: their first bullet and last few, for a batch whose condensing failed or
+     a summary still over SAVE_MAX */
+  function trimRange(doc, keep) {
+    doc.convs.forEach(c => {
+      const b = rangeBullets(c.synopsis);
+      if (b.length > keep) c.synopsis = keep > 1 ? [b[0]].concat(b.slice(1 - keep)) : b.slice(-1);
+    });
+    return doc;
+  }
+  /* The merge condensed in batches of conversations that each fit in one request. A batch that fails twice keeps its
+     merged conversations; throws only on a stop. */
+  async function condenseRange(J, m, sig) {
+    const units = condenseUnits(m);
+    const lim = S.promptCap - MARGIN - u8(condensePrompt([]));
+    const batches = [];
+    let cur = [],
+      used = 0;
+    units.forEach(u => {
+      if (u8(u.text) + 2 > lim) u.text = clipBytes(u.text, lim - 2);
+      const b = u8(u.text) + 2;
+      if (cur.length && used + b > lim) {
+        batches.push(cur);
+        cur = [];
+        used = 0;
+      }
+      cur.push(u);
+      used += b;
+    });
+    if (cur.length) batches.push(cur);
+    const inR = new Set(J.ids.map(x => x.i));
+    const span = new Map();
+    rangeConvs(J.ids).forEach(c => span.set(c.id, new Set(c.members)));
+    const answeredBy = repliedTo(J.ids, inR);
+    const got = new Map(),
+      lists = { open: [], answered: [], deals: [] };
+    J.phase = "join";
+    J.joinOf = batches.length;
+    for (let x = 0; x < batches.length; x++) {
+      J.joinAt = x + 1;
+      paintRange();
+      const ids = batches[x].map(u => u.id);
+      let out = null;
+      for (let tries = 0; tries < 2 && !out; tries++) {
+        if (sig.aborted) throw Object.assign(new Error("stopped"), { code: "cancelled" });
+        try {
+          out = await S.sample.json(condensePrompt(batches[x]), { modelTier: "default", signal: sig });
+          if (!out || typeof out !== "object" || Array.isArray(out)) out = null;
+        } catch (e) {
+          if (sig.aborted || (e && e.code === "cancelled"))
+            throw Object.assign(new Error("stopped"), { code: "cancelled" });
+          if (e && e.code === "not_granted") break;
+        }
+      }
+      if (!out) continue;
+      const mem = new Map(ids.filter(id => span.has(id)).map(id => [id, span.get(id)]));
+      const c = rangeClean(out, { inR, mem, answeredBy, mentions: false });
+      c.convs.forEach(cv => !got.has(cv.id) && got.set(cv.id, cv));
+      ["open", "answered", "deals"].forEach(f => lists[f].push(...c[f]));
+    }
+    /* conversations of a failed batch, or left out of a reply, keep their merged state (bullets trimmed) and items */
+    const doc = {
+      mentions: m.mentions,
+      mentionsNote: m.mentionsNote,
+      convs: m.convs.map(c => got.get(c.id) || trimRange({ convs: [Object.assign({}, c)] }, 6).convs[0]),
+      open: [],
+      answered: [],
+      deals: [],
+    };
+    ["open", "answered", "deals"].forEach(f => {
+      doc[f] = m[f].filter(x => !got.has(x.conv)).concat(lists[f].filter(x => got.has(x.conv)));
+    });
+    const asked = new Set(doc.answered.map(a => a.ask));
+    const seen = new Set();
+    doc.open = doc.open.filter(o => !asked.has(o.ask) && !answeredBy.has(o.ask) && !seen.has(o.ask) && seen.add(o.ask));
+    const seenA = new Set();
+    doc.answered = doc.answered.filter(a => !seenA.has(a.ask) && seenA.add(a.ask));
+    doc.condensed = got.size === m.convs.length ? true : got.size ? "partly" : false;
+    J.phase = null;
+    return doc;
+  }
+  /* Saves a written span summary; a failed save, or one too big to try, is shown and kept until the page reloads */
+  async function saveRange(k, doc) {
+    const bytes = jsonBytes(doc);
+    S.rangeUnsaved[k] = doc;
+    if (bytes > SAVE_MAX) S.rangeSaveErr = { k, code: "too_big", bytes };
+    else
+      try {
+        await S.db.collection("rangeSummaries").doc(k).set(doc);
+        S.rangeSums[k] = doc;
+        delete S.rangeUnsaved[k];
+        if (S.rangeSaveErr && S.rangeSaveErr.k === k) S.rangeSaveErr = null;
+      } catch (e) {
+        S.rangeSaveErr = { k, code: (e && e.code) || "error" };
+      }
+    renderHeader();
+    renderSummary();
   }
   async function writeRangeSummary(k, ids) {
     if (!S.sample) {
@@ -3701,14 +4014,23 @@
       return;
     }
     if (RJ && RJ.state === "running") return;
-    /* a stopped or failed run of this span goes on from its first part not done */
+    /* a stopped or failed run of this span goes on from its first part not done; so does one of the same start that
+       newer messages have since extended (a window with no end) */
     let J = RJ && RJ.k === k && RJ.ids.length === ids.length ? RJ : null;
+    if (!J && RJ && RJ.outs.length && RJ.ids[0].i === ids[0].i && ids.length > RJ.ids.length) {
+      const done = RJ.parts[RJ.outs.length - 1][1];
+      if (RJ.ids.slice(0, done).every((m, x) => ids[x].i === m.i)) {
+        const rest = splitRange(ids.slice(done), RJ.lim).map(([a, b]) => [a + done, b + done]);
+        J = { k, ids, lim: RJ.lim, parts: RJ.parts.slice(0, RJ.outs.length).concat(rest), outs: RJ.outs };
+      }
+    }
     if (!J) {
       const lim = S.promptCap - MARGIN;
-      J = { k, ids, lim, parts: rangeParts(ids, lim), outs: [] };
+      J = { k, ids, lim, parts: u8(rangePrompt(ids)) <= lim ? [[0, ids.length]] : splitRange(ids, lim), outs: [] };
     }
     J.state = "running";
     J.err = null;
+    J.phase = null;
     J.ctl = new AbortController();
     RJ = J;
     paintRange();
@@ -3719,12 +4041,14 @@
         const x = J.outs.length;
         const [s, e] = J.parts[x];
         const part = J.ids.slice(s, e);
+        /* the earlier parts' open questions go with this one, so it can answer them */
+        const earlier = x ? earlierFit(mergeRange(J.outs, J.ids.slice(0, s)).open, J.lim) : [];
         let out = null;
         /* a part that fails is tried once more; prompt_too_large (nothing was sent: the runtime counts more strictly
            than it said) splits what's left again at 80% of the bytes just sent, which is that retry */
         for (let tries = 0; ; tries++) {
           if (sig.aborted) throw stopped();
-          const prompt = rangePrompt(part);
+          const prompt = rangePrompt(part, earlier);
           try {
             out = await S.sample.json(prompt, { modelTier: "default", signal: sig });
             if (!out || typeof out !== "object" || Array.isArray(out))
@@ -3735,17 +4059,20 @@
             if (tries || (err && err.code === "not_granted")) throw err;
             if (err && err.code === "prompt_too_large" && part.length > 1) {
               J.lim = Math.floor(u8(prompt) * 0.8);
-              const rest = rangeParts(J.ids.slice(s), J.lim).map(([a, b]) => [a + s, b + s]);
+              const rest = splitRange(J.ids.slice(s), J.lim).map(([a, b]) => [a + s, b + s]);
               J.parts = J.parts.slice(0, x).concat(rest);
               part.length = J.parts[x][1] - s;
+              earlier.splice(0, earlier.length, ...earlierFit(earlier, J.lim));
               paintRange();
             }
           }
         }
-        J.outs.push(rangeDoc(out, part));
+        J.outs.push(rangeDoc(out, part, earlier));
         paintRange();
       }
-      const m = mergeRange(J.outs, J.ids);
+      let m = mergeRange(J.outs, J.ids);
+      const n = J.parts.length;
+      if (n > CONDENSE_PARTS || (n > 1 && jsonBytes(m) > CONDENSE_BYTES)) m = await condenseRange(J, m, sig);
       const doc = Object.assign(
         {
           version: 2,
@@ -3757,22 +4084,21 @@
             hour: "numeric",
             minute: "2-digit",
           }),
-          fromI: ids[0].i,
-          toI: ids[ids.length - 1].i,
+          fromI: J.ids[0].i,
+          toI: J.ids[J.ids.length - 1].i,
         },
         m,
-        J.parts.length > 1 ? { parts: J.parts.length } : {},
+        n > 1 ? { parts: n } : {},
       );
-      S.rangeSums[k] = doc;
-      RJ = null;
-      try {
-        await S.db.collection("rangeSummaries").doc(k).set(doc);
-      } catch (e) {}
-      renderHeader();
-      renderSummary();
+      /* still too big: fewer bullets, then fewer mentions, until it fits */
+      for (const keep of [6, 4, 2, 1]) if (jsonBytes(doc) > SAVE_MAX) trimRange(doc, keep);
+      while (jsonBytes(doc) > SAVE_MAX && doc.mentions.length) doc.mentions.shift();
+      if (RJ === J) RJ = null;
+      await saveRange(J.k, doc);
     } catch (e) {
       J.state = e && e.code === "cancelled" ? "stopped" : "failed";
       J.err = (e && e.code) || "error";
+      J.phase = null;
       paintRange();
     }
   }
@@ -5270,7 +5596,8 @@
         : null;
     if (!arr) return null;
     const out = [];
-    let good = 0;
+    let good = 0,
+      stored = 0;
     for (const s of arr.slice(0, DEEP_MAX * 2)) {
       if (!s || typeof s !== "object" || Array.isArray(s)) continue;
       let a = deepNum(s.from),
@@ -5283,6 +5610,8 @@
       const focus = deepNum(s.focus);
       const why = trunc(String(s.why || ""), 120);
       let pieces = [[idxOf(a), idxOf(b + 1) - 1]];
+      /* past the stored messages, or in a gap: nothing to read there (told apart from "already read") */
+      if (pieces[0][0] <= pieces[0][1]) stored++;
       const cut = (x, y) =>
         (pieces = pieces.flatMap(([p, q]) =>
           q < x || p > y
@@ -5305,6 +5634,7 @@
     if (arr.length && !good) return null;
     const r = out.slice(0, DEEP_MAX);
     r.named = good;
+    r.stored = stored;
     return r;
   }
   /* Step 2: the stretches word for word. Each takes what's left of the budget: whole, or the part around its focus
@@ -5425,9 +5755,13 @@
       if (!want) return again("Claude's first step couldn't be read, so nothing more was sent. Try again.");
       if (!want.length)
         return again(
-          want.named
-            ? "Claude named only messages it had already read word for word, so nothing more was sent."
-            : "Claude found no stretch in the summaries that would change this answer, so nothing more was sent.",
+          want.named && !want.stored
+            ? "Claude named only messages that aren't stored, so nothing more was sent."
+            : want.named
+              ? "Claude named only messages it had already read word for word" +
+                (want.stored < want.named ? " or that aren't stored" : "") +
+                ", so nothing more was sent."
+              : "Claude found no stretch in the summaries that would change this answer, so nothing more was sent.",
         );
       st.textContent =
         "Step 2 of 2: reading " +

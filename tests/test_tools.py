@@ -209,6 +209,11 @@ class TestSkillReferences(unittest.TestCase):
         self.assertIn("afterFrom:", page)
         for part in ("`from`", "`to`", "`sumFrom`", "`afterFrom`"):
             self.assertIn(part.strip("`"), line.group(0))
+        # F17: a Look deeper answer saves another shape; a later Claude must not read #from-#to as all read
+        self.assertIn("stretches:", page)
+        self.assertIn("wanted:", page)
+        for part in ('scope:"deeper"', "{from, to, stretches, wanted}", "outer bounds, not all read"):
+            self.assertIn(part, line.group(0))
 
     def test_every_meta_chat_field_the_page_writes_is_documented(self):
         """Anchored on each doc("meta/chat").update(...): an object literal, or a variable traced back to its literal,
