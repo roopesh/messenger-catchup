@@ -848,14 +848,48 @@ class TestDigests(unittest.TestCase):
         order = [
             "catchup.py days WORK RUN --backfill",
             "catchup.py digests WORK RUN spec.json",
-            "manifest.json",
+            "Take the run lock just before the write",
+            "`RUN/out/manifest.json`",
+            "Release the lock right after",
             "catchup.py check-digests WORK RUN AFTER",
         ]
         self.assertEqual([bf.index(x) for x in order], sorted(bf.index(x) for x in order))
         self.assertIn("`RUN/out/backup/`", bf)
-        self.assertIn("never changes a day that already has a digest", bf)
+        self.assertNotIn("never changes a day that already has a digest", bf, "a non-final day can be digested again")
         self.assertIn("stop, write nothing more, and tell the user", bf)
         self.assertIn("found again by the next `days`", bf)
+
+    def test_the_backfill_locks_each_write_and_retries_a_refused_one(self):
+        """A pinned write refused because a refresh wrote the current month is routine: back to step 2, no check. The
+        lock is taken just before each batch's write (an approval wait can outlast the 20-minute stale window)."""
+        bf = section(self.ref, "Backfill")
+        lock = re.search(r"^4\. Take the run lock.*$", bf, re.M).group(0)
+        for must in (
+            '`{state:"running",startedAt,step:"digests",by:"digest backfill"}`, pinned',
+            "under 20 minutes old",
+            "`get` it again",
+            'update `refresh/status` (pinned) to `{state:"done",finishedAt}`',
+        ):
+            self.assertIn(must, lock)
+        refused = re.search(r"^   - \*\*A refused write\*\*.*$", bf, re.M).group(0)
+        self.assertIn("Don't run the check", refused)
+        self.assertIn("go back to step 2 with a fresh folder", refused)
+        self.assertIn("Do 2 or 3 batches in a session, then stop and tell the user how many days are left", bf)
+        self.assertIn("`offset` and `limit`", bf)
+
+    def test_days_are_the_browsers_dates(self):
+        """The helper dates messages in the browser's zone, not meta/chat.tz; days never go back; final digests."""
+        db = in_skill("references", "database.md")
+        for text in (self.ref, db):
+            self.assertIn("browser's time zone", text)
+            self.assertNotIn("in the chat's time zone (`meta/chat.tz`)", text)
+            self.assertIn("final", text)
+        self.assertIn("A day never goes back", self.ref)
+        self.assertIn("create an empty", section(self.ref, "During a refresh"))
+        wb = in_skill("references", "writing-the-build.md")
+        self.assertIn("a `digests/m<YYYY-MM>` month step 5's listing holds", wb)
+        self.assertNotIn("(only the `current` documents)", wb)
+        self.assertIn("or two when its days (DUE_MAX at", self.py)
 
     def test_database_md_documents_digests(self):
         db = in_skill("references", "database.md")

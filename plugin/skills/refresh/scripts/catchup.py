@@ -33,9 +33,10 @@
                                      The refresh skill's references/restoring-a-summary.md has the whole procedure.
   catchup.py days WORK RUNDIR [--backfill] [--max=N]
                                      The days to digest (F16), each day's messages in RUNDIR/out/days/<day>.txt. RUNDIR
-                                     holds step 5's chunks and `list digests`. A refresh: finished days after the newest
-                                     digest (none yet: the newest finished day), and digested days that gained messages,
-                                     oldest first, 3 at most. --backfill: finished days without one, newest first, up to
+                                     holds step 5's chunks and `list digests` (a digests/ folder, empty if need be). A
+                                     refresh: finished days after the newest digest (none yet: the newest finished day),
+                                     and a day digested before a later day was stored that gained messages since (once),
+                                     oldest first, 3 at most. --backfill: finished days that need one, newest first, up to
                                      10 days (or N) and 2,000 messages.
   catchup.py digests WORK RUNDIR SPEC
                                      The backfill's write: SPEC is {"digests": {...}} alone. Saves the listed month
@@ -74,8 +75,9 @@ SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or 
   ref: a message of the deal; index is refused where the same spec moves or adds deals), "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
   "answered":[{conv,ask,answer,refs}], "mentions":[{"note","refs":[[i],...]}],
   "digests":{"YYYY-MM-DD":[["text",[refs]],...]} (a finished day's digest: 1-8 bullets of at most 15 words and 240
-  bytes, each citing 1-10 stored messages of that day by their date label d; a day that has one is refused unless its
-  messages now reach past its toI; written to digests/m<YYYY-MM>, pinned when that month exists),
+  bytes, one line of plain text each, citing 1-10 stored messages of that day by their date label d (the browser's
+  zone; a day never goes back); a day that has one is refused unless that one isn't final (written before a later day
+  was stored) and the day gained messages; written to digests/m<YYYY-MM>, pinned when that month exists),
   "relink":{"i":[parent,type] or null} (relink: messages an earlier build threaded; null removes the link),
   "move":{"i":"convid" or "new"} (a built message and its Messenger replies (r, rq, rg) into another conversation: an
   existing one, one in newconvs, or "new"; its own link must end up in that conversation or null. Messages linked to
@@ -1703,8 +1705,9 @@ def build(work, run, specp):
 
 # Per-day digests (F16): a few bullets per finished day, citing its messages, for Ask on the page about stretches older
 # than its conversation lines reach. One document per month, digests/m<YYYY-MM> {month, days:{"<YYYY-MM-DD>":
-# {bullets:[{t, refs}], fromI, toI, n, at}}}: a refresh writes one or two, the page reads a few dozen for years of
-# history, and with the caps below a full month stays under 90 KB of the 240 KiB a build allows.
+# {bullets:[{t, refs}], fromI, toI, n, at, final}}}: a refresh writes one document, or two when its days (DUE_MAX at
+# most) cross a month; the page reads a few dozen for years of history; and with the caps below a full month stays
+# under 90 KB of the 240 KiB a build allows.
 
 DIGEST_WORDS = 15  # like a conversation bullet
 DIGEST_BYTES = 240  # UTF-8 bytes of one bullet's text
@@ -1714,37 +1717,46 @@ DUE_MAX = 3  # days one refresh digests (oldest first); the next refresh carries
 BACKFILL_DAYS = 10  # days per backfill batch (newest first) ...
 BACKFILL_MSGS = 2000  # ... and no more messages than this in one batch (one day at least)
 DAY_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
+CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")  # one bullet is one line in Ask's prompt
 MONTH_RE = re.compile(r"^m\d{4}-\d\d$")
 NOW = None  # tests: an aware datetime standing in for the clock
 
 
-def _today():  # the date in the chat's time zone (meta/chat.tz)
+def _today():  # the date in the chat's time zone (meta/chat.tz), or None when this Python can't tell
     now = NOW or datetime.datetime.now(datetime.timezone.utc)
     try:
         import zoneinfo
 
         return now.astimezone(zoneinfo.ZoneInfo(TZ)).date().isoformat()
-    except Exception:  # no tz database here: the system clock's zone
-        return now.astimezone().date().isoformat()
+    except Exception:  # no tz database (or an unknown zone): the machine's clock may be in any zone, so don't guess
+        return None
 
 
 def _days(msgs):
-    """{day: [i, ...]}: a message's day is its date label `d`, as Messenger showed it in the chat's time zone (a message
-    without one belongs to the day before it, as on the page)."""
+    """{day: [i, ...]}: a message's day is its date label `d`, as the helper read it in the browser's time zone. A day
+    never goes back: a message without a label, or dated before the message before it (the browser's zone changed
+    between captures), belongs to that message's day, as on the page. So every day is one run of numbers."""
     out, prev = {}, None
     for m in sorted(msgs, key=lambda m: m["i"]):
-        d = m.get("d") or prev
+        d = max(m.get("d") or "", prev or "") or None
         prev = d
         if d:
             out.setdefault(d, []).append(m["i"])
     return out
 
 
-def _finished_before(days):  # every day before this one has finished: today in the chat's zone, or a later day stored
-    return max([_today()] + list(days))
+def _finished_before(days):
+    """Every day before this one has finished: a later day is stored, or it's before today in meta/chat.tz. Without a
+    tz database only the first counts."""
+    t = _today()
+    return max(list(days) + ([t] if t else []))
 
 
-def _digest_listing(run):  # RUN's `list digests`: {doc id: document}; no folder means none yet
+def _digest_listing(run):  # RUN's `list digests`: {doc id: document}
+    assert os.path.isdir(run + "/digests"), (
+        "%s has no digests/ folder: list the digests collection into it (list, limit 1000). If the collection is "
+        "empty and the list leaves no folder, create an empty %s/digests folder (references/digests.md)" % (run, run)
+    )
     return {k: v for k, v in _docs(run + "/digests").items() if MONTH_RE.match(k)}
 
 
@@ -1752,8 +1764,13 @@ def _digest_index(docs):  # {day: its digest} from the month documents
     return {day: e for k in sorted(docs) for day, e in ((docs[k] or {}).get("days") or {}).items()}
 
 
-def _needs(e, ids):  # no digest, or the day's stored messages now reach past the one it has (written too early)
-    return not isinstance(e, dict) or not isinstance(e.get("toI"), int) or max(ids) > e["toI"]
+def _needs(e, ids, later):
+    """No digest yet; or one written before a later day was stored (not `final`: the browser's zone may still have
+    been on that day) whose day gained messages, now that a later day is stored. That second digest is final, so a day
+    is digested twice at most, however far meta/chat.tz runs ahead of the browser."""
+    if not isinstance(e, dict) or not isinstance(e.get("toI"), int):
+        return True
+    return not e.get("final") and later and max(ids) > e["toI"]
 
 
 def _due(msgs, have, backfill=False, most=None):
@@ -1762,8 +1779,8 @@ def _due(msgs, have, backfill=False, most=None):
     gained messages, oldest first, DUE_MAX at most. A backfill: every finished day that needs one, newest first, up to
     BACKFILL_DAYS days (or `most`) and BACKFILL_MSGS messages."""
     days = _days(msgs)
-    edge = _finished_before(days)
-    need = [d for d in sorted(days) if d < edge and _needs(have.get(d), days[d])]
+    edge, last = _finished_before(days), max(days, default="")
+    need = [d for d in sorted(days) if d < edge and _needs(have.get(d), days[d], d < last)]
     if backfill:
         out, n = [], 0
         for d in reversed(need):
@@ -1819,9 +1836,9 @@ def _digest_entries(sd, pool, have):
             "digests %s: that day hasn't finished in %s (meta/chat.tz) and no later day is stored: digest it at a later "
             "refresh" % (day, TZ)
         )
-        assert _needs(have.get(day), ids), (
-            "digests %s: it already has a digest (through #%s) and no message since: drop it from the spec"
-            % (day, have[day].get("toI"))
+        assert _needs(have.get(day), ids, day < max(days)), (
+            "digests %s: it already has a digest (through #%s) that stays: drop it from the spec (a day is digested "
+            "again only once, when it gained messages before the next day began)" % (day, have[day].get("toI"))
         )
         assert isinstance(bs, list) and 1 <= len(bs) <= DIGEST_BULLETS, "digests %s: 1 to %d bullets, as a list" % (
             day,
@@ -1831,6 +1848,9 @@ def _digest_entries(sd, pool, have):
         for b in bs:
             t, refs = _bullet(b)
             assert isinstance(t, str) and t.strip(), "digests %s: each bullet is [text, [refs]]: %r" % (day, b)
+            assert not CONTROL_RE.search(t), (
+                "digests %s: a bullet is one line of plain text (no line breaks or control characters): %r" % (day, t)
+            )
             assert len(t.split()) <= DIGEST_WORDS, ("digest bullet over %d words" % DIGEST_WORDS, day, t)
             assert len(t.encode("utf-8")) <= DIGEST_BYTES, ("digest bullet over %d bytes" % DIGEST_BYTES, day, t)
             assert (
@@ -1849,6 +1869,7 @@ def _digest_entries(sd, pool, have):
             )
             items.append({"t": t.strip(), "refs": list(dict.fromkeys(refs))})
         out[day] = {"bullets": items, "fromI": ids[0], "toI": ids[-1], "n": len(ids), "at": _ts()}
+        out[day]["final"] = day < max(days)  # a later day was already stored: never digested again
     return out
 
 
@@ -1864,6 +1885,8 @@ def _digest_docs(entries, listed):  # the month documents to write: each as the 
 
 def _digest_spec(sp, pool, run, docs, listing):
     """A build's `digests`: checked, their month documents added to docs and listing. -> a line on what's still due."""
+    if not sp.get("digests") and not os.path.isdir(run + "/digests"):
+        return "0 digest(s); RUN has no digests/ folder, so what's due is unknown (step 5 lists digests)"
     listed = _digest_listing(run)
     have = _digest_index(listed)
     entries = _digest_entries(sp["digests"], pool, have) if sp.get("digests") else {}
