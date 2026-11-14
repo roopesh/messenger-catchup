@@ -2,7 +2,7 @@
 Known bugs from docs/BACKLOG.md are marked expectedFailure; when one starts passing, unittest reports
 "unexpected success": remove the marker and close the backlog item."""
 
-import contextlib, copy, importlib.util, io, json, os, random, re, shutil, sys, tempfile, unittest
+import collections, contextlib, copy, importlib.util, io, json, os, random, re, shutil, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location(
@@ -101,7 +101,7 @@ class Env:
             for p, x in docs.items():
                 w(os.path.join(into, p + ".json"), x)
 
-    def run(self, new, meta=None):
+    def run(self, new, meta=None, topic=None):
         """Simulate an import: append `new`, write the touched chunks and the updated meta/chat into a RUN dir, plus
         step 5's listing of threading and summary."""
         self.n += 1
@@ -111,7 +111,11 @@ class Env:
         self._chunks(run, first)
         w(
             os.path.join(run, "meta", "chat.json"),
-            meta or {"lastI": self.msgs[-1]["i"], "anchorMids": [m["m"] for m in self.msgs[-3:]]},
+            meta
+            or dict(
+                {"lastI": self.msgs[-1]["i"], "anchorMids": [m["m"] for m in self.msgs[-3:]]},
+                **({"topic": topic} if topic else {}),
+            ),
         )
         self.listing(run)
         return run
@@ -1238,7 +1242,7 @@ def tail_spec(th, new, nid="tail1111"):
 
 
 def without_times(o):
-    return {k: v for k, v in o.items() if k not in ("builtAt", "generatedAt")}
+    return {k: v for k, v in o.items() if k not in ("builtAt", "generatedAt", "rev", "summaryRev")}
 
 
 class TestLayout(unittest.TestCase):
@@ -2007,7 +2011,11 @@ class TestRestoreSummary(unittest.TestCase):
         self.assertIn("restore ok", out)
         man = T.write(run)  # pinned from the listing; refresh/status (the lock) in the last batch
         self.assertTrue(man["batches"][-1][-1]["pin"] and man["batches"][-1][-1]["doc_id"] == "current")
-        self.assertTrue(all(e["collection"] == "summary" for bt in man["batches"] for e in bt), "threading untouched")
+        self.assertEqual(
+            [e["doc_id"] for bt in man["batches"] for e in bt if e["collection"] == "threading"],
+            ["current"],
+            "threading: only its current, for the shared rev; no block changes",
+        )
         # restored, T is U: the backup plus everything built after it
         t_t, t_s = T.db.merged()
         u_t, u_s = U.db.merged()
@@ -2253,6 +2261,1237 @@ class TestRestoreSummary(unittest.TestCase):
         )
         self.assertEqual(p.returncode, 1)
         self.assertIn("catchup.py restore-summary WORK RUNDIR BACKUPDIR [DECISIONS] [--dry-run]", p.stderr)
+
+
+TRADE = "Pack buy/sell/trade"
+
+
+def react_lines(out):
+    return [x for x in out.splitlines() if x.startswith(("REACT?", "CLOSE?"))]
+
+
+class TestClaims(unittest.TestCase):
+    """F19 (issue #41): in a buy/sell chat the build flags short claims (REACT?) with the posts they may react to, and
+    the seller's own "Sold"/"SPF" (CLOSE?). Claude decides; deals record claims and a sold or pending status."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def test_claim_words(self):
+        for text, n in (
+            ("In", 1),
+            ("in", 1),
+            ("IN!!", 1),
+            ("In!! 🙋‍♀️", 1),
+            ("  I'm in ", 1),
+            ("I’m in", 1),
+            ("Im in", 1),
+            ("I am in.", 1),
+            ("in for 2", 2),
+            ("In for two!", 2),
+            ("I'm in for 3", 3),
+            ("Dibs", 1),
+            ("Mine!", 1),
+            ("I'll take it", 1),
+            ("Ill take it!", 1),
+            ("Sold", 1),
+            ("SOLD!", 1),
+            ("PM'd", 1),
+            ("PMd", 1),
+            ("pm sent", 1),
+            ("DM sent", 1),
+            ("DMed", 1),
+            ("DM'd", 1),
+            ("Interested", 1),
+            ("interested!!", 1),
+        ):
+            self.assertEqual(catchup.claim_word(text), n, text)
+        for text in (
+            "Insane",
+            "in the car",
+            "#7",
+            "#7 please",
+            "in for 2 spots",
+            "In for 2 spots please",
+            "Inn",
+            "within",
+            "interested in the blue one",
+            "Mine is the same",
+            "sold out everywhere",
+            "in for 0",
+            "",
+            None,
+        ):
+            self.assertIsNone(catchup.claim_word(text), text)
+        self.assertEqual(
+            [catchup.close_word(x) for x in ("Sold", "SPF", "spf!", "Pending", "sale pending", "In", "Sold out")],
+            ["sold", "pending", "pending", "pending", "pending", None, None],
+        )
+
+    def test_topic_gate(self):
+        for topic in ("Pack buy/sell/trade", "BST for packs", "WTS / WTB", "Gear swap", "Paffles and sales", "Selling"):
+            self.assertTrue(catchup.trade_topic(topic), topic)
+        for topic in ("Hiking friends", "Trail chat", "", None, "Insiders"):
+            self.assertFalse(catchup.trade_topic(topic), topic)
+
+    def test_offer_heuristics(self):
+        offer = lambda b, **kw: catchup.looks_like_offer(dict({"b": b}, **kw))
+        for b in (
+            "WTS blue pack",
+            "FS: 30L pack",
+            "Selling my old tent",
+            "Let me know if you're interested in this one",
+            "let me know if anyone's interested",
+            "Raffle for the green bag, 10 spots",
+            "Group buy is open",
+            "$120 shipped",
+            "120 shipped",
+            "asking $80",
+            "Price drop on the quilt",
+        ):
+            self.assertTrue(offer(b), b)
+        self.assertTrue(offer("$95", p="1"), "a photo with a price")
+        for b in ("Anyone selling a 30L pack?", "WTB a stove", "ISO a quilt, $100 budget", "nice bag", "lol", ""):
+            self.assertFalse(offer(b), b)
+
+    def history(self):
+        """Built history across five days; the claims come on Nov 6 around 9:10."""
+        return [
+            msg(0, "Ana", "WTS blue pack $120 shipped", p="1", d="2026-11-01"),  # an offer, 5 days back: too old
+            msg(1, "Dee", "", p="2", d="2026-11-03", h=9, mi=0),  # a photo 3 days and 10 minutes back: too old
+            msg(2, "Dee", "my new bag", p="3", d="2026-11-03", h=10, mi=0),  # a photo post, inside 3 days
+            msg(3, "Cy", "Group buy for the quilts is open", d="2026-11-04"),  # an offer
+            msg(4, "Ana", "Let me know if you're interested in this one", d="2026-11-05"),  # an offer
+            msg(5, "Cy", "Anyone selling a 30L?", d="2026-11-05"),  # a request
+            msg(6, "Ana", "In", d="2026-11-05"),  # a claim, never a post
+            msg(7, "Dee", "$80 shipped", p="4", h=9, mi=0),  # photo with a price
+            msg(8, "Ben", "", p="5", h=9, mi=1),  # Ben's own photo
+            msg(9, "Cy", "nice weather", h=9, mi=2),
+        ]
+
+    def seed_history(self, deals=()):
+        hist = self.history()
+        ids = [m["i"] for m in hist]
+        th = {"convs": [{"id": "a", "title": "A", "members": ids}], "links": {}, "to": ids[-1], "note": ""}
+        sm = dict(EMPTY_SM, convs=[{"id": "a", "tag": "", "synopsis": [], "outcome": "", "key": []}], toI=ids[-1])
+        sm["deals"] = list(deals)
+        self.e.seed(hist, th, sm)
+
+    def test_window_ranking_and_who(self):
+        self.seed_history()
+        new = [
+            msg(10, "Ben", "In!!", h=9, mi=10),
+            msg(11, "Dee", "in for 2", h=9, mi=11),
+            msg(12, "Cy", "Insane", mi=12),
+        ]
+        out = self.e.build(self.e.run(new, topic=TRADE), {"join": {"a": [10, 11, 12]}})
+        self.assertEqual(
+            react_lines(out),
+            [
+                'REACT? 10 (Ben: "In!!") -> 7, 2, 4',  # photos first, then offers, newest first; three at most
+                'REACT? 11 (Dee: "in for 2") -> 8, 4, 3',  # not Dee's own posts (7, 2); claims are never posts
+            ],
+        )
+        links = r(os.path.join(self.e.work, "base", "threading.json"))["links"]
+        self.assertEqual(links["10"], [9, "i"], "the line informs; the build's guess stands")
+
+    def test_other_chats_get_no_change(self):
+        new = [msg(10, "Ben", "In!!", h=9, mi=10)]
+        for topic in (None, "Hiking friends"):
+            with self.subTest(topic=topic):
+                self.e = Env(tempfile.mkdtemp(dir=self.t.name))
+                self.seed_history()
+                out = self.e.build(self.e.run([dict(m) for m in new], topic=topic), {"join": {"a": [10]}})
+                self.assertEqual(react_lines(out), [])
+                self.assertIn("GUESS 10 -> 9 i", out)
+
+    def test_open_deals_none_in_window_and_the_sellers_close(self):
+        deal = lambda refs, **kw: dict(
+            {"kind": "sale", "tag": "For sale", "conv": "a", "text": "x", "refs": refs}, **kw
+        )
+        hist = [
+            msg(0, "Ana", "details in the post above", h=8, mi=0),  # in an open deal
+            msg(1, "Cy", "and this one", h=8, mi=1),  # only in a sold deal
+            msg(2, "Cy", "hi", h=8, mi=2),
+        ]
+        th = {"convs": [{"id": "a", "title": "A", "members": [0, 1, 2]}], "links": {}, "to": 2, "note": ""}
+        sm = dict(EMPTY_SM, convs=[{"id": "a", "tag": "", "synopsis": [], "outcome": "", "key": []}], toI=2)
+        sm["deals"] = [deal([0]), deal([1], status="sold", statusAt=2)]
+        self.e.seed(hist, th, sm)
+        new = [
+            msg(3, "Ben", "dibs", h=9, mi=0),
+            msg(4, "Ana", "SPF", h=9, mi=1),  # the seller: closes it
+            msg(5, "Cy", "Sold", h=9, mi=2),  # someone else: a claim
+            msg(6, "Ana", "Sold!", h=9, mi=3),  # the seller's "Sold": both readings are offered
+            msg(7, "Dee", "Interested", d="2026-11-12"),  # nothing within 3 days
+        ]
+        out = self.e.build(self.e.run(new, topic=TRADE), {"join": {"a": [3, 4, 5, 6, 7]}})
+        self.assertEqual(
+            react_lines(out),
+            [
+                'REACT? 3 (Ben: "dibs") -> 0',
+                'CLOSE? 4 (Ana: "SPF") -> own 0',
+                'REACT? 5 (Cy: "Sold") -> 0',
+                'REACT? 6 (Ana: "Sold!") -> none within 3 days | own posts 0: the seller closing?',
+                'REACT? 7 (Dee: "Interested") -> none within 3 days',
+            ],
+        )
+
+    def test_messenger_reply_is_named(self):
+        self.seed_history()
+        out = self.e.build(self.e.run([msg(10, "Ben", "In", pi=2, h=9, mi=10)], topic=TRADE), {"join": {"a": [10]}})
+        self.assertEqual(react_lines(out), ['REACT? 10 (Ben: "In") -> 7, 2, 4 (Messenger reply to 2)'])
+
+    def claims_env(self):
+        hist = [msg(0, "Ana", "WTS pack $90", p="1"), msg(1, "Ben", "hi")]
+        th = {"convs": [{"id": "a", "title": "A", "members": [0, 1]}], "links": {}, "to": 1, "note": ""}
+        sm = dict(EMPTY_SM, convs=[{"id": "a", "tag": "", "synopsis": [], "outcome": "", "key": []}], toI=1)
+        sm["deals"] = [{"kind": "sale", "tag": "For sale", "conv": "a", "text": "Pack $90", "refs": [0]}]
+        self.e.seed(hist, th, sm)
+        return [msg(2, "Cy", "In"), msg(3, "Ben", "in for 2"), msg(4, "Ana", "Sold")]
+
+    def test_claims_and_status_are_stored(self):
+        new = self.claims_env()
+        out = self.e.build(
+            self.e.run(new, topic=TRADE),
+            {
+                "join": {"a": [2, 3, 4]},
+                "links": {"2": [0, "i"], "3": [0, "i"], "4": [0, "c"]},
+                "dealEdit": {
+                    "a": {
+                        "addClaims": [{"i": 3, "who": "Ben", "n": 2}, {"i": 2, "who": "Cy"}],
+                        "status": "sold",
+                        "statusAt": 4,
+                    }
+                },
+            },
+        )
+        self.assertIn("build ok", out)
+        d = r(os.path.join(self.e.work, "base", "summary.json"))["deals"][0]
+        self.assertEqual(d["claims"], [{"i": 2, "who": "Cy", "n": 1}, {"i": 3, "who": "Ben", "n": 2}])
+        self.assertEqual((d["status"], d["statusAt"]), ("sold", 4))
+        # a later build: one more claim after it sold, then reopened
+        run = self.e.run([msg(5, "Dee", "Mine")], topic=TRADE)
+        self.e.build(
+            run, {"join": {"a": [5]}, "dealEdit": {"a": {"addClaims": [{"i": 5, "who": "Dee"}], "status": None}}}
+        )
+        d = r(os.path.join(run, "out", "merged", "summary.json"))["deals"][0]
+        self.assertEqual([c["i"] for c in d["claims"]], [2, 3, 5])
+        self.assertNotIn("status", d)
+        self.assertNotIn("statusAt", d)
+
+    def test_a_new_deal_with_claims(self):
+        new = self.claims_env()
+        spec = {
+            "join": {"a": [2, 3, 4]},
+            "deals": [
+                {
+                    "kind": "sale",
+                    "tag": "For sale",
+                    "conv": "a",
+                    "text": "Second pack",
+                    "refs": [2],
+                    "claims": [{"i": 4, "who": "Ana", "n": 1}, {"i": 3, "who": "Ben", "n": 2}],
+                }
+            ],
+        }
+        self.e.build(self.e.run(new, topic=TRADE), spec)
+        d = r(os.path.join(self.e.work, "base", "summary.json"))["deals"][1]
+        self.assertEqual([c["i"] for c in d["claims"]], [3, 4], "ordered by message")
+
+    def test_claims_validation(self):
+        new = self.claims_env()
+        run = self.e.run(new, topic=TRADE)
+        base = {"join": {"a": [2, 3, 4]}}
+        for edit, why in (
+            ({"addClaims": [{"i": 99, "who": "Cy"}]}, "claim i must be a stored message"),
+            ({"addClaims": [{"i": "2", "who": "Cy"}]}, "claim i must be a stored message"),
+            ({"addClaims": [{"i": 2, "who": "Ben"}]}, "claim who must be the name stored on message #2"),
+            ({"addClaims": [{"i": 2, "who": "Cy", "n": 0}]}, "claim n must be a positive whole number"),
+            ({"addClaims": [{"i": 2, "who": "Cy", "n": -1}]}, "claim n must be a positive whole number"),
+            ({"addClaims": [{"i": 2, "who": "Cy", "n": 1.5}]}, "claim n must be a positive whole number"),
+            ({"addClaims": [{"i": 2, "who": "Cy", "n": True}]}, "claim n must be a positive whole number"),
+            ({"addClaims": [{"i": 2, "who": "Cy"}, {"i": 2, "who": "Cy", "n": 2}]}, "claims a deal only once"),
+            ({"addClaims": [{"i": 2, "who": "Cy", "x": 1}]}, r"a claim is \{i, who, n\}"),
+            ({"status": "gone", "statusAt": 4}, "deal status is sold or pending"),
+            ({"status": "sold", "statusAt": 99}, "deal statusAt must be the stored message that closed it"),
+            ({"claims": []}, "dealEdit takes text, addRefs, index, ref, addClaims, removeClaims, status, statusAt"),
+        ):
+            with self.subTest(edit=edit):
+                p = os.path.join(self.t.name, "bad.json")
+                w(p, dict(base, dealEdit={"a": edit}))
+                with self.assertRaisesRegex(AssertionError, why):
+                    quiet(catchup.build, self.e.work, run, p)
+        # a claim added twice across builds is refused too
+        self.e.build(run, dict(base, dealEdit={"a": {"addClaims": [{"i": 2, "who": "Cy"}]}}))
+        run2 = self.e.run([msg(5, "Dee", "hi")], topic=TRADE)
+        p = os.path.join(self.t.name, "bad.json")
+        w(p, {"join": {"a": [5]}, "dealEdit": {"a": {"addClaims": [{"i": 2, "who": "Cy"}]}}})
+        with self.assertRaisesRegex(AssertionError, "claims a deal only once"):
+            quiet(catchup.build, self.e.work, run2, p)
+        w(p, {"join": {"a": [5]}, "deals": [{"kind": "sale", "conv": "a", "text": "x", "refs": [5], "claims": {}}]})
+        with self.assertRaisesRegex(AssertionError, "deal claims must be a list"):
+            quiet(catchup.build, self.e.work, run2, p)
+
+
+# F20: a chat where two claims were misfiled: Dee's "In" in a conversation of its own, Ben's in the hiking talk.
+MOVE_MSGS = [
+    msg(0, "Ana", "WTS blue pack $120", p="1"),
+    msg(1, "Ben", "nice"),
+    msg(2, "Cy", "what size?"),
+    msg(3, "Ana", "30L", r="Cy", q="what size?", pi=2),
+    msg(4, "Dee", "In"),
+    msg(5, "Ana", "ok Dee", r="Dee", q="In", pi=4),
+    msg(6, "Cy", "anyone hiking sat?"),
+    msg(7, "Ben", "me"),
+    msg(8, "Ben", "In"),
+    msg(9, "Cy", "Ben? for the pack?", r="Ben", q="In", pi=8),
+    msg(10, "Dee", "sat works"),
+]
+MOVE_SPEC = {
+    "newconvs": [
+        {"id": "sale", "title": "Blue pack", "tag": "For sale", "outcome": "Ana selling", "key": [0, 3]},
+        {"id": "dee", "title": "Dee in", "tag": "Claim", "outcome": "Dee claimed the pack", "key": [4, 5]},
+        {"id": "hike", "title": "Saturday hike", "tag": "Trip", "outcome": "", "key": [6, 8]},
+    ],
+    "join": {"sale": [0, 1, 2, 3], "dee": [4, 5], "hike": [6, 7, 8, 9, 10]},
+    "links": {"1": [0, "i"], "2": [0, "i"], "4": None, "6": None, "7": [6, "i"], "8": [7, "i"], "10": [6, "i"]},
+    "bullets": {
+        "sale": [["Ana sells a blue pack for $120", [0]], ["It's 30L", [2, 3]]],
+        "dee": [["Dee is in", [4]]],
+        "hike": [["Cy asked about Saturday", [6, 7]], ["Ben said in", [8, 9]], ["Ben is going, then in", [7, 8]]],
+    },
+    "deals": [{"kind": "sale", "tag": "For sale", "conv": "sale", "text": "Blue pack $120", "refs": [0]}],
+    "open": [{"conv": "dee", "ask": 4, "to": "anyone", "note": ""}],
+    "answered": [
+        {"conv": "hike", "ask": 6, "answer": "Ben and Dee", "refs": [7, 10]},
+        {"conv": "hike", "ask": 8, "answer": "For the pack", "refs": [9]},
+    ],
+}
+
+
+class MoveEnv:
+    """MOVE_MSGS built into WORK (Env), with a standalone move as writing-the-build.md has it."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+        self.e.seed()
+        self.e.build(self.e.run([dict(m) for m in MOVE_MSGS]), MOVE_SPEC)
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def move(self, spec):
+        """On its own, as writing-the-build.md has it: `list threading` and `list summary` into a fresh RUN."""
+        p = os.path.join(self.t.name, "move.json")
+        w(p, spec)
+        run = os.path.join(self.t.name, "mrun")
+        shutil.rmtree(run, ignore_errors=True)
+        self.e.listing(run)
+        out = quiet(catchup.relink, self.e.work, run, p)
+        d = os.path.join(run, "out")
+        return out, r(os.path.join(d, "merged", "threading.json")), r(os.path.join(d, "merged", "summary.json")), d
+
+    def base(self):
+        return [r(os.path.join(self.e.work, "base", f + ".json")) for f in ("threading", "summary")]
+
+
+class TestMove(MoveEnv, unittest.TestCase):
+    """F20: `move` puts a built message, and what's threaded under it, into another conversation; summary items follow,
+    and a conversation left empty is dropped. In a build spec, or on its own through `catchup.py relink`."""
+
+    def test_into_an_existing_conversation_dropping_the_empty_one(self):
+        before = self.base()
+        out, t, s, d = self.move({"move": {"4": "sale"}, "relink": {"4": [0, "i"]}})
+        self.assertIn("RELINK 4 -> 0 i", out)
+        self.assertNotIn("crosses conversations", out)
+        self.assertIn("MOVE 4 (with its Messenger replies 5) dee -> sale", out)
+        self.assertIn(
+            'DROP dee (title "Dee in", tag "Claim", outcome "Dee claimed the pack"): no messages left; its summary went '
+            "to sale",
+            out,
+        )
+        self.assertIn("moved to sale from dee: 1 bullet, 2 key, 1 open, 1 outcome as a bullet", out)
+        self.assertIn("relink ok: 1 change(s), 1 move(s), dropped dee", out)
+        mem = {c["id"]: c["members"] for c in t["convs"]}
+        self.assertEqual(mem, {"sale": [0, 1, 2, 3, 4, 5], "hike": [6, 7, 8, 9, 10]})
+        sc = {c["id"]: c for c in s["convs"]}
+        self.assertNotIn("dee", sc)
+        self.assertEqual(
+            [(b["t"], b["refs"]) for b in sc["sale"]["synopsis"]],
+            [
+                ("Ana sells a blue pack for $120", [0]),
+                ("It's 30L", [2, 3]),
+                ("Dee is in", [4]),
+                ("Dee claimed the pack", [5]),  # the dropped conversation's outcome, kept as a bullet
+            ],
+        )
+        self.assertEqual(sc["sale"]["key"], [0, 3, 4, 5])
+        self.assertEqual(
+            (sc["sale"]["tag"], sc["sale"]["outcome"]), ("For sale", "Ana selling"), "the target's own stay"
+        )
+        self.assertEqual([(o["conv"], o["ask"]) for o in s["open"]], [("sale", 4)])
+        self.assertEqual(t["links"]["4"], [0, "i"])
+        # WORK follows, through the manifest, and restore undoes it
+        self.assertEqual(self.base(), [t, s])
+        man = r(os.path.join(d, "manifest.json"))
+        self.assertEqual(
+            sorted(e["collection"] for e in man["batches"][-1] if e["doc_id"] == "current"), ["summary", "threading"]
+        )
+        quiet(catchup.restore, self.e.work)
+        self.assertEqual(self.base(), before)
+
+    def test_the_rest_stays_and_loses_only_the_moved_refs(self):
+        out, t, s, _ = self.move({"move": {"8": "sale"}, "relink": {"8": [0, "i"]}})
+        self.assertIn("MOVE 8 (with its Messenger replies 9) hike -> sale", out)
+        self.assertNotIn("DROP", out)
+        self.assertIn("moved to sale from hike: 1 answered, 1 bullet, 1 key", out)
+        self.assertIn("refs 8 dropped from hike: 1 bullet", out)
+        mem = {c["id"]: c["members"] for c in t["convs"]}
+        self.assertEqual((mem["sale"], mem["hike"]), ([0, 1, 2, 3, 8, 9], [6, 7, 10]))
+        sc = {c["id"]: c for c in s["convs"]}
+        self.assertEqual(
+            [(b["t"], b["refs"]) for b in sc["sale"]["synopsis"]],
+            [("Ana sells a blue pack for $120", [0]), ("It's 30L", [2, 3]), ("Ben said in", [8, 9])],
+        )
+        self.assertEqual(
+            [(b["t"], b["refs"]) for b in sc["hike"]["synopsis"]],
+            [("Cy asked about Saturday", [6, 7]), ("Ben is going, then in", [7])],
+        )
+        self.assertEqual((sc["hike"]["key"], sc["sale"]["key"]), ([6], [0, 3, 8]))
+        self.assertEqual(sorted((a["conv"], a["ask"]) for a in s["answered"]), [("hike", 6), ("sale", 8)])
+        self.assertEqual([c["id"] for c in s["convs"]], ["hike", "sale", "dee"], "newest activity first")
+
+    def test_deals_follow_their_messages(self):
+        """A deal whose refs all moved goes along; one with refs left behind stays and loses only the moved refs; a
+        ref an older session left outside the conversation is left as it was."""
+        p = os.path.join(self.e.work, "base", "summary.json")
+        sm = r(p)
+        deal = lambda text, refs: {"kind": "sale", "tag": "For sale", "conv": "hike", "text": text, "refs": refs}
+        sm["deals"] += [deal("moves", [8, 9]), deal("stays", [7, 8]), deal("legacy", [6, 3])]
+        next(c for c in sm["convs"] if c["id"] == "sale").pop("key")  # a summary written without key
+        w(p, sm)
+        out, t, s, _ = self.move({"move": {"8": "sale"}, "relink": {"8": [0, "i"]}})
+        self.assertIn("moved to sale from hike: 1 answered, 1 bullet, 1 deal, 1 key", out)
+        self.assertIn("refs 8 dropped from hike: 1 bullet, 1 deal", out)
+        got = {d["text"]: (d["conv"], d["refs"]) for d in s["deals"]}
+        self.assertEqual(
+            got,
+            {
+                "Blue pack $120": ("sale", [0]),
+                "moves": ("sale", [8, 9]),
+                "stays": ("hike", [7]),
+                "legacy": ("hike", [6, 3]),
+            },
+        )
+        self.assertEqual(next(c for c in s["convs"] if c["id"] == "sale")["key"], [8])
+
+    def test_into_new(self):
+        out, t, s, _ = self.move({"move": {"8": "new"}, "relink": {"8": None}})
+        self.assertIn('NEW conversation mv8 "In"', out)
+        self.assertIn("MOVE 8 (with its Messenger replies 9) hike -> mv8", out)
+        mem = {c["id"]: c["members"] for c in t["convs"]}
+        self.assertEqual((mem["mv8"], mem["hike"]), ([8, 9], [6, 7, 10]))
+        self.assertNotIn("8", t["links"])
+        sc = {c["id"]: c for c in s["convs"]}
+        self.assertEqual([b["t"] for b in sc["mv8"]["synopsis"]], ["Ben said in"])
+
+    def test_into_a_new_conversation_with_its_title_and_tag(self):
+        spec = {
+            "newconvs": [{"id": "benin1106", "title": "Ben's claim", "tag": "Claim", "outcome": "Ben is in"}],
+            "move": {"8": "benin1106"},
+            "relink": {"8": None},
+        }
+        out, t, s, _ = self.move(spec)
+        self.assertIn("MOVE 8 (with its Messenger replies 9) hike -> benin1106", out)
+        c = next(c for c in t["convs"] if c["id"] == "benin1106")
+        self.assertEqual((c["title"], c["members"]), ("Ben's claim", [8, 9]))
+        sc = next(c for c in s["convs"] if c["id"] == "benin1106")
+        self.assertEqual((sc["tag"], sc["outcome"]), ("Claim", "Ben is in"))
+
+    def test_in_a_build_spec_with_new_messages_and_a_claim(self):
+        run = self.e.run([msg(11, "Ana", "sold to Dee"), msg(12, "Ben", "Mine")], topic=TRADE)
+        spec = {
+            "move": {"4": "sale"},
+            "join": {"sale": [11, 12]},
+            "links": {"11": [4, "i"], "12": [0, "i"]},
+            "dealEdit": {
+                "sale": {
+                    "addClaims": [{"i": 12, "who": "Ben"}, {"i": 4, "who": "Dee"}],
+                    "status": "sold",
+                    "statusAt": 11,
+                }
+            },
+            "bullets": {"sale": [["Dee is in, then it sold", [4, 11]]]},
+        }
+        out = self.e.build(run, spec)
+        self.assertIn("MOVE 4 (with its Messenger replies 5) dee -> sale", out)
+        self.assertNotIn("WARN", out)
+        self.assertIn('REACT? 12 (Ben: "Mine") -> 0', out)  # the open deal's post; Dee's In is no post
+        s = r(os.path.join(run, "out", "merged", "summary.json"))
+        self.assertEqual([c["i"] for c in s["deals"][0]["claims"]], [4, 12])
+        self.assertNotIn("dee", {c["id"] for c in s["convs"]})
+
+    def test_refusals_leave_work_as_it_was(self):
+        before = self.base()
+        for spec, why in (
+            ({"move": {"99": "sale"}}, r"move #99: only messages already built \(through #10\)"),
+            ({"move": {"4": "nope"}}, 'move #4: no conversation "nope"'),
+            ({"move": {"4": "dee"}}, "move #4: it's already in dee"),
+            ({"move": {"8": "sale"}}, r"move #8: its link points to #7 in hike, not in sale. Add a relink for #8"),
+            ({"move": {"8": "sale", "9": "dee"}, "relink": {"8": None}}, "move #9: it already moves with #8"),
+            ({"newconvs": [{"id": "x", "title": "X"}], "relink": {"4": None}}, "newconvs only for a move"),
+            ({"move": {}}, 'takes only a non-empty "relink"'),
+        ):
+            with self.subTest(spec=spec):
+                with self.assertRaisesRegex(AssertionError, why):
+                    self.move(spec)
+                self.assertEqual(self.base(), before, "WORK untouched")
+        # a message not built yet can't move: it joins
+        run = self.e.run([msg(11, "Ana", "hi")])
+        p = os.path.join(self.t.name, "spec.json")
+        w(p, {"join": {"sale": [11]}, "move": {"11": "hike"}})
+        with self.assertRaisesRegex(AssertionError, r"move #11: only messages already built \(through #10\); use join"):
+            quiet(catchup.build, self.e.work, run, p)
+
+    def test_across_block_documents_through_the_database(self):
+        """Layout 2 at scale: a conversation emptied by moves is dropped and its summary goes along; the documents land
+        through the manifest, a fresh bootstrap reads back exactly WORK, and restore undoes the move."""
+        msgs, th, sm = synth.chat(3500, seed=17)
+        live = Live(self.t.name + "/live", msgs, th, sm, "new")
+        live.bootstrap()
+        t0, s0 = live.db.merged()
+        where = {i: c["id"] for c in t0["convs"] for i in c["members"]}
+        S0 = {c["id"]: c for c in s0["convs"]}
+        # a conversation with a few messages and bullets in an older block, moved into a busy recent one
+        src = next(
+            c
+            for c in t0["convs"]
+            if 1000 <= c["members"][0] < 2000 and len(c["members"]) >= 3 and S0[c["id"]]["synopsis"]
+        )
+        dst = max((c for c in t0["convs"] if c["id"] != src["id"]), key=lambda c: max(c["members"]))
+        mem = set(src["members"])
+        L0 = lambda i: t0["links"].get(str(i), [None, None])  # every message not a Messenger reply within it moves
+        roots = [i for i in src["members"] if not (L0(i)[1] in catchup.REPLY_TYPES and L0(i)[0] in mem)]
+        spec = {
+            "move": {str(i): dst["id"] for i in roots},
+            "relink": {str(i): None for i in roots if str(i) in t0["links"] and L0(i)[0] not in mem},
+        }
+        p = os.path.join(self.t.name, "move.json")
+        w(p, spec)
+        rrun = live.listing(os.path.join(self.t.name, "rrun"))
+        out = quiet(catchup.relink, live.work, rrun, p)
+        self.assertIn("DROP %s" % src["id"], out)
+        self.assertIn("dropped %s" % src["id"], out)
+        write_manifest(live.db, os.path.join(rrun, "out"), live.seen)
+        t, s = live.db.merged()
+        T = {c["id"]: c for c in t["convs"]}
+        self.assertNotIn(src["id"], T)
+        self.assertEqual(T[dst["id"]]["members"], sorted(dst["members"] + src["members"]))
+        self.assertNotIn(src["id"], {c["id"] for c in s["convs"]})
+        moved = next(c for c in s["convs"] if c["id"] == dst["id"])
+        for b in S0[src["id"]]["synopsis"]:
+            self.assertIn(b, moved["synopsis"])
+        for name in ("open", "answered", "deals"):
+            self.assertFalse([x for x in s[name] if x["conv"] == src["id"]], name)
+            self.assertEqual(len(s[name]), len(s0[name]), "nothing dropped: " + name)
+        bonus = int("1 outcome as a bullet" in out)  # the dropped conversation's outcome, when the target has its own
+        self.assertEqual(
+            sum(len(c["synopsis"]) for c in s["convs"]), sum(len(c["synopsis"]) for c in s0["convs"]) + bonus
+        )
+        self.assertEqual(sorted(where), sorted(i for c in t["convs"] for i in c["members"]), "every message kept")
+        self.assertEqual(t, r(os.path.join(live.work, "base", "threading.json")))
+        self.assertEqual(s, r(os.path.join(live.work, "base", "summary.json")))
+        live.bootstrap(os.path.join(self.t.name, "work2"))
+        for f in ("base/threading.json", "base/summary.json"):
+            self.assertEqual(r(os.path.join(self.t.name, "work2", f)), r(os.path.join(live.work, f)), f)
+        # undo: restore WORK, and the previous documents are still what the database's old blocks held
+        quiet(catchup.restore, live.work)
+        self.assertEqual(without_times(r(os.path.join(live.work, "base", "threading.json"))), without_times(t0))
+        self.assertEqual(without_times(r(os.path.join(live.work, "base", "summary.json"))), without_times(s0))
+
+
+def small_live(d):
+    """MOVE_MSGS built into a fake database, so writes land (review of release A)."""
+    live = Live(os.path.join(d, "live"), [], None, None, "new")
+    live.bootstrap()
+    run = live.run([dict(m) for m in MOVE_MSGS])
+    live.build(run, MOVE_SPEC)
+    live.write(run)
+    return live
+
+
+def live_relink(live, spec, tag="mv"):
+    p = os.path.join(live.d, tag + ".json")
+    w(p, spec)
+    run = live.listing(os.path.join(live.d, tag + "run"))
+    return quiet(catchup.relink, live.work, run, p), run
+
+
+class TestMoveReview(MoveEnv, unittest.TestCase):
+    """Two reviews of release A (v1.23.0) on `move` (F20); each test is a reviewer's repro."""
+
+    def test_guessed_links_never_drag_messages_along(self):
+        """Finding 1: a conversation built from guesses is one chain (each message `i` to the one before). Moving a
+        misfiled "In" from its middle moves only it; its guessed children stay, re-pointed to its old parent."""
+        e = Env(os.path.join(self.t.name, "chain"))
+        e.seed()
+        ms = [
+            msg(0, "Ana", "WTS tent $80", p="1"),
+            msg(1, "Ben", "what brand?"),
+            msg(2, "Ana", "REI"),
+            msg(3, "Cy", "anyone up for a hike sat?"),
+            msg(4, "Dee", "In"),  # a claim on the tent, filed into the hike talk
+            msg(5, "Ben", "where to?"),
+            msg(6, "Cy", "Mt Tam"),
+            msg(7, "Dee", "sounds good"),
+        ]
+        spec = {
+            "newconvs": [{"id": "tent", "title": "Tent"}, {"id": "hike", "title": "Hike"}],
+            "join": {"tent": [0, 1, 2], "hike": [3, 4, 5, 6, 7]},
+            "bullets": {"hike": [["Cy proposes a Saturday hike", [3]], ["Mt Tam it is", [5, 6, 7]]]},
+            "answered": [{"conv": "hike", "ask": 5, "answer": "Mt Tam", "refs": [6]}],
+        }
+        e.build(e.run(ms), spec)
+        self.e = e
+        out, t, s, _ = self.move({"move": {"4": "tent"}, "relink": {"4": [0, "i"]}})
+        self.assertIn("MOVE 4 hike -> tent", out)
+        self.assertIn("LEFT 5 (i -> 4), now -> 3: move it too if it goes with 4", out)
+        self.assertEqual({c["id"]: c["members"] for c in t["convs"]}, {"tent": [0, 1, 2, 4], "hike": [3, 5, 6, 7]})
+        self.assertEqual((t["links"]["5"], t["links"]["6"]), ([3, "i"], [5, "i"]))
+        sc = {c["id"]: c for c in s["convs"]}
+        self.assertEqual([b["t"] for b in sc["hike"]["synopsis"]], ["Cy proposes a Saturday hike", "Mt Tam it is"])
+        self.assertEqual([(a["conv"], a["ask"]) for a in s["answered"]], [("hike", 5)])
+        # a moved message with no parent in its old conversation: its guessed children are left unlinked
+        quiet(catchup.restore, e.work)
+        out, t, _, _ = self.move({"move": {"3": "new"}})
+        self.assertIn("LEFT 4 (i -> 3), now unlinked: move it too if it goes with 3", out)
+        self.assertNotIn("4", t["links"])
+        self.assertEqual({c["id"]: c["members"] for c in t["convs"]}["mv3"], [3])
+
+    def test_a_partly_applied_move_stops_bootstrap(self):
+        """Finding 2: threading/current lands and summary/current doesn't. `to` and `toI` still agree, so only the
+        shared `rev` shows it; before, the next build died with a raw KeyError."""
+        live = small_live(self.t.name)
+        out, run = live_relink(live, {"move": {"4": "sale"}, "relink": {"4": [0, "i"]}})
+        man = r(os.path.join(run, "out", "manifest.json"))
+        writes = [e["collection"] + "/" + e["doc_id"] for bt in man["batches"] for e in bt]
+        live.write(run, stop_after=writes.index("threading/current") + 1)
+        with self.assertRaisesRegex(AssertionError, "come from different writes .*send the rest of its last batch"):
+            live.bootstrap(os.path.join(self.t.name, "w2"))
+        # the rest of the batch sent again, pinned with fresh versions: bootstrap is happy again
+        rest = [e for bt in man["batches"] for e in bt][writes.index("threading/current") + 1 :]
+        live.db.batch(
+            [dict(e, data=r(e["file_path"]), if_version=live.db.ver[e["collection"] + "/" + e["doc_id"]]) for e in rest]
+        )
+        self.assertIn("bootstrap ok", live.bootstrap(os.path.join(self.t.name, "w3")))
+        cur = live.db.docs
+        self.assertEqual(cur["threading/current"]["rev"], cur["summary/current"]["rev"])
+        # a relink with no move writes only threading; its summaryRev keeps the pair matched
+        out, run = live_relink(live, {"relink": {"10": [7, "i"]}}, "rl")
+        self.assertNotIn(
+            "summary/current",
+            [
+                e["collection"] + "/" + e["doc_id"]
+                for bt in r(os.path.join(run, "out", "manifest.json"))["batches"]
+                for e in bt
+            ],
+        )
+        live.write(run)
+        self.assertNotEqual(cur["threading/current"]["rev"], cur["summary/current"]["rev"])
+        self.assertEqual(cur["threading/current"]["summaryRev"], cur["summary/current"]["rev"])
+        self.assertIn("bootstrap ok", live.bootstrap(os.path.join(self.t.name, "w4")))
+
+    def test_a_stale_work_is_refused_in_the_same_minute(self):
+        """Finding 3: after a move's write lands, `restore WORK` puts WORK back but not the database. The freshness
+        check compared minute-resolution times, so the next build went through and undid the move silently."""
+        self.addCleanup(setattr, catchup, "_ts", catchup._ts)
+        catchup._ts = lambda: "Fri Nov 6, 9:00 AM"  # every write in the same minute
+        live = small_live(self.t.name)
+        out, run = live_relink(live, {"move": {"4": "sale"}, "relink": {"4": [0, "i"]}})
+        live.write(run)
+        quiet(catchup.restore, live.work)
+        run2 = live.run([msg(11, "Ana", "hi")])
+        with self.assertRaisesRegex(AssertionError, "changed since WORK was bootstrapped"):
+            live.build(run2, {"join": {"sale": [11]}})
+
+    def test_dealEdit_index_after_a_move_is_refused(self):
+        """Finding 4: a move brings an older deal into the conversation, so "index" 0 named the stove, not the pack.
+        Refused; "ref" names a deal by one of its messages; the MOVE output and the refusal list the indexes."""
+        p = os.path.join(self.e.work, "base", "summary.json")
+        sm = r(p)
+        sm["deals"].insert(
+            0, {"kind": "sale", "tag": "For sale", "conv": "hike", "text": "Ben's stove $30", "refs": [8]}
+        )
+        w(p, sm)
+        spec = {
+            "move": {"8": "sale"},
+            "relink": {"8": [0, "i"]},
+            "join": {"sale": [11]},
+            "links": {"11": [0, "i"]},
+            "dealEdit": {"sale": {"status": "sold", "statusAt": 11, "index": 0}},
+        }
+        run = self.e.run([msg(11, "Ana", "sold!")])
+        with self.assertRaisesRegex(
+            AssertionError,
+            r'or new deals changed its deals.*"ref".*0 "Ben\'s stove \$30" \(refs \[8\]\); 1 "Blue pack \$120"',
+        ):
+            self.e.build(run, spec)
+        out = self.e.build(run, dict(spec, dealEdit={"sale": {"status": "sold", "statusAt": 11, "ref": 0}}))
+        self.assertIn('deals in sale now: 0 "Ben\'s stove $30" (refs [8]); 1 "Blue pack $120" (refs [0])', out)
+        got = {d["text"]: d.get("status") for d in r(os.path.join(run, "out", "merged", "summary.json"))["deals"]}
+        self.assertEqual(got, {"Ben's stove $30": None, "Blue pack $120": "sold"})
+        # with two deals and neither index nor ref, the refusal lists them
+        run2 = self.e.run([msg(12, "Ana", "pending")])
+        p2 = os.path.join(self.t.name, "s2.json")
+        w(p2, {"join": {"sale": [12]}, "dealEdit": {"sale": {"text": "x"}}})
+        with self.assertRaisesRegex(AssertionError, r'add "index" \(or "ref"\): 0 "Ben\'s stove'):
+            quiet(catchup.build, self.e.work, run2, p2)
+
+    def test_items_for_a_dropped_conversation_get_a_clear_refusal(self):
+        """Finding 6: bullets, outcome, key or join for the conversation the same spec's move drops."""
+        run = self.e.run([msg(11, "Dee", "ok")])
+        base = {"move": {"4": "sale"}, "relink": {"4": [0, "i"]}, "join": {"sale": [11]}}
+        p = os.path.join(self.t.name, "s.json")
+        for extra in (
+            {"bullets": {"dee": [["Dee confirmed", [4]]]}},
+            {"outcome": {"dee": "x"}},
+            {"key": {"dee": [4]}},
+            {"join": {"dee": [11]}},
+            {"answered": [{"conv": "dee", "ask": 4, "answer": "x", "refs": []}]},
+        ):
+            with self.subTest(extra=extra):
+                w(p, dict(base, **extra))
+                with self.assertRaisesRegex(
+                    AssertionError, 'names dee, which this spec\'s move empties and drops .*use "sale"'
+                ):
+                    quiet(catchup.build, self.e.work, run, p)
+        w(p, dict(base, bullets={"nope": [["x", [11]]]}))
+        with self.assertRaisesRegex(AssertionError, "bullets: unknown conv"):
+            quiet(catchup.build, self.e.work, run, p)
+
+    def test_the_cross_conversation_warning_comes_after_the_move(self):
+        """Finding 7: a relink to a message the same spec moves into the same conversation is no crossing."""
+        out, _, _, _ = self.move({"move": {"4": "hike"}, "relink": {"4": None, "10": [5, "i"]}})
+        self.assertNotIn("WARN", out)
+        quiet(catchup.restore, self.e.work)
+        out, _, _, _ = self.move({"move": {"4": "hike"}, "relink": {"4": None, "7": [0, "i"]}})
+        self.assertIn("WARN link 7 -> 0 crosses conversations (hike -> sale)", out)
+
+    def test_standalone_newconvs_new_ids_and_wording(self):
+        """Finding 8: a standalone newconvs entry must be a move's target; "new" avoids ids the summary uses; the
+        printout says what to write without "block lists"."""
+        before = self.base()
+        with self.assertRaisesRegex(AssertionError, "newconvs spare: no move in this spec puts a message in it"):
+            self.move({"newconvs": [{"id": "spare", "title": "S"}], "move": {"8": "new"}, "relink": {"8": None}})
+        self.assertEqual(self.base(), before)
+        p = os.path.join(self.e.work, "base", "summary.json")
+        sm = r(p)
+        sm["convs"].append({"id": "mv8", "tag": "", "synopsis": [], "outcome": "", "key": []})
+        w(p, sm)
+        out, t, s, _ = self.move({"move": {"8": "new"}, "relink": {"8": None}})
+        self.assertIn('NEW conversation mv8x "In"', out)
+        self.assertIn(". Write it as in step 7: ", out)
+        self.assertNotIn("block lists", out)
+
+    def test_fuzz_moves_keep_the_database_whole(self):
+        """The reviewers' fuzz: random moves on a 3,500-message chat (into existing, newconvs and "new" conversations,
+        with and without relinks), on their own and inside a build, written through the fake database. Nothing is
+        lost, only relinked or LEFT links change, the database equals WORK and reads back the same, and a later build
+        restores and rebuilds cleanly."""
+        import random
+
+        stats = collections.Counter()
+        for seed in range(4):
+            for mode in ("relink", "build"):
+                with self.subTest(seed=seed, mode=mode):
+                    stats[self.fuzz_one(seed, mode, random.Random(seed))] += 1
+        self.assertGreaterEqual(stats["ok"], 4, stats)
+
+    def fuzz_one(self, seed, mode, rnd):
+        msgs, th, sm = synth.chat(3500, seed=seed)
+        live = Live(tempfile.mkdtemp(dir=self.t.name), msgs, th, sm, "new")
+        live.bootstrap()
+        t0, s0 = live.db.merged()
+        where = {i: c["id"] for c in t0["convs"] for i in c["members"]}
+        convs = [c for c in t0["convs"] if c["members"]]
+        roots = sorted(rnd.sample(range(len(msgs)), rnd.choice([1, 1, 2, 3, 4])))
+        mv, rl, newc = {}, {}, []
+        for i in roots:
+            x = rnd.random()
+            if x < 0.15:
+                dest = "new"
+            elif x < 0.3:
+                dest = "nc%d" % i
+                newc.append({"id": dest, "title": "N%d" % i, "tag": "T", "outcome": "o%d" % i})
+            else:
+                dest = rnd.choice([c["id"] for c in convs if c["id"] != where[i]])
+            mv[str(i)] = dest
+            cand = [y for y in next((c["members"] for c in convs if c["id"] == dest), []) if y < i]
+            if cand and rnd.random() < 0.5:
+                rl[str(i)] = [rnd.choice(cand), "i"]
+            elif str(i) in t0["links"]:
+                rl[str(i)] = None
+        spec = dict({"move": mv}, **({"relink": rl} if rl else {}), **({"newconvs": newc} if newc else {}))
+        if mode == "relink":
+            p = os.path.join(live.d, "mv.json")
+            w(p, spec)
+            run = live.listing(os.path.join(live.d, "rrun"))
+            try:
+                out = quiet(catchup.relink, live.work, run, p)
+            except AssertionError as x:
+                self.assertRegex(str(x), r"^move #\d+: |^\('?a message claims")  # a clear refusal, never a crash
+                return "refused"
+        else:
+            new = synth.more(len(msgs), 4, seed=seed)
+            run = live.run(new)
+            dest = rnd.choice([v for v in mv.values() if v != "new"] or [convs[0]["id"]])
+            spec["join"] = {dest: [m["i"] for m in new]}
+            try:
+                out = live.build(run, spec)
+            except AssertionError as x:
+                self.assertRegex(str(x), r"^move #\d+: |names \S+, which this spec's move empties")
+                return "refused"
+        t1, s1 = r(live.work + "/base/threading.json"), r(live.work + "/base/summary.json")
+        left = {int(x) for x in re.findall(r"^LEFT (\d+)", out, re.M)}
+        for k in set(t0["links"]) | set(t1["links"]):
+            if k not in rl and int(k) < len(msgs) and int(k) not in left:
+                self.assertEqual(t0["links"].get(k), t1["links"].get(k), ("only relinked or LEFT links change", k))
+        bonus = len(re.findall(r"outcome as a bullet", out))
+        count = lambda s: sum(len(catchup._syn_items(c["synopsis"])) for c in s["convs"])
+        self.assertEqual(count(s1), count(s0) + bonus + (0 if mode == "relink" else 0))
+        for f in ("open", "answered", "deals", "mentions"):
+            self.assertEqual(len(s1[f]), len(s0[f]), f)
+        write_manifest(live.db, os.path.join(run, "out"), live.seen)
+        t, s = live.db.merged()
+        self.assertEqual((t, s), (t1, s1), "the database equals WORK")
+        w2 = tempfile.mkdtemp(dir=self.t.name)
+        live.bootstrap(w2)
+        self.assertEqual(r(w2 + "/base/threading.json"), t1)
+        self.assertEqual(r(w2 + "/base/summary.json"), s1)
+        ids = {c["id"] for c in t["convs"]}
+        self.assertTrue(all(c["id"] in ids for c in s["convs"]), "every summary conversation has its messages")
+        seen = collections.Counter(i for c in t["convs"] for i in c["members"])
+        self.assertEqual(sorted(seen), list(range(len(seen))), "every message in exactly one conversation")
+        self.assertTrue(all(v == 1 for v in seen.values()))
+        new = synth.more(len(live.msgs), 3, seed=seed + 1000)
+        run2 = live.run(new)
+        tgt = max((c for c in t["convs"] if c["members"]), key=lambda c: max(c["members"]))["id"]
+        live.build(run2, {"join": {tgt: [m["i"] for m in new]}})
+        quiet(catchup.restore, live.work)
+        self.assertEqual((r(live.work + "/base/threading.json"), r(live.work + "/base/summary.json")), (t1, s1))
+        live.build(run2, {"join": {tgt: [m["i"] for m in new]}})
+        write_manifest(live.db, os.path.join(run2, "out"), live.seen)
+        self.assertEqual(live.db.merged(), (r(live.work + "/base/threading.json"), r(live.work + "/base/summary.json")))
+        return "ok"
+
+
+def strip_rev(live):
+    """A page last written by v1.22: no rev on either current document."""
+    for p in ("threading/current", "summary/current"):
+        d = dict(live.db.docs[p])
+        d.pop("rev", None)
+        d.pop("summaryRev", None)
+        live.db.put(p, d)
+
+
+def land_only(live, run, skip):
+    """Send a manifest one write at a time, leaving out the `current` documents in `skip` (a write that half landed)."""
+    man = r(os.path.join(run, "out", "manifest.json"))
+    for bt in man["batches"]:
+        for e in bt:
+            if e["doc_id"] == "current" and e["collection"] in skip:
+                continue
+            x = {"op": e["op"], "collection": e["collection"], "doc_id": e["doc_id"], "data": r(e["file_path"])}
+            if e.get("pin"):
+                x["if_version"] = live.seen[e["collection"] + "/" + e["doc_id"]]
+            live.db.batch([x])
+    return man
+
+
+def summary_counts(s):
+    return (
+        sum(len(catchup._syn_items(c["synopsis"])) for c in s["convs"]),
+        sum(len(c.get("key") or []) for c in s["convs"]),
+        len(s["open"]),
+        len(s["answered"]),
+        len(s["deals"]),
+        len(s["mentions"]),
+    )
+
+
+class TestPartlyLanded(unittest.TestCase):
+    """Re-review of release A: a write that half landed must never leave a page stuck, on pages with or without `rev`."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def half_move(self, skip, legacy=False):
+        live = small_live(self.t.name)
+        if legacy:
+            strip_rev(live)
+            live.bootstrap()
+        before = live.db.merged()
+        out, run = live_relink(live, {"move": {"4": "sale"}, "relink": {"4": [0, "i"]}})
+        land_only(live, run, skip)
+        return live, before
+
+    def test_a_half_landed_move_is_refused_then_rollback_refiles_and_relink_writes_it(self):
+        """With rev, and on a v1.22 page (no rev; only one current gets one): threading or summary lands alone. Bootstrap
+        refuses, naming --rollback; --rollback files the summary under threading's conversations (nothing dropped);
+        `relink` with {} writes it; the page bootstraps clean and builds again."""
+        for legacy in (False, True):
+            for skip in ({"summary"}, {"threading"}):
+                with self.subTest(legacy=legacy, skip=skip):
+                    live, (t0, s0) = self.half_move(skip, legacy)
+                    w2 = os.path.join(live.d, "w2")
+                    with self.assertRaisesRegex(
+                        AssertionError, "don't fit together .*restore-summary.*--rollback`: it files the summary"
+                    ):
+                        live.bootstrap(w2)
+                    dbd = os.path.join(live.d, "dbr")
+                    live.db.fetch(dbd)
+                    out = quiet(catchup.bootstrap, w2, dbd, True)
+                    self.assertIn("didn't fit together: filed", out)
+                    self.assertIn("catchup.py relink WORK RUN with the spec {}", out)
+                    t, s = (r(os.path.join(w2, "base", f + ".json")) for f in ("threading", "summary"))
+                    self.assertEqual(catchup._problems(t, s), [])
+                    sc = {c["id"]: [b["t"] for b in c["synopsis"]] for c in s["convs"]}
+                    home = "sale" if skip == {"summary"} else "dee"  # where threading has #4 now
+                    self.assertIn("Dee is in", sc[home])
+                    self.assertEqual("dee" in sc, home == "dee", "a summary conversation threading lacks is dropped")
+                    self.assertEqual([o["conv"] for o in s["open"]], [home])
+                    self.assertEqual(
+                        summary_counts(s)[2:], summary_counts(s0)[2:], "open, answered, deals, mentions kept"
+                    )
+                    self.assertGreaterEqual(summary_counts(s)[0], summary_counts(s0)[0], "no bullet dropped")
+                    p = os.path.join(live.d, "empty.json")
+                    w(p, {})
+                    rrun = live.listing(os.path.join(live.d, "rrun"))
+                    self.assertIn("relink ok: 0 change(s)", quiet(catchup.relink, w2, rrun, p))
+                    man = r(os.path.join(rrun, "out", "manifest.json"))
+                    pins = sorted(e["collection"] for bt in man["batches"] for e in bt if e.get("pin"))
+                    self.assertEqual(pins, ["summary", "threading"])
+                    write_manifest(live.db, os.path.join(rrun, "out"), live.seen)
+                    self.assertNotIn("different writes", live.bootstrap(os.path.join(live.d, "w3")))
+                    run = live.run([msg(11, "Ana", "bump")])
+                    self.assertIn("build ok", live.build(run, {"join": {"sale": [11]}}, os.path.join(live.d, "w3")))
+
+    def test_a_half_landed_restore_summary_that_fits_is_accepted(self):
+        """restore-summary's threading/current differs only in rev: whichever half lands alone, the pair fits, so
+        bootstrap carries on and says so (before, every later run refused), and the next build restamps both."""
+        for which in ("threading", "summary"):
+            with self.subTest(lands=which):
+                tc = TestRestoreSummary("test_restore_puts_back_everything_the_trim_dropped")
+                tc.setUp()
+                self.addCleanup(tc.tearDown)
+                T, U, f = tc.world()
+                work, run, bk = tc.ready(T, "x")
+                tc.restore(T, work, run, bk)
+                dec = dict(r(os.path.join(run, "out", "restore-open.json"))["template"])
+                self.assertIn("restore ok", tc.restore(T, work, run, bk, dec))
+                land_only(T, run, {"threading", "summary"} - {which})
+                out = T.bootstrap(os.path.join(tc.d, "w2"))
+                self.assertIn("come from different writes but fit together", out)
+                new = synth.more(3040, 3, seed=8)
+                run2 = T.run(new)
+                tgt = T.db.merged()[0]["convs"][-1]["id"]
+                T.build(run2, {"join": {tgt: [m["i"] for m in new]}}, os.path.join(tc.d, "w2"))
+                T.write(run2)
+                cur = T.db.docs
+                self.assertEqual(cur["threading/current"]["rev"], cur["summary/current"]["rev"])
+
+    def test_relink_with_an_empty_spec_only_after_a_rollback(self):
+        live = small_live(self.t.name)
+        p = os.path.join(live.d, "empty.json")
+        w(p, {})
+        rrun = live.listing(os.path.join(live.d, "rrun"))
+        with self.assertRaisesRegex(AssertionError, r"\{\} only to write what bootstrap --rollback refiled"):
+            quiet(catchup.relink, live.work, rrun, p)
+
+
+class TestDealIndexAfterMoves(unittest.TestCase):
+    """Re-review of release A: a deal's index also shifts in the conversation a move takes a deal out of, and in a build
+    after a standalone move."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        d = self.t.name
+        self.live = live = Live(os.path.join(d, "live"), [], None, None, "new")
+        live.bootstrap()
+        run = live.run(
+            [
+                msg(0, "Ana", "WTS red tent $50", p="1"),
+                msg(1, "Ana", "WTS stove $20", p="2"),
+                msg(2, "Ana", "WTS lamp $10", p="3"),
+                msg(3, "Ben", "In"),
+            ]
+        )
+        deal = lambda text, i: {"kind": "sale", "tag": "For sale", "conv": "gear", "text": text, "refs": [i]}
+        live.build(
+            run,
+            {
+                "newconvs": [{"id": "gear", "title": "Gear"}, {"id": "ben", "title": "Ben"}],
+                "join": {"gear": [0, 1, 2], "ben": [3]},
+                "links": {"1": None, "2": None, "3": None},
+                "deals": [deal("red tent", 0), deal("stove", 1), deal("lamp", 2)],
+            },
+        )
+        live.write(run)
+        live.bootstrap()
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def test_a_deal_moved_out_shifts_the_source_indexes(self):
+        run = self.live.run([msg(4, "Cy", "In for the lamp")])
+        spec = {
+            "move": {"0": "ben"},
+            "join": {"gear": [4]},
+            "dealEdit": {"gear": {"index": 1, "status": "sold", "statusAt": 4}},
+        }
+        with self.assertRaisesRegex(
+            AssertionError, r'dealEdit gear: .*Its deals now: 0 "stove" \(refs \[1\]\); 1 "lamp"'
+        ):
+            self.live.build(run, spec)
+        out = self.live.build(run, dict(spec, dealEdit={"gear": {"ref": 1, "status": "sold", "statusAt": 4}}))
+        self.assertIn('deals in gear now: 0 "stove" (refs [1]); 1 "lamp" (refs [2])', out)
+        self.assertIn('deals in ben now: 0 "red tent" (refs [0])', out)
+        got = [(d["conv"], d["text"], d.get("status")) for d in r(self.live.work + "/base/summary.json")["deals"]]
+        self.assertEqual(got, [("ben", "red tent", None), ("gear", "stove", "sold"), ("gear", "lamp", None)])
+
+    def test_index_after_a_standalone_move_and_ref_with_index(self):
+        out, rrun = live_relink(self.live, {"move": {"0": "ben"}})
+        write_manifest(self.live.db, os.path.join(rrun, "out"), self.live.seen)
+        run = self.live.run([msg(4, "Cy", "In for the lamp")])
+        p = os.path.join(self.t.name, "s.json")
+        w(p, {"join": {"gear": [4]}, "dealEdit": {"gear": {"index": 1, "status": "sold", "statusAt": 4}}})
+        with self.assertRaisesRegex(AssertionError, r"since WORK was bootstrapped"):
+            quiet(catchup.build, self.live.work, run, p)
+        w(p, {"join": {"gear": [4]}, "dealEdit": {"gear": {"index": 1, "ref": 2, "status": "sold", "statusAt": 4}}})
+        with self.assertRaisesRegex(AssertionError, r'"ref" or "index", not both'):
+            quiet(catchup.build, self.live.work, run, p)
+        w(p, {"join": {"gear": [4]}, "dealEdit": {"gear": {"ref": 2, "status": "sold", "statusAt": 4}}})
+        quiet(catchup.build, self.live.work, run, p)
+        self.live.write(run)
+        # the next build no longer remembers the move
+        run2 = self.live.run([msg(5, "Dee", "hi")])
+        w(p, {"join": {"gear": [5]}, "dealEdit": {"gear": {"index": 0, "text": "Stove, $15"}}})
+        quiet(catchup.build, self.live.work, run2, p)
+
+
+class TestManifestDocs(unittest.TestCase):
+    """Every reference that tells Claude how to write a manifest names, for its versions and pins, exactly the current
+    documents that command's manifest pins (the restore procedure once said threading wasn't touched)."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    @staticmethod
+    def pins(run):
+        man = r(os.path.join(run, "out", "manifest.json"))
+        return sorted(e["collection"] for bt in man["batches"] for e in bt if e.get("pin"))
+
+    def test_references_name_what_each_manifest_pins(self):
+        ref = lambda *p: open(os.path.join(ROOT, "plugin", "skills", "refresh", *p), encoding="utf-8").read()
+        live = small_live(self.t.name)
+        _, run = live_relink(live, {"relink": {"10": [7, "i"]}}, "rl")
+        relink_only = self.pins(run)
+        quiet(catchup.restore, live.work)
+        _, run = live_relink(live, {"move": {"4": "sale"}, "relink": {"4": [0, "i"]}}, "mv")
+        move = self.pins(run)
+        quiet(catchup.restore, live.work)
+        # restore-summary: a backup holding one mention the stored summary lacks
+        s = copy.deepcopy(r(os.path.join(live.work, "base", "summary.json")))
+        s["mentions"].append({"note": "Named you", "refs": [[1]]})
+        for p, x in zip(("a", "b"), backup_parts(s)):
+            live.db.put("backups/summary-pre-prune-" + p, x)
+        bk = fetch_backups(live.db, os.path.join(self.t.name, "bk"))
+        rrun = live.listing(os.path.join(self.t.name, "rs"))
+        self.assertIn("restore ok", quiet(catchup.restore_summary, live.work, rrun, bk, None, False))
+        restore_summary = self.pins(rrun)
+        self.assertEqual(
+            (relink_only, move, restore_summary), (["threading"], ["summary", "threading"], ["summary", "threading"])
+        )
+        rs = ref("references", "restoring-a-summary.md")
+        step = lambda n: re.search(r"^%d\. .*$" % n, rs, re.M).group(0)
+        for c in restore_summary:
+            self.assertIn("`%s/current`" % c, step(2), "restore step 2 notes its version")
+            self.assertIn("`%s/current`" % c, step(6), "restore step 6 pins it")
+        for gone in ("Threading isn't touched", "(only `summary/current`)"):
+            self.assertNotIn(gone, rs)
+        wb = ref("references", "writing-the-build.md")
+        moving = re.search(r"^## Moving a message.*?(?=^## |\Z)", wb, re.M | re.S).group(0)
+        nothing_new = re.search(r"^- \*\*With nothing new to build:\*\*.*$", moving, re.M).group(0)
+        for c in move:
+            self.assertIn("`list %s`" % c, nothing_new, "a standalone move lists what it pins")
+        relink_line = re.search(r"^- \*\*Fixing a link with nothing new to build:\*\*.*$", ref("SKILL.md"), re.M).group(
+            0
+        )
+        for c in relink_only:
+            self.assertIn("`list %s`" % c, relink_line)
+        partly = re.search(r"^## A partly applied write.*?(?=^## )", wb, re.M | re.S).group(0)
+        self.assertIn("`list threading` and `list summary`", partly, "the {} relink pins both")
+
+
+class TestClaimsReview(unittest.TestCase):
+    """Two reviews of release A (v1.23.0) on claims (F19)."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def seed(self, hist, deals=()):
+        ids = [m["i"] for m in hist]
+        th = {"convs": [{"id": "a", "title": "A", "members": ids}], "links": {}, "to": ids[-1], "note": ""}
+        sm = dict(EMPTY_SM, convs=[{"id": "a", "tag": "", "synopsis": [], "outcome": "", "key": []}], toI=ids[-1])
+        sm["deals"] = list(deals)
+        self.e.seed(hist, th, sm)
+
+    def build(self, new, spec=None, **meta):
+        allm = self.e.msgs + new
+        m = dict({"lastI": new[-1]["i"], "anchorMids": [x["m"] for x in allm[-3:]]}, **meta)
+        return self.e.build(self.e.run(new, meta=m), spec or {"join": {"a": [x["i"] for x in new]}})
+
+    def test_the_chat_name_opens_the_gate_and_a_missing_topic_is_noted(self):
+        """Finding 9: setup never asked for `topic`, so the gate also reads `threadName`, and a build says to set it."""
+        self.seed([msg(0, "Ana", "WTS blue pack", p="1")])
+        out = self.build([msg(1, "Ben", "In")], threadName="Pack BST")
+        self.assertEqual(react_lines(out), ['REACT? 1 (Ben: "In") -> 0'])
+        self.assertIn(
+            "NOTE meta/chat has no topic: set it once (references/writing-the-build.md › The chat's topic)", out
+        )
+        out = self.build([msg(2, "Cy", "In")], topic="Trail friends", threadName="Hikers")
+        self.assertEqual(react_lines(out), [])
+        self.assertNotIn("NOTE meta/chat has no topic", out)
+
+    def test_raffle_posts_are_marked(self):
+        """Finding 10: a reaction to a raffle post is a spot claim, not a claim on a sale: its candidate says so."""
+        deal = {"kind": "raffle", "tag": "Raffle", "conv": "a", "text": "Quilt", "refs": [1]}
+        self.seed(
+            [msg(0, "Ana", "Paffle: blue pack, 10 spots at $20", p="1"), msg(1, "Cy", "the quilt one", mi=3)], [deal]
+        )
+        out = self.build([msg(2, "Ben", "in for 2", mi=5)], topic=TRADE)
+        self.assertEqual(react_lines(out), ['REACT? 2 (Ben: "in for 2") -> 1 (raffle), 0 (raffle)'])
+
+    def test_a_claim_can_be_removed_or_corrected(self):
+        """Finding 11: "Ben wasn't claiming, he just liked it", or a wrong count."""
+        deal = {"kind": "sale", "tag": "For sale", "conv": "a", "text": "Pack", "refs": [0]}
+        self.seed([msg(0, "Ana", "WTS pack $90", p="1")], [deal])
+        ed = {"addClaims": [{"i": 1, "who": "Ben"}, {"i": 2, "who": "Cy", "n": 2}]}
+        self.build([msg(1, "Ben", "In"), msg(2, "Cy", "in for 2")], {"join": {"a": [1, 2]}, "dealEdit": {"a": ed}})
+        ed = {"removeClaims": [1, 2], "addClaims": [{"i": 2, "who": "Cy", "n": 3}]}
+        run = self.e.run([msg(3, "Dee", "hi")])
+        self.e.build(run, {"join": {"a": [3]}, "dealEdit": {"a": ed}})
+        self.assertEqual(
+            r(os.path.join(run, "out", "merged", "summary.json"))["deals"][0]["claims"], [{"i": 2, "who": "Cy", "n": 3}]
+        )
+        p = os.path.join(self.t.name, "bad.json")
+        run = self.e.run([msg(4, "Dee", "hi")])
+        w(p, {"join": {"a": [4]}, "dealEdit": {"a": {"removeClaims": [1]}}})
+        with self.assertRaisesRegex(AssertionError, r"removeClaims: #1 isn't among the deal's claims \[2\]"):
+            quiet(catchup.build, self.e.work, run, p)
+
+    def test_more_phrasings(self):
+        """Finding 12: closes with a short tail and claims with a count."""
+        for text, n in (
+            ("In x2", 2),
+            ("In (2)", 2),
+            ("in 2", 2),
+            ("I'm interested", 1),
+            ("in for 2 please", 2),
+            ("Im in x3", 3),
+            ("Dibs please", 1),
+        ):
+            self.assertEqual(catchup.claim_word(text), n, text)
+        for text in ("Insane", "in the car", "#7", "in 2 spots", "in for 2 spots please", "interested in hiking"):
+            self.assertIsNone(catchup.claim_word(text), text)
+        for text, how in (
+            ("Sold to Ben", "sold"),
+            ("SPF Ben", "pending"),
+            ("Sold, thanks all", "sold"),
+            ("pending pickup", "pending"),
+            ("sold ppu", "pending"),
+            ("Sold pending funds", "pending"),
+            ("Sold out", None),
+            ("sold out everywhere", None),
+            ("Sold to Ben, thanks everyone for the interest", None),  # longer than a short tail
+            ("Solder", None),
+        ):
+            self.assertEqual(catchup.close_word(text), how, text)
+
+    def test_loose_phrases_are_no_offers_and_people_are_told_apart_by_full_name(self):
+        """Finding 13."""
+        for b in (
+            "let me know if you are coming",
+            "anyone want pizza?",
+            "who wants to hike",
+            "dm me when you get there",
+            "shipped it yesterday",
+            "I paid $40 for mine",
+            "got mine for $30",
+            "I'm interested in hiking",
+        ):
+            self.assertFalse(catchup.looks_like_offer({"b": b}), b)
+        for b in ("dm me if interested", "let me know if you're interested", "Anyone interested? $40", "40 shipped"):
+            self.assertTrue(catchup.looks_like_offer({"b": b}), b)
+        # two people both shown as "Ben": the other Ben's photo is a candidate, the same Ben's isn't
+        self.seed([msg(0, "Ben", "", p="1", fn="Ben Aa"), msg(1, "Ben", "", p="2", fn="Ben Bb", mi=2)])
+        out = self.build([msg(2, "Ben", "In", fn="Ben Bb", mi=4)], topic=TRADE)
+        self.assertEqual(react_lines(out), ['REACT? 2 (Ben: "In") -> 0'])
+
+    def test_claims_and_closes_are_never_candidates_and_the_window_is_exact(self):
+        """Finding 16: a claim that is also a photo, an offer or a deal's message is never a post; the 3-day window
+        includes a post exactly 72 hours back and not one a minute earlier."""
+        deal = {"kind": "sale", "tag": "For sale", "conv": "a", "text": "x", "refs": [3, 4]}
+        self.seed(
+            [
+                msg(0, "Ana", "WTS stove", d="2026-11-03", h=9, mi=0),  # 72 h and 1 minute back: too old
+                msg(1, "Ana", "WTS tent", d="2026-11-03", h=9, mi=1),  # exactly 72 h back: in
+                msg(2, "Cy", "In", p="9", d="2026-11-05"),  # a claim with a photo
+                msg(3, "Dee", "Mine", d="2026-11-05"),  # a claim that is a deal's message
+                msg(4, "Cy", "Sold $50 obo", d="2026-11-05"),  # a close that looks like an offer
+            ],
+            [deal],
+        )
+        out = self.build([msg(5, "Ben", "In", h=9, mi=1)], topic=TRADE)
+        self.assertEqual(react_lines(out), ['REACT? 5 (Ben: "In") -> 1'])
+
+    def test_dealEdit_validation_holes(self):
+        """Finding 14."""
+        deal = {"kind": "sale", "tag": "For sale", "conv": "a", "text": "Pack", "refs": [0]}
+        self.seed([msg(0, "Ana", "WTS pack $90", p="1")], [deal])
+        run = self.e.run([msg(1, "Ben", "In"), msg(2, "Ana", "Sold")])
+        p = os.path.join(self.t.name, "bad.json")
+        for edit, why in (
+            ({"addClaims": {"i": 1, "who": "Ben"}}, "dealEdit addClaims must be a list"),
+            ({"addClaims": "Ben"}, "dealEdit addClaims must be a list"),
+            ({"removeClaims": 1}, "dealEdit removeClaims must be a list"),
+            ({"statusAt": 2}, "dealEdit statusAt needs status"),
+            ({"status": "sold"}, "dealEdit status needs statusAt"),
+            ({"status": "sold", "statusAt": True}, "deal statusAt must be the stored message that closed it"),
+        ):
+            with self.subTest(edit=edit):
+                w(p, {"join": {"a": [1, 2]}, "dealEdit": {"a": edit}})
+                with self.assertRaisesRegex(AssertionError, why):
+                    quiet(catchup.build, self.e.work, run, p)
+        w(p, {"join": {"a": [1, 2]}, "deals": [dict(deal, refs=[1], status="sold")]})
+        with self.assertRaisesRegex(AssertionError, "deal statusAt must be the stored message that closed it"):
+            quiet(catchup.build, self.e.work, run, p)
 
 
 def read_page():
