@@ -6258,8 +6258,30 @@ async function scriptJson(p, replies) {
     const orig = window.__origJson || (window.__origJson = S.sample.json);
     window.__json = window.__json || [];
     window.__replies = rs;
-    const auto = prompt => {
-      const conv = (prompt.split('CONVERSATIONS (id: title: message numbers):\n')[1] || '').split('\n\nMESSAGES:')[0];
+    /* a condense request (PART SUMMARIES): per conversation one bullet citing its block's first number, its open
+       questions kept, key = its first numbers */
+    const condensed = prompt => {
+      const blocks = (prompt.split('PART SUMMARIES (one block per conversation):\n')[1] || '').split('\n\nCONV ');
+      const out = { open: [], answered: [], deals: [], convs: [] };
+      blocks.forEach(b => {
+        const id = b.replace(/^CONV /, '').split(':')[0];
+        const refs = (b.match(/#\d+/g) || []).map(x => +x.slice(1));
+        out.convs.push({
+          id,
+          tag: 'Gear',
+          synopsis: [{ t: id + ' condensed', refs: refs.slice(0, 2) }],
+          outcome: id + ' condensed outcome',
+          key: refs.slice(0, 3),
+        });
+        (b.match(/^open #\d+ \(to [^)]*\): .*$/gm) || []).forEach(l =>
+          out.open.push({ conv: id, ask: +l.match(/#(\d+)/)[1], to: 'anyone', note: l.split('): ')[1] }),
+        );
+      });
+      return out;
+    };
+    const auto = (prompt, add, big) => {
+      if (/\nPART SUMMARIES \(one block per conversation\):\n/.test(prompt)) return condensed(prompt);
+      const conv = (prompt.split('CONVERSATIONS (id: title: message numbers):\n')[1] || '').split('\n\n')[0];
       const convs = conv
         .split('\n')
         .filter(Boolean)
@@ -6270,7 +6292,7 @@ async function scriptJson(p, replies) {
       const nums = ((prompt.split('\n\nMESSAGES:\n')[1] || '').match(/^#\d+/gm) || []).map(x => +x.slice(1));
       const first = convs[0];
       const ment = nums.find(i => i % 5 !== 2);
-      return {
+      const out = {
         mentions: [{ note: 'Mentioned at #' + ment, refs: [ment] }],
         mentionsNote: 'n/a',
         open: [{ conv: first.id, ask: first.members[0], to: 'anyone', note: 'Asked at #' + first.members[0] }],
@@ -6281,11 +6303,15 @@ async function scriptJson(p, replies) {
         convs: convs.map(c => ({
           id: c.id,
           tag: 'Gear',
-          synopsis: [{ t: c.id + ' bullet from #' + c.members[0], refs: [c.members[0]] }],
+          synopsis: [
+            { t: c.id + ' bullet from #' + c.members[0] + (big ? ' ' + 'x'.repeat(big) : ''), refs: [c.members[0]] },
+          ],
           outcome: c.id + ' as of #' + c.members[c.members.length - 1],
           key: [c.members[0], c.members[c.members.length - 1]],
         })),
       };
+      Object.entries(add || {}).forEach(([f, v]) => (out[f] = out[f].concat(v)));
+      return out;
     };
     S.sample.json = async (prompt, o) => {
       const st = document.querySelector('#v-summary .rangebox .range-st, #chat .deeper:last-child .note');
@@ -6306,7 +6332,7 @@ async function scriptJson(p, replies) {
         r = __replies.length ? __replies.shift() : { __auto: true };
       }
       if (r && r.__throw) throw Object.assign(new Error(r.__throw), { code: r.__throw });
-      return r && r.__auto ? auto(prompt) : r;
+      return r && r.__auto ? auto(prompt, r.add, r.big || window.__big) : r;
     };
   }, replies);
 }
@@ -6446,7 +6472,12 @@ async function deeper() {
       ['no stretches key', { pick: [100, 160] }, /couldn't be read/],
       ['invalid_json from the runtime', { __throw: 'invalid_json' }, /couldn't be read/],
       ['an empty list', { stretches: [] }, /found no stretch/],
-      ['only what was read word for word', { stretches: [{ from: rawLo + 5, to: 799 }] }, /already read/],
+      [
+        'only what was read word for word',
+        { stretches: [{ from: rawLo + 5, to: 799 }] },
+        /already read word for word, so/,
+      ],
+      ['only numbers that are not stored', { stretches: [{ from: 5000, to: 6000 }] }, /aren't stored/],
     ];
     for (const [label, reply, want] of cases) {
       await scriptJson(p, [reply]);
@@ -6604,10 +6635,40 @@ async function deeper() {
   });
 }
 
+/* D9: step 2's budget is shared: the most relevant stretch goes in whole, the next one gets what's left */
+async function deeperBudget() {
+  await hcase('D9', async () => {
+    const { p, rawLo } = await deepOpen();
+    await scriptJson(p, [
+      {
+        stretches: [
+          { from: 450, to: 500 },
+          { from: 0, to: 400, focus: 100 },
+        ],
+      },
+    ]);
+    const d = await deepPress(p);
+    const lines = await p.evaluate(() => S.msgs.slice(0, 501).map(lineFor));
+    ok(
+      rawLo > 501 &&
+        d.prompt.includes('MESSAGES #450 to #500 (oldest first):\n' + lines.slice(450, 501).join('\n')) &&
+        d.note.includes('#0–#400 was too long to send whole: read the part around #100 that fits.') &&
+        !d.note.includes('#450–#500 was too long') &&
+        d.calls[1].bytes <= 32768 - HMARGIN,
+      'D9: #450–#500 (named first) is sent whole and #0–#400 is cut to what is left, within the cap (' +
+        (d.calls[1] || {}).bytes +
+        ' bytes): "' +
+        d.note +
+        '"',
+    );
+    await p.close();
+  });
+}
+
 /* ---------- longRanges: a range summary longer than one request, in parts (F18) ---------- */
 /* 600 messages today with longer lines; conversations a (even numbers), b (odd, before #300) and c (odd, from #300);
    the saved summary starts at #300, so a window from today's start asks for a span summary of #0–#599 */
-function lrSeed(n, opts) {
+function lrSeed(n, opts, links = {}) {
   const msgs = range(0, n - 1, i =>
     mk(i, { b: 'message ' + i + ' about the ridge trail, tent poles and a spare stove' }),
   );
@@ -6618,7 +6679,7 @@ function lrSeed(n, opts) {
       { id: 'b', title: 'Tents', members: range(0, half - 1, i => i).filter(i => i % 2 === 1) },
       { id: 'c', title: 'Packs', members: range(half, n - 1, i => i).filter(i => i % 2 === 1) },
     ],
-    links: {},
+    links,
     to: n - 1,
     note: '',
   };
@@ -6639,8 +6700,8 @@ function lrSeed(n, opts) {
     opts,
   });
 }
-async function lrOpen(opts, n = 600) {
-  const p = await hopen(lrSeed(n, opts), n);
+async function lrOpen(opts, n = 600, links) {
+  const p = await hopen(lrSeed(n, opts, links), n);
   const box = await until(p, () => {
     const b = document.querySelector('#v-summary .rangebox');
     return b && b.querySelector('button') && b.textContent;
@@ -6711,12 +6772,10 @@ async function longRanges() {
       JSON.stringify(ids) === '["a","b","c"]' &&
         JSON.stringify(a.synopsis.map(x => x.t)) === JSON.stringify(firstA.map(i => 'a bullet from #' + i)) &&
         a.outcome === 'a as of #598' &&
-        a.key.length === 4 &&
-        a.key[0] === 0 &&
-        a.key[3] === 598,
+        JSON.stringify(a.key) === JSON.stringify(firstA),
       'L2: conversations joined by id in order (' +
         ids +
-        '); a has one bullet per part, in order, the last outcome and key ' +
+        "); a has one bullet per part, in order, the last outcome, and key numbers that are each part's first pick " +
         JSON.stringify(a.key),
     );
     const b = doc.convs.find(c => c.id === 'b');
@@ -6850,7 +6909,7 @@ async function longRanges() {
   await hcase('L6', async () => {
     const { p, k } = await lrOpen({ promptMax: 9000 });
     const doc = await lrRun(p, [], () => __rt.get('rangeSummaries/r0_599'));
-    const calls = await p.evaluate(() => __json);
+    const calls = (await p.evaluate(() => __json)).filter(c => !/\nPART SUMMARIES/.test(c.prompt));
     ok(
       k >= 20 && doc && doc.parts === k && calls.length === k && lrCover(calls, 600, 9000 - HMARGIN),
       'L6: at a 9,000-byte cap the span takes ' + k + ' parts, every one sent and merged',
@@ -6863,7 +6922,7 @@ async function longRanges() {
     const { p, k } = await lrOpen({ promptMax: 24576, enforce: 18000 });
     const doc = await lrRun(p, [], () => __rt.get('rangeSummaries/r0_599'));
     const r = await p.evaluate(() => ({ json: __json, log: __rt.sampleLog }));
-    const ok2 = r.json.filter((c, x) => r.log[x].code === null);
+    const ok2 = r.json.filter((c, x) => r.log[x].code === null && !/\nPART SUMMARIES/.test(c.prompt));
     ok(
       doc &&
         r.log.filter(c => c.code === 'prompt_too_large').length === 1 &&
@@ -6894,6 +6953,171 @@ async function longRanges() {
         doc.parts === undefined &&
         (await p.evaluate(() => __json.length)) === 1,
       'L8: a 100-message span at the full cap: one request, saved without parts',
+    );
+    await p.close();
+  });
+}
+
+/* longRanges2: the review's cases (release C): questions across parts, links that answer, special ids, a merge too big
+   to save (condensed), a failed save shown, and new messages arriving during a run */
+async function longRanges2() {
+  /* L9: an open question answered in a later part, and the links that do or don't answer one (F18 review 3, 5, 8) */
+  await hcase('L9', async () => {
+    /* #10, #20, #30, #40 are Ana's questions in part 1. #231 (Ben) replies to #30; #235 (Ana) replies to her own #20;
+       #240 (Ana) continues #40, and so (by type alone) does #241 (Ben): only Ben's reply answers. Part 2 answers #10
+       from its messages. */
+    const links = { 231: [30, 'r'], 235: [20, 'r'], 240: [40, 'c'], 241: [40, 'c'] };
+    const { p, k } = await lrOpen({ promptMax: 24576 }, 600, links);
+    const q = n => ({ conv: 'a', ask: n, to: 'anyone', note: 'Q' + n });
+    const doc = await lrRun(
+      p,
+      [
+        { __auto: true, add: { open: [q(10), q(20), q(30), q(40)] } },
+        {
+          __auto: true,
+          add: { answered: [{ conv: 'a', ask: 10, answer: 'Answered in part 2', refs: [250] }] },
+        },
+        {
+          __auto: true,
+          add: {
+            convs: [
+              { id: 'constructor', tag: 'x', synopsis: [{ t: 'odd', refs: [400] }], outcome: '', key: [400] },
+              { id: '__proto__', tag: 'x', synopsis: [{ t: 'odd', refs: [400] }], outcome: '', key: [400] },
+            ],
+            open: [{ conv: 'constructor', ask: 400, to: 'anyone', note: 'odd' }],
+            deals: [{ kind: 'sale', tag: '', conv: 'hasOwnProperty', text: 'odd', refs: [400] }],
+          },
+        },
+      ],
+      () => __rt.get('rangeSummaries/r0_599'),
+    );
+    const calls = await p.evaluate(() => __json);
+    ok(
+      k === 4 &&
+        /\nEARLIER OPEN QUESTIONS \(conversation: number: question\):\n(.*\n)*a: #10: Q10\n/.test(calls[1].prompt) &&
+        !/EARLIER OPEN QUESTIONS/.test(calls[0].prompt),
+      "L9: part 2's request carries part 1's open questions (a: #10: Q10), part 1's none",
+    );
+    const asks = doc ? doc.open.map(o => o.ask) : [];
+    ok(
+      doc &&
+        !asks.includes(10) &&
+        doc.answered.some(a => a.ask === 10 && a.answer === 'Answered in part 2' && a.conv === 'a'),
+      'L9: #10, asked in part 1 and answered in part 2, is answered, not open (open ' + JSON.stringify(asks) + ')',
+    );
+    ok(
+      doc && !asks.includes(30) && asks.includes(20) && asks.includes(40),
+      "L9: Ben's reply to #30 answers it; Ana replying to her own #20, or a continues link to #40, doesn't (open " +
+        JSON.stringify(asks) +
+        ')',
+    );
+    ok(
+      doc &&
+        JSON.stringify(doc.convs.map(c => c.id)) === '["a","b","c"]' &&
+        !asks.includes(400) &&
+        doc.deals.every(d => d.conv === 'a') &&
+        p.errors.length === 0,
+      'L9: conversation ids "constructor", "__proto__" and "hasOwnProperty" from a reply are dropped, not crashed on (' +
+        JSON.stringify(p.errors) +
+        ')',
+    );
+    await p.close();
+  });
+
+  /* L10: a merge too big to save is condensed under the 256 KiB document limit (F18 review 1) */
+  await hcase('L10', async () => {
+    const { p, k } = await lrOpen({ promptMax: 9000 });
+    await p.evaluate(() => (window.__big = 6000));
+    const doc = await lrRun(p, [], () => __rt.get('rangeSummaries/r0_599'));
+    const r = await p.evaluate(() => ({
+      calls: __json.map(c => ({ join: /\nPART SUMMARIES/.test(c.prompt), status: c.status })),
+      bytes: new TextEncoder().encode(JSON.stringify(__rt.get('rangeSummaries/r0_599') || null)).length,
+    }));
+    const joins = r.calls.filter(c => c.join);
+    ok(
+      k > 20 &&
+        doc &&
+        doc.condensed === true &&
+        doc.parts === k &&
+        r.bytes <= 262144 &&
+        JSON.stringify(doc.convs.map(c => [c.id, c.synopsis[0].t])) ===
+          '[["a","a condensed"],["b","b condensed"],["c","c condensed"]]' &&
+        joins.length >= 1 &&
+        r.calls.length === k + joins.length &&
+        joins.every(c => /^Joining the \d+ parts into one summary/.test(c.status)),
+      'L10: ' +
+        k +
+        ' parts with long bullets are condensed in ' +
+        joins.length +
+        ' more requests ("' +
+        (joins[0] || {}).status +
+        '") and saved in ' +
+        r.bytes +
+        ' bytes',
+    );
+    await p.close();
+  });
+
+  /* L11: a save that fails is shown, the summary stays on screen, and Save it again saves it (F18 review 1) */
+  await hcase('L11', async () => {
+    const { p } = await lrOpen({ promptMax: 24576 });
+    await p.evaluate(() => __rt.fails.push({ p: 'rangeSummaries/r0_599', op: 'set' }));
+    const t = await lrRun(p, [], () => {
+      const v = document.getElementById('v-summary').textContent;
+      return /Written, but not saved/.test(v) && v;
+    });
+    ok(
+      !!t &&
+        t.includes("Written, but not saved (unavailable). It's shown until this page reloads.") &&
+        /a as of #598/.test(t) &&
+        !(await lrDoc(p)),
+      'L11: a failed save says "Written, but not saved (unavailable)…" and the summary is shown',
+    );
+    await p.click('text=Save it again');
+    const doc = await until(p, () => __rt.get('rangeSummaries/r0_599'));
+    ok(
+      !!doc && (await until(p, () => !/Written, but not saved/.test(document.getElementById('v-summary').textContent))),
+      'L11: Save it again saves it and the warning goes',
+    );
+    await p.close();
+  });
+
+  /* L12: new messages arrive during a run of a window with no end (F18 review 2) */
+  await hcase('L12', async () => {
+    const { p } = await lrOpen({ promptMax: 24576 });
+    await scriptJson(p, [{ __auto: true }, { __wait: 3000 }]);
+    await p.click('#v-summary .rangebox button.primary');
+    await until(p, () => __json.length === 2);
+    await p.evaluate(m => __rt.write('chunks/c9600', { start: 600, msgs: [m] }), mk(600, { b: 'a newer message' }));
+    const box = await until(p, () => {
+      const b = document.querySelector('#v-summary .rangebox');
+      return S.msgs.length === 601 && b && b.textContent;
+    });
+    const btns = await p.evaluate(() =>
+      [...document.querySelectorAll('#v-summary .rangebox button')].map(b => [b.textContent, b.hidden, b.disabled]),
+    );
+    ok(
+      /Writing a summary for #0–#599 \(Fri 9:00 AM to Fri 6:59 PM\)…/.test(box) &&
+        /Writing part 2 of 4/.test(box) &&
+        JSON.stringify(btns) === '[["Stop",false,false]]',
+      'L12: with a new message the box shows the run for #0–#599 with Stop, not an idle button (' +
+        String(box).slice(0, 120) +
+        '…, ' +
+        JSON.stringify(btns) +
+        ')',
+    );
+    const doc = await until(p, () => __rt.get('rangeSummaries/r0_599'), null, 30000);
+    const v = await until(p, () => {
+      const t = document.getElementById('v-summary').textContent;
+      return /This summary covers #0–#599/.test(t) && t;
+    });
+    ok(
+      !!doc &&
+        !!v &&
+        v.includes("It doesn't include the 1 newer message after #599.") &&
+        /a as of #598/.test(v) &&
+        (await p.$('text=Write it again through #600')) !== null,
+      'L12: once written, the window (#0–#600) uses the summary of #0–#599 and says what it leaves out',
     );
     await p.close();
   });
@@ -7484,7 +7708,9 @@ const SECTIONS = {
   schedule,
   claims,
   deeper,
+  deeperBudget,
   longRanges,
+  longRanges2,
   olderByDay,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
