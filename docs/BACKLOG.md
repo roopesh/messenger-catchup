@@ -33,6 +33,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
 | R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
+| R18 (A1) | P2 | tooling | `npm test` took 12 minutes, mostly the sim waiting one case at a time · **done** (v1.23.0) |
+| R19 (A1) | P3 | tooling | `tools/sync.py` leaves files open: the Python suite prints "Exception ignored … ResourceWarning" noise that `-W error::ResourceWarning` doesn't catch |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
@@ -378,6 +380,14 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### R17 · P3 · The helper notice runs ahead of the release
 - **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.
 - **Options:** run `tools/release.sh` straight after every merge that bumps the helper (today's practice, so the gap is usually minutes); or have the page hold E until a day after `versions.helper` first appears (a `since` the skill keeps), which the owner turned down for F5 ("flagged right away").
+
+### R18 (A1) · P2 · The test suite took 12 minutes · done (v1.23.0)
+- **Found:** on the owner's Mac, `npm test` took 737 s at 12% CPU: the sim 590 s (its cases one after another, mostly waiting on the helper's timers), the page tests 125 s, Python 20 s. CI took 11–14 minutes.
+- **Done in v1.23.0:** `tests/sim.js` registers each case with `sim(name, fn)` and runs them in parallel, each in its own browser context, three times the CPU count at a time (`SIM_JOBS`), each case's lines printed together under its name. A3 and A5 go on from A2's storage (`after`, `SHARED`). `tests/page.test.js` runs each section in its own process, the CPU count at a time (`PAGE_JOBS`); `photos` and `history` are split in two. `tests/run.js` runs `composer.sim.js` and, for `npm test`, the Python suites alongside the sim. Same PASS lines as before. Now about 1.5 minutes on the Mac.
+- **Floor:** the sim's longest chain is A1, A2 then A3, A5 (about 64 s), which has no top-of-chat wait, so helper 2.1's `topMs` shortens other cases but not the sim's total here; it helps on CI, which runs fewer at a time.
+
+### R19 (A1) · P3 · `tools/sync.py` leaves files open
+- **Found:** R18. The Python suite prints "Exception ignored while finalizing file … ResourceWarning: unclosed file" for `tools/sync.py`'s `read()` (`open(p).read()`), once per copied file. The warning is raised in a finalizer, so `-W error::ResourceWarning` doesn't fail on it. Use `with open(...)`.
 
 ### R3 · P3 · Messenger markup dependency (known) · done (v1.20.0, option B)
 - English UI labels, `[role="log"]`, `data-message-id`, "Go to replied message", "Reply to this message", the `At <time>, <name>: ` aria-label shape. See F4.
