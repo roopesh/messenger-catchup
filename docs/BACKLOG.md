@@ -482,7 +482,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### R10 · P3 · The page doesn't mention the Claude Desktop app · done (v1.25.0)
 - **Where:** `page.html` › "Your computer has to be online…" (about line 1388)
 - **What:** v1.21.0 added "the Claude Desktop app is open" to the requirements in the setup skill and README: Claude in Chrome needs it when Claude runs from claude.ai, the phone, Cowork or a scheduled run. The page's own requirements text doesn't say so.
-- **Done in v1.25.0:** the page's "Your computer has to be online" item says to keep the Claude Desktop app open, in the same words as setup and the README (claude.ai, the phone or a schedule). The live check below is still open; the owner runs refreshes from the Desktop app, the phone and schedules, which the wording covers.
+- **Done in v1.25.0:** the page's "Your computer has to be online" item says to keep the Claude Desktop app open, in the same words as setup and the README (claude.ai, the phone, Cowork or a schedule). The live check below is still open; the owner runs refreshes from the Desktop app, the phone and schedules, which the wording covers.
 - **Fix (original):** add the line with the next page change (it bumps `PAGE_VERSION` and republishes every page, too much for one sentence). Check first whether claude.ai in the same Chrome needs Desktop open (R6's live checks); if not, drop that case from the wording everywhere.
 
 ### R11 · P3 · Desktop local scheduled tasks

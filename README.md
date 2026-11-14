@@ -15,7 +15,7 @@ Code execution must be on (claude.ai: Settings › Capabilities › **Code execu
 ## Requirements (read this)
 - Refreshes drive the Messenger tab in your Chrome, so they only run while your **computer is on, awake and unlocked**.
 - **Chrome** with the **Claude in Chrome** extension, signed in to the same Claude account.
-- Keep the **Claude Desktop app** open on that computer, signed in to the same account (Claude in Chrome needs it when Claude runs from claude.ai, the phone or a scheduled run).
+- Keep the **Claude Desktop app** open on that computer, signed in to the same account (Claude in Chrome needs it when Claude runs from claude.ai, the phone, Cowork or a scheduled run).
 - **Facebook signed in**, language set to **English**.
 - Keep the Messenger tab Claude opens **open and in front** in its window.
 - Missed runs are skipped; the next run catches up.

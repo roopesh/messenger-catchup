@@ -1610,10 +1610,10 @@ class TestScheduling(unittest.TestCase):
     def test_desktop_requirement(self):
         self.assertIn("**The Claude Desktop app is open**", section(in_setup("SKILL.md"), "Requirements"))
         self.assertIn("**Claude Desktop app**", section(read("README.md"), "Requirements"))
-        # R10 (v1.25.0): the page's own requirements say it too, in the same words (claude.ai, the phone, a schedule)
+        # R10 (v1.25.0): the page's own requirements say it too, in the same words as setup (claude.ai, the phone, Cowork, a schedule)
         page = re.sub(r"\s+", " ", read("plugin", "skills", "refresh", "assets", "page.html"))
         self.assertIn("Keep the Claude Desktop app open on that computer too", page)
-        self.assertIn("when a refresh runs from claude.ai, the phone or a schedule", page)
+        self.assertIn("when a refresh runs from claude.ai, the phone, Cowork or a schedule", page)
 
     def test_stop_and_change_leave_one_schedule(self):
         """H1 and H2: stopping clears the token, so every old follow-up and task goes stale; a recurring task that
