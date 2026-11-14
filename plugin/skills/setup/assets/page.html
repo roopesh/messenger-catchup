@@ -605,6 +605,38 @@
     white-space: pre-line;
     padding-right: 6px;
   }
+  /* F23: above a reply to a message in another conversation, one quiet line naming it; it opens that message */
+  .msg > .xr {
+    grid-column: 3;
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    text-align: left;
+    background: none;
+    border: 0;
+    border-left: 2px solid var(--olive);
+    padding: 0 0 0 7px;
+    font: 0.8rem/1.4 var(--body);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .msg > .xr b {
+    font-weight: 600;
+  }
+  .msg > .xr:hover .xq,
+  .msg > .xr:focus-visible .xq {
+    color: var(--fg);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  @media (max-width: 560px) {
+    .msg > .xr {
+      grid-column: 1/-1;
+    }
+  }
   .divider {
     font-family: var(--mono);
     font-size: 0.72rem;
@@ -2796,14 +2828,20 @@
       const lk = L[i];
       return lk && lk[1] === "c" && run.includes(lk[0]) && sameRun(S.byI.get(run[run.length - 1]), S.byI.get(i));
     };
+    /* F23: a Messenger reply to a message in another conversation gets a "replying to" line, except the first message
+       shown, whose parent the conversation already shows above it (B40's ctxLine) */
+    const xo = i => {
+      const xr = i !== mem[0] && crossParent(i, L[i]);
+      return xr ? { xr } : undefined;
+    };
     (function add(arr, into) {
       arr.forEach(h => {
         const grp = [h].concat(conts.get(h) || []);
         runsOf(grp, joins).forEach(run =>
           into.append(
             run.length > 1
-              ? blockOf(run, (i, pos) => onRow(i, L[i], shown(i), pos))
-              : onRow(run[0], L[run[0]], shown(run[0])),
+              ? blockOf(run, (i, pos) => onRow(i, L[i], shown(i), pos, xo(i)))
+              : onRow(run[0], L[run[0]], shown(run[0]), undefined, xo(run[0])),
           ),
         );
         const g = [].concat(...grp.map(i => kids.get(i) || [])).sort((a, b) => a - b);
@@ -2973,6 +3011,30 @@
     }
     return run;
   }
+  /* F23: the stored parent of message i when its link lk is a Messenger reply (r, rq, rg; never a guessed i or c) and
+     the parent sits in another conversation (or in none); else null */
+  const REPLY_LINKS = new Set(["r", "rq", "rg"]);
+  function crossParent(i, lk) {
+    if (!lk || lk[0] == null || !REPLY_LINKS.has(lk[1])) return null;
+    const p = S.byI.get(lk[0]);
+    return p && convOfMsg(p.i) !== convOfMsg(i) ? p : null;
+  }
+  /* the line above such a reply: "↩ replying to Ana: <start of her text>", opening the parent where it is */
+  function xrLine(p) {
+    const b = el("button", "xr");
+    b.type = "button";
+    const pc = convOfMsg(p.i);
+    b.title = "Show #" + p.i + (pc ? " in “" + pc.title + "”" : "");
+    const body = p.b && !/^\w[\w ]* sent \d+ photos$/.test(p.b) ? trunc(p.b, 120) : "";
+    b.append(
+      "↩ replying to ",
+      el("b", null, nameOf(p)),
+      ": ",
+      el("span", "xq", body || (p.p ? "[photo]" : "[attachment]")),
+    );
+    b.onclick = () => goMsg(p.i);
+    return b;
+  }
   function ctxLine(mem, convId) {
     const m0 = S.byI.get(mem[0]);
     const lk = ((S.threading || {}).links || {})[mem[0]];
@@ -3022,8 +3084,8 @@
   }
   function threadTree(mem) {
     const set = new Set(mem);
-    const tree = convTree(mem, (i, lk, showQ, pos) => {
-      const r = msgRow(S.byI.get(i), lk, showQ, pos);
+    const tree = convTree(mem, (i, lk, showQ, pos, o) => {
+      const r = msgRow(S.byI.get(i), lk, showQ, pos, o);
       r.removeAttribute("id");
       r.dataset.i = i;
       return r;
@@ -4209,16 +4271,23 @@
   };
   /* pos: this row is a bubble in a block (blockOf); pos.more: not the first, so no header of its own */
   /* o.ctx: a copy shown as context in another conversation (B40): no row id, no Reply here */
+  /* o.xr: the parent of a reply across conversations (F23): a "replying to" line above the bubble stands in for the
+     reply link and the quote */
   function msgRow(m, lk, showQuote, pos, o = {}) {
     const r = el("div", "msg" + (m.f === "You" ? " own" : "") + (pos ? " bub" + (pos.more ? " more" : " first") : ""));
     if (o.ctx) r.dataset.ctx = m.i;
     else r.id = "m" + m.i;
+    if (o.xr) {
+      r.classList.add("has-xr");
+      r.append(xrLine(o.xr));
+      lk = null;
+    }
     r.append(el("span", "n", "#" + m.i), el("span", "t", m.t));
     const c = el("div", "c");
     const head = el("div");
     if (pos && pos.more) head.className = "sr";
     head.append(el("span", pos && pos.more ? null : "who", nameOf(m)));
-    if (m.r && !lk) head.append(el("span", "muted", " ↪ " + m.r));
+    if (m.r && !lk && !o.xr) head.append(el("span", "muted", " ↪ " + m.r));
     if (lk && lk[0] != null && !(pos && pos.more)) {
       const k = LK[lk[1]] || LK.i;
       const p = S.byI.get(lk[0]);
@@ -4232,7 +4301,7 @@
       head.append(a);
     }
     c.append(head);
-    if (m.q && (layout === "flat" || showQuote)) c.append(el("div", "quote", m.q));
+    if (m.q && !o.xr && (layout === "flat" || showQuote)) c.append(el("div", "quote", m.q));
     if (m.b && !/^\w[\w ]* sent \d+ photos$/.test(m.b)) c.append(el("div", "body", m.b));
     const pics = (S.photos && S.photos[m.i]) || [];
     if (pics.length) {
@@ -4763,7 +4832,7 @@
     d.append(s);
     const cx = ctxLine(mem, cv.id);
     if (cx) d.append(cx);
-    const tree = convTree(mem, (i, lk, showQ, pos) => msgRow(S.byI.get(i), lk, showQ, pos));
+    const tree = convTree(mem, (i, lk, showQ, pos, o) => msgRow(S.byI.get(i), lk, showQ, pos, o));
     d.append(tree);
     return d;
   }

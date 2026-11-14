@@ -2019,6 +2019,7 @@ function viewSeed() {
 }
 async function viewPage(o = {}) {
   const V = viewSeed();
+  if (o.tweak) o.tweak(V);
   const p = await open(SEED(), PAGE, o.ctx);
   await paste(p, JSON.stringify(cap(V.msgs)));
   await p.evaluate(
@@ -7716,6 +7717,197 @@ async function olderByDay() {
   });
 }
 
+/* ---------- crossReply: Messenger replies across conversations, mid-conversation (F23) ----------
+   viewSeed with more links in "Maps" (t5, #39-#49 without #44): #45 is Cy's Messenger reply to Ana's #34 (in "packs"),
+   #46 replies to #45 (same conversation), #47 and #48 carry guessed links (i, c) to "gap" and "Stove", #49 replies to
+   #53 (in "Snacks"), whose text is markup, #43 replies to Ana's photo #31, and #42 to her long #30. "lend" still starts
+   with Dee's reply to #30 (B40). */
+const XR_MARKUP = '<img src=x onerror="window.__xss=1"><b>bold</b> & <i>more</i>';
+function xrTweak(V) {
+  const set = (i, o) => Object.assign(V.msgs[i], o);
+  set(45, { f: 'Cy', b: 'Does it fit a bear can?', r: 'Ana', q: 'Can meet Saturday at the trailhead' });
+  set(46, { f: 'Ben', b: 'Mine does', r: 'Cy', q: 'Does it fit a bear can?' });
+  set(49, { f: 'Dee', b: 'Ha, same', r: 'Cy', q: '<b>bold</b>' });
+  set(53, { f: 'Cy', b: XR_MARKUP });
+  set(43, { f: 'Ben', b: 'Which color is that?', r: 'Ana', q: '' });
+  set(42, { f: 'Cy', b: 'Is the hip belt padded?', r: 'Ana', q: 'Selling my old pack' });
+  Object.assign(V.th.links, {
+    42: [30, 'r'],
+    43: [31, 'rg'],
+    45: [34, 'r'],
+    46: [45, 'r'],
+    47: [36, 'i'],
+    48: [37, 'c'],
+    49: [53, 'rq'],
+  });
+}
+const xrOf = (p, i) =>
+  p.evaluate(i => {
+    const r = document.getElementById('m' + i);
+    const x = r && r.querySelector(':scope > .xr');
+    return x ? { text: x.textContent, title: x.title, html: x.innerHTML, lk: !!r.querySelector('a.lk') } : null;
+  }, i);
+async function crossReply() {
+  let p = await viewPage({ tweak: xrTweak });
+  await p.click('#lay-thread');
+  await p.evaluate(() => {
+    document.querySelectorAll('#msgs details.conv').forEach(d => (d.open = ['t5', 'lend'].includes(d.dataset.conv)));
+  });
+  await p.waitForTimeout(150);
+  const x45 = await xrOf(p, 45);
+  ok(
+    x45 &&
+      x45.text === '↩ replying to Ana: Can meet Saturday at the trailhead' &&
+      /Show #34 in “Pack for sale”/.test(x45.title) &&
+      !x45.lk,
+    'F23: a Messenger reply mid-conversation to a message in another conversation shows "↩ replying to Ana: <her text>" ' +
+      'in place of the reply link (' +
+      JSON.stringify(x45) +
+      ')',
+  );
+  const x43 = await xrOf(p, 43);
+  const x42 = await xrOf(p, 42);
+  ok(
+    x43 &&
+      x43.text === '↩ replying to Ana: [photo]' &&
+      x42 &&
+      x42.text.startsWith('↩ replying to Ana: Selling my old pack, $40.') &&
+      x42.text.length < 160,
+    'F23: a reply to a photo says [photo], and a long parent is cut to its start (' +
+      JSON.stringify([x43 && x43.text, x42 && x42.text.length]) +
+      ')',
+  );
+  ok(
+    x45 && !(await xrOf(p, 46)) && (await p.$('#m46 a.lk')) && (await p.$eval('#m46', r => !!r.closest('.kids'))),
+    'F23: a reply to a message in the same conversation nests as before, with no "replying to" line (while #45 has one)',
+  );
+  ok(
+    x45 && !(await xrOf(p, 47)) && !(await xrOf(p, 48)) && (await p.$('#m47 a.lk.i')) && (await p.$('#m48 a.lk.c')),
+    'F23: guessed links across conversations (answers, continues) keep their link and get no "replying to" line',
+  );
+  const x49 = await xrOf(p, 49);
+  ok(
+    x49 &&
+      x49.text === '↩ replying to Cy: ' + XR_MARKUP &&
+      !/<img|<b>bold/.test(x49.html) &&
+      (await p.evaluate(() => !window.__xss && !document.querySelector('#m49 img, #m49 .xr i'))),
+    "F23: markup in the parent's text shows as literal text (" + JSON.stringify(x49 && x49.text) + ')',
+  );
+  const lend = await p.evaluate(() => {
+    const d = document.querySelector('#msgs details.conv[data-conv="lend"]');
+    return {
+      ctx: d.querySelectorAll(':scope > .ctx').length,
+      xr: d.querySelectorAll('.xr').length,
+      lk: !!d.querySelector('#m50 a.lk'),
+      ctxText: (d.querySelector(':scope > .ctx .lab') || {}).textContent,
+    };
+  });
+  ok(
+    x45 && lend.ctx === 1 && lend.xr === 0 && lend.lk && /Pack for sale/.test(lend.ctxText),
+    'F23: B40 unchanged: a conversation that starts with such a reply shows its context block once and no ' +
+      '"replying to" line (' +
+      JSON.stringify(lend) +
+      ')',
+  );
+  await tryClick(p, '#m45 > .xr');
+  ok(
+    await until(p, () => {
+      const n = document.querySelector('#m34.flash');
+      const r = n && n.getBoundingClientRect();
+      return r && r.height && r.top >= 0 && r.bottom <= innerHeight && n.closest('details').dataset.conv === 'packs';
+    }),
+    'F23: clicking the line shows #34 in its own conversation ("packs", opened)',
+  );
+  await p.evaluate(() => {
+    location.hash = '#summary';
+  });
+  await p.waitForTimeout(200);
+  await p.click('#v-summary article.cv[data-conv="t5"] details.thr > summary');
+  await p.waitForTimeout(200);
+  ok(
+    (await p
+      .$eval('#v-summary article.cv[data-conv="t5"] .msg[data-i="45"] > .xr', x => x.textContent)
+      .catch(() => '')) === '↩ replying to Ana: Can meet Saturday at the trailhead' &&
+      !(await p.$('#v-summary article.cv[data-conv="t5"] .msg[data-i="46"] > .xr')),
+    "F23: the summary card's thread shows the same line",
+  );
+  ok(p.errors.length === 0, 'F23: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  /* a phone, dark: one line, cut with an ellipsis, nothing scrolls sideways */
+  p = await viewPage({
+    tweak: xrTweak,
+    ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme: 'dark' },
+  });
+  await p.click('#lay-thread');
+  await p.evaluate(() => {
+    document.querySelectorAll('#msgs details.conv').forEach(d => (d.open = d.dataset.conv === 't5'));
+  });
+  await p.waitForTimeout(150);
+  const ph = await p.evaluate(() => {
+    const x = document.querySelector('#m42 > .xr');
+    const r = x && x.getBoundingClientRect();
+    const row = document.getElementById('m42').getBoundingClientRect();
+    const who = document.querySelector('#m42 .who').getBoundingClientRect();
+    const cs = x && getComputedStyle(x);
+    return {
+      line: !!x,
+      oneLine: !!r && r.height < 30,
+      inRow: !!r && r.left >= row.left && r.right <= row.right + 0.5,
+      above: !!r && r.bottom <= who.top + 0.5,
+      cut: !!x && x.scrollWidth > x.clientWidth && cs.textOverflow === 'ellipsis',
+      color: cs && cs.color,
+      scrollW: document.documentElement.scrollWidth,
+    };
+  });
+  ok(
+    ph.line && ph.oneLine && ph.inRow && ph.above && ph.cut && ph.scrollW <= 390 && ph.color === 'rgb(163, 166, 152)',
+    'F23: at 390 px (dark) the line sits above the bubble on one line, cut with an ellipsis, in the muted color, and ' +
+      'nothing scrolls sideways (' +
+      JSON.stringify(ph) +
+      ')',
+  );
+  ok(p.errors.length === 0, 'F23 phone: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  /* the parent on a day Show older hasn't loaded (F15): the line loads that day and shows it */
+  await ocase('F23 older', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    await p.click('#lay-thread');
+    const t = msgs[n - 10 * 460].i;
+    const i = await p.evaluate(t => {
+      const T = S.threading;
+      const shown = new Set([...document.querySelectorAll('#msgs .msg[id]')].map(x => +x.id.slice(1)));
+      const c = T.convs.find(c => c.members.filter(k => shown.has(k)).length >= 3 && !c.members.includes(t));
+      const mem = c.members.filter(k => shown.has(k));
+      const i = mem[mem.length - 1];
+      __rt.write('threading/current', {
+        convs: T.convs,
+        links: Object.assign({}, T.links, { [i]: [t, 'r'] }),
+        to: T.to,
+        note: '',
+      });
+      return i;
+    }, t);
+    await until(p, i => document.querySelector('#m' + i + ' > .xr'), i, 5000);
+    const before = await p.evaluate(t => !!document.getElementById('m' + t), t);
+    await p.evaluate(i => {
+      const r = document.getElementById('m' + i);
+      r.closest('details').open = true;
+      r.querySelector(':scope > .xr').click();
+    }, i);
+    await p.waitForTimeout(700);
+    const shown = await p.evaluate(t => {
+      const x = document.getElementById('m' + t);
+      const r = x && x.getBoundingClientRect();
+      return !!x && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight && x.classList.contains('flash');
+    }, t);
+    ok(!before && shown, 'F23: the line on #' + i + ' opens #' + t + ' (10 days back, not loaded) by loading its day');
+    ok(p.errors.length === 0, 'F23 older: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
 const SECTIONS = {
   importer,
   robustness,
@@ -7742,6 +7934,7 @@ const SECTIONS = {
   longRanges,
   longRanges2,
   olderByDay,
+  crossReply,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1
