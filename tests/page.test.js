@@ -3649,6 +3649,282 @@ async function history2() {
   });
 }
 
+/* ---------- digests: per-day digests in Ask's older history (F16) ----------
+   catchup.py writes digests/m<YYYY-MM> {month, days:{day: {bullets:[{t, refs}], fromI, toI, n, at}}}; the page only
+   reads them. A day line takes its digest when it covers the whole day the digest was written for; title-only day lines
+   stay the floor, so every older message is still in some line, within the same budget. */
+/* digest documents for the days of msgs that keep(k, day, ids) picks; make(k, ids) gives a day's bullets */
+function hdigests(msgs, keep = () => true, make) {
+  const by = new Map();
+  msgs.forEach(m => (by.has(m.d) ? by.get(m.d).push(m.i) : by.set(m.d, [m.i])));
+  const docs = {};
+  [...by].forEach(([d, ids], k) => {
+    if (!keep(k, d, ids)) return;
+    const id = 'digests/m' + d.slice(0, 7);
+    docs[id] = docs[id] || { month: d.slice(0, 7), days: {} };
+    docs[id].days[d] = {
+      bullets: make
+        ? make(k, ids)
+        : [
+            { t: 'Ana sold a stove on day ' + k, refs: [ids[1], ids[2]] },
+            { t: 'Ben asked about permits on day ' + k, refs: [ids[5]] },
+          ],
+      fromI: ids[0],
+      toI: ids[ids.length - 1],
+      n: ids.length,
+      at: 'Thu Nov 12, 9:00 AM',
+    };
+  });
+  return docs;
+}
+/* the day of each message and each day's first and last number */
+function hdays(msgs) {
+  const span = new Map();
+  msgs.forEach(m => {
+    const s = span.get(m.d);
+    if (s) s[1] = m.i;
+    else span.set(m.d, [m.i, m.i]);
+  });
+  return span;
+}
+/* the page has read n days' digests (an older page has no S.digests: go on, so its checks fail on what it sends) */
+const dgLoaded = (p, n) => until(p, n => !S.digests || S.digests.size === n, n);
+const digestLines = dig => dig.filter(([, , l]) => /\] [\d,]+ messages?\. Digest: /.test(l));
+const citedIn = l => (l.match(/\[#\d+(?:, #\d+)*\]/g) || []).flatMap(x => x.match(/\d+/g).map(Number));
+
+async function digests() {
+  /* D1: no digests: title-only day lines as before; digests written later are used by the next question, within the
+     same cap, every older message still in a line, and the note and the saved row say so */
+  await hcase('D1', async () => {
+    const msgs = hmsgs(800, { perDay: 134 });
+    const span = hdays(msgs);
+    const p = await hopen(hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: 16384 } }), 800);
+    let r = await hask(p, 'Anything about permits?', true);
+    let { dig, raw } = parts(r.prompt);
+    ok(
+      dig.length > 0 &&
+        digestLines(dig).length === 0 &&
+        dig.some(([, , l]) => /\] \d+ messages\. Busiest: /.test(l)) &&
+        !/Digest:|Day digests/.test(r.prompt + r.note),
+      'D1: with no digests, the day lines are title-only as before ("Busiest: …") and nothing mentions digests',
+    );
+    await p.evaluate(docs => Object.entries(docs).forEach(([k, v]) => __rt.write(k, v)), hdigests(msgs));
+    await dgLoaded(p, 6);
+    const w0 = await p.evaluate(() => __rt.writes.length);
+    r = await hask(p, 'Who sold a stove?', true);
+    ({ dig, raw } = parts(r.prompt));
+    const c = raw[0];
+    const dl = digestLines(dig);
+    ok(
+      r.calls.length === 1 && r.calls[0].bytes <= 16384 - HMARGIN && dl.length > 0,
+      'D1: with digests, ' +
+        dl.length +
+        ' day lines carry one, in one call of ' +
+        r.calls[0].bytes +
+        ' bytes (cap 16 KiB less the margin)',
+    );
+    ok(
+      dl.every(([a, b, l]) => {
+        const d = msgs[a].d,
+          k = Math.floor(a / 134);
+        const cites = citedIn(l.slice(l.indexOf('Digest: ')));
+        return (
+          span.get(d)[0] === a &&
+          span.get(d)[1] === b &&
+          l.includes('Ana sold a stove on day ' + k + ' [#' + (a + 1) + ', #' + (a + 2) + ']') &&
+          l.includes(' | Ben asked about permits on day ' + k + ' [#' + (a + 5) + ']') &&
+          cites.length === 3 &&
+          cites.every(i => i >= a && i <= b)
+        );
+      }),
+      "D1: each digest line spans its whole day and cites that day's messages after each bullet",
+    );
+    const missing = uncovered(dig, hthreads(800).threading.convs, c);
+    ok(
+      dig[0][0] === 0 && missing.length === 0 && dig.every(([, b]) => b < c),
+      'D1: every message before #' + c + ' is still in a line (' + missing.length + ' missing), none reaches #' + c,
+    );
+    const n = dl.length,
+      from = n ? dl[0][0] : -1,
+      to = n ? dl[n - 1][1] : -1;
+    const days = (a, b) => {
+      if (a < 0) return '';
+      const x = msgs[a].d.slice(5).split('-').map(Number),
+        y = msgs[b].d.slice(5).split('-').map(Number);
+      const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return x.join() === y.join()
+        ? M[x[0] - 1] + ' ' + x[1]
+        : M[x[0] - 1] + ' ' + x[1] + '–' + (x[0] === y[0] ? '' : M[y[0] - 1] + ' ') + y[1];
+    };
+    ok(
+      r.prompt.includes(
+        'The day lines from #' + from + ' to #' + to + ' that say Digest: carry a few bullets on that day',
+      ) && r.note.includes(' Day digests for ' + n + ' day' + (n === 1 ? '' : 's') + ' (' + days(from, to) + ').'),
+      'D1: "What you have" and the note say which day lines carry digests ("' + r.note + '")',
+    );
+    const qa = await until(p, () =>
+      Object.entries(Object.fromEntries(__rt.store)).find(
+        ([k, v]) => k.startsWith('qa/a') && v.q === 'Who sold a stove?',
+      ),
+    );
+    const sent = qa && qa[1].sent;
+    ok(
+      sent &&
+        sent.from === c &&
+        sent.digests &&
+        sent.digests.n === n &&
+        sent.digests.from === from &&
+        sent.digests.to === to,
+      'D1: the qa row saves sent.digests ' + JSON.stringify(sent && sent.digests),
+    );
+    ok(
+      (await p.textContent('#qa-list')).includes(', day digests #' + from + '–#' + to),
+      'D1: Earlier questions says digests were used',
+    );
+    ok(
+      !(await p.evaluate(w0 => __rt.writes.slice(w0).some(w => w.p.startsWith('digests/')), w0)),
+      'D1: the page never writes digests',
+    );
+    ok(p.errors.length === 0, 'D1: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* D2: a day without a digest, one written for another span, one citing only other days or unstored numbers, and
+     one with a bad bullet: each falls back to title-only or keeps only what it may cite */
+  await hcase('D2', async () => {
+    const msgs = hmsgs(800, { perDay: 100 });
+    const docs = hdigests(
+      msgs,
+      k => k !== 1,
+      (k, ids) =>
+        k === 2
+          ? [{ t: 'Too early', refs: [ids[1]] }]
+          : k === 4
+            ? [{ t: 'Elsewhere', refs: [5, 99999] }]
+            : k === 5
+              ? [
+                  { t: 'Mixed refs', refs: [5, ids[3], ids[3] + 1000] },
+                  { t: 'No list', refs: 'x' },
+                  { t: 7, refs: [ids[1]] },
+                ]
+              : [{ t: 'Plain day ' + k, refs: [ids[2]] }],
+    );
+    const d2 = msgs[200].d;
+    docs['digests/m' + d2.slice(0, 7)].days[d2].fromI = 199; /* claims a day that started a message earlier */
+    const p = await hopen(
+      hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: 12288 }, docs }),
+      800,
+    );
+    await dgLoaded(p, 7);
+    const r = await hask(p, 'What happened?', true);
+    const { dig } = parts(r.prompt);
+    const dayLine = k => dig.find(([a, b, l]) => a === k * 100 && b === k * 100 + 99 && /\] 100 messages\./.test(l));
+    const kinds = [0, 1, 2, 3, 4, 5].map(k => {
+      const x = dayLine(k);
+      return x ? (/Digest: /.test(x[2]) ? 'D' : /Busiest: |Not grouped/.test(x[2]) ? 'T' : '?') : '-';
+    });
+    ok(
+      kinds.join('') === 'DTTDTD',
+      'D2: days 0, 3 and 5 carry their digest; day 1 (none), 2 (written for another span) and 4 (cites nothing of its own) are title-only: ' +
+        kinds.join(''),
+    );
+    const five = dayLine(5);
+    ok(
+      five && five[2].endsWith('100 messages. Digest: Mixed refs [#503]'),
+      'D2: a bullet keeps only the numbers of its own day, and bullets with bad fields are left out: ' +
+        (five && five[2]),
+    );
+    ok(r.calls.length === 1 && r.calls[0].bytes <= 12288 - HMARGIN, 'D2: one call within the cap');
+    ok(p.errors.length === 0, 'D2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* D3: long digests at a small cap: within the cap, and they never push older days out: the first line is the same
+     as without digests (title-only lines are the floor) */
+  await hcase('D3', async () => {
+    const msgs = hmsgs(800, { perDay: 20 });
+    const long = (k, ids) =>
+      Array.from({ length: 8 }, (_, j) => ({
+        t: ('Day ' + k + ' bullet ' + j + ' about the long ridge trail permits and the spare tent poles ')
+          .repeat(3)
+          .slice(0, 238),
+        refs: ids.slice(j, j + 10),
+      }));
+    const first = {};
+    for (const [label, docs] of [
+      ['without', {}],
+      ['with', hdigests(msgs, () => true, long)],
+    ]) {
+      for (const cap of [12288, 32768]) {
+        const p = await hopen(
+          hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: cap }, docs }),
+          800,
+        );
+        if (label === 'with') await dgLoaded(p, 40);
+        const r = await hask(p, 'Anything about permits?', true);
+        const { dig, raw } = parts(r.prompt);
+        first[label + cap] = dig.length ? dig[0][0] : null;
+        ok(
+          r.calls.length === 1 && r.calls[0].bytes <= cap - HMARGIN,
+          'D3: ' + label + ' digests at ' + cap + ': one call of ' + r.calls[0].bytes + ' bytes',
+        );
+        if (label === 'with') {
+          const dl = digestLines(dig);
+          /* at 12 KiB the digests' room (half the summaries' share) is smaller than one of these long ones */
+          ok(
+            (cap < 32768 || dl.length > 0) &&
+              dl.every(([a, b, l]) => citedIn(l.slice(l.indexOf('Digest: '))).every(i => i >= a && i <= b)),
+            'D3: at ' +
+              cap +
+              ', ' +
+              dl.length +
+              ' of ' +
+              dig.filter(([, , l]) => /\] \d+ messages\./.test(l)).length +
+              ' day lines carry a digest, each citing only its day',
+          );
+          const missing = first['without' + cap] === 0 ? uncovered(dig, hthreads(800).threading.convs, raw[0]) : [];
+          ok(
+            first['with' + cap] === first['without' + cap] && missing.length === 0,
+            'D3: at ' +
+              cap +
+              ' the summaries start at #' +
+              first['with' + cap] +
+              ' with digests, #' +
+              first['without' + cap] +
+              ' without; ' +
+              missing.length +
+              ' messages missing',
+          );
+        }
+        await p.close();
+      }
+    }
+  });
+
+  /* D4: dayLines(fromI, toI), for other prompts that summarize a stretch by day */
+  await hcase('D4', async () => {
+    const msgs = hmsgs(300, { perDay: 100 });
+    const p = await hopen(hseed(msgs, { threads: true, docs: hdigests(msgs, k => k === 1) }), 300);
+    await dgLoaded(p, 1);
+    const ls = await p.evaluate(() =>
+      typeof dayLines === 'function' ? [dayLines(0, 299), dayLines(150, 299), dayLines(5, 3)] : [[], [], []],
+    );
+    ok(
+      ls[0].length === 3 &&
+        ls[0].map(l => (l.dg ? 'D' : 'T')).join('') === 'TDT' &&
+        ls[0][1].a === 100 &&
+        ls[0][1].b === 199 &&
+        ls[0][1].text.startsWith('[#100–#199, Oct 2] 100 messages. Digest: Ana sold a stove on day 1 [#101, #102]') &&
+        ls[0].every(l => l.kind === 'day' && l.bytes === new TextEncoder().encode(l.text).length + 1),
+      'D4: dayLines gives a line per day, the digest where a day has one: ' +
+        ls[0].map(l => l.text.slice(0, 40)).join(' / '),
+    );
+    ok(
+      ls[1].length === 2 && !ls[1][0].dg && ls[1][0].a === 150 && ls[2].length === 0,
+      'D4: a stretch starting mid-day gets that day title-only (the digest covers the whole day); an empty stretch, nothing',
+    );
+    ok(p.errors.length === 0, 'D4: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
 /* ---------- R2: photos stored as they upload ----------
    Each photo is indexed (photos/b<start>) the moment it lands, refresh/lastImport says "uploading" with a heartbeat
    while they store, owed slots are on record (null, and meta/chat.photosOwed), every upload error code has its own
@@ -6376,6 +6652,7 @@ const SECTIONS = {
   standIn,
   history,
   history2,
+  digests,
   notices,
   schedule,
   claims,
