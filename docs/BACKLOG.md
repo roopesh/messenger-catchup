@@ -120,8 +120,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F18 | P3 | feature | Range summaries longer than one request: split into parts and merge |
 | F19 | P2 | feature | Short claims ("In", "dibs", "in for 2") in buy/sell chats thread to the latest open offer, not to whatever came before (issue #41) · **done** (v1.23.0: `REACT?` lines, Claude decides; deal `claims` and `status`) |
 | F20 | P2 | feature | A `move` spec key: put an already-built message into another conversation (`relink` can only change its link) (issue #41) · **done** (v1.23.0) |
-| F21 (A2) | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
-| F22 (A2) | P3 | feature | The page could show a deal's `status` ("sold", "pending"), which v1.23.0 stores; release B shows `claims` only |
+| F21 | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
+| F22 | P3 | feature | The page could show a deal's `status` ("sold", "pending"), which v1.23.0 stores; release B shows `claims` only |
 
 ---
 
