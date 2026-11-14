@@ -13,10 +13,11 @@
                                      RUNDIR/out/merged/ holds the whole state as the page merges it, for checking only.
   catchup.py restore WORK            Undo the last build or relink (WORK back to WORK/prev): after a refused DB write, or to
                                      rebuild the same RUN with a corrected spec.
-  catchup.py relink WORK RUNDIR SPEC Correct links on messages already built, when there's nothing new to build. RUNDIR
-                                     holds the whole threading collection (list); SPEC holds only "relink". Writes
-                                     RUNDIR/out/manifest.json and the threading documents it names, then advances WORK's
-                                     threading, keeping the previous WORK in WORK/prev.
+  catchup.py relink WORK RUNDIR SPEC Correct links (relink) or conversations (move) of messages already built, when
+                                     there's nothing new to build. RUNDIR holds the whole threading collection (list),
+                                     and summary too for a move; SPEC holds only "relink", "move" and newconvs for the
+                                     move. Writes RUNDIR/out/manifest.json and the documents it names, then advances
+                                     WORK's threading (and summary), keeping the previous WORK in WORK/prev.
   catchup.py restore-summary WORK RUNDIR BACKUPDIR [DECISIONS] [--dry-run] [--backup=NAME]
                                      Put back what sessions before v1.17 dropped from the summary, from the copy they saved
                                      in the page's `backups` collection (BACKUPDIR = out_dir with backups/*.json; its parts,
@@ -46,17 +47,26 @@ LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summ
   restore-summary moves it back to what the backup covered (or removes it when the summary covers everything).
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
-  "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs}],
-  "dealEdit":{"convid":{"text":"...","addRefs":[...],"index":n}} (index only when the conv has several deals), "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
+  "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs,claims?,status?,statusAt?}],
+  "dealEdit":{"convid":{"text":"...","addRefs":[...],"addClaims":[{i,who,n}],"status":"sold"|"pending"|null,"statusAt":i,
+  "index":n}} (index only when the conv has several deals), "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
   "answered":[{conv,ask,answer,refs}], "mentions":[{"note","refs":[[i],...]}],
-  "relink":{"i":[parent,type] or null}} (relink: messages an earlier build threaded; null removes the link)
+  "relink":{"i":[parent,type] or null} (relink: messages an earlier build threaded; null removes the link),
+  "move":{"i":"convid" or "new"} (a built message and its replies into another conversation: an existing one, one in
+  newconvs, or "new"; its own link must end up in that conversation or null; a conversation left empty is dropped and
+  its summary items go along, otherwise the items whose messages all moved)}
 Link defaults per new message: Messenger reply link (pi / pmid) -> 'r' ('rq' if matched by quote in-browser);
 else quote match against stored history (same author + first 20 chars, latest wins) -> 'rq';
 reply to a photo with no Messenger link -> latest photo by that author, 'rg' + a CHECK warning;
 a reply whose parent can't be found -> no link (WARN);
 else 'c' if same author as the previous member of its conversation, otherwise 'i' to that member (printed as GUESS
 for review; none if that member is over 3 h older -> ROOT). Override any GUESS in "links" and rebuild.
-A link whose parent sits in another conversation prints a WARN (the page would show it as a new thread)."""
+A link whose parent sits in another conversation prints a WARN (the page would show it as a new thread).
+A deal may carry claims [{i, who: f of message i, n: count, default 1}] ordered by i, and status "sold"|"pending" with
+statusAt (the message that closed it). In a chat whose meta/chat.topic suggests buying, selling or trading, a short
+claim ("In", "in for 2", "Dibs", "Sold", "PM'd", ...) prints REACT? i (who: "text") -> up to 3 posts it may react to
+(photo posts, offers and open deals' messages by others in the 3 days before, newest first); the seller's own "Sold",
+"SPF" or "pending" after their own post prints CLOSE?. These lines only inform: nothing is linked."""
 
 import json, sys, re, os, glob, collections, shutil, datetime, hashlib, copy
 
@@ -514,6 +524,156 @@ def _note(t):  # the Messages tab's line on where reply links came from
     t["note"] = re.sub(NOTE_RE, note, old) if re.match(NOTE_RE, old) else note + (". " + old if old else "")
 
 
+# Short reactions and claims in buy/sell chats (F19): the build flags them (REACT?, CLOSE?), Claude decides.
+
+TRADE_TOPIC = re.compile(
+    r"\b(buy\w*|sell\w*|sale|sales|trad(e|es|ing)|swap\w*|wts|wtb|wtt|bst|b/s/t|marketplace|classifieds?|paffles?|raffles?)\b",
+    re.I,
+)
+NUMS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+CLAIM_RE = re.compile(
+    r"^(?:(?:i'?m|i am) in|in)(?: for (\d{1,2}|one|two|three|four|five))?$"
+    r"|^(?:dibs|mine|i'?ll take it|i will take it|sold|pm'?d|pm sent|dm'?d|dm'?ed|dm sent|interested)$"
+)
+CLOSE_RE = re.compile(r"^(?:sold|spf|sold pending funds|sale pending|pending)$")
+WANT_RE = re.compile(r"\b(wtb|iso|looking for|anyone (selling|have|got))\b", re.I)
+OFFER_RE = re.compile(
+    r"^\s*fs\b|\b(wts|wtt|fs/ft|fsot|ft/fs|for sale|for trade|selling|up for grabs|free to a good home|price drop|"
+    r"paffle|raffle|group buy|obo|shipped|anyone (want|need|interested)|who wants|interested in|"
+    r"let me know if|if (you'?re |anyone'?s |anyone is )?interested|first come|dm me|pm me)\b",
+    re.I,
+)
+PRICE_RE = re.compile(r"\$\s?\d|\b\d+(\.\d\d)?\s?(shipped|obo|usd|bucks|firm|ppd)\b|\b(asking|price)[:\s]+\$?\d", re.I)
+REACT_DAYS = 3
+REACT_MAX = 3
+
+
+def trade_topic(topic):
+    """meta/chat.topic suggests buying, selling or trading: only then are short claims flagged."""
+    return bool(TRADE_TOPIC.search(topic or ""))
+
+
+def _claim_text(b):  # trimmed, any case, emoji and punctuation dropped ("I’m in!! 🙋" -> "i'm in"); '#' kept
+    s = re.sub("[\U0001f000-\U0001faff☀-➿️‍]", " ", b or "").replace("’", "'").lower()
+    s = re.sub(r"[^\w#' ]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip(" '")
+
+
+def claim_word(b):
+    """A short claim or reaction ("In", "I'm in", "in for 2", "Dibs", "Mine", "I'll take it", "Sold", "PM'd",
+    "DM sent", "Interested") -> its count (1 unless "in for N"), else None. Raffle spot claims ("#7", "in for 2
+    spots") and anything longer are not claims."""
+    x = CLAIM_RE.match(_claim_text(b))
+    if not x:
+        return None
+    k = x.group(1)
+    return 1 if k is None else NUMS.get(k) or int(k) or None
+
+
+def close_word(b):  # a seller closing their own offer: "Sold", "SPF", "pending" -> "sold" | "pending"
+    s = _claim_text(b)
+    return None if not CLOSE_RE.match(s) else ("sold" if s.startswith("sold") else "pending")
+
+
+def looks_like_offer(m):
+    """A post that offers something: offer words (WTS, for sale, raffle, "let me know if you're interested in…"),
+    or a price on a photo or in the text. A request (WTB, "anyone selling…?") is not an offer."""
+    b = m.get("b") or ""
+    if WANT_RE.search(b):
+        return False
+    return bool(OFFER_RE.search(b) or PRICE_RE.search(b))
+
+
+def react_candidates(m, pool, open_refs, own=False):
+    """The posts a short claim may react to, newest first: messages within REACT_DAYS before it (by timestamp) that
+    are a photo post, look like an offer, or belong to an open deal. By someone else, or (own=True) by its author."""
+    out = []
+    for k in range(m["i"] - 1, max(m["i"] - 5000, -1), -1):
+        P = pool.get(k)
+        if P is None:
+            continue
+        if _min(m) - _min(P) > REACT_DAYS * 1440:
+            break
+        if (P["f"] == m["f"]) != own or claim_word(P.get("b")) or close_word(P.get("b")):
+            continue
+        if P.get("p") or k in open_refs or looks_like_offer(P):
+            out.append(k)
+            if len(out) == REACT_MAX:
+                break
+    return out
+
+
+def _flag_reactions(ids, pool, deals, links):
+    """REACT? i (who: "text") -> candidates: a short claim in a buy/sell chat, with the posts it may react to.
+    CLOSE? i: the seller's own "Sold"/"SPF"/"pending" after their own post. Lines only; nothing is linked."""
+    open_refs = {r for d in deals if not d.get("status") for r in _nums(d.get("refs") or [])}
+    for i in ids:
+        m = pool[i]
+        n, how = claim_word(m.get("b")), close_word(m.get("b"))
+        if n is None and how is None:
+            continue
+        said = '%s: "%s"' % (m["f"][:12], (m.get("b") or "").strip()[:30])
+        mine = react_candidates(m, pool, open_refs, own=True) if how else []
+        L = links.get(str(i))
+        via = " (Messenger reply to %d)" % L[0] if L and L[1] in ("r", "rq", "rg") else ""
+        own = ", ".join(map(str, mine))
+        if n is not None:  # "Sold" is both: a claim from a buyer, a close from the seller
+            c = react_candidates(m, pool, open_refs)
+            print(
+                "REACT? %d (%s) -> %s%s%s"
+                % (
+                    i,
+                    said,
+                    ", ".join(map(str, c)) or "none within 3 days",
+                    via,
+                    " | own posts %s: the seller closing?" % own if own else "",
+                )
+            )
+        elif mine:
+            print("CLOSE? %d (%s) -> own %s%s" % (i, said, own, via))
+
+
+DEAL_STATUS = ("sold", "pending")
+
+
+def _check_deal(d, pool):
+    """A deal's optional claims [{i, who, n}] (ordered by i; n defaults to 1) and status ("sold" | "pending", with
+    statusAt, the message that closed it)."""
+    cl = d.get("claims")
+    if cl is not None:
+        assert isinstance(cl, list), ("deal claims must be a list of {i, who, n}", d.get("conv"))
+        for c in cl:
+            assert isinstance(c, dict) and set(c) <= {"i", "who", "n"}, ("a claim is {i, who, n}", d.get("conv"), c)
+            i = c.get("i")
+            assert isinstance(i, int) and not isinstance(i, bool) and i in pool, (
+                "claim i must be a stored message",
+                d.get("conv"),
+                c,
+            )
+            assert c.get("who") == pool[i]["f"], (
+                "claim who must be the name stored on message #%d (%r)" % (i, pool[i]["f"]),
+                d.get("conv"),
+                c,
+            )
+            n = c.setdefault("n", 1)
+            assert isinstance(n, int) and not isinstance(n, bool) and n > 0, (
+                "claim n must be a positive whole number",
+                d.get("conv"),
+                c,
+            )
+        ii = [c["i"] for c in cl]
+        assert len(set(ii)) == len(ii), ("a message claims a deal only once", d.get("conv"), ii)
+        cl.sort(key=lambda c: c["i"])
+    if "status" in d:
+        assert d["status"] in DEAL_STATUS, ("deal status is sold or pending", d.get("conv"), d["status"])
+        at = d.get("statusAt")
+        assert at is None or isinstance(at, int) and at in pool, (
+            "deal statusAt must be a stored message",
+            d.get("conv"),
+            at,
+        )
+
+
 def _relink(t, sp, stored, base):  # correct the link on messages an earlier build already threaded
     conv = lambda i: next((c["id"] for c in t["convs"] if i in c["members"]), None)
     for k, L in sp.get("relink", {}).items():
@@ -533,6 +693,8 @@ def _relink(t, sp, stored, base):  # correct the link on messages an earlier bui
         assert L[0] in stored and L[0] < i, ("relink parent must be an earlier stored message", i, L)
         t["links"][str(i)] = L
         print("RELINK %d -> %d %s" % (i, L[0], L[1]))
+        if k in (sp.get("move") or {}):  # the move puts it in its parent's conversation, or says why not
+            continue
         if conv(i) and conv(L[0]) and conv(i) != conv(L[0]):
             print(
                 "WARN link %d -> %d crosses conversations (%s -> %s); the page shows %d as a new thread"
@@ -540,29 +702,272 @@ def _relink(t, sp, stored, base):  # correct the link on messages an earlier bui
             )
 
 
+def _newconvs(t, s, sp):  # the spec's new conversations, in threading and summary; -> {id: threading conversation}
+    C = {cv["id"]: cv for cv in t["convs"]}
+    for nc in sp.get("newconvs", []):
+        assert nc["id"] not in C and nc["id"] != "new", ("conv id exists", nc["id"])
+        cv = {"id": nc["id"], "title": nc["title"], "members": []}
+        t["convs"].append(cv)
+        C[nc["id"]] = cv
+        s["convs"].append(
+            {
+                "id": nc["id"],
+                "tag": nc.get("tag", ""),
+                "synopsis": [],
+                "outcome": nc.get("outcome", ""),
+                "key": nc.get("key", []),
+            }
+        )
+    return C
+
+
+def _merge_by_ref(a, b):
+    """Bullets b joined into a, each list's order kept, b's placed by the messages they cite (a running maximum, so
+    bullets without refs stay next to the ones before them)."""
+    ka = _runmax([max(_nums(x.get("refs") if isinstance(x, dict) else []) or [-1]) for x in a], False)
+    kb = _runmax([max(_nums(x.get("refs") if isinstance(x, dict) else []) or [-1]) for x in b], False)
+    out, j = [], 0
+    for x, k in zip(a, ka):
+        while j < len(b) and kb[j] < k:
+            out.append(b[j])
+            j += 1
+        out.append(x)
+    return out + b[j:]
+
+
+def _move(t, s, sp, stored, base):
+    """`move` {"<i>": "<conv id>" | "new"}: put messages an earlier build threaded into another conversation, with
+    everything threaded under them in their old one. Summary items follow: a conversation left with no messages is
+    dropped and everything of it goes along; otherwise only the items whose messages all moved go along, and the
+    others lose the refs that moved. Prints what moved and what was dropped. -> (groups moved, conversations dropped)"""
+    mv = sp.get("move") or {}
+    if not mv:
+        return 0, []
+    T = {c["id"]: c for c in t["convs"]}
+    S = {c["id"]: c for c in s["convs"]}
+    where = {i: c["id"] for c in t["convs"] for i in c["members"]}
+    kids = collections.defaultdict(list)
+    for k, L in t["links"].items():
+        kids[L[0]].append(int(k))
+    moved, plan = {}, []  # moved: {message: (old conversation, new conversation)}
+    for k in sorted(mv, key=lambda k: int(k)):
+        i, dest = int(k), mv[k]
+        assert i in stored and i <= base, (
+            "move #%d: only messages already built (through #%d); use join for new ones"
+            % (
+                i,
+                base,
+            )
+        )
+        assert i not in moved, (
+            "move #%d: it already moves with #%d, threaded under it. Move only #%d, or relink #%d (null) in the same "
+            "spec to move it on its own" % (i, next(r for r, _, _, g in plan if i in g), i, i)
+        )
+        old = where.get(i)
+        assert old, "move #%d: it isn't in any conversation" % i
+        if dest == "new":
+            dest = "mv%d" % i
+            while dest in T:
+                dest += "x"
+            title = re.sub(r"\s+", " ", (stored[i].get("b") or "").strip())[:40] or _short(stored[i])
+            T[dest] = {"id": dest, "title": title, "members": []}
+            t["convs"].append(T[dest])
+            print(
+                'NEW conversation %s "%s" (to give it a title and tag, list it in newconvs and move into it)'
+                % (dest, title)
+            )
+        assert dest in T, 'move #%d: no conversation "%s" (an existing id, one in this spec\'s newconvs, or "new")' % (
+            i,
+            dest,
+        )
+        assert dest != old, "move #%d: it's already in %s" % (i, dest)
+        group, todo = {i}, [i]
+        while todo:
+            for c in kids[todo.pop()]:
+                if where.get(c) == old and c not in group:
+                    group.add(c)
+                    todo.append(c)
+        for x in group:
+            moved[x] = (old, dest)
+        plan.append((i, old, dest, group))
+    for i, old, dest, group in plan:
+        T[old]["members"] = [x for x in T[old]["members"] if x not in group]
+        T[dest]["members"] = sorted(T[dest]["members"] + list(group))
+        rest = sorted(group - {i})
+        print("MOVE %d%s %s -> %s" % (i, " (with %s)" % ", ".join(map(str, rest)) if rest else "", old, dest))
+    where = {i: c["id"] for c in t["convs"] for i in c["members"]}
+    for i, old, dest, group in plan:
+        L = t["links"].get(str(i))
+        assert not L or where.get(L[0]) == dest, (
+            "move #%d: its link points to #%d in %s, not in %s. Add a relink for #%d in the same spec: to a message in "
+            "%s, or null" % (i, L[0], where.get(L[0]), dest, i, dest)
+        )
+    # the summary: items follow their messages
+    for cid in {d for _, _, d, _ in plan}:
+        if cid not in S:  # a new conversation, or one whose summary a session before v1.17 dropped
+            S[cid] = {"id": cid, "tag": "", "synopsis": [], "outcome": "", "key": []}
+            s["convs"].append(S[cid])
+    dropped = []
+    for old in sorted({o for _, o, _, _ in plan}):
+        gone = {x: d for x, (o, d) in moved.items() if o == old}
+        empty = not T[old]["members"]
+        first = gone[min(gone)]  # where the whole conversation goes when it's left empty
+        told = collections.defaultdict(collections.Counter)
+
+        def home(refs, lead=None):
+            """Where an item with these refs goes (None: it stays), and the refs it keeps there."""
+            refs = _nums(refs)
+            if lead is not None:  # a question follows the message that asks it
+                d = gone.get(lead)
+            elif refs and all(r in gone for r in refs):
+                d = gone[min(refs)]
+            else:
+                d = first if empty else None
+            # only refs that moved away from the item go: one that was never in this conversation is left as it was
+            stays = set(T[old]["members"])
+            keep = [r for r in refs if (gone[r] == d if r in gone else not (d and r in stays))]
+            return d, keep
+
+        def note(d, what, refs, keep):
+            if d:
+                told["to " + d][what] += 1
+            if len(keep) < len(_nums(refs)):
+                told["refs %s dropped from" % ", ".join(map(str, sorted(set(_nums(refs)) - set(keep))))][what] += 1
+
+        sc = S.get(old)
+        if sc is not None:
+            syn = _syn_items(sc.get("synopsis"))
+            stay, go = [], collections.defaultdict(list)
+            for b in syn:
+                d, keep = home(b.get("refs") or [])
+                note(d, "bullet", b.get("refs") or [], keep)
+                b = dict(b, refs=keep)
+                (go[d] if d else stay).append(b)
+            for d, bs in go.items():
+                S[d]["synopsis"] = _merge_by_ref(_syn_items(S[d].get("synopsis")), bs)
+            if go or isinstance(sc.get("synopsis"), list):
+                sc["synopsis"] = stay
+            for r in list(sc.get("key") or []):
+                d = gone.get(r) or (first if empty else None)
+                if d:
+                    sc["key"].remove(r)
+                    if r in gone and r not in (S[d].get("key") or []):
+                        S[d]["key"] = list(S[d].get("key") or []) + [r]
+                        told["to " + d]["key"] += 1
+            if empty:
+                for f in ("tag", "outcome"):
+                    if sc.get(f) and not S[first].get(f):
+                        S[first][f] = sc[f]
+                        told["to " + first][f] += 1
+        for name in ("open", "answered"):
+            for o in s[name]:
+                if o.get("conv") != old:
+                    continue
+                refs = list(o.get("refs") or [])
+                d, keep = home([o["ask"]] + refs, o["ask"])
+                note(d, name, [o["ask"]] + refs, keep)
+                if d:
+                    o["conv"] = d
+                if "refs" in o:
+                    o["refs"] = [r for r in refs if r in keep]
+        for dl in s["deals"]:
+            if dl.get("conv") != old:
+                continue
+            d, keep = home(dl.get("refs") or [])
+            note(d, "deal", dl.get("refs") or [], keep)
+            if d:
+                dl["conv"] = d
+            dl["refs"] = keep
+        if empty:
+            t["convs"] = [c for c in t["convs"] if c["id"] != old]
+            if sc is not None:
+                assert not sc["synopsis"] and not sc.get("key"), (
+                    "internal error: items left in a dropped conversation",
+                    old,
+                )
+                s["convs"] = [c for c in s["convs"] if c["id"] != old]
+            dropped.append(old)
+            print('DROP %s ("%s"): no messages left; its summary went to %s' % (old, T[old].get("title", ""), first))
+        for k, c in told.items():
+            what = ", ".join(
+                "%d %s%s" % (n, w, "s" * (n > 1 and w in ("bullet", "deal"))) for w, n in sorted(c.items())
+            )
+            print(
+                "  moved %s %s: %s" % (k, "from " + old, what)
+                if k.startswith("to ")
+                else "  %s %s: %s" % (k, old, what)
+            )
+    return len(plan), dropped
+
+
+def _check_summary(t, s, pool):  # every summary ref belongs to its conversation; deals' claims and status
+    cm = {cv["id"]: set(cv["members"]) for cv in t["convs"]}
+    for cv in s["convs"]:
+        for k in cv.get("key", []):
+            assert k in cm[cv["id"]], ("key not in conv", cv["id"], k)
+        for b in cv["synopsis"] if isinstance(cv["synopsis"], list) else []:  # bullets from old strings have no refs
+            refs = (b.get("refs") or []) if isinstance(b, dict) else []
+            assert all(r in cm[cv["id"]] for r in refs), ("bullet ref not in conv", cv["id"], b)
+    for o in s["open"] + s["answered"]:
+        assert all(r in cm[o["conv"]] for r in [o["ask"]] + o.get("refs", [])), ("ref not in conv", o)
+    for d in s["deals"]:
+        assert d["conv"] in cm, ("deal conv missing", d["conv"])
+        _check_deal(d, pool)
+    return cm
+
+
 def relink(work, run, specp):
+    """`catchup.py relink`: correct links (relink) and conversations (move) of messages already built."""
     global TZ
     sp = _load(specp)
     assert (
-        set(sp) == {"relink"} and sp["relink"]
-    ), 'relink SPEC takes only a non-empty "relink" (use build for the rest)'
+        set(sp) <= {"relink", "move", "newconvs"}
+        and (sp.get("relink") or sp.get("move"))
+        and (sp.get("move") or "newconvs" not in sp)
+    ), 'relink SPEC takes only a non-empty "relink" and/or "move" (newconvs only for a move; use build for the rest)'
     st = _load(work + "/state.json")
     TZ = st.get("tz") or TZ
     lay = _layout(work)
-    listing = {"threading": _listing(run, "threading")}  # a fresh read: which blocks exist, and that WORK is current
+    colls = ("threading", "summary") if sp.get("move") else ("threading",)
+    listing = {c: _listing(run, c) for c in colls}  # a fresh read: which blocks exist, and that WORK is current
     _fresh(listing, lay)
     t = _load(work + "/base/threading.json")
-    _relink(t, sp, {m["i"]: m for m in _load(work + "/all.json")}, st["base"])
+    s = _load(work + "/base/summary.json") if sp.get("move") else None
+    stored = {m["i"]: m for m in _load(work + "/all.json")}
+    _relink(t, sp, stored, st["base"])
+    moves, dropped = 0, []
+    if sp.get("move"):
+        _newconvs(t, s, sp)
+        moves, dropped = _move(t, s, sp, stored, st["base"])
+        seen = collections.Counter(x for cv in t["convs"] for x in cv["members"])
+        assert all(v == 1 for v in seen.values()), ("internal error: a message in two conversations", seen)
+        _check_summary(t, s, stored)
+        last = {c["id"]: max(c["members"]) for c in t["convs"] if c["members"]}
+        s["convs"].sort(key=lambda c: -last.get(c["id"], 0))
     _note(t)
     t["builtAt"] = _ts()
-    docs = layout_docs(t)
-    _roundtrip(docs, t, None)
+    merged = {"threading": t}
+    if s is not None:
+        s["generatedAt"] = t["builtAt"]  # so a WORK bootstrapped before this write sees that summary/current changed
+        merged["summary"] = s
+    scur = listing.get("summary", {}).get("current") or {}
+    docs = layout_docs(t, s, scur.get("activeFrom", 0) if scur.get("layout") == 2 else 0)
+    _roundtrip(docs, t, s)
     batches, cleanup = _plan(docs, listing)
-    told = _write_out(run + "/out", docs, batches, cleanup, {"threading": t})
+    told = _write_out(run + "/out", docs, batches, cleanup, merged)
     _snapshot(work)
     _dump(t, work + "/base/threading.json")
+    if s is not None:
+        _dump(s, work + "/base/summary.json")
     _dump(_record(lay, docs), work + "/base/layout.json")
-    print("relink ok: %d change(s); write what %s lists, as in step 7" % (len(sp["relink"]), told))
+    print(
+        "relink ok: %d change(s)%s; write what %s lists, as in step 7"
+        % (
+            len(sp.get("relink") or {}),
+            ", %d move(s)%s" % (moves, ", dropped %s" % ", ".join(dropped) if dropped else "") if moves else "",
+            told,
+        )
+    )
 
 
 def _snapshot(work):  # the WORK a build started from, so `restore` can undo it
@@ -780,21 +1185,9 @@ def build(work, run, specp):
     listing = {c: _listing(run, c) for c in ("threading", "summary")}  # step 5's read of both whole collections
     _fresh(listing, lay)
     _relink(t, sp, byi, base)
+    _newconvs(t, s, sp)
+    _move(t, s, sp, byi, base)  # before the new messages join, so they can join and link where a message moved
     C = {cv["id"]: cv for cv in t["convs"]}
-    for nc in sp.get("newconvs", []):
-        assert nc["id"] not in C, ("conv id exists", nc["id"])
-        cv = {"id": nc["id"], "title": nc["title"], "members": []}
-        t["convs"].append(cv)
-        C[nc["id"]] = cv
-        s["convs"].append(
-            {
-                "id": nc["id"],
-                "tag": nc.get("tag", ""),
-                "synopsis": [],
-                "outcome": nc.get("outcome", ""),
-                "key": nc.get("key", []),
-            }
-        )
     joined = {}
     for cid, mem in sp["join"].items():
         assert cid in C, ("unknown conv", cid)
@@ -914,26 +1307,29 @@ def build(work, run, specp):
             len(ds),
             cid,
         )
+        bad = sorted(set(e) - {"text", "addRefs", "index", "addClaims", "status", "statusAt"})
+        assert not bad, ("dealEdit takes text, addRefs, index, addClaims, status and statusAt", cid, bad)
         d = ds[e.get("index", 0)]
         if "text" in e:
             d["text"] = e["text"]
         assert all(r in cmem(cid) for r in e.get("addRefs", [])), ("dealEdit addRefs must be in the conversation", cid)
         d["refs"] = sorted(set(d.get("refs", []) + e.get("addRefs", [])))
+        if e.get("addClaims"):  # in message order; _check_deal refuses a message that claims twice
+            d["claims"] = list(d.get("claims") or []) + e["addClaims"]
+        if "status" in e and e["status"] is None:  # reopened
+            d.pop("status", None)
+            d.pop("statusAt", None)
+        elif "status" in e:
+            d["status"] = e["status"]
+            if "statusAt" in e:
+                d["statusAt"] = e["statusAt"]
     s["open"] = sp.get("open", []) + [o for o in s["open"] if o["ask"] not in sp.get("closeOpen", [])]
     s["answered"] = sp.get("answered", []) + s["answered"]
     s["mentions"] = sp.get("mentions", []) + s["mentions"]
     s["toI"] = ids[-1]
-    cm = {cv["id"]: set(cv["members"]) for cv in t["convs"]}
-    for cv in s["convs"]:
-        for k in cv.get("key", []):
-            assert k in cm[cv["id"]], ("key not in conv", cv["id"], k)
-        for b in cv["synopsis"] if isinstance(cv["synopsis"], list) else []:  # bullets from old strings have no refs
-            refs = (b.get("refs") or []) if isinstance(b, dict) else []
-            assert all(r in cm[cv["id"]] for r in refs), ("bullet ref not in conv", cv["id"], b)
-    for o in s["open"] + s["answered"]:
-        assert all(r in cm[o["conv"]] for r in [o["ask"]] + o.get("refs", [])), ("ref not in conv", o)
-    for d in s["deals"]:
-        assert d["conv"] in cm, ("deal conv missing", d["conv"])
+    cm = _check_summary(t, s, pool)
+    if trade_topic(mt.get("topic")):  # a buy/sell chat: flag short claims for Claude (F19)
+        _flag_reactions(ids, pool, s["deals"], t["links"])
     last = {c: max(m) for c, m in cm.items() if m}
     s["convs"].sort(key=lambda c: -last.get(c["id"], 0))
     a = mt["anchorMids"]
