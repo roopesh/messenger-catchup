@@ -385,7 +385,10 @@ const SEED = () => ({
 });
 
 let browser;
+/* ctxOpts.clockAt (ms): install Playwright's clock at that time before the page loads (it keeps running; p.clock
+   moves it on) */
 async function open(seed, page = PAGE, ctxOpts) {
+  const { clockAt, ...cOpts } = ctxOpts || {};
   const ctx = await browser.newContext(
     Object.assign(
       {
@@ -393,9 +396,10 @@ async function open(seed, page = PAGE, ctxOpts) {
         locale: 'en-US',
         timezoneId: 'America/Los_Angeles',
       },
-      ctxOpts,
+      cOpts,
     ),
   );
+  if (clockAt != null) await ctx.clock.install({ time: clockAt });
   await ctx.route('https://fonts.googleapis.com/**', r => r.abort());
   await ctx.route(URL, r => r.fulfill({ body: page, contentType: 'text/html; charset=utf-8' }));
   await ctx.addInitScript(runtime, seed);
@@ -4433,6 +4437,347 @@ async function photos2() {
   ok(p.errors.length === 0, 'photos: no page errors ' + JSON.stringify(p.errors));
   await p.close();
 }
+
+/* ---------- R15, R16 (helper 2.1): photos the helper couldn't get stay owed and are retried; slots by attachment id ----------
+   A 2.1 capture adds aid (Messenger's attachment id) to each photo, and phfail / phskip: the photos it couldn't get and
+   the ones it skipped. meta/chat.lastRefresh tells refresh runs apart. */
+const KEYS = path.join(__dirname, 'out/sim_cap_keys.json'); /* sim section H: {loaded, lazy}, window #100-#119 */
+/* a photo with an attachment id; its bytes name the id, so uploads show which photo went where */
+const PHA = (i, k, aid) => ({
+  i,
+  k,
+  aid,
+  type: 'image/png',
+  b64: Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from(' aid ' + aid)]).toString('base64'),
+});
+const hashOf = ph => sha(Buffer.from(ph.b64, 'base64'));
+const cap21 = (msgs, photos, phfail = [], phskip = []) =>
+  JSON.stringify(Object.assign(cap(msgs, { photos }), { phfail, phskip }));
+const tryOf = async (p, i) => ((((await get(p, 'photos/b0')) || {}).tries || {})[i] || {})['0'];
+const setRun = (p, run) =>
+  p.evaluate(
+    r => __rt.batch([{ op: 'update', p: 'meta/chat', v: { lastRefresh: r }, if_version: __rt.version('meta/chat') }]),
+    run,
+  );
+async function photoKeys() {
+  // K1 (R15): a photo the helper couldn't fetch is owed (null slot), with its id and one try
+  let p = await openR2();
+  await setRun(p, 'r1');
+  let r = await paste(p, cap21(range(0, 9), [PHA(2, 0, '200')], [{ i: 5, k: 0, aid: '500', e: 'fetch' }]));
+  let b = (await get(p, 'photos/b0')) || {};
+  const owedK1 = (await get(p, 'meta/chat')).photosOwed;
+  ok(
+    r &&
+      r.state === 'done' &&
+      JSON.stringify((b.byK || {})['5']) === '{"0":null}' &&
+      JSON.stringify(b.aids) === '{"2":{"0":"200"},"5":{"0":"500"}}' &&
+      JSON.stringify(b.tries) === '{"5":{"0":{"n":1,"run":"r1"}}}' &&
+      owedK1 &&
+      owedK1.n === 1 &&
+      owedK1.fromI === 5 &&
+      JSON.stringify(r.owed) === '[{"i":5,"k":0}]' &&
+      /1 photo Messenger didn't give \(#5\): still owed, the next refresh tries again\./.test(r.msg),
+    'K1: a photo in phfail becomes an owed slot with its aid and one try; photosOwed counts it; the toast says so (' +
+      JSON.stringify([b.byK, b.aids, b.tries, r && r.msg]) +
+      ')',
+  );
+  // K2: a try per refresh run, not per paste; 2.1 captures that hold the message but not the photo count, an older
+  // helper's capture (no phfail) and a capture without the message don't; the third run gives it up ("no-fetch")
+  r = await paste(p, cap21(range(0, 9), [PHA(2, 0, '200')], [{ i: 5, k: 0, aid: '500', e: 'fetch' }]));
+  const t1 = await tryOf(p, 5);
+  await setRun(p, 'r2');
+  await paste(p, cap21(range(3, 12), []));
+  const t2 = (await tryOf(p, 5)) || {};
+  await setRun(p, 'r3');
+  await paste(p, JSON.stringify(cap(range(3, 13))));
+  await setRun(p, 'r4');
+  await paste(p, cap21(range(6, 14), []));
+  const t4 = (await tryOf(p, 5)) || {};
+  await setRun(p, 'r5');
+  r = await paste(p, cap21(range(3, 15), [], [{ i: 5, k: 0, aid: '500', e: 'unloaded' }]));
+  b = await get(p, 'photos/b0');
+  ok(
+    t1 &&
+      t1.n === 1 &&
+      t2.n === 2 &&
+      t4.n === 2 &&
+      r &&
+      r.state === 'done' &&
+      JSON.stringify((b.byK || {})['5']) === '{"0":{"e":"no-fetch"}}' &&
+      JSON.stringify(r.gaveUp) === '[{"i":5,"k":0,"e":"no-fetch"}]' &&
+      (await get(p, 'meta/chat')).photosOwed === null &&
+      /couldn't be stored \(#5, Messenger didn't give it in 3 refreshes\)/.test(r.msg) &&
+      (await uploads(p)).length === 1,
+    'K2: tries count once per run (re-paste 1, absent 2, older helper 2, #5 not in the capture 2), the third ' +
+      'failed run gives it ' +
+      'up as "no-fetch", reported (' +
+      JSON.stringify([t1, t2, t4, r && r.msg]) +
+      ')',
+  );
+  await p.close();
+  // K3: the retry that works stores the owed photo in its slot; a photo owed because its upload failed is no fetch try
+  p = await openR2();
+  await setRun(p, 'r1');
+  await failCalls(p, [0, 1]);
+  await paste(p, cap21(range(0, 9), [PHA(6, 0, '600')], [{ i: 5, k: 0, aid: '500', e: 'fetch' }]));
+  await setRun(p, 'r2');
+  r = await paste(p, cap21(range(3, 12), [PHA(5, 0, '500'), PHA(6, 0, '600')]));
+  b = await get(p, 'photos/b0');
+  const up3 = await uploads(p);
+  ok(
+    r &&
+      r.state === 'done' &&
+      typeof (b.byK['5'] || {})['0'] === 'string' &&
+      typeof (b.byK['6'] || {})['0'] === 'string' &&
+      (up3.find(u => '/_blob/' + u.id === b.byK['5']['0']) || {}).hash === hashOf(PHA(5, 0, '500')) &&
+      JSON.stringify(b.tries) === '{"5":{"0":{"n":1,"run":"r1"}}}' &&
+      (await get(p, 'meta/chat')).photosOwed === null,
+    'K3: the next run brings the photo: stored in its slot, owed cleared; #6, owed after a failed upload, counted no ' +
+      'fetch try (' +
+      JSON.stringify([b.byK, b.tries]) +
+      ')',
+  );
+  await p.close();
+  // K4 (R16): a photo found by its id is never stored under another slot, even when the capture numbers it differently
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHA(4, 1, 'B'), PHA(4, 2, 'C')], [{ i: 4, k: 0, aid: 'A', e: 'unloaded' }]));
+  r = await paste(p, cap21(range(0, 9), [PHA(4, 0, 'B')]));
+  const n4 = (await uploads(p)).length;
+  const slot0 = (await get(p, 'photos/b0')).byK['4']['0'];
+  const r4 = await paste(p, cap21(range(0, 9), [PHA(4, 0, 'A'), PHA(4, 1, 'B'), PHA(4, 2, 'C')]));
+  b = await get(p, 'photos/b0');
+  const up4 = await uploads(p);
+  const in4 = k => (up4.find(u => '/_blob/' + u.id === b.byK['4'][k]) || {}).hash;
+  ok(
+    r &&
+      /0 photos stored \(1 already stored\)/.test(r.msg) &&
+      n4 === 2 &&
+      slot0 === null &&
+      r4 &&
+      r4.state === 'done' &&
+      up4.length === 3 &&
+      in4(0) === hashOf(PHA(4, 0, 'A')) &&
+      in4(1) === hashOf(PHA(4, 1, 'B')) &&
+      in4(2) === hashOf(PHA(4, 2, 'C')) &&
+      JSON.stringify((b.aids || {})['4']) === '{"0":"A","1":"B","2":"C"}',
+    'K4: photo B (stored in slot 1) arriving as slot 0 is matched by its id: not uploaded, slot 0 stays owed for A, ' +
+      'which the next capture fills (' +
+      JSON.stringify([r && r.msg, n4, b.byK['4']]) +
+      ')',
+  );
+  await p.close();
+  // K5: old slots stored by position (no id) keep working by k; new ones record their id; a slot holding another id is
+  // never reused, so nothing is stored twice or in another photo's slot
+  p = await openR2();
+  await paste(p, JSON.stringify(cap(range(0, 9))));
+  await p.evaluate(() => {
+    __rt.write('photos/b0', { start: 0, byK: { 6: { 0: '/_blob/old60', 1: null } }, gifs: [] });
+    __rt.batch([
+      {
+        op: 'update',
+        p: 'meta/chat',
+        v: { photosOwed: { n: 1, fromI: 6, toI: 6, at: 'x' } },
+        if_version: __rt.version('meta/chat'),
+      },
+    ]);
+  });
+  r = await paste(p, cap21(range(0, 9), [PHA(6, 0, 'X0'), PHA(6, 1, 'X1')]));
+  const b5 = await get(p, 'photos/b0');
+  const n5 = (await uploads(p)).length;
+  const r5 = await paste(p, cap21(range(0, 9), [PHA(6, 0, 'X1'), PHA(6, 1, 'Y')]));
+  b = await get(p, 'photos/b0');
+  const up5 = await uploads(p);
+  ok(
+    r &&
+      r.state === 'done' &&
+      n5 === 1 &&
+      b5.byK['6']['0'] === '/_blob/old60' &&
+      JSON.stringify((b5.aids || {})['6']) === '{"1":"X1"}' &&
+      r5 &&
+      r5.state === 'done' &&
+      up5.length === 2 &&
+      b.byK['6']['0'] === '/_blob/old60' &&
+      (up5.find(u => '/_blob/' + u.id === b.byK['6']['1']) || {}).hash === hashOf(PHA(6, 1, 'X1')) &&
+      (up5.find(u => '/_blob/' + u.id === b.byK['6']['2']) || {}).hash === hashOf(PHA(6, 1, 'Y')) &&
+      JSON.stringify((b.aids || {})['6']) === '{"1":"X1","2":"Y"}' &&
+      (await get(p, 'meta/chat')).photosOwed === null,
+    'K5: an old slot 0 (no id) matches by k and is never rewritten; owed slot 1 takes X1 and records it; X1 seen ' +
+      'again as slot 0 is found by id; Y arriving as slot 1 (X1’s) gets slot 2 (' +
+      JSON.stringify([b.byK['6'], b.aids]) +
+      ')',
+  );
+  await p.close();
+  // K6: an older helper's capture (no ids, no phfail) meeting slots that have ids: by k, as before
+  p = await openR2();
+  await failCalls(p, [1, 2]);
+  await paste(p, cap21(range(0, 9), [PHA(8, 0, 'a80'), PHA(8, 1, 'a81')]));
+  r = await paste(p, JSON.stringify(cap(range(0, 9), { photos: [PH(8, 0), PH(8, 1)] })));
+  const st6 = await photoState(p);
+  ok(
+    r && r.state === 'done' && st6.stored(8).length === 2 && (await uploads(p)).length === 2 && !st6.owed.length,
+    'K6: an older helper’s capture fills the owed slot 1 by k and skips the stored slot 0 (' + (r && r.msg) + ')',
+  );
+  await p.close();
+  // K7: a full block with an id on every slot still fits the 256 KiB cap (17-digit ids, as Messenger's)
+  const byK7 = {};
+  const aids7 = {};
+  const h7 = {};
+  for (let i = 0; i < 500; i++) {
+    byK7[i] = {};
+    aids7[i] = {};
+    h7[i] = {};
+    for (let k = 0; k < 4; k++) {
+      byK7[i][k] = '/_blob/' + 'a'.repeat(32);
+      aids7[i][k] = String(10000000000000000 + i * 4 + k);
+      h7[i][k] = sha(i + '.' + k).slice(0, 12);
+    }
+  }
+  const size7 = Buffer.byteLength(JSON.stringify({ start: 0, byK: byK7, aids: aids7, h: h7, gifs: [] }));
+  ok(
+    size7 < 262144,
+    'K7: 500 messages × 4 photos with ids and hashes in one block is ' + size7 + ' bytes, under 256 KiB',
+  );
+  // K8: the real helper's captures (sim section H): the lazy capture leaves #104's first photo owed, and the capture
+  // with every image loaded stores just that one
+  if (!fs.existsSync(KEYS)) ok(false, 'K8: ' + path.relative(ROOT, KEYS) + ' missing: run tests/sim.js first');
+  else {
+    const K = JSON.parse(fs.readFileSync(KEYS, 'utf8'));
+    p = await openR2();
+    await paste(p, JSON.stringify(cap(range(0, 99))));
+    r = await paste(p, JSON.stringify(K.lazy));
+    const owed8 = (await photoState(p)).owed;
+    const n8 = (await uploads(p)).length;
+    const r8 = await paste(p, JSON.stringify(K.loaded));
+    b = await get(p, 'photos/b0');
+    ok(
+      r &&
+        r.state === 'done' &&
+        owed8.join() === '104.0' &&
+        r8 &&
+        r8.state === 'done' &&
+        (await uploads(p)).length - n8 === 1 &&
+        Object.values(b.byK['104'] || {}).every(v => typeof v === 'string') &&
+        JSON.stringify((b.aids || {})['104']) === '{"0":"921040","1":"921041","2":"921042"}',
+      'K8: sim captures: #104’s unloaded photo is owed after the lazy capture, and the full capture uploads only it (' +
+        JSON.stringify([owed8, r8 && r8.msg]) +
+        ')',
+    );
+    await p.close();
+  }
+  /* the same bytes (tag) under another id */
+  const PHX = (i, k, aid, tag) => Object.assign(PHA(i, k, tag), { aid });
+  // K9: an id that changes between visits (unstable ids): the photo is found by its content hash, its slot takes the
+  // new id, and it isn't uploaded again
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHX(3, 0, 'A1', 'same')]));
+  await paste(p, cap21(range(0, 9), [PHX(3, 0, 'A2', 'same')]));
+  r = await paste(p, cap21(range(0, 9), [PHX(3, 0, 'A3', 'same'), PHX(3, 1, 'A4', 'other')]));
+  b = await get(p, 'photos/b0');
+  ok(
+    r &&
+      r.state === 'done' &&
+      (await uploads(p)).length === 2 &&
+      Object.keys(b.byK['3']).join() === '0,1' &&
+      JSON.stringify((b.aids || {})['3']) === '{"0":"A3","1":"A4"}' &&
+      ((b.h || {})['3'] || {})['0'] === sha(PHX(3, 0, 'A1', 'same').b64).slice(0, 12),
+    'K9: one photo seen as A1, A2, A3 stays one slot and one upload, its id updated; a different photo still gets ' +
+      'its own slot (' +
+      JSON.stringify([b.byK['3'], b.aids, b.h]) +
+      ')',
+  );
+  await p.close();
+  // K10: a phfail for a photo already stored never turns its slot back to owed
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHA(2, 0, '200')]));
+  r = await paste(p, cap21(range(0, 9), [], [{ i: 2, k: 0, aid: '200', e: 'fetch' }]));
+  st = await photoState(p);
+  ok(
+    r && r.state === 'done' && st.stored(2).length === 1 && !st.owed.length && !(r.retry || []).length,
+    'K10: a phfail on a stored photo leaves it stored, nothing owed (' + JSON.stringify(st.byK) + ')',
+  );
+  await p.close();
+  // K11: a photo whose slot k holds another photo's id gets the next free slot, even alone in its capture
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHA(6, 0, 'X0'), PHA(6, 1, 'X1')]));
+  r = await paste(p, cap21(range(0, 9), [PHA(6, 1, 'Y')]));
+  b = await get(p, 'photos/b0');
+  ok(
+    r &&
+      r.state === 'done' &&
+      (await uploads(p)).length === 3 &&
+      typeof b.byK['6']['2'] === 'string' &&
+      JSON.stringify((b.aids || {})['6']) === '{"0":"X0","1":"X1","2":"Y"}',
+    'K11: Y arriving as slot 1, which holds X1, is stored in slot 2 (' + JSON.stringify([b.byK['6'], b.aids]) + ')',
+  );
+  await p.close();
+  // K12: a skip on a slot the page doesn't hold stored (Claude's skip list was wrong): owed, counted as a try, and
+  // listed in skipOwed; a skip on an unknown photo opens an owed slot for it (by id, beside another photo's slot)
+  p = await openR2();
+  await setRun(p, 'r1');
+  await paste(p, cap21(range(0, 9), [PHA(6, 0, 'X0')], [{ i: 5, k: 0, aid: '500', e: 'fetch' }]));
+  await setRun(p, 'r2');
+  r = await paste(
+    p,
+    cap21(
+      range(0, 9),
+      [],
+      [],
+      [
+        { i: 5, k: 0, aid: '500' },
+        { i: 6, k: 0, aid: 'Z' },
+      ],
+    ),
+  );
+  b = await get(p, 'photos/b0');
+  ok(
+    r &&
+      r.state === 'done' &&
+      JSON.stringify(r.skipOwed) === '[{"i":5,"k":0},{"i":6,"k":1}]' &&
+      ((b.tries || {})['5'] || {})['0'].n === 2 &&
+      b.byK['6']['1'] === null &&
+      ((b.aids || {})['6'] || {})['1'] === 'Z' &&
+      (await get(p, 'meta/chat')).photosOwed.n === 2 &&
+      /2 photos the helper skipped aren't stored here \(#5, #6\)/.test(r.msg),
+    'K12: skips on an owed slot and on an unknown photo: both owed, listed in skipOwed, the owed one counted (' +
+      JSON.stringify([r && r.skipOwed, b.byK, b.tries]) +
+      ')',
+  );
+  await p.close();
+  // K14: the id wins over bytes and position: the same id with other bytes (another size of the image) at another
+  // place is the stored photo, not uploaded again
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHX(4, 0, 'A', 'v1'), PHX(4, 1, 'B', 'v1b')]));
+  r = await paste(p, cap21(range(0, 9), [PHX(4, 0, 'B', 'v2')]));
+  b = await get(p, 'photos/b0');
+  ok(
+    r &&
+      /0 photos stored \(1 already stored\)/.test(r.msg) &&
+      (await uploads(p)).length === 2 &&
+      Object.keys(b.byK['4']).join() === '0,1',
+    'K14: photo B with other bytes, arriving as slot 0, is matched by its id to slot 1: nothing uploaded (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p.close();
+  // K13: a capture with full's run id counts once for that run, even after the refresh wrote lastRefresh
+  p = await openR2();
+  await setRun(p, 'r1');
+  const runCap = (msgs, run) =>
+    JSON.stringify(Object.assign(JSON.parse(cap21(msgs, [], [{ i: 5, k: 0, aid: '500', e: 'fetch' }])), { run }));
+  await paste(p, runCap(range(0, 9), 'run-a'));
+  await setRun(p, 'r1-done');
+  await paste(p, runCap(range(0, 9), 'run-a'));
+  const k13a = await tryOf(p, 5);
+  await paste(p, runCap(range(0, 9), 'run-b'));
+  const k13b = await tryOf(p, 5);
+  ok(
+    k13a && k13a.n === 1 && k13a.run === 'run:run-a' && k13b && k13b.n === 2,
+    'K13: the same run id pasted again after lastRefresh changed counts once; a new run id counts (' +
+      JSON.stringify([k13a, k13b]) +
+      ')',
+  );
+  await p.close();
+}
 /* P23: a 20 MB capture through a real clipboard and a real paste keystroke */
 async function bigPaste() {
   const many = range(0, 199, i => i).map(i => PH(i, 0, 100 * 1024));
@@ -5053,6 +5398,535 @@ async function notices() {
   }
 }
 
+/* ---------- F14: the schedule on the page ----------
+   meta/chat.schedule and refresh/schedule (the refresh skill's references/scheduling.md), shown under the status line.
+   The clock is fixed at Fri Nov 13 2026, 10:00 AM in Los Angeles (the browser's and the chat's zone). */
+const T0 = Date.parse('2026-11-13T18:00:00Z');
+const tAt = min => new Date(T0 + min * 60000).toISOString();
+const HOURLY = { mode: 'chain', every: 60, hours: { from: '07:00', to: '23:00' }, tz: 'America/Los_Angeles' };
+const schedSeed = (schedule, live, extra) =>
+  withMeta(
+    metaWith(schedule === undefined ? {} : { schedule }),
+    Object.assign(live === undefined ? {} : { 'refresh/schedule': live }, extra),
+  );
+/* {line, warns} as shown ({line:'', warns:[]} when the area is hidden); null when the page has no schedule area */
+const schedShown = p =>
+  p.evaluate(() => {
+    const b = document.getElementById('sched');
+    if (!b) return null;
+    if (b.hidden) return { line: '', warns: [] };
+    const line = b.querySelector('.line');
+    return { line: line ? line.textContent : '', warns: [...b.querySelectorAll('.warn')].map(x => x.textContent) };
+  });
+const sopen = (seed, ctxOpts) => open(seed, PAGE, Object.assign({ clockAt: T0 }, ctxOpts));
+const STOP_TAIL = ' Ask Claude in chat to “refresh my catch-up”, and it offers to restart them.';
+async function schedule() {
+  /* one page per case: what it shows */
+  const shows = async (seed, what, want, ctxOpts) => {
+    const p = await sopen(seed, ctxOpts);
+    const s = await schedShown(p);
+    ok(
+      s && s.line === want.line && JSON.stringify(s.warns) === JSON.stringify(want.warns || []) && !p.errors.length,
+      'schedule: ' + what + ' (' + JSON.stringify([s, p.errors]) + ')',
+    );
+    await p.close();
+  };
+  /* S1: the summary and the next run */
+  await shows(
+    schedSeed(HOURLY, { armId: 'a', nextAt: tAt(5), misses: 0, problem: null }),
+    'S1: a chain, hourly 7 AM–11 PM, due in 5 minutes: "Hourly, 7 AM–11 PM. Next refresh about 10:05 AM."',
+    { line: 'Hourly, 7 AM–11 PM. Next refresh about 10:05 AM.' },
+  );
+  await shows(
+    schedSeed({ mode: 'recurring', every: 120, tz: 'America/Los_Angeles' }),
+    'S2: recurring every 2 hours with no hours and no refresh/schedule: "Every 2 hours, all day."',
+    { line: 'Every 2 hours, all day.' },
+  );
+  await shows(
+    schedSeed(
+      { mode: 'chain', every: 30, hours: { from: '07:30', to: '22:00' } },
+      { nextAt: tAt(26 * 60), lastRunAt: tAt(-4) },
+    ),
+    'S2b: every 30 minutes from 7:30 AM, next run tomorrow: the date is shown',
+    { line: 'Every 30 minutes, 7:30 AM–10 PM. Next refresh about Nov 14, 12:00 PM.' },
+  );
+  await shows(
+    schedSeed(
+      { mode: 'manual', every: 60, tz: 'America/Los_Angeles' },
+      { nextAt: tAt(5), misses: 4, problem: 'no scheduling tool in this app' },
+    ),
+    'S3: manual: "Refreshes only when you ask", and no next run, problem or misses',
+    { line: 'Refreshes only when you ask.' },
+  );
+  /* S4: hours that wrap past midnight; 5 minutes early counts as inside */
+  const night = { mode: 'chain', every: 60, hours: { from: '22:00', to: '06:00' }, tz: 'America/Los_Angeles' };
+  await shows(
+    schedSeed(night, { nextAt: null }),
+    'S4: 10 PM–6 AM at 10 AM: summary, and no stopped warning outside the hours',
+    { line: 'Hourly, 10 PM–6 AM.' },
+  );
+  for (const [h, when] of [
+    [13, '11 PM'],
+    [16, '2 AM'],
+    [11 + 55 / 60, '9:55 PM'],
+  ])
+    await shows(
+      schedSeed(night, { nextAt: null }),
+      'S4: 10 PM–6 AM at ' + when + ', nothing armed: stopped (inside the wrapped hours, or 5 minutes early)',
+      { line: 'Hourly, 10 PM–6 AM.', warns: ['Scheduled refreshes have stopped.' + STOP_TAIL] },
+      { clockAt: T0 + h * 3600000 },
+    );
+  await shows(
+    schedSeed(night, { nextAt: null }),
+    'S4: 10 PM–6 AM at 9:54 PM (6 minutes early): not stopped',
+    { line: 'Hourly, 10 PM–6 AM.' },
+    { clockAt: T0 + (11 + 54 / 60) * 3600000 },
+  );
+  await shows(
+    schedSeed(night, { nextAt: null }),
+    'S4: 10 PM–6 AM at 6:00 AM (to is excluded): not stopped',
+    { line: 'Hourly, 10 PM–6 AM.' },
+    { clockAt: T0 + 20 * 3600000 },
+  );
+  /* S5: missing and odd values show nothing, with no errors */
+  await shows(SEED(), 'S5: no meta/chat.schedule and no refresh/schedule: nothing', { line: '' });
+  await shows(schedSeed(HOURLY), 'S5: a chain with no refresh/schedule document has nothing armed: stopped', {
+    line: 'Hourly, 7 AM–11 PM.',
+    warns: ['Scheduled refreshes have stopped.' + STOP_TAIL],
+  });
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { mode: 'recurring' })),
+    'S5: a recurring schedule with no refresh/schedule document: the summary only',
+    { line: 'Hourly, 7 AM–11 PM.' },
+  );
+  /* S5c: "00:00"–"24:00" (either way round) is all day */
+  for (const hours of [
+    { from: '00:00', to: '24:00' },
+    { from: '24:00', to: '00:00' },
+  ])
+    await shows(
+      schedSeed(Object.assign({}, HOURLY, { hours }), { nextAt: tAt(5) }),
+      'S5c: hours ' + hours.from + '–' + hours.to + ' read as all day',
+      { line: 'Hourly, all day. Next refresh about 10:05 AM.' },
+    );
+  /* S5d: before meta/chat or refresh/schedule has loaded, nothing about the live state (scheduleView directly) */
+  {
+    const q = await sopen(SEED());
+    const v = await q.evaluate(
+      ([sc, at]) =>
+        typeof scheduleView !== 'function'
+          ? null
+          : [
+              scheduleView(null, { problem: 'no scheduling tool in this app', misses: 4 }, null, Date.now(), 'r'),
+              scheduleView(undefined, { problem: 'x' }, null, Date.now(), 'r'),
+              scheduleView({ tz: 'America/Los_Angeles', schedule: sc }, undefined, null, Date.now(), 'r'),
+              scheduleView({ tz: 'America/Los_Angeles', schedule: sc }, null, null, Date.now(), 'r').warns.length,
+            ],
+      [HOURLY, T0],
+    );
+    const empty = JSON.stringify({ line: '', warns: [] });
+    ok(
+      v &&
+        JSON.stringify(v[0]) === empty &&
+        JSON.stringify(v[1]) === empty &&
+        JSON.stringify(v[2]) === JSON.stringify({ line: 'Hourly, 7 AM–11 PM.', warns: [] }) &&
+        v[3] === 1,
+      'schedule S5d: no view while meta/chat is not loaded; refresh/schedule not loaded yet (undefined) warns nothing, missing (null) is stopped (' +
+        JSON.stringify(v) +
+        ')',
+    );
+    await q.close();
+  }
+  const odd = [
+    ['"B"', 'B'],
+    ['mode "A"', { mode: 'A', every: 60 }],
+    ['every "often"', { mode: 'chain', every: 'often' }],
+    ['every 0', { mode: 'chain', every: 0 }],
+    ['every 45.5', { mode: 'chain', every: 45.5 }],
+    ['hours "7-23"', { mode: 'chain', every: 60, hours: '7-23' }],
+    ['hours 7am to x', { mode: 'chain', every: 60, hours: { from: '7am', to: 'x' } }],
+    ['hours 25:00', { mode: 'chain', every: 60, hours: { from: '07:00', to: '25:00' } }],
+    ['from = to', { mode: 'chain', every: 60, hours: { from: '07:00', to: '07:00' } }],
+    ['tz "Mars/Base"', { mode: 'chain', every: 60, hours: { from: '7:00', to: 'x' }, tz: 'Mars/Base' }],
+  ];
+  /* (a run started 5 minutes ago, so a chain with nothing armed isn't "stopped" either) */
+  for (const [what, sc] of odd)
+    await shows(schedSeed(sc, { lastRunAt: tAt(-5) }), 'S5: schedule ' + what + ': nothing', { line: '' });
+  await shows(
+    schedSeed(HOURLY, { nextAt: 'soon', lastRunAt: tAt(-5), misses: '3', problem: 7 }),
+    'S5: odd refresh/schedule fields (nextAt "soon", misses "3", problem 7): ignored',
+    { line: 'Hourly, 7 AM–11 PM.' },
+  );
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { tz: 'Mars/Base' }), { nextAt: tAt(5) }),
+    "S5: an unknown tz falls back to meta/chat.tz (the chat's zone)",
+    { line: 'Hourly, 7 AM–11 PM. Next refresh about 10:05 AM.' },
+  );
+  /* S6: Chain stopped (scheduling.md): inside the hours, nextAt missing or over 30 minutes past, no run going */
+  await shows(
+    schedSeed(HOURLY, { nextAt: tAt(-45), lastRunAt: tAt(-105) }),
+    'S6: nextAt 45 minutes past: stopped, with when it was due',
+    {
+      line: 'Hourly, 7 AM–11 PM.',
+      warns: ['Scheduled refreshes have stopped (the next run was due 9:15 AM).' + STOP_TAIL],
+    },
+  );
+  await shows(
+    schedSeed(HOURLY, { nextAt: '2026-11-12T17:55:00Z' }),
+    'S6: nextAt yesterday: stopped, the date included',
+    {
+      line: 'Hourly, 7 AM–11 PM.',
+      warns: ['Scheduled refreshes have stopped (the next run was due Nov 12, 9:55 AM).' + STOP_TAIL],
+    },
+  );
+  for (const [what, live, extra] of [
+    ['nextAt 20 minutes past', { nextAt: tAt(-20) }],
+    ['a run started 10 minutes ago (lastRunAt)', { nextAt: tAt(-45), lastRunAt: tAt(-10) }],
+    [
+      'refresh/status running from 10 minutes ago',
+      { nextAt: null },
+      { 'refresh/status': { state: 'running', startedAt: tAt(-10), step: 'scan' } },
+    ],
+  ])
+    await shows(schedSeed(HOURLY, live, extra), 'S6: ' + what + ': not stopped', { line: 'Hourly, 7 AM–11 PM.' });
+  await shows(
+    schedSeed(HOURLY, { nextAt: null }, { 'refresh/status': { state: 'running', startedAt: tAt(-25) } }),
+    'S6: a "running" status 25 minutes old is no run going: stopped',
+    { line: 'Hourly, 7 AM–11 PM.', warns: ['Scheduled refreshes have stopped.' + STOP_TAIL] },
+  );
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { mode: 'recurring' }), { nextAt: null }),
+    'S6: recurring with no nextAt: no stopped warning (that is for chains)',
+    { line: 'Hourly, 7 AM–11 PM.' },
+  );
+  /* S7: overdue shows up as time passes, and goes when a new run is armed, without a reload */
+  let p = await sopen(schedSeed(HOURLY, { nextAt: tAt(-29) }));
+  const before = await schedShown(p);
+  await p.clock.fastForward(120000);
+  const late = await until(p, () => document.querySelectorAll('#sched .warn').length === 1, null, 3000);
+  const lateS = await schedShown(p);
+  await p.evaluate(at => __rt.write('refresh/schedule', { nextAt: at, misses: 0 }), tAt(62));
+  const back = await until(p, () => !document.querySelector('#sched .warn'), null, 3000);
+  const backS = await schedShown(p);
+  ok(
+    before &&
+      before.line === 'Hourly, 7 AM–11 PM.' &&
+      !before.warns.length &&
+      late &&
+      lateS.warns[0] === 'Scheduled refreshes have stopped (the next run was due 9:31 AM).' + STOP_TAIL &&
+      back &&
+      backS.line === 'Hourly, 7 AM–11 PM. Next refresh about 11:02 AM.' &&
+      !p.errors.length,
+    'schedule S7: nextAt 29 minutes past is quiet; 2 minutes later "stopped" appears, and goes once a run is armed (' +
+      JSON.stringify([before, lateS, backS, p.errors]) +
+      ')',
+  );
+  await p.close();
+  /* S8: the problem sentence as text, never markup */
+  const evil = '<img src=x onerror="window.__x=1"> no scheduling tool in this app';
+  p = await sopen(schedSeed(HOURLY, { nextAt: null, problem: evil }));
+  let s = await schedShown(p);
+  ok(
+    s &&
+      s.warns.length === 1 &&
+      s.warns[0] === 'Scheduled refreshes have stopped: ' + evil + '.' + STOP_TAIL &&
+      (await p.evaluate(() => window.__x === undefined && !document.querySelector('#sched img'))),
+    'schedule S8: a problem with markup shows literally and runs nothing (' + JSON.stringify(s) + ')',
+  );
+  await p.close();
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { mode: 'recurring' }), { problem: 'The task was cancelled.' }),
+    'S8: a problem on a running recurring schedule: "hit a problem", the sentence as written',
+    {
+      line: 'Hourly, 7 AM–11 PM.',
+      warns: [
+        'Scheduled refreshes hit a problem: The task was cancelled. Claude reports it on the next refresh you ask for.',
+      ],
+    },
+  );
+  await shows(
+    schedSeed(HOURLY, { nextAt: tAt(40), problem: 'The last follow-up failed' }),
+    'S8: a problem on a chain that is armed (not stopped): reported, no restart offered',
+    {
+      line: 'Hourly, 7 AM–11 PM. Next refresh about 10:40 AM.',
+      warns: [
+        'Scheduled refreshes hit a problem: The last follow-up failed. Claude reports it on the next refresh you ask for.',
+      ],
+    },
+  );
+  /* S9: missed runs */
+  const MISS = "The last 3 scheduled runs couldn't reach Chrome.";
+  p = await sopen(schedSeed(HOURLY, { nextAt: tAt(50), misses: 3 }));
+  s = await schedShown(p);
+  ok(
+    s && s.line.endsWith('Next refresh about 10:50 AM.') && s.warns.length === 1 && s.warns[0].startsWith(MISS),
+    'schedule S9: misses 3: "' + MISS + '" (' + JSON.stringify(s) + ')',
+  );
+  await p.close();
+  await shows(schedSeed(HOURLY, { nextAt: tAt(50), misses: 1 }), 'S9: misses 1: no line (a single miss is normal)', {
+    line: 'Hourly, 7 AM–11 PM. Next refresh about 10:50 AM.',
+  });
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { mode: 'recurring' }), { misses: 3 }),
+    'S9: misses 3 on a recurring schedule: no line (misses count chain runs)',
+    { line: 'Hourly, 7 AM–11 PM.' },
+  );
+  /* S9b: a refresh starting after load hides "stopped" at once, and it's back when the run is over */
+  p = await sopen(schedSeed(HOURLY, { nextAt: null }));
+  const was = await schedShown(p);
+  await p.evaluate(() =>
+    __rt.write('refresh/status', { state: 'running', startedAt: new Date().toISOString(), step: 'scan' }),
+  );
+  const hid = await until(p, () => !document.querySelector('#sched .warn'), null, 3000);
+  await p.evaluate(() => __rt.write('refresh/status', { state: 'done', finishedAt: new Date().toISOString() }));
+  const shown = await until(p, () => document.querySelectorAll('#sched .warn').length === 1, null, 3000);
+  ok(
+    was && was.warns.length === 1 && hid && shown && !p.errors.length,
+    'schedule S9b: refresh/status turning "running" after load hides "stopped" without waiting for the timer, and "done" brings it back (' +
+      JSON.stringify([was, !!hid, !!shown]) +
+      ')',
+  );
+  await p.close();
+  /* S9c: a wake-up outside the hours (it only arms the next one) isn't shown as the next refresh */
+  await shows(
+    schedSeed(HOURLY, { nextAt: tAt(13.5 * 60) }),
+    'S9c: nextAt at 11:30 PM, outside 7 AM–11 PM: no next-refresh text',
+    { line: 'Hourly, 7 AM–11 PM.' },
+  );
+  /* S10: the chat's time zone, labelled when it isn't the browser's */
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { tz: 'America/New_York' }), { nextAt: tAt(5) }),
+    'S10: a New York schedule seen from Los Angeles: its times, labelled',
+    { line: 'Hourly, 7 AM–11 PM (EST). Next refresh about 1:05 PM (EST).' },
+  );
+  /* S10b: the label is the zone's name at nextAt: across the March change it's EDT, while now is still EST */
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { tz: 'America/New_York' }), { nextAt: '2027-03-14T18:00:00Z' }),
+    'S10b: a New York run due after daylight saving starts: its label from nextAt (EDT)',
+    { line: 'Hourly, 7 AM–11 PM (EST). Next refresh about Mar 14, 2:00 PM (EDT).' },
+    { clockAt: Date.parse('2027-03-13T18:00:00Z') },
+  );
+  /* S11: dark mode and phone width */
+  const busy = () =>
+    schedSeed(HOURLY, { nextAt: tAt(-45), misses: 5, problem: 'Error: ' + 'x'.repeat(160) + ' (send_later refused)' });
+  p = await sopen(busy(), { viewport: { width: 390, height: 800 } });
+  const fit = await p.evaluate(() => ({
+    sw: document.documentElement.scrollWidth,
+    iw: innerWidth,
+    right: Math.max(...[...document.querySelectorAll('#sched p')].map(x => x.getBoundingClientRect().right)),
+    n: document.querySelectorAll('#sched p').length,
+  }));
+  ok(
+    fit.n === 3 && fit.sw <= fit.iw && fit.right <= fit.iw,
+    'schedule S11: summary, stopped and misses at 390 px fit the width, no sideways scroll (' +
+      JSON.stringify(fit) +
+      ')',
+  );
+  const colors = () =>
+    p.evaluate(() => {
+      const x = document.querySelector('#sched .warn'),
+        l = document.querySelector('#sched .line');
+      if (!x || !l) return null;
+      const probe = document.createElement('div');
+      probe.style.cssText = 'background:var(--warn-soft);color:var(--fg);border-color:var(--muted)';
+      document.body.append(probe);
+      const want = getComputedStyle(probe);
+      return {
+        bg: getComputedStyle(x).backgroundColor,
+        fg: getComputedStyle(x).color,
+        line: getComputedStyle(l).color,
+        wantBg: want.backgroundColor,
+        wantFg: want.color,
+        wantLine: want.borderTopColor,
+      };
+    });
+  const light = await colors();
+  await p.close();
+  p = await sopen(busy(), { colorScheme: 'dark' });
+  const dark = await colors();
+  ok(
+    light &&
+      dark &&
+      dark.bg === dark.wantBg &&
+      dark.fg === dark.wantFg &&
+      dark.line === dark.wantLine &&
+      dark.bg !== light.bg &&
+      !p.errors.length,
+    'schedule S11: dark mode uses the dark --warn-soft, --fg and --muted (' + JSON.stringify([light, dark]) + ')',
+  );
+  await p.close();
+}
+
+/* ---------- F19: claims on a deal ----------
+   The Messages-view chat with a sale on "packs" (#30) and claims written by the refresh: names as the page shows them,
+   first come first, each linking to its message; bad entries skipped. */
+async function claims() {
+  const V = viewSeed();
+  V.msgs[32].fn = 'Ben Brooks';
+  V.msgs[37].fn = 'Ben Ortiz'; /* two Bens: the one from #32 is shown with his full name */
+  const deal = (conv, extra) =>
+    Object.assign(
+      {
+        kind: 'sale',
+        tag: 'For sale',
+        conv,
+        text: 'Pack, $40',
+        refs: [V.th.convs.find(c => c.id === conv).members[0]],
+      },
+      extra,
+    );
+  V.sm.deals = [
+    deal('packs', {
+      claims: [
+        { i: 54, who: 'Dee', n: 1 },
+        { i: 35, who: 'Cy', n: 2 },
+        null,
+        'Ana',
+        { i: '33', who: 'Ana' },
+        { i: 34 },
+        { who: 'Dee' },
+        { i: -1, who: 'Dee' },
+        { i: 36, who: '  ' },
+        { i: 32, who: 'Ben' },
+        { i: 53, who: 'DD', n: 'x' },
+        { i: 1.5, who: 'Cy' },
+      ],
+    }),
+    deal('lend'),
+    deal('gone', { claims: [] }),
+    deal('t6', { claims: [{ i: 52 }, null, 'x'] }),
+    deal('t5', { claims: { i: 40, who: 'Ana' }, status: 'toString', statusAt: 39 }),
+    /* F22 (A2): status "sold" | "pending" with statusAt */
+    deal('t2', {
+      status: 'pending',
+      statusAt: 13,
+      claims: [
+        { i: 13, who: 'Cy' },
+        { i: 16, who: 'Ben', n: 2 },
+        { i: 25, who: 'Ana' },
+      ],
+    }),
+    deal('t3', { status: 'sold', statusAt: 'x', claims: [{ i: 20, who: 'Ana' }] }),
+    deal('t4', { status: 'SOLD', statusAt: 24, claims: [{ i: 26, who: 'Ben' }] }),
+    deal('t0', { status: null, statusAt: 2, claims: [{ i: 3, who: 'Cy' }] }),
+    deal('t1', { status: 'sold', statusAt: 8 }),
+  ];
+  const p = await open(SEED());
+  await paste(p, JSON.stringify(cap(V.msgs)));
+  await p.evaluate(
+    ([th, sm]) => {
+      const pi = __rt.get('people/index') || { people: {} };
+      pi.people['Dee Diaz'] = { shown: ['DD'] };
+      __rt.write('people/index', pi);
+      __rt.write('threading/current', th);
+      __rt.write('summary/current', sm);
+      location.hash = '#summary';
+    },
+    [V.th, V.sm],
+  );
+  await until(p, () => document.querySelector('[data-conv="packs"] .callout.deal'));
+  await p.waitForTimeout(200);
+  const got = await p.evaluate(() => {
+    const line = c => {
+      const x = document.querySelector('[data-conv="' + c + '"] .callout.deal .claims');
+      return x ? x.textContent : null;
+    };
+    const links = [...document.querySelectorAll('[data-conv="packs"] .callout.deal .claims a')].map(a => ({
+      t: a.textContent,
+      href: a.getAttribute('href'),
+    }));
+    return { packs: line('packs'), links, others: ['lend', 'gone', 't6', 't5'].map(line) };
+  });
+  ok(
+    got.packs === 'Claimed: Ben Brooks, Cy (2), DD (Dee), Dee' &&
+      JSON.stringify(got.links.map(a => a.t)) === JSON.stringify(['Ben Brooks', 'Cy', 'DD (Dee)', 'Dee']) &&
+      got.links.every(a => a.href === '#messages'),
+    'claims C1: first come first, names as shown elsewhere, "(n)" only above 1, bad entries skipped (' +
+      JSON.stringify(got) +
+      ')',
+  );
+  ok(
+    !!got.packs && JSON.stringify(got.others) === JSON.stringify([null, null, null, null]),
+    'claims C2: beside a deal with claims, no claims, an empty list, only bad entries, or not a list: no line (' +
+      JSON.stringify(got.others) +
+      ')',
+  );
+  /* C4 (F22): "Sold" or "Pending" beside the deal, linking to statusAt; claims after it say so; unknown values ignored */
+  const sts = await p.evaluate(() =>
+    ['t2', 't3', 't4', 't0', 't1', 't5', 'packs'].map(c => {
+      const d = document.querySelector('[data-conv="' + c + '"] .callout.deal');
+      const x = d && d.querySelector('.lab .dstat');
+      const cl = d && d.querySelector('.claims');
+      return [
+        c,
+        x ? x.tagName + ':' + x.textContent + ':' + (x.getAttribute('href') || '') : null,
+        cl && cl.textContent,
+      ];
+    }),
+  );
+  const wantSts = [
+    ['t2', 'A:Pending:#messages', 'Claimed: Cy, Ben (2) (after pending), Ana (after pending)'],
+    ['t3', 'SPAN:Sold:', 'Claimed: Ana'],
+    ['t4', null, 'Claimed: Ben'],
+    ['t0', null, 'Claimed: Cy'],
+    ['t1', 'A:Sold:#messages', null],
+    ['t5', null, null],
+    ['packs', null, 'Claimed: Ben Brooks, Cy (2), DD (Dee), Dee'],
+  ];
+  ok(
+    JSON.stringify(sts) === JSON.stringify(wantSts),
+    'claims C4: status shows "Pending"/"Sold" linking to statusAt (a plain label without one), claims after statusAt marked, unknown or null status ignored (' +
+      JSON.stringify(sts) +
+      ')',
+  );
+  const stClicked = await tryClick(p, '[data-conv="t2"] .callout.deal .lab a.dstat');
+  const stOpen =
+    stClicked &&
+    (await until(p, () => {
+      const d = document.querySelector('[data-conv="t2"] details.thr');
+      return d && d.open && location.hash === '#summary' && d.querySelector('.msg[data-i="13"].flash');
+    }));
+  ok(
+    !!stOpen && !p.errors.length,
+    'claims C5: the "Pending" label opens its card\'s thread with statusAt (#13) highlighted',
+  );
+  /* C6: the card's header chip says "Sold" or "Pending" for a closed deal, the offer's tag otherwise */
+  const chipsAt = await p.evaluate(() =>
+    ['t1', 't2', 't3', 't4', 'packs'].map(c =>
+      [...document.querySelectorAll('[data-conv="' + c + '"] .cv-head .chip.deal')].map(x => x.textContent).join('|'),
+    ),
+  );
+  ok(
+    JSON.stringify(chipsAt) === JSON.stringify(['Sold', 'Pending', 'Sold', 'For sale', 'For sale']),
+    'claims C6: header chips follow the status (unknown status keeps the tag) (' + JSON.stringify(chipsAt) + ')',
+  );
+  /* C3: a claim in the card opens its thread at that message; one in another conversation goes to Messages */
+  const c2 = await tryClick(p, '[data-conv="packs"] .callout.deal .claims a:nth-of-type(2)');
+  const inCard =
+    c2 &&
+    (await until(p, () => {
+      const d = document.querySelector('[data-conv="packs"] details.thr');
+      return d && d.open && location.hash === '#summary' && d.querySelector('.msg[data-i="35"].flash');
+    }));
+  const c4 = await tryClick(p, '[data-conv="packs"] .callout.deal .claims a:nth-of-type(4)');
+  const away =
+    c4 &&
+    !!(await until(
+      p,
+      () =>
+        location.hash === '#messages' &&
+        !document.getElementById('v-messages').hidden &&
+        document.querySelector('#m54.flash'),
+    ));
+  ok(
+    inCard && away && !p.errors.length,
+    'claims C3: Cy (#35, in the card) opens its thread at #35, highlighted; Dee (#54, another conversation) goes to Messages with #54 highlighted (' +
+      JSON.stringify([inCard, away, p.errors]) +
+      ')',
+  );
+  await p.context().close();
+}
+
 const SECTIONS = {
   importer,
   robustness,
@@ -5065,11 +5939,14 @@ const SECTIONS = {
   speed,
   photos,
   photos2,
+  photoKeys,
   bigPaste,
   standIn,
   history,
   history2,
   notices,
+  schedule,
+  claims,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1

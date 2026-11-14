@@ -30,8 +30,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up · **done** (v1.23.0) |
 | R18 | P3 | risk | Now that a chain run arms as it starts, a run still going when the next one fires (`every` minus 3 minutes after it started) has a lock older than 20 minutes for usual settings, which the next run takes over |
 | R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 715 and adds about 55 a day (to design) |
-| R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
-| R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again |
+| R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them · **done** (v1.24.0) |
+| R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again · **done** (v1.24.0) |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | T6 | P2 | test | `npm test` took 12 minutes, mostly the sim waiting one case at a time · **done** (v1.23.0) |
 | C8 | P3 | cleanup | `tools/sync.py` leaves files open: the Python suite prints "Exception ignored … ResourceWarning" noise that `-W error::ResourceWarning` doesn't catch |
@@ -113,7 +113,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.0) |
 | F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.20.0) |
 | F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
-| F14 | P3 | feature | The page shows when the next scheduled refresh is due (`refresh/schedule.nextAt`) |
+| F14 | P3 | feature | The page shows when the next scheduled refresh is due (`refresh/schedule.nextAt`) · **done** (v1.24.0) |
 | F15 | P3 | perf | "Show older messages" renders the whole history at once; page it by day (R4's remainder) |
 | F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
 | F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
@@ -121,7 +121,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F19 | P2 | feature | Short claims ("In", "dibs", "in for 2") in buy/sell chats thread to the latest open offer, not to whatever came before (issue #41) · **done** (v1.23.0: `REACT?` lines, Claude decides; deal `claims` and `status`) |
 | F20 | P2 | feature | A `move` spec key: put an already-built message into another conversation (`relink` can only change its link) (issue #41) · **done** (v1.23.0) |
 | F21 | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
-| F22 | P3 | feature | The page could show a deal's `status` ("sold", "pending"), which v1.23.0 stores; release B shows `claims` only |
+| F22 | P3 | feature | The page could show a deal's `status` ("sold", "pending"), which v1.23.0 stores; release B shows `claims` only · **done** (v1.24.0: "Sold" or "Pending" beside the deal, linking to `statusAt`, and in the card's header chip) |
+| F23 | P3 | feature | A Messenger reply mid-conversation to a message in another conversation shows no "replying to…" line (27 on the owner's page) |
 
 ---
 
@@ -367,15 +368,34 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Now (v1.22.0):** the page records usage with each import and warns at 80%; `references/photos.md` › Cleanup removes copies and unused files on the user's say-so. That buys time, not a fix.
 - **To design:** for example keep older photos as links only (Messenger's own, which expire), move older photos to an archive page with its own quota, or store a smaller copy of old photos. Each has costs (lost photos, a second page to maintain, re-encoding the owner ruled out for now).
 
-### R15 · P3 · Photos the helper couldn't fetch aren't recorded as owed
+### R15 · P3 · Photos the helper couldn't fetch aren't recorded as owed · done (v1.24.0)
 - **What:** when the helper can't fetch a photo (`FAILED #…` in the capture summary), the capture has no slot for it, so the page never marks it owed and no backfill retries it.
-- **Fix:** the helper lists them (`phfail:[{i,k}]`, helper 2.1) and the page records them as owed `null` slots, so the next run's backfill retries them like any other owed photo.
+- **Done (helper 2.1, owner's decision: give up after 3 runs):**
+  - The capture lists them in `phfail:[{i,k,aid,e}]`: `e:"fetch"` for a failed fetch, `"unloaded"` for an image that never loaded during the scan (before, it was silently left out).
+  - The page records each as an owed `null` slot (with its id), so the next refresh's backfill retries it.
+  - Tries are counted per slot in the block (`tries[i][k] = {n, run}`), once per refresh run: `run` is the `meta/chat.lastRefresh` the import saw, so pasting again in the same run counts once. A run counts when its capture holds the message but not the photo: a `phfail` entry, or with a 2.1 capture a photo neither brought nor skipped. An older helper's capture never counts, and a photo owed only because its upload stopped never counts.
+  - The third run gives it up as `{e:"no-fetch"}`, listed in `gaveUp`; the toast and `photos.md` › Waiting report it. Photos still being tried are in `refresh/lastImport.retry`.
+- **Tests:** page K1–K3 and K8, sim H2 and H4; all fail on the 2.0 helper or the 2.7 page.
+- **Review fixes (v1.24.0, before release):** a skip landing on a slot the page doesn't hold stored (Claude's skip list named an owed or unknown photo) is owed again, counted as a try and listed in `refresh/lastImport.skipOwed`, instead of being taken as stored; tries count once per `full` run id carried in the capture (`run`), falling back to `lastRefresh`, so a paste after step 7 or two refreshes in the same minute can't count twice or once. Tests: page K2 (a capture without the message), K10, K12, K13.
 
-### R16 · P3 · Backfill captures can misplace a photo's slot, and fetch every photo again
+### R16 · P3 · Backfill captures can misplace a photo's slot, and fetch every photo again · done (v1.24.0)
 - **Found:** the review of PR #42 (v1.22.0).
 - **Slot shift:** the helper numbers a message's photos `k` = 0, 1, … in the order of the images it finds loaded. On a backfill scan (messages already stored, scrolled past quickly), an image that hasn't loaded yet is skipped, so the photos after it take a lower `k`. The page then stores a photo in another photo's slot: the owed slot stays owed and a stored slot is skipped as "already stored", or a photo lands under the wrong `k`.
 - **Refetching:** a backfill window of up to 300 messages fetches and base64-encodes every photo in it, stored ones included, only for the page to skip them. The paste grows with every stored photo in the window.
 - **Fix (to design):** key slots by something stable (the photo's Messenger attachment id from its link) instead of position, and let the helper skip photos the page says are stored (for example a `skip:[{i,k}]` or attachment-id list passed to `full`); helper 2.1 with R15.
+- **Done (helper 2.1, owner's decisions):**
+  - **Slots by tile:** the helper numbers a message's photos by their photo links in page order (`photoTiles`), loaded or not, so an unloaded image keeps its slot (and is listed in `phfail`) instead of shifting the rest.
+  - **Ids:** each photo carries Messenger's attachment id (`aid`, the link's `attachment_id`; ARCHITECTURE › Capture format says how sure that is). The page records it with each new slot (`aids[i][k]` in the block) and matches by id first, by `k` when either side has none. The entries stored by position before this keep working by `k`: no migration, nothing rewritten.
+  - **Never twice, never in another's slot:** a photo found by id is skipped wherever the capture numbers it; a slot recording another id is never taken (the photo gets the message's next free slot); no two capture entries share a slot.
+  - **Skip list:** Claude passes `skip:{"<i>":[k or "aid", …]}` to `full` on a backfill (`photos.md` › Backfill, built from the blocks); the helper doesn't fetch or encode those (`phskip`, `skipped n` in the summary). An older helper ignores it: as before, the page skips what it holds.
+  - **Left as is:** a slot stored by position from an earlier shifted capture (helper 2.0 on a backfill since v1.22.0) can't be told apart from a correct one without comparing bytes, so it keeps matching by `k` as the owner decided; at worst a photo is missing or shown twice for that message, as it would be today.
+- **Tests:** page K4–K8, sim H1–H3; all but K6 (an older helper's capture still works, a compatibility check) fail on the 2.0 helper or the 2.7 page.
+- **Also:** `topMs` (scan, verify, `full`), a test option that shortens the 12 s top-of-chat wait; sim H5.
+- **Review fixes (v1.24.0, before release), guarding the id assumption both ways:**
+  - **Unstable ids:** the page keeps a 12-hex content hash per slot (`h`); a photo whose id changed is found by it, its slot takes the new id, and it isn't uploaded again (before, each new id opened a new slot and uploaded a copy). A full block with ids and hashes is about 190 KB (K7).
+  - **Shared ids:** when photos of one message share an id, the helper drops that message's ids (position, as before 2.1) and the scan warns, instead of keeping only the first photo.
+  - **Tiles:** a photo link with no image yet (a placeholder) counts as an unloaded photo, so it keeps its slot and is listed; the reads of a message merge tile by tile (a loaded photo over a recognised GIF or other image over an unloaded tile), so a GIF read before its still loaded no longer leaves a phantom unloaded photo, and two unloaded tiles no longer beat one loaded one.
+  - **Tests:** page K9, K11 and K14, sim H6–H9. In a mutation run, 15 of 16 changes to the page's slot and try rules and all 8 to the helper's tile code were caught; the other (dropping skips on stored slots from `got`) changed nothing, so that code was removed.
 
 ### R17 · P3 · The helper notice runs ahead of the release
 - **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.
@@ -741,9 +761,10 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - Full names: each avatar names only its own group, so two people shown as "Ben" back to back keep their own names (`E: two people shown as "Ben" back to back …`).
   - Also: outbox.md's call 1 now waits after focusing the box and before checking it. With Lexical, text typed the instant the box gets focus is dropped, and inserted text shows a moment later, so the old same-instant check would fail (`F: outbox.md's call 1 types the first line even when Reply leaves the composer unfocused`).
 
-### F14 · P3 · Show the next scheduled refresh on the page
+### F14 · P3 · Show the next scheduled refresh on the page · done (v1.24.0)
 - **What:** `refresh/schedule.nextAt` (v1.21.0) says when the next scheduled run is due, and `problem` why the schedule stopped. The page could show both next to the status line, so a dead schedule is visible without asking Claude.
 - **Fix:** read `refresh/schedule` by name (the page lists no `refresh` collection today); ship with the next page change.
+- **Done in v1.24.0:** the page reads `refresh/schedule` by name (a live snapshot) with `meta/chat.schedule` and shows, under the status line, in the schedule's time zone (labelled when it isn't the browser's): a summary ("Hourly, 7 AM–11 PM", "Every 2 hours, all day", hours that wrap past midnight; manual reads "Refreshes only when you ask"); "Next refresh about 10:05 AM" while `nextAt` is ahead; a calm line when a chain has stopped (scheduling.md's "Chain stopped" conditions, with `refresh/status`) or `problem` is set, saying to ask Claude for a refresh, which offers the restart; and "The last N scheduled runs couldn't reach Chrome" at `misses` ≥ 2. A minute timer brings "stopped" in without a reload. Missing, older or odd values show nothing. Tests: `page.test.js` section `schedule` (S1–S11).
 
 ### F15 · P3 · perf · Page "Show older messages" by day
 - **What:** with "Show older messages" on, the Messages tab renders every stored message. An earlier bench: 0.5 s and 79k elements at 6,400 messages, 2.0 s and 307k at 25,000, 4.2 s and 2.9 GB at 50,000. The default view (the window only) is unaffected. This is what remains of R4.
@@ -805,4 +826,8 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - `references/restoring-a-summary.md` noted and pinned only `summary/current` and said threading wasn't touched; following it left the page refusing every bootstrap. It now pins both, and `TestManifestDocs` checks every reference describing a manifest write against what that command's manifest pins.
   - A pair from different writes no longer locks a page whose writing session is gone: bootstrap accepts it when it fits together (`_problems`), and `--rollback` refiles the summary to fit threading (`_heal`) when it doesn't; `relink` with `{}` writes it when there's nothing new to build. The same check catches a half-landed write on pages without `rev`.
   - `dealEdit` `index` is refused on the conversation a move took a deal out of, and in the build after a standalone move (`state.json` `moved`); the "deals in X now" lines cover the source; `ref` and `index` together are refused.
+
+### F23 · P3 · Show cross-conversation replies mid-conversation
+- **Found:** cleaning up the owner's page (Nov 13). Of 122 links whose parent sat in another conversation, 52 were wrong guesses (fixed live with `relink` and `move`). The 70 left are real Messenger replies where the topic drifted. 43 start a conversation, and the page shows their parent as context (B40). 27 sit mid-conversation, where the page draws no link at all.
+- **Fix:** for a message whose link crosses conversations, show a short "replying to Ben: …" line that opens the parent, like B40's context line. Moving these would misfile them, so the page should show them instead.
 

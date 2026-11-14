@@ -866,6 +866,54 @@
   .upd p button.link {
     margin-left: 4px;
   }
+  /* The schedule (F14): its summary and next run as quiet as the status line; a stopped chain or missed runs as a
+     calm line like the update notices */
+  .sched {
+    display: grid;
+    gap: 6px;
+  }
+  .sched[hidden] {
+    display: none;
+  }
+  .sched p {
+    margin: 0;
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;
+  }
+  .sched .line {
+    color: var(--muted);
+  }
+  .sched .warn {
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--warn-soft);
+    color: var(--fg);
+  }
+  /* Claims on a deal (F19): "Claimed: Ben, Cy (2), Dee", each name opening its message */
+  .callout .claims {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .callout .claims a {
+    color: var(--accent);
+  }
+  /* A deal's status (F22): a small calm pill beside its tag */
+  .callout .lab .dstat {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 0 6px;
+    border: 1px solid currentColor;
+    border-radius: 9px;
+    font-family: var(--body);
+    font-size: 0.72rem;
+    letter-spacing: 0;
+    text-transform: none;
+    text-decoration: none;
+    color: var(--muted);
+  }
+  .callout .lab a.dstat {
+    color: var(--accent);
+  }
   .marker {
     display: flex;
     flex-wrap: wrap;
@@ -1309,6 +1357,7 @@
     <div class="refresh">
       <span class="st" id="refresh-st" role="status"></span><span class="st" id="storage-st" hidden></span>
     </div>
+    <div class="sched" id="sched" role="status" hidden></div>
     <div class="upd" id="upd" role="status" hidden></div>
     <p class="note" id="layout-st" role="status" hidden></p>
     <div class="strip" id="strip"></div>
@@ -1528,7 +1577,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.7";
+  const PAGE_VERSION = "2.8";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -2945,6 +2994,59 @@
     }
     return d;
   }
+  /* a link that opens message i through go(i) (the deal card's claims and status) */
+  function goLink(text, i, go, cls) {
+    const a = el("a", cls || null, text);
+    a.href = "#messages";
+    a.title = "Show this message (#" + i + ")";
+    a.onclick = e => {
+      e.preventDefault();
+      go(i);
+    };
+    return a;
+  }
+  /* F22 (A2): a deal's status, "sold" or "pending" (absent or null: open), with statusAt, the message that closed it.
+     Unknown values are ignored: null. */
+  const DEAL_STATUS = {
+    sold: { label: "Sold", after: "after it was sold" },
+    pending: { label: "Pending", after: "after pending" },
+  };
+  function dealStatus(x) {
+    const s = x && Object.prototype.hasOwnProperty.call(DEAL_STATUS, x.status) ? DEAL_STATUS[x.status] : null;
+    if (!s) return null;
+    return Object.assign({ at: Number.isInteger(x.statusAt) && x.statusAt >= 0 ? x.statusAt : null }, s);
+  }
+  /* the calm label next to the deal's tag, linking to statusAt when there is one */
+  function statusTag(st, go) {
+    if (st.at == null) return el("span", "dstat", st.label);
+    return goLink(st.label, st.at, go, "dstat");
+  }
+  /* F19: a deal's claims [{i, who, n}] as "Claimed: Ben, Cy (2), Dee", first come first, each name opening its message
+     (go(i)); a claim after the deal's statusAt says so. Entries without a message number or a name are skipped; null
+     when none is left. */
+  function claimsLine(claims, go, st) {
+    if (!Array.isArray(claims)) return null;
+    const ok = claims
+      .filter(
+        c =>
+          c && typeof c === "object" && Number.isInteger(c.i) && c.i >= 0 && typeof c.who === "string" && c.who.trim(),
+      )
+      .sort((a, b) => a.i - b.i);
+    if (!ok.length) return null;
+    const p = el("p", "claims note");
+    p.append("Claimed: ");
+    ok.forEach((c, k) => {
+      const who = c.who.trim();
+      const m = S.byI.get(c.i);
+      /* the name as the page shows it elsewhere: from the message when it's theirs, else from the stored name */
+      const name = m && (m.f === who || m.fn === who) ? nameOf(m) : nameOf({ f: who });
+      if (k) p.append(", ");
+      p.append(goLink(name, c.i, go));
+      if (Number.isInteger(c.n) && c.n > 1) p.append(" (" + c.n + ")");
+      if (st && st.at != null && c.i > st.at) p.append(" (" + st.after + ")");
+    });
+    return p;
+  }
   function convCard(c, ctx) {
     const mem = convMembers(c.id).filter(ctx.after);
     const a = S.byI.get(mem[0]),
@@ -2959,7 +3061,11 @@
     const h = el("div", "cv-head");
     const chips = el("div", "row");
     if (opens.length) chips.append(el("span", "chip open", "open question"));
-    deals.forEach(x => chips.append(el("span", "chip deal", x.tag || x.kind || "deal")));
+    /* a sold or pending deal's chip says so, not its offer tag ("For sale") */
+    deals.forEach(x => {
+      const st = dealStatus(x);
+      chips.append(el("span", "chip deal", st ? st.label : x.tag || x.kind || "deal"));
+    });
     if (!deals.length && c.tag && !/^(Open|Answered)$/.test(c.tag))
       chips.append(
         el(
@@ -3044,7 +3150,12 @@
     });
     deals.forEach(x => {
       const b = el("div", "callout deal");
-      b.append(el("div", "lab", x.tag || "Deal"), el("p", null, x.text));
+      /* a claim, or the message that closed the deal, in this card opens the thread at it; one elsewhere goes to Messages */
+      const go = i => (mem.includes(i) ? show([i]) : goMsg(i));
+      const st = dealStatus(x);
+      const lab = el("div", "lab", x.tag || "Deal");
+      if (st) lab.append(" ", statusTag(st, go));
+      b.append(lab, el("p", null, x.text));
       if ((x.links || []).length) {
         const p = el("p", "note");
         x.links.forEach(([lab, u], k) => {
@@ -3053,6 +3164,8 @@
         });
         b.append(p);
       }
+      const cl = claimsLine(x.claims, go, st);
+      if (cl) b.append(cl);
       d.append(b);
     });
     ans.forEach(x => {
@@ -4786,12 +4899,23 @@
      Photos store one at a time after the messages, and each is indexed the moment it lands, so a tab closed mid-upload
      loses nothing: what landed is indexed, and what's left is owed (a null slot, counted in meta/chat.photosOwed) for a
      re-paste or the next refresh's backfill to store. photos/b<start> holds the slots of messages start..start+499:
-     byK[i][k] = "/_blob/<id>" (stored) | null (owed) | {e:code} (given up). photos/index (pages up to 2.6) is read,
-     never written. Tests shorten the timings with window.__mcImportTune; nothing in production sets it. */
+     byK[i][k] = "/_blob/<id>" (stored) | null (owed) | {e:code} (given up), aids[i][k] = Messenger's attachment id of
+     that slot (R16: captures from helper 2.1 on; older slots have none and match by k), h[i][k] = the first 12 hex
+     characters of the SHA-256 of the photo's base64 as captured (v1.24: a photo whose id changed is still found), and
+     tries[i][k] = {n, run}, the refresh runs that couldn't fetch an owed photo (R15). photos/index (pages up to 2.6) is read, never written. Tests
+     shorten the timings with window.__mcImportTune; nothing in production sets it. */
   const PHOTO_BLOCK = 500;
   const IMPORT_TUNE = Object.freeze(
     Object.assign(
-      { beatMs: 10000, leaseMs: 60000, uploadTimeoutMs: 90000, retryMs: 2000, rateWaitMs: 30000, owedWindow: 300 },
+      {
+        beatMs: 10000,
+        leaseMs: 60000,
+        uploadTimeoutMs: 90000,
+        retryMs: 2000,
+        rateWaitMs: 30000,
+        owedWindow: 300,
+        fetchTries: 3,
+      },
       window.__mcImportTune || {},
     ),
   );
@@ -4802,6 +4926,9 @@
      and a block's over the old index's. byI (what the page shows) is derived: stored photos in slot order. */
   function mergePhotos(docs) {
     const byK = {};
+    const aids = {};
+    const tries = {};
+    const h = {};
     const gifs = new Set();
     const put = (i, k, v) => {
       const m = byK[i] || (byK[i] = {});
@@ -4821,6 +4948,9 @@
       .forEach(id => {
         const d = docs[id] || {};
         Object.entries(d.byK || {}).forEach(([i, m]) => Object.entries(m || {}).forEach(([k, v]) => put(i, k, v)));
+        Object.entries(d.aids || {}).forEach(([i, m]) => Object.assign(aids[i] || (aids[i] = {}), m));
+        Object.entries(d.tries || {}).forEach(([i, m]) => Object.assign(tries[i] || (tries[i] = {}), m));
+        Object.entries(d.h || {}).forEach(([i, m]) => Object.assign(h[i] || (h[i] = {}), m));
         (d.gifs || []).forEach(g => gifs.add(+g));
       });
     const byI = {};
@@ -4831,7 +4961,46 @@
         .filter(isStored);
       if (l.length) byI[i] = l;
     });
-    return { byK, byI, gifs };
+    return { byK, byI, gifs, aids, tries, h };
+  }
+  /* R16: the slot each capture entry (a photo, a phfail or a phskip) stands for. By Messenger's attachment id when the
+     entry and a slot of its message both have one; then, for a photo, by its content hash (h) when a slot of its message
+     has the same (the same photo under a new id: byHash, so its id is updated and it isn't uploaded again); otherwise by
+     k, as before helper 2.1 (slots stored before then have neither). A slot whose recorded id is another photo's is never
+     used: the entry gets the message's next free slot, so a photo is never stored under another photo's slot, and one id
+     is never given two slots. Returns copies with k set to the slot (ck = the capture's k). */
+  function resolveSlots(M, items) {
+    const used = {};
+    const out = items.map(x => Object.assign({}, x, { ck: x.k }));
+    const use = (x, k) => {
+      x.k = k;
+      (used[x.i] || (used[x.i] = new Set())).add(k);
+    };
+    out.forEach(x => {
+      const a = M.aids[x.i] || {};
+      const hit = x.aid ? Object.keys(a).find(s => a[s] === x.aid) : null;
+      if (hit != null) use(x, +hit);
+      else x.k = null;
+    });
+    out.forEach(x => {
+      if (x.k != null || !x.h) return;
+      const hs = M.h[x.i] || {};
+      const u = used[x.i] || new Set();
+      const hit = Object.keys(hs).find(s => hs[s] === x.h && !u.has(+s));
+      if (hit == null) return;
+      use(x, +hit);
+      x.byHash = true;
+    });
+    out.forEach(x => {
+      if (x.k != null) return;
+      const a = M.aids[x.i] || {};
+      const u = used[x.i] || new Set();
+      const k = x.ck;
+      if (!(x.aid && a[k] && a[k] !== x.aid) && !u.has(k)) return use(x, k);
+      const ks = Object.keys(M.byK[x.i] || {}).concat(Object.keys(a), [...u]);
+      use(x, Math.max(-1, ...ks.map(Number)) + 1);
+    });
+    return out;
   }
   const owedOf = M => {
     const o = [];
@@ -4848,7 +5017,12 @@
   async function planPhotos(P) {
     const ig = await S.db.doc("photos/index").get();
     const idx = ig.exists ? ig.data() : null;
-    const ids = new Set(P.photos.map(ph => photoBlock(ph.i)).concat(P.gifs.map(photoBlock)));
+    const ids = new Set(
+      P.photos
+        .concat(P.phfail, P.phskip)
+        .map(ph => photoBlock(ph.i))
+        .concat(P.gifs.map(photoBlock)),
+    );
     const ow = P.meta.photosOwed;
     if (ow && ow.n)
       for (let s = Math.floor(ow.fromI / PHOTO_BLOCK) * PHOTO_BLOCK; s <= ow.toI; s += PHOTO_BLOCK) ids.add("b" + s);
@@ -4862,13 +5036,32 @@
     }
     const M = mergePhotos(Object.assign({ index: idx }, blocks));
     const val = ph => (M.byK[ph.i] || {})[ph.k];
+    const hashed = [];
+    for (const ph of P.photos) hashed.push(Object.assign({}, ph, { h: (await sha256hex(ph.b64)).slice(0, 12) }));
+    const all = resolveSlots(
+      M,
+      hashed.concat(
+        P.phfail.map(x => Object.assign({ fail: true }, x)),
+        P.phskip.map(x => Object.assign({ skip: true }, x)),
+      ),
+    );
+    const photos = all.filter(x => !x.fail && !x.skip);
     /* oldest first, so an interrupted run leaves the newest owed, nearest the next run's backfill */
-    const todo = (P.lab ? P.photos : P.photos.filter(ph => val(ph) == null))
-      .slice()
-      .sort((a, b) => a.i - b.i || a.k - b.k);
+    const todo = (P.lab ? photos : photos.filter(ph => val(ph) == null)).slice().sort((a, b) => a.i - b.i || a.k - b.k);
     const bytes = todo.reduce((n, ph) => n + Math.floor((ph.b64.length * 3) / 4), 0);
-    return { idx, blocks, exists, todo, skipped: P.photos.length - todo.length, bytes };
+    return {
+      idx,
+      blocks,
+      exists,
+      todo,
+      photos,
+      fails: all.filter(x => x.fail),
+      skips: all.filter(x => x.skip),
+      skipped: photos.length - todo.length,
+      bytes,
+    };
   }
+  const aidOk = a => a === undefined || (typeof a === "string" && /^[\w.:-]{1,64}$/.test(a));
   const GIVE_UP = ["too_large", "unsupported_type", "invalid_request"];
   const NO_ASSETS = ["not_granted", "capability_disabled", "capability_removed"];
   const stopOf = c =>
@@ -4906,18 +5099,23 @@
     R.photos = { total: P.photos.length, todo: todo.length, done: 0, skipped: L.skipped, failed: 0, bytes: L.bytes };
     R.stored = [];
     R.gaveUp = [];
+    R.retry = [];
     /* Writes go slot by slot (update merges nested objects), never the whole block: another tab that took the lease
        after ours lapsed may have indexed other slots of the same block since we read it. pend[id] holds what's still
        to write; gifs are merged with a fresh read, since update replaces an array whole. */
     const pend = {};
     const known = new Set(Object.keys(blocks).filter(id => L.exists[id]));
-    const pendOf = id => pend[id] || (pend[id] = { byK: {}, gifs: [] });
-    const slot = (i, k, v) => {
+    const FIELDS = ["aids", "tries", "h"];
+    const pendOf = id => pend[id] || (pend[id] = { byK: {}, aids: {}, tries: {}, h: {}, gifs: [] });
+    /* f: "byK" (the slot), or one of FIELDS */
+    const put = (f, i, k, v) => {
       const id = photoBlock(i);
-      (blocks[id].byK[i] || (blocks[id].byK[i] = {}))[k] = v;
-      const p = pendOf(id);
-      (p.byK[i] || (p.byK[i] = {}))[k] = v;
+      const b = blocks[id][f] || (blocks[id][f] = {});
+      (b[i] || (b[i] = {}))[k] = v;
+      const p = pendOf(id)[f];
+      (p[i] || (p[i] = {}))[k] = v;
     };
+    const slot = (i, k, v) => put("byK", i, k, v);
     const wait = ms => new Promise(r => setTimeout(r, ms));
     /* one write at a time per document; a refused write is retried once, after renewing the lease (a tab that lost it
        writes nothing more), and one over 256 KiB never */
@@ -4928,10 +5126,15 @@
       for (let t = 0; ; t++) {
         try {
           const g = !known.has(id) || p.gifs.length ? await ref.get() : null;
-          if (g && !g.exists) await ref.set({ start: +id.slice(1), byK: p.byK, gifs: p.gifs.sort((x, y) => x - y) });
-          else {
+          if (g && !g.exists) {
+            const d = { start: +id.slice(1), byK: p.byK };
+            FIELDS.forEach(f => Object.keys(p[f]).length && (d[f] = p[f]));
+            d.gifs = p.gifs.sort((x, y) => x - y);
+            await ref.set(d);
+          } else {
             const up = {};
             if (Object.keys(p.byK).length) up.byK = p.byK;
+            FIELDS.forEach(f => Object.keys(p[f]).length && (up[f] = p[f]));
             if (p.gifs.length)
               up.gifs = [...new Set([...((g && g.data().gifs) || []), ...p.gifs])].sort((x, y) => x - y);
             await ref.update(up);
@@ -4969,8 +5172,45 @@
     let stop = null,
       at = null;
     if (!P.lab) {
-      /* placeholders first, so the owed slots are on record even if the tab dies before the first upload */
+      /* placeholders first, so the owed slots are on record even if the tab dies before the first upload; a photo from
+         helper 2.1 records its attachment id with its slot (R16) */
       todo.forEach(ph => val(ph.i, ph.k) !== null && slot(ph.i, ph.k, null));
+      todo.forEach(ph => ph.aid && (M.aids[ph.i] || {})[ph.k] !== ph.aid && put("aids", ph.i, ph.k, ph.aid));
+      todo.forEach(ph => ph.h && (M.h[ph.i] || {})[ph.k] !== ph.h && put("h", ph.i, ph.k, ph.h));
+      /* a stored photo found by its hash under a new id: the slot takes the new id; nothing is uploaded */
+      L.photos
+        .filter(ph => ph.byHash && ph.aid && val(ph.i, ph.k) != null && (M.aids[ph.i] || {})[ph.k] !== ph.aid)
+        .forEach(ph => put("aids", ph.i, ph.k, ph.aid));
+      /* R15: a photo the helper couldn't get (phfail) is owed, so the next refresh's backfill retries it. Each refresh
+         run that holds an owed photo's message but not the photo (a phfail, or with helper 2.1 neither brought nor
+         skipped) is one try; meta/chat.lastRefresh tells runs apart, so pasting again counts once. At fetchTries the
+         photo is given up ("no-fetch"). Photos brought but not uploaded yet never count. */
+      /* a skip the page doesn't hold stored or given up (Claude's skip list named an owed or unknown slot): owed like a
+         phfail, and listed in skipOwed so Claude sees its list was wrong */
+      const skipOwed = L.skips.filter(x => val(x.i, x.k) == null);
+      if (skipOwed.length) R.skipOwed = skipOwed.map(x => ({ i: x.i, k: x.k }));
+      L.fails.concat(skipOwed).forEach(x => {
+        if (val(x.i, x.k) !== undefined) return;
+        slot(x.i, x.k, null);
+        if (x.aid) put("aids", x.i, x.k, x.aid);
+      });
+      remerge();
+      /* the capture's run id (helper 2.1's full), else the last refresh: one try per run */
+      const run = P.run ? "run:" + P.run : String(P.meta.lastRefresh || "");
+      /* skips on stored or given-up slots never touch an owed one, so only the photos brought count as got */
+      const got = new Set(L.photos.map(x => x.i + "." + x.k));
+      const fail = new Set(L.fails.map(x => x.i + "." + x.k));
+      owedOf(M)
+        .filter(o => P.inCap.has(o.i) && !got.has(o.i + "." + o.k) && (P.v21 || fail.has(o.i + "." + o.k)))
+        .forEach(o => {
+          const t = (M.tries[o.i] || {})[o.k] || { n: 0, run: null };
+          if (t.run === run) return;
+          const n = (+t.n || 0) + 1;
+          put("tries", o.i, o.k, { n, run });
+          if (n < T.fetchTries) return R.retry.push({ i: o.i, k: o.k, n });
+          slot(o.i, o.k, { e: "no-fetch" });
+          R.gaveUp.push({ i: o.i, k: o.k, e: "no-fetch" });
+        });
       remerge();
       P.gifs.forEach(i => {
         const b = blocks[photoBlock(i)];
@@ -5111,7 +5351,12 @@
       await writeOwed();
     }
     remerge();
-    R.owed = P.lab ? [] : P.photos.filter(ph => val(ph.i, ph.k) === null).map(ph => ({ i: ph.i, k: ph.k }));
+    R.owed = P.lab
+      ? []
+      : L.photos
+          .concat(L.fails)
+          .filter(ph => val(ph.i, ph.k) === null)
+          .map(ph => ({ i: ph.i, k: ph.k }));
     R.backfill = P.firstI != null && P.firstI <= P.oldLastI && R.stored.some(s => s.i <= P.oldLastI);
     if (stop) R.stop = stop === "index-full" ? "index" : stop;
     R.state = stop ? "partial" : "done";
@@ -5126,6 +5371,7 @@
     invalid_request: "rejected",
     "gave-up": "too old to fetch again",
     "no-backfill": "too early in the chat to fetch again",
+    "no-fetch": "Messenger didn't give it in " + IMPORT_TUNE.fetchTries + " refreshes",
   };
   function photoNote(R, P, { stop, at, code }) {
     const ph = R.photos;
@@ -5157,6 +5403,22 @@
         "): more than " +
         IMPORT_TUNE.owedWindow +
         " messages old, too old to fetch again.";
+    if (R.retry.length)
+      s +=
+        " " +
+        plural(R.retry.length, "photo") +
+        " Messenger didn't give (" +
+        [...new Set(R.retry.map(g => "#" + g.i))].join(", ") +
+        "): still owed, the next refresh tries again.";
+    if (R.skipOwed)
+      s +=
+        " " +
+        plural(R.skipOwed.length, "photo") +
+        " the helper skipped " +
+        (R.skipOwed.length === 1 ? "isn't" : "aren't") +
+        " stored here (" +
+        [...new Set(R.skipOwed.map(g => "#" + g.i))].join(", ") +
+        "): owed, so the next refresh fetches it.";
     const left = ph.todo - ph.done - ph.failed;
     const part = " Photos: " + ph.done + " of " + ph.todo + " stored";
     const again = " Paste again to store the rest.";
@@ -5362,10 +5624,14 @@
       if (!m.f || !m.m || !m.t || !/^\d{4}-\d\d-\d\d$/.test(m.d || ""))
         return done("#" + m.i + " is missing a field. Nothing saved.");
     const inCap = new Set(ms.map(m => m.i));
+    /* helper 2.1: aid = Messenger's attachment id (R16); phfail and phskip = photos it couldn't get or skipped */
+    const slotOk = x => x && inCap.has(x.i) && Number.isInteger(x.k) && x.k >= 0 && x.k < 100 && aidOk(x.aid);
     for (const ph of photos) {
-      if (!inCap.has(ph.i) || !/^image\/(jpeg|png|webp|gif)$/.test(ph.type || "") || !ph.b64)
+      if (!slotOk(ph) || !/^image\/(jpeg|png|webp|gif)$/.test(ph.type || "") || !ph.b64)
         return done("Photo for #" + ph.i + " is malformed. Nothing saved.");
     }
+    const phfail = cap.lab || !Array.isArray(cap.phfail) ? [] : cap.phfail.filter(slotOk);
+    const phskip = cap.lab || !Array.isArray(cap.phskip) ? [] : cap.phskip.filter(slotOk);
     const size = meta.chunkSize || 82;
     const writes = [];
     let cur;
@@ -5390,6 +5656,8 @@
     const gifsNew = cap.lab ? [] : (cap.gifs || []).filter(i => inCap.has(i));
     const plan = { photos, gifs: gifsNew, meta, inCap, firstI: ms.length ? ms[0].i : null, oldLastI: lastI };
     plan.lab = !!cap.lab;
+    Object.assign(plan, { phfail, phskip, v21: !cap.lab && Array.isArray(cap.phfail) });
+    plan.run = typeof cap.run === "string" && cap.run.length <= 64 ? cap.run : null;
     let dryPh = "";
     if (dry && photos.length) {
       const L = await planPhotos(plan);
@@ -5506,7 +5774,8 @@
       if (P && !R.dry) {
         let end = null;
         const owed = P.meta.photosOwed && P.meta.photosOwed.n;
-        if (P.photos.length || P.gifs.length || owed) end = await storePhotos(R, P, show);
+        if (P.photos.length || P.gifs.length || P.phfail.length || P.phskip.length || owed)
+          end = await storePhotos(R, P, show);
         if (!end || end.stop !== "lease") await recordUsage(R, P);
         if (end) R.msg += photoNote(R, P, end);
         const n = usageNote(R.usage);
@@ -5576,6 +5845,7 @@
   setInterval(() => {
     if (S.refresh) renderRefresh();
     renderUpdates();
+    renderSchedule();
   }, 60000);
 
   /* ---------- update notices (F5) ----------
@@ -5725,6 +5995,160 @@
       box.append(p);
     });
     box.hidden = !list.length;
+  }
+
+  /* ---------- the schedule (F14) ----------
+     meta/chat.schedule {mode, every, hours:{from,to}, tz} is the user's choice and refresh/schedule {nextAt, lastRunAt,
+     misses, problem, …} its live state (the refresh skill's references/scheduling.md). The page only reads them: a
+     summary, the next run, and a calm line when the chain has stopped (scheduling.md's "Chain stopped") or runs keep
+     missing Chrome. Anything missing, older or odd shows nothing. Times are in the schedule's time zone. */
+  const SCHED_MODES = ["chain", "recurring", "manual"];
+  /* "HH:MM" → minutes since midnight ("24:00" is the end of the day), or null */
+  function hhmm(s) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(typeof s === "string" ? s.trim() : "");
+    if (!m) return null;
+    const h = +m[1],
+      mi = +m[2];
+    if (mi > 59 || h > 24 || (h === 24 && mi)) return null;
+    return h * 60 + mi;
+  }
+  function validTz(tz) {
+    if (typeof tz !== "string" || !tz) return undefined;
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: tz });
+      return tz;
+    } catch (e) {
+      return undefined;
+    }
+  }
+  /* " (PST)" when the schedule's zone isn't this browser's, so its times aren't read as local */
+  function tzLabel(tz, now) {
+    if (!tz || tz === Intl.DateTimeFormat().resolvedOptions().timeZone) return "";
+    const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" }).formatToParts(new Date(now));
+    const n = p.find(x => x.type === "timeZoneName");
+    return n ? " (" + n.value + ")" : "";
+  }
+  const clock12 = min => {
+    const h = Math.floor(min / 60) % 24,
+      mi = min % 60;
+    return (h % 12 || 12) + (mi ? ":" + String(mi).padStart(2, "0") : "") + (h < 12 ? " AM" : " PM");
+  };
+  function minuteOfDay(now, tz) {
+    const p = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+    }).formatToParts(new Date(now));
+    const g = t => Number((p.find(x => x.type === t) || {}).value) || 0;
+    return (g("hour") % 24) * 60 + g("minute");
+  }
+  /* {all:true} with no hours, {from, to} in minutes, or null for a form the page can't read */
+  function schedHours(h) {
+    if (h == null) return { all: true };
+    if (!isObj(h)) return null;
+    const f = hhmm(h.from),
+      t = hhmm(h.to);
+    if (f == null || t == null) return null;
+    /* equal ends: "00:00"–"24:00" is the whole day; any other pair (such as "07:00"–"07:00") can't be read */
+    if (f % 1440 === t % 1440) return f === 1440 || t === 1440 ? { all: true } : null;
+    return { from: f % 1440, to: t % 1440 };
+  }
+  /* from included, to excluded, up to 5 minutes early counts as inside; a `to` before `from` wraps past midnight */
+  function inHours(w, now, tz) {
+    if (w.all) return true;
+    const m = minuteOfDay(now, tz);
+    const start = (w.from - 5 + 1440) % 1440;
+    const len = ((w.to - w.from + 1440) % 1440) + 5;
+    return (m - start + 1440) % 1440 < len;
+  }
+  function everyText(v) {
+    const n = typeof v === "number" || (typeof v === "string" && /^\d+$/.test(v)) ? Number(v) : NaN;
+    if (!Number.isInteger(n) || n <= 0 || n > 10080) return null;
+    if (n === 60) return "Hourly";
+    return n % 60 ? "Every " + n + " minutes" : "Every " + n / 60 + " hours";
+  }
+  /* the time alone today, else with the date */
+  function schedTime(ms, now, tz) {
+    const d = new Date(ms);
+    const day = x => x.toLocaleDateString("en-US", { timeZone: tz });
+    const o = { hour: "numeric", minute: "2-digit", timeZone: tz };
+    if (day(d) === day(new Date(now))) return d.toLocaleTimeString("en-US", o);
+    return d.toLocaleString("en-US", Object.assign({ month: "short", day: "numeric" }, o));
+  }
+  /* Pure: meta/chat, refresh/schedule, refresh/status, the time and the refresh phrase in; {line, warns} out.
+     sched is undefined until its snapshot arrives (nothing about the live state yet) and null when the document doesn't
+     exist (a chain then has nothing armed). Nothing at all until meta/chat has loaded. */
+  function scheduleView(meta, sched, status, now, rp) {
+    const out = { line: "", warns: [] };
+    if (!isObj(meta)) return out;
+    const sc = isObj(meta.schedule) ? meta.schedule : null;
+    const mode = sc && SCHED_MODES.includes(sc.mode) ? sc.mode : null;
+    if (mode === "manual") {
+      out.line = "Refreshes only when you ask.";
+      return out;
+    }
+    const st = isObj(sched) ? sched : sched === null && mode === "chain" ? {} : null;
+    const tz = validTz(sc && sc.tz) || validTz(meta.tz);
+    const lab = tzLabel(tz, now);
+    const w = sc ? schedHours(sc.hours) : null;
+    const ev = mode ? everyText(sc.every) : null;
+    const parts = [];
+    if (ev && w) parts.push(ev + ", " + (w.all ? "all day" : clock12(w.from) + "–" + clock12(w.to) + lab) + ".");
+    const next = st && typeof st.nextAt === "string" ? Date.parse(st.nextAt) : NaN;
+    /* the zone's name at that time (it can differ from now's across a daylight-saving change) */
+    const at = ms => schedTime(ms, now, tz) + tzLabel(tz, ms);
+    /* a wake-up outside the hours only arms the next one, so it isn't shown as a refresh */
+    if (mode && next > now && (!w || inHours(w, next, tz))) parts.push("Next refresh about " + at(next) + ".");
+    out.line = parts.join(" ");
+    if (!st) return out;
+    /* Chain stopped: inside the hours, nextAt missing or over 30 minutes past, and no run going (refresh/status isn't
+       "running" from the last 20 minutes, and lastRunAt isn't from the last 30) */
+    const ago = v => (typeof v === "string" ? (now - Date.parse(v)) / 60000 : NaN);
+    const running = isObj(status) && status.state === "running" && ago(status.startedAt) < 20;
+    const stopped =
+      mode === "chain" &&
+      !!w &&
+      inHours(w, now, tz) &&
+      !(next > now - 30 * 60000) &&
+      !running &&
+      !(ago(st.lastRunAt) < 30);
+    const problem = typeof st.problem === "string" ? st.problem.trim() : "";
+    if (stopped || problem) {
+      let t = stopped
+        ? "Scheduled refreshes have stopped" + (Number.isFinite(next) ? " (the next run was due " + at(next) + ")" : "")
+        : "Scheduled refreshes hit a problem";
+      t += problem ? ": " + problem + (/[.!?]$/.test(problem) ? "" : ".") : ".";
+      /* scheduling.md: Claude offers a restart only for a stopped chain; a problem alone is reported and cleared */
+      out.warns.push(
+        t +
+          (stopped
+            ? " Ask Claude in chat to “" + rp + "”, and it offers to restart them."
+            : " Claude reports it on the next refresh you ask for."),
+      );
+    }
+    const mi = st.misses;
+    if (mode === "chain" && Number.isInteger(mi) && mi >= 2)
+      out.warns.push(
+        "The last " +
+          mi +
+          " scheduled runs couldn't reach Chrome. Each run needs the computer awake and Chrome open, with Claude in Chrome connected.",
+      );
+    return out;
+  }
+  /* rebuilt only when something changed, so the status region isn't announced again every minute */
+  let schedShown = null;
+  function renderSchedule() {
+    const box = $("#sched");
+    if (!box) return;
+    const v = scheduleView(S.meta, S.sched, S.refresh, Date.now(), RP());
+    const sig = JSON.stringify(v);
+    if (sig === schedShown) return;
+    schedShown = sig;
+    box.textContent = "";
+    if (v.line) box.append(el("p", "line", v.line));
+    v.warns.forEach(t => box.append(el("p", "warn", t)));
+    box.hidden = !v.line && !v.warns.length;
   }
 
   /* ---------- threading and summary documents (v1.17) ----------
@@ -5887,6 +6311,7 @@
           rebuild();
           renderRefresh();
           renderUpdates();
+          renderSchedule();
         });
       },
       () => {},
@@ -5941,6 +6366,14 @@
         S.refresh = s.exists ? s.data() : null;
         renderRefresh();
         renderUpdates();
+        renderSchedule();
+      },
+      () => {},
+    );
+    db.doc("refresh/schedule").onSnapshot(
+      s => {
+        S.sched = s.exists ? s.data() : null;
+        renderSchedule();
       },
       () => {},
     );

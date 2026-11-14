@@ -2,6 +2,46 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.24.0] - 2026-11-13
+**The schedule and deal claims on the page, and photos that are retried and keep their slots** (BACKLOG F14, F19's display, F22, R15, R16). MINOR: new page features and refresh procedure changes. Page **`PAGE_VERSION` 2.8** (from 2.7), helper **2.1** (from 2.0). No re-setup: Claude republishes your page on its next refresh, and installed helpers (1.5+) update themselves from this release.
+
+### Added
+- **The schedule on the page (F14).** Under the status line, in the schedule's time zone (labelled when it isn't the browser's), from `meta/chat.schedule`, `refresh/schedule` and `refresh/status`, updated live and as time passes:
+  - a summary ("Hourly, 7 AM–11 PM"; a manual schedule reads "Refreshes only when you ask");
+  - "Next refresh about …" from `nextAt`, left out when it falls outside the chosen hours;
+  - a calm line when scheduled refreshes have stopped, saying to ask Claude for a refresh, which offers to restart them. A chain with no `refresh/schedule` document counts as stopped;
+  - a `problem` on its own says Claude reports it on the next refresh you ask for;
+  - "The last N scheduled runs couldn't reach Chrome" once a chain's `misses` reaches 2.
+- **Claims on the deal card (F19's display).** A deal with `claims` shows "Claimed: Ben, Cy (2), Dee", first come first, with each name opening its message (in the card, or in Messages when it's in another conversation). Names follow the page's people mapping; bad entries are skipped.
+- **A deal's status (F22).** "Sold" or "Pending" shows beside the deal, linking to `statusAt`, and replaces the tag in the card's header chip. A claim made after it reads "(after it was sold)" or "(after pending)". Other status values are ignored.
+- **Failed photos are retried (R15).** A photo the helper couldn't get (the fetch failed, or the image never loaded during the scan) is now owed like any other, and the next refreshes try it again. Each run that reaches its message without getting it counts one try (`tries` in its block). After 3 runs the page gives it up as `{e:"no-fetch"}`, listed in `gaveUp` and in the report. Photos still being tried are in `refresh/lastImport.retry`.
+- **Photos keep their slots (R16):**
+  - **Messenger photo ids:** each photo carries Messenger's attachment id (`aid`). The page records it with each new slot and matches by it first, so a photo is never stored twice or in another photo's slot. Photos stored before keep matching by position: no migration.
+  - **A content hash for unstable ids:** each slot also keeps the start of the photo's SHA-256 (`h`). A photo whose id changed is found by it, its slot takes the new id, and it isn't uploaded again.
+  - **Shared ids:** when photos of one message share an id, the helper drops that message's ids (matching by position, as before 2.1) and the scan warns.
+  - **A skip list:** on a backfill Claude passes `skip` to `full` with the photos the page already holds (`photos.md` › Backfill), and the helper doesn't fetch or encode them. A skip naming a slot the page doesn't hold stored is owed again, counted as a try and listed in `refresh/lastImport.skipOwed`.
+  - **Skeleton and lazy images keep their slots:** a message's photos are numbered by their photo links in page order, loaded or not, so an image that hasn't loaded (or a placeholder box) keeps its slot and is listed as unloaded, instead of shifting the photos after it.
+  - **Per-tile merge:** two reads of a message merge tile by tile (a loaded photo over a GIF or other image over an unloaded tile), so a GIF read before its still loaded leaves no phantom photo, and one loaded read beats unloaded tiles that don't line up.
+  - **Run ids:** the capture carries the run id given to `full`, so a failed photo counts once per refresh run, even when the paste is repeated after step 7 or two runs fall in the same minute (falling back to `meta/chat.lastRefresh` for captures without one).
+
+### Changed
+- **Helper 2.1:** each photo gains `aid`; the capture gains `phfail` (photos it couldn't get: `{i, k, aid, e}`), `phskip` (photos it skipped) and `run`; `full` takes `skip` and `topMs` (a test option that shortens the 12 s top-of-chat wait). The capture summary adds `FAILED #…` and `skipped n`. An older helper ignores `skip`, and its captures still import as before.
+- **Page 2.8:** photo blocks (`photos/b<start>`) gain `aids`, `tries` and `h`; `refresh/lastImport` gains `retry` and `skipOwed`. The page reads `refresh/schedule` by name.
+- Refresh skill: step 4 keeps the page tab open for photos or `FAILED` (`SKILL.md` 18,508 bytes). `references/photos.md` covers failed photos, the tries, `no-fetch` and the skip list; `references/helper.md`, `references/database.md` (and setup's copies), ARCHITECTURE and BACKLOG follow.
+- Tests: page sections `schedule`, `claims` and `photoKeys` (K1–K14); sim cases H1–H9 in four `sim(...)` cases (`SIM_ONLY=H`), with new mock modes (`lazy`, `skeleton`, `sharedaid`).
+
+### Review
+- An independent review of the release and a separate adversarial review of the photo changes found real defects, all fixed before merge, each with a test that fails without the fix:
+  - a problem alone offered a restart meant for a stopped chain; "00:00–24:00" didn't read as all day; a chain with no schedule state didn't show as stopped; a next run outside the hours was shown, and the zone label could be wrong across daylight saving; a sold or pending deal's chip kept its tag;
+  - a photo whose Messenger id changed opened a new slot and was uploaded again (now the content hash);
+  - photos sharing one id kept only the first;
+  - a placeholder box shifted the slots after it, and a GIF read before its still loaded left a phantom unloaded photo;
+  - a skip naming an owed slot was taken as stored;
+  - a repeated paste, or two runs in the same minute, could count a try twice or once.
+- In a mutation run of the photo rules, 15 of 16 changes to the page's slot and try rules and all 8 to the helper's tile code were caught; the remaining one changed nothing, so that code was removed.
+- R10 (the page's requirements don't mention the Claude Desktop app) stays open: its page wording follows in a later release.
+- Filed F23: a Messenger reply mid-conversation to a message in another conversation shows no "replying to…" line.
+
 ## [1.23.0] - 2026-11-13
 **Claims in buy/sell chats, moving a message to another conversation, scheduled runs that survive a crash, and a test suite 8× faster** (BACKLOG F19, F20, R14, T6; GitHub issue #41). MINOR: refresh procedure changes and new spec keys. Page and helper unchanged (`PAGE_VERSION` 2.7, helper 2.0).
 

@@ -626,6 +626,175 @@ sim('G: several photos per message', { s: 32 }, async b => {
   await ctx.close();
 });
 
+/* ---------- H: helper 2.1: photo slots by tile and attachment id (R16), the skip list, failures listed (R15), topMs ----------
+   mock_photos=4: #104 and #116 carry 3 photos, #112 two, #108 one, #100 one (attachment ids 92<i><j>, 9100100). The
+   window is #100-#119 (STOPS99, BASE 99), as in a backfill scan. Writes tests/out/sim_cap_keys.json {loaded, lazy} for
+   the page suite. */
+/* capture(m, args): a backfill-style scan of #100-#119 in mock mode m; at(cap, i): message i's photos as "k:aid" */
+const photoKeysOn = p => ({
+  capture: async (m, args) => {
+    await mode(p, m, 120);
+    await bridge(p, 'full', Object.assign({ stops: STOPS99, base: 99, run: 'h' }, args));
+    await p.waitForLoadState('load');
+    const res = await pollResult(p);
+    const cap = JSON.parse((await p.evaluate(() => window.__capText)) || 'null');
+    return { res, cap: cap || { photos: [] } };
+  },
+  at: (cap, i) => cap.photos.filter(ph => ph.i === i).map(ph => ph.k + ':' + ph.aid),
+});
+sim('H1-H4, H6: photo ids and slots, the skip list, failures listed, run id', { s: 56 }, async b => {
+  const { ctx, p } = await fresh(b);
+  const { capture, at } = photoKeysOn(p);
+  // H1: every photo loaded: slots 0.. in page order, each with its attachment id; nothing failed or skipped
+  const L = await capture({ photos: '4' });
+  ok(
+    L.res &&
+      L.res.stage === 'captured' &&
+      at(L.cap, 104).join() === '0:921040,1:921041,2:921042' &&
+      at(L.cap, 100).join() === '0:9100100' &&
+      JSON.stringify(L.cap.phfail) === '[]' &&
+      !/FAILED|skipped/.test(L.res.capture),
+    'H1: photos carry their attachment id (aid) and slot k in page order; phfail empty (' +
+      JSON.stringify(at(L.cap, 104)) +
+      ')',
+  );
+  // H2: a lazy image that never loaded (#104's first): the others keep their slots, and it is listed as unloaded
+  const Z = await capture({ photos: '4', lazy: '104-0' });
+  ok(
+    Z.res &&
+      Z.res.stage === 'captured' &&
+      at(Z.cap, 104).join() === '1:921041,2:921042' &&
+      JSON.stringify(Z.cap.phfail) === '[{"i":104,"k":0,"aid":"921040","e":"unloaded"}]' &&
+      / FAILED 104 /.test(Z.res.capture),
+    'H2: an image that never loaded doesn’t shift the slots after it (#104: 1, 2) and is listed in phfail (' +
+      JSON.stringify([at(Z.cap, 104), Z.cap.phfail, Z.res && Z.res.capture]) +
+      ')',
+  );
+  // H3: the skip list (by attachment id, or by slot for slots stored without one): those are never fetched
+  const fetched = [];
+  const onReq = q => q.resourceType() === 'fetch' && /fbcdn/.test(q.url()) && fetched.push(q.url().split('m=')[1]);
+  p.on('request', onReq);
+  const S = await capture({ photos: '4' }, { skip: { 104: ['921041', 0], 112: [1] } });
+  p.off('request', onReq);
+  ok(
+    S.res &&
+      S.res.stage === 'captured' &&
+      at(S.cap, 104).join() === '2:921042' &&
+      at(S.cap, 112).join() === '0:921120' &&
+      (S.cap.phskip || []).length === 3 &&
+      / skipped 3 /.test(S.res.capture) &&
+      !fetched.some(f => /^(104-0|104-1|112-1)$/.test(f)) &&
+      fetched.includes('104-2'),
+    'H3: skip {104: ["921041", 0], 112: [1]}: those 3 photos aren’t fetched or sent, the rest are (fetched ' +
+      JSON.stringify(fetched) +
+      ', ' +
+      (S.res && S.res.capture) +
+      ')',
+  );
+  // H4: a photo whose fetch fails is listed (R15), not just counted
+  const R112 = /p100\.jpg\?m=112-0$/;
+  await p.route(R112, r => (r.request().resourceType() === 'fetch' ? r.abort() : r.continue()));
+  const F = await capture({ photos: '4' });
+  await p.unroute(R112);
+  ok(
+    F.res &&
+      F.res.stage === 'captured' &&
+      at(F.cap, 112).join() === '1:921121' &&
+      JSON.stringify(F.cap.phfail) === '[{"i":112,"k":0,"aid":"921120","e":"fetch"}]' &&
+      / FAILED 112 /.test(F.res.capture),
+    'H4: a fetch that fails is listed in phfail {i, k, aid, e:"fetch"} (' + (F.res && F.res.capture) + ')',
+  );
+  fs.writeFileSync(D + 'tests/out/sim_cap_keys.json', JSON.stringify({ loaded: L.cap, lazy: Z.cap }));
+  // H6: the capture carries the run id of `full`, so the page counts a failed photo once per run
+  ok(L.cap.run === 'h' && Z.cap.run === 'h', 'H6: the capture carries full’s run id (' + L.cap.run + ')');
+  await ctx.close();
+});
+sim('H7, H8: photos sharing an id, placeholder boxes', { s: 28 }, async b => {
+  const { ctx, p } = await fresh(b);
+  const { capture, at } = photoKeysOn(p);
+  // H7: photos of one message that share an attachment id: none is lost; ids dropped, matched by position, a warning
+  const SH = await capture({ photos: '4', sharedaid: '1' });
+  ok(
+    SH.res &&
+      SH.res.stage === 'captured' &&
+      at(SH.cap, 104).join() === '0:undefined,1:undefined,2:undefined' &&
+      at(SH.cap, 112).join() === '0:undefined,1:undefined' &&
+      at(SH.cap, 108).join() === '0:92108' &&
+      has(SH.res.warn, 'share one Messenger id'),
+    'H7: photos sharing one id keep all their slots (no id), others keep theirs, and the scan warns (' +
+      JSON.stringify([at(SH.cap, 104), SH.res && SH.res.warn]) +
+      ')',
+  );
+  // H8: a photo link with no image yet (a placeholder box) is an unloaded photo: it keeps its slot and is listed
+  const SK = await capture({ photos: '4', skeleton: '104-0' });
+  ok(
+    SK.res &&
+      at(SK.cap, 104).join() === '1:921041,2:921042' &&
+      JSON.stringify(SK.cap.phfail) === '[{"i":104,"k":0,"aid":"921040","e":"unloaded"}]',
+    'H8: a photo link holding only a placeholder keeps its slot and is listed as unloaded (' +
+      JSON.stringify([at(SK.cap, 104), SK.cap.phfail]) +
+      ')',
+  );
+  await ctx.close();
+});
+sim('H9: two reads of a message merged tile by tile', async b => {
+  const { ctx, p } = await fresh(b);
+  // H9: merging two reads of a message, tile by tile (window.__mcPh: the scan's own functions)
+  await mode(p, {}, 120);
+  const mg = await p.evaluate(() => {
+    const P = window.__mcPh;
+    if (!P) return null;
+    const ph = (raw, gif = false) => ({ srcs: raw.filter(x => x.u).map(x => x.u), raw, gif });
+    const T = (kind, aid = '', u = '') => ({ u: kind === 'photo' ? u || 'u' + aid : '', aid, kind });
+    const show = r => r.tiles.map(t => (t.u || '-') + '/' + t.aid).join() + (r.gif ? ' gif' : '');
+    const out = {};
+    // an image loaded in the first read, not in a later one (by id, and by place without ids): the URL is kept
+    out.fillId = show(P.mergePh(ph([T('photo', 'A'), T('photo', 'B')]), ph([T('unloaded', 'A'), T('photo', 'B')])));
+    out.fillPlace = show(P.mergePh(ph([T('photo', '', 'x'), T('unloaded')]), ph([T('unloaded'), T('photo', '', 'y')])));
+    // a GIF read before its still loaded, then recognised: a GIF, no phantom unloaded photo
+    out.gif = show(P.mergePh(ph([T('unloaded', '5')]), ph([T('gif', '5')], true)));
+    // one loaded photo against two unloaded tiles that don't line up: the loaded read wins
+    out.known = show(P.mergePh(ph([T('photo', '', 'x')]), ph([T('unloaded'), T('unloaded')])));
+    // a message with a placeholder box in its first photo link
+    const d = document.createElement('div');
+    d.innerHTML =
+      '<a href="https://www.facebook.com/messenger_media/?attachment_id=71"><div style="width:9px;height:9px"></div></a>' +
+      '<a href="https://www.facebook.com/messenger_media/?attachment_id=72"><img src="/mock/fbcdn/p100.jpg?m=t"></a>';
+    out.skeleton = show(P.photoInfo(d));
+    return out;
+  });
+  ok(
+    mg &&
+      mg.fillId === 'uA/A,uB/B' &&
+      mg.fillPlace === 'x/,y/' &&
+      mg.gif === ' gif' &&
+      mg.known === 'x/' &&
+      /^-\/71,.*p100\.jpg\?m=t\/72$/.test(mg.skeleton),
+    'H9: reads merge tile by tile: a URL seen once is kept, a recognised GIF beats an unloaded tile, a loaded read ' +
+      'beats unloaded tiles that don’t line up, and a placeholder is an unloaded photo (' +
+      JSON.stringify(mg) +
+      ')',
+  );
+  await ctx.close();
+});
+sim('H5: topMs shortens the top-of-chat wait', { s: 33 }, async b => {
+  const { ctx, p } = await fresh(b);
+  // H5: topMs shortens the top-of-chat wait in the scan, verify and full (a 30-message chat, a first run of 50)
+  await mode(p, {}, 30);
+  await bridge(p, 'full', { first: { count: 50 }, base: -1, run: 'htop', topMs: 1500 });
+  await p.waitForLoadState('load');
+  const T = await pollResult(p);
+  ok(
+    T && T.stage === 'captured' && T.scan.top && T.scan.win === 30 && T.verify.ok && T.scan.ms < 17500 && T.ms < 22500,
+    'H5: full with topMs 1500 on a 30-message chat: the top is confirmed in ' +
+      (T && T.scan && T.scan.ms) +
+      ' ms (about 22 s by default), the reload, verify and capture in ' +
+      (T && T.ms) +
+      ' ms (about 27 s)',
+  );
+  await ctx.close();
+});
+
 /* ---------- E: helper 2.0: silent failures become warnings (R3), the scroller, the stall timeout, full names (B41) ---------- */
 const STOPS99 = ['mid.$mock99', 'mid.$mock98', 'mid.$mock97']; /* window #100-#119 (base 99) of the 120-message mock */
 async function mode(p, m, total) {

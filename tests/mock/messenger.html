@@ -86,8 +86,13 @@
    mock_stall=stuck (the list snaps back to the bottom, no spinner), mock_noreplymenu (a photo's More actions menu has
    no Reply), mock_stalemenu (an open menu stays open when another opens), mock_retarget (the reply bar moves to #105 on
    the first keystroke), mock_twobens (grouped: Ben Brooks posts #105-#107, then Ben Ortiz #108-#110), mock_nofocus
-   (Reply doesn't focus the composer), mock_photos=N (every Nth message carries 1-3 photos with its text). */
+   (Reply doesn't focus the composer), mock_photos=N (every Nth message carries 1-3 photos with its text), mock_lazy=
+   "104-0,100-0" (those photos, message-photo, never load: their img has no src, as a lazy image off screen),
+   mock_skeleton="104-0" (those photo links hold no img yet, only a placeholder box), mock_sharedaid (every photo of a
+   message links to the same attachment id). */
       const MODE = k => localStorage.getItem("mock_" + k);
+      const lazy = (i, j) => (MODE("lazy") || "").split(",").includes(i + "-" + j);
+      const skel = (i, j) => (MODE("skeleton") || "").split(",").includes(i + "-" + j);
       document.documentElement.lang = MODE("lang") || "en";
       const NAMES = ["Ana", "Ben", "You", "Cy", "Dee"];
       /* full names, carried as the alt text of each sender's 28 px avatar, as in Messenger */
@@ -270,18 +275,20 @@
             "&message_id=" +
             encodeURIComponent(o.id);
           const im = document.createElement("img");
-          im.src = MODE("noimg")
-            ? "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='200'/%3E"
-            : "/mock/fbcdn/p" + o.i + ".jpg";
+          if (!lazy(o.i, 0))
+            im.src = MODE("noimg")
+              ? "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='200'/%3E"
+              : "/mock/fbcdn/p" + o.i + ".jpg";
           a.append(im);
           d.append(a);
         }
         /* mock_photos=N: 1-3 photos with a caption on every Nth message, each its own image (same bytes, own URL) */
         for (let j = 0; j < (o.photos || 0); j++) {
           const a = document.createElement("a");
-          a.href = "https://www.facebook.com/messenger_media/?attachment_id=92" + o.i + j;
-          const im = document.createElement("img");
-          im.src = "/mock/fbcdn/p100.jpg?m=" + o.i + "-" + j;
+          a.href = "https://www.facebook.com/messenger_media/?attachment_id=92" + o.i + (MODE("sharedaid") ? "" : j);
+          const im = document.createElement(skel(o.i, j) ? "div" : "img");
+          if (skel(o.i, j)) im.style.cssText = "width:200px;height:150px;background:#ddd";
+          else if (!lazy(o.i, j)) im.src = "/mock/fbcdn/p100.jpg?m=" + o.i + "-" + j;
           a.append(im);
           d.append(a);
         }
