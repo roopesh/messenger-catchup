@@ -4,7 +4,10 @@
                                      collections (threading/*.json, summary/*.json) and meta/chat.json. Reads either
                                      layout (below). Writes WORK/all.json, WORK/base/*, WORK/state.json. It stops if
                                      threading and summary disagree on the last message built (a write that half landed);
-                                     add --rollback to count threading's extra messages as not built yet.
+                                     add --rollback to count threading's extra messages as not built yet. A pair from
+                                     different writes (rev) passes when it fits together as a build would check; when it
+                                     doesn't, --rollback files the summary's items under threading's conversations
+                                     (nothing dropped), and the next build or `relink` with the spec {} writes it.
   catchup.py build WORK RUNDIR SPEC  RUNDIR = out_dir with the touched chunks/*.json + meta/chat.json fetched after import,
                                      and the whole threading and summary collections (listed at step 5). Writes the
                                      documents that changed into RUNDIR/out/{threading,summary}/ and
@@ -16,7 +19,7 @@
   catchup.py relink WORK RUNDIR SPEC Correct links (relink) or conversations (move) of messages already built, when
                                      there's nothing new to build. RUNDIR holds the whole threading collection (list),
                                      and summary too for a move; SPEC holds only "relink", "move" and newconvs for the
-                                     move. Writes RUNDIR/out/manifest.json and the documents it names, then advances
+                                     move, or is {} after bootstrap --rollback refiled the summary (it writes both). Writes RUNDIR/out/manifest.json and the documents it names, then advances
                                      WORK's threading (and summary), keeping the previous WORK in WORK/prev.
   catchup.py restore-summary WORK RUNDIR BACKUPDIR [DECISIONS] [--dry-run] [--backup=NAME]
                                      Put back what sessions before v1.17 dropped from the summary, from the copy they saved
@@ -48,7 +51,8 @@ LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summ
   restore-summary moves it back to what the backup covered (or removes it when the summary covers everything).
   rev: every write puts one new revision token in both `current` documents (a relink with no move writes only
   threading, naming summary's rev in summaryRev). Bootstrap refuses a pair from different writes (one that only
-  partly landed), and a build or relink refuses a database whose rev isn't the one WORK was built from.
+  partly landed) unless it fits together, and a build or relink refuses a database whose rev isn't the one WORK was
+  built from.
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
   "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs,claims?,status?,statusAt?}],
@@ -517,6 +521,8 @@ def _fresh(listing, lay):  # the database's `current` must still be the one WORK
 
 
 def _record(lay, docs):  # what the database holds once this write lands: what its `current` documents name
+    if "summary/current" in docs:
+        lay.pop("repair", None)
     for c in ("threading", "summary"):
         cur = docs.get(c + "/current")
         if cur is not None:
@@ -822,7 +828,7 @@ def _move(t, s, sp, stored, base, before):
     `before` is the links as they were before this spec's relinks. -> (groups moved, {dropped conversation: target})"""
     mv = sp.get("move") or {}
     if not mv:
-        return 0, {}
+        return 0, {}, set()
     T = {c["id"]: c for c in t["convs"]}
     S = {c["id"]: c for c in s["convs"]}
     ids = set(T) | set(S)
@@ -984,7 +990,7 @@ def _move(t, s, sp, stored, base, before):
             note(d, "deal", dl.get("refs") or [], keep)
             if d:
                 dl["conv"] = d
-                gained.add(d)
+                gained |= {d, old}
             dl["refs"] = keep
         if empty:
             t["convs"] = [c for c in t["convs"] if c["id"] != old]
@@ -1008,9 +1014,9 @@ def _move(t, s, sp, stored, base, before):
                 if k.startswith("to ")
                 else "  %s %s: %s" % (k, old, what)
             )
-    for d in sorted(gained):  # the indexes a dealEdit would use from now on
-        print("  deals in %s now: %s" % (d, _deal_list([x for x in s["deals"] if x.get("conv") == d])))
-    return len(plan), dropped
+    for d in sorted(gained):  # the indexes a dealEdit would use from now on, where a deal moved in or out
+        print("  deals in %s now: %s" % (d, _deal_list([x for x in s["deals"] if x.get("conv") == d]) or "none"))
+    return len(plan), dropped, {c for _, o, d, _ in plan for c in (o, d)}
 
 
 def _check_summary(t, s, pool):  # every summary ref belongs to its conversation; deals' claims and status
@@ -1029,34 +1035,145 @@ def _check_summary(t, s, pool):  # every summary ref belongs to its conversation
     return cm
 
 
+def _problems(t, s):
+    """What a build's _check_summary would refuse in this pair, as messages (never raises): a summary item whose
+    conversation threading lacks, or whose refs lie outside its conversation."""
+    cm = {cv["id"]: set(cv["members"]) for cv in t.get("convs", [])}
+    out = []
+    for cv in s.get("convs", []):
+        mem = cm.get(cv.get("id"))
+        refs = list(cv.get("key") or []) + [
+            r for b in cv.get("synopsis") or [] if isinstance(b, dict) for r in b.get("refs") or []
+        ]
+        if refs and (mem is None or not all(r in mem for r in refs)):
+            out.append("%s's bullets or key messages lie outside it" % cv.get("id"))
+    for name in ("open", "answered"):
+        for o in s.get(name, []):
+            mem = cm.get(o.get("conv"))
+            if mem is None or not all(r in mem for r in [o.get("ask")] + list(o.get("refs") or [])):
+                out.append("%s #%s isn't in %s" % (name, o.get("ask"), o.get("conv")))
+    for d in s.get("deals", []):
+        if d.get("conv") not in cm:
+            out.append("a deal's conversation %s isn't in threading" % d.get("conv"))
+    return out
+
+
+def _heal(t, s):
+    """Make the summary fit threading, which says where each message is: every item goes to the conversation that
+    holds its messages (refs outside it dropped from the item, never the item), and a summary conversation threading
+    lacks is dropped once nothing of it is left (its tag and outcome go along). -> what was refiled"""
+    where = {i: cv["id"] for cv in t["convs"] for i in cv["members"]}
+    cm = {cv["id"]: set(cv["members"]) for cv in t["convs"]}
+    S = {c["id"]: c for c in s["convs"]}
+    n, went = collections.Counter(), {}  # went: {summary conversation: where its first refiled item went}
+
+    def conv(cid):
+        if cid not in S:
+            S[cid] = {"id": cid, "tag": "", "synopsis": [], "outcome": "", "key": []}
+            s["convs"].append(S[cid])
+        return S[cid]
+
+    def home(cid, refs):  # where an item of cid with these refs belongs
+        refs = _nums(refs)
+        if cid in cm and all(r in cm[cid] for r in refs):
+            return cid
+        if cid in cm and any(r in cm[cid] for r in refs):
+            return cid  # mostly here: it stays, losing the refs elsewhere
+        placed = [where[r] for r in refs if r in where]
+        return placed[0] if placed else cid
+
+    for cv in list(s["convs"]):
+        cid, syn = cv["id"], cv.get("synopsis")
+        if isinstance(syn, list):
+            keep = []
+            for b in _syn_items(syn):
+                d = home(cid, b.get("refs") or [])
+                b = dict(b, refs=[r for r in b.get("refs") or [] if r in cm.get(d, ())]) if d in cm else b
+                if d == cid:
+                    keep.append(b)
+                else:
+                    went.setdefault(cid, d)
+                    conv(d)["synopsis"] = _merge_by_ref(_syn_items(conv(d).get("synopsis")), [b])
+                    n["bullets"] += 1
+            cv["synopsis"] = keep
+        for r in list(cv.get("key") or []):
+            if r not in cm.get(cid, ()):
+                cv["key"].remove(r)
+                if r in where:
+                    went.setdefault(cid, where[r])
+                if r in where and r not in (conv(where[r]).get("key") or []):
+                    conv(where[r])["key"] = list(conv(where[r]).get("key") or []) + [r]
+                n["key messages"] += 1
+    for name in ("open", "answered"):
+        for o in s[name]:
+            mem = cm.get(o.get("conv"))
+            if mem is None or o.get("ask") not in mem:
+                if o.get("ask") in where:
+                    o["conv"] = where[o["ask"]]
+                    conv(o["conv"])
+                    n[name] += 1
+            if "refs" in o and o.get("conv") in cm:
+                o["refs"] = [r for r in o["refs"] if r in cm[o["conv"]]]
+    for d in s["deals"]:
+        if d.get("conv") not in cm:
+            placed = [where[r] for r in _nums(d.get("refs") or []) if r in where]
+            if placed:
+                d["conv"] = placed[0]
+                conv(d["conv"])
+                n["deals"] += 1
+    for cv in list(s["convs"]):  # a conversation threading lacks, with nothing left: dropped, tag and outcome kept
+        cid = cv["id"]
+        if cid in cm or cv.get("key") or _syn_items(cv.get("synopsis")):
+            continue
+        if any(o.get("conv") == cid for o in s["open"] + s["answered"]) or any(
+            x.get("conv") == cid for x in s["deals"]
+        ):
+            continue
+        s["convs"].remove(cv)
+        n["conversations dropped"] += 1
+        d = S.get(went.get(cid))
+        for f in ("tag", "outcome") if d is not None else ():
+            if cv.get(f) and not d.get(f):
+                d[f] = cv[f]
+            elif f == "outcome" and cv.get(f) and cv[f] != d[f]:
+                d["synopsis"] = _syn_items(d.get("synopsis")) + [{"t": cv[f], "refs": []}]
+    last = {cv["id"]: max(cv["members"]) for cv in t["convs"] if cv["members"]}
+    s["convs"].sort(key=lambda c: -last.get(c["id"], 0))
+    return ", ".join("%d %s" % (v, k) for k, v in sorted(n.items())) or "nothing"
+
+
 def relink(work, run, specp):
     """`catchup.py relink`: correct links (relink) and conversations (move) of messages already built."""
     global TZ
     sp = _load(specp)
+    lay = _layout(work)
     assert (
         set(sp) <= {"relink", "move", "newconvs"}
-        and (sp.get("relink") or sp.get("move"))
+        and (sp.get("relink") or sp.get("move") or lay.get("repair") and not sp)
         and (sp.get("move") or "newconvs" not in sp)
-    ), 'relink SPEC takes only a non-empty "relink" and/or "move" (newconvs only for a move; use build for the rest)'
+    ), (
+        'relink SPEC takes only a non-empty "relink" and/or "move" (newconvs only for a move; {} only to write what '
+        "bootstrap --rollback refiled; use build for the rest)"
+    )
     for nc in sp.get("newconvs", []):
         assert nc.get("id") in (sp.get("move") or {}).values(), (
             "newconvs %s: no move in this spec puts a message in it, so it would stay empty" % nc.get("id")
         )
     st = _load(work + "/state.json")
     TZ = st.get("tz") or TZ
-    lay = _layout(work)
-    colls = ("threading", "summary") if sp.get("move") else ("threading",)
+    both = sp.get("move") or lay.get("repair")  # a move, or a summary bootstrap refiled: write both documents
+    colls = ("threading", "summary") if both else ("threading",)
     listing = {c: _listing(run, c) for c in colls}  # a fresh read: which blocks exist, and that WORK is current
     _fresh(listing, lay)
     t = _load(work + "/base/threading.json")
-    s = _load(work + "/base/summary.json") if sp.get("move") else None
+    s = _load(work + "/base/summary.json") if both else None
     stored = {m["i"]: m for m in _load(work + "/all.json")}
     before = copy.deepcopy(t["links"])
     relinked = _relink(t, sp, stored, st["base"])
-    moves, dropped = 0, {}
+    moves, dropped, touched = 0, {}, set()
     if sp.get("move"):
         _newconvs(t, s, sp)
-        moves, dropped = _move(t, s, sp, stored, st["base"], before)
+        moves, dropped, touched = _move(t, s, sp, stored, st["base"], before)
         seen = collections.Counter(x for cv in t["convs"] for x in cv["members"])
         assert all(v == 1 for v in seen.values()), ("internal error: a message in two conversations", seen)
         _check_summary(t, s, stored)
@@ -1080,6 +1197,8 @@ def relink(work, run, specp):
     if s is not None:
         _dump(s, work + "/base/summary.json")
     _dump(_record(lay, docs), work + "/base/layout.json")
+    if touched:  # the next build refuses a dealEdit "index" there: deals may have changed places since they were read
+        _dump(dict(st, moved=sorted(set(st.get("moved") or []) | touched)), work + "/state.json")
     print(
         "relink ok: %d change(s)%s. Write it as in step 7: %s"
         % (
@@ -1185,14 +1304,34 @@ def bootstrap(work, db, rollback=False):
             % (to, toi, how)
         )
         th, to, rolled = _rollback(th, toi), toi, "; rolled threading back from #%d to #%d" % (to, toi)
-    tr, sr = th.get("rev"), sm.get("rev")
-    assert rolled or not (tr and sr) or sr in (tr, th.get("summaryRev")), (
-        "threading/current and summary/current come from different writes (rev %s and %s): the last build, relink or "
-        "move was only partly applied. Nothing was changed. If the session that wrote it still has its "
-        "RUN/out/manifest.json, send the rest of its last batch again (pinned with fresh versions), then bootstrap "
-        "again. Otherwise write nothing, and tell the user (references/writing-the-build.md › A partly applied write)"
-        % (tr, sr)
-    )
+    tr, sr, paired, repair = th.get("rev"), sm.get("rev"), "", False
+    if (tr or sr) and not (tr and sr and sr in (tr, th.get("summaryRev"))):
+        # the pair comes from different writes (or only one carries a rev: the first write after v1.23 that only
+        # partly landed, or a relink on a page from before it): fine if it fits together, as a build would check
+        bad = _problems(th, sm)
+        if bad and rollback:
+            healed, repair = _heal(th, sm), True
+            assert not _problems(th, sm), ("internal error: the summary still doesn't fit threading", _problems(th, sm))
+            paired = (
+                "; threading/current and summary/current came from different writes and didn't fit together: filed %s "
+                "under the conversations threading has them in (nothing dropped). The next build or relink writes it "
+                "(with nothing new to build: catchup.py relink WORK RUN with the spec {}); say so in the report"
+                % healed
+            )
+        else:
+            assert not bad, (
+                "threading/current and summary/current come from different writes (rev %s and %s) and don't fit "
+                "together (%s): the last build, relink, move or restore-summary was only partly applied. Nothing was "
+                "changed. If the session that wrote it still has its RUN/out/manifest.json, send the rest of its last "
+                "batch again (pinned with fresh versions), then bootstrap again. Otherwise run `catchup.py bootstrap "
+                "WORK DBDIR --rollback`: it files the summary's items under the conversations threading has them in, "
+                "dropping nothing (references/writing-the-build.md › A partly applied write)"
+                % (tr, sr, "; ".join(bad[:3]) + ("; …" if len(bad) > 3 else ""))
+            )
+            paired = (
+                "; threading/current and summary/current come from different writes but fit together: the next write "
+                "gives both the same rev (say so in the report)"
+            )
     base = last
     if isinstance(to, int) and -1 <= to < last:
         base = to  # stored but never built (a run that stopped after its import): the next build covers them
@@ -1208,6 +1347,8 @@ def bootstrap(work, db, rollback=False):
         "layout": {c: 1 if c in old else 2 for c in docs},
         "seen": {c: {f: d["current"].get(f) for f in SEEN[c]} for c, d in docs.items()},
     }
+    if repair:  # WORK's summary was refiled to fit threading: the next write must carry both documents
+        lay["repair"] = True
     _dump(lay, work + "/base/layout.json")
     st = {
         "base": base,
@@ -1232,6 +1373,7 @@ def bootstrap(work, db, rollback=False):
     print(
         "bootstrap ok: %d messages built through #%d; STOPS=%s" % (base + 1, base, json.dumps(st["stops"]))
         + rolled
+        + paired
         + (
             "; conversation id(s) used twice, renamed: %s (the summary stays with the first; say so in the report)"
             % ", ".join("%s -> %s" % r for r in renamed)
@@ -1316,7 +1458,7 @@ def build(work, run, specp):
     relinked = _relink(t, sp, byi, base)
     _newconvs(t, s, sp)
     homes = [d["conv"] for d in s["deals"]]
-    _, dropped = _move(t, s, sp, byi, base, before)  # before the new messages join, so they can join the target
+    _, dropped, touched = _move(t, s, sp, byi, base, before)  # before new messages join, so they can join the target
     _cross_warn(t, relinked)
     for k in ("join", "bullets", "outcome", "key", "dealEdit"):
         for cid in sp.get(k) or {}:
@@ -1330,9 +1472,12 @@ def build(work, run, specp):
                 '%s names %s, which this spec\'s move empties and drops (its summary went to %s): use "%s" instead'
                 % (k, x.get("conv"), dropped.get(x.get("conv")), dropped.get(x.get("conv")))
             )
-    gained = {d["conv"] for d, h in zip(s["deals"], homes) if d["conv"] != h} | {
-        d.get("conv") for d in sp.get("deals", [])
-    }
+    gained = (  # conversations whose deal indexes changed: a deal moved in or out, a new deal, an earlier move
+        {d["conv"] for d, h in zip(s["deals"], homes) if d["conv"] != h}
+        | {h for d, h in zip(s["deals"], homes) if d["conv"] != h}
+        | {d.get("conv") for d in sp.get("deals", [])}
+        | set(st.get("moved") or [])
+    )
     C = {cv["id"]: cv for cv in t["convs"]}
     for k in ("bullets", "outcome", "key"):
         for cid in sp.get(k) or {}:
@@ -1455,6 +1600,7 @@ def build(work, run, specp):
         keys = ("text", "addRefs", "index", "ref", "addClaims", "removeClaims", "status", "statusAt")
         bad = sorted(set(e) - set(keys))
         assert not bad, ("dealEdit takes %s" % ", ".join(keys), cid, bad)
+        assert not ("ref" in e and "index" in e), 'dealEdit %s: "ref" or "index", not both' % cid
         if "ref" in e:  # the deal whose refs hold this message
             pick = [d for d in ds if e["ref"] in (d.get("refs") or [])]
             assert len(pick) == 1, 'dealEdit %s: "ref" %s is in %d of its deals: %s' % (
@@ -1471,8 +1617,9 @@ def build(work, run, specp):
                 _deal_list(ds),
             )
             assert "index" not in e or cid not in gained, (
-                'dealEdit %s: this spec moves or adds deals there, so "index" may name another deal than you read. '
-                'Name it by "ref" (one of its messages) instead. Its deals now: %s' % (cid, _deal_list(ds))
+                "dealEdit %s: a move (in this spec or since WORK was bootstrapped) or new deals changed its deals, so "
+                '"index" may name another deal than you read. Name it by "ref" (one of its messages) instead. Its '
+                "deals now: %s" % (cid, _deal_list(ds))
             )
             assert isinstance(e.get("index", 0), int) and 0 <= e.get("index", 0) < len(ds), (
                 'dealEdit %s: no deal at "index" %s: %s' % (cid, e.get("index"), _deal_list(ds))

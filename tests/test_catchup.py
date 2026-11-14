@@ -2939,7 +2939,7 @@ class TestMoveReview(MoveEnv, unittest.TestCase):
         run = self.e.run([msg(11, "Ana", "sold!")])
         with self.assertRaisesRegex(
             AssertionError,
-            r'moves or adds deals there.*"ref".*0 "Ben\'s stove \$30" \(refs \[8\]\); 1 "Blue pack \$120"',
+            r'or new deals changed its deals.*"ref".*0 "Ben\'s stove \$30" \(refs \[8\]\); 1 "Blue pack \$120"',
         ):
             self.e.build(run, spec)
         out = self.e.build(run, dict(spec, dealEdit={"sale": {"status": "sold", "statusAt": 11, "ref": 0}}))
@@ -3089,6 +3089,260 @@ class TestMoveReview(MoveEnv, unittest.TestCase):
         write_manifest(live.db, os.path.join(run2, "out"), live.seen)
         self.assertEqual(live.db.merged(), (r(live.work + "/base/threading.json"), r(live.work + "/base/summary.json")))
         return "ok"
+
+
+def strip_rev(live):
+    """A page last written by v1.22: no rev on either current document."""
+    for p in ("threading/current", "summary/current"):
+        d = dict(live.db.docs[p])
+        d.pop("rev", None)
+        d.pop("summaryRev", None)
+        live.db.put(p, d)
+
+
+def land_only(live, run, skip):
+    """Send a manifest one write at a time, leaving out the `current` documents in `skip` (a write that half landed)."""
+    man = r(os.path.join(run, "out", "manifest.json"))
+    for bt in man["batches"]:
+        for e in bt:
+            if e["doc_id"] == "current" and e["collection"] in skip:
+                continue
+            x = {"op": e["op"], "collection": e["collection"], "doc_id": e["doc_id"], "data": r(e["file_path"])}
+            if e.get("pin"):
+                x["if_version"] = live.seen[e["collection"] + "/" + e["doc_id"]]
+            live.db.batch([x])
+    return man
+
+
+def summary_counts(s):
+    return (
+        sum(len(catchup._syn_items(c["synopsis"])) for c in s["convs"]),
+        sum(len(c.get("key") or []) for c in s["convs"]),
+        len(s["open"]),
+        len(s["answered"]),
+        len(s["deals"]),
+        len(s["mentions"]),
+    )
+
+
+class TestPartlyLanded(unittest.TestCase):
+    """Re-review of release A: a write that half landed must never leave a page stuck, on pages with or without `rev`."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def half_move(self, skip, legacy=False):
+        live = small_live(self.t.name)
+        if legacy:
+            strip_rev(live)
+            live.bootstrap()
+        before = live.db.merged()
+        out, run = live_relink(live, {"move": {"4": "sale"}, "relink": {"4": [0, "i"]}})
+        land_only(live, run, skip)
+        return live, before
+
+    def test_a_half_landed_move_is_refused_then_rollback_refiles_and_relink_writes_it(self):
+        """With rev, and on a v1.22 page (no rev; only one current gets one): threading or summary lands alone. Bootstrap
+        refuses, naming --rollback; --rollback files the summary under threading's conversations (nothing dropped);
+        `relink` with {} writes it; the page bootstraps clean and builds again."""
+        for legacy in (False, True):
+            for skip in ({"summary"}, {"threading"}):
+                with self.subTest(legacy=legacy, skip=skip):
+                    live, (t0, s0) = self.half_move(skip, legacy)
+                    w2 = os.path.join(live.d, "w2")
+                    with self.assertRaisesRegex(
+                        AssertionError, "don't fit together .*restore-summary.*--rollback`: it files the summary"
+                    ):
+                        live.bootstrap(w2)
+                    dbd = os.path.join(live.d, "dbr")
+                    live.db.fetch(dbd)
+                    out = quiet(catchup.bootstrap, w2, dbd, True)
+                    self.assertIn("didn't fit together: filed", out)
+                    self.assertIn("catchup.py relink WORK RUN with the spec {}", out)
+                    t, s = (r(os.path.join(w2, "base", f + ".json")) for f in ("threading", "summary"))
+                    self.assertEqual(catchup._problems(t, s), [])
+                    sc = {c["id"]: [b["t"] for b in c["synopsis"]] for c in s["convs"]}
+                    home = "sale" if skip == {"summary"} else "dee"  # where threading has #4 now
+                    self.assertIn("Dee is in", sc[home])
+                    self.assertEqual("dee" in sc, home == "dee", "a summary conversation threading lacks is dropped")
+                    self.assertEqual([o["conv"] for o in s["open"]], [home])
+                    self.assertEqual(
+                        summary_counts(s)[2:], summary_counts(s0)[2:], "open, answered, deals, mentions kept"
+                    )
+                    self.assertGreaterEqual(summary_counts(s)[0], summary_counts(s0)[0], "no bullet dropped")
+                    p = os.path.join(live.d, "empty.json")
+                    w(p, {})
+                    rrun = live.listing(os.path.join(live.d, "rrun"))
+                    self.assertIn("relink ok: 0 change(s)", quiet(catchup.relink, w2, rrun, p))
+                    man = r(os.path.join(rrun, "out", "manifest.json"))
+                    pins = sorted(e["collection"] for bt in man["batches"] for e in bt if e.get("pin"))
+                    self.assertEqual(pins, ["summary", "threading"])
+                    write_manifest(live.db, os.path.join(rrun, "out"), live.seen)
+                    self.assertNotIn("different writes", live.bootstrap(os.path.join(live.d, "w3")))
+                    run = live.run([msg(11, "Ana", "bump")])
+                    self.assertIn("build ok", live.build(run, {"join": {"sale": [11]}}, os.path.join(live.d, "w3")))
+
+    def test_a_half_landed_restore_summary_that_fits_is_accepted(self):
+        """restore-summary's threading/current differs only in rev: whichever half lands alone, the pair fits, so
+        bootstrap carries on and says so (before, every later run refused), and the next build restamps both."""
+        for which in ("threading", "summary"):
+            with self.subTest(lands=which):
+                tc = TestRestoreSummary("test_restore_puts_back_everything_the_trim_dropped")
+                tc.setUp()
+                self.addCleanup(tc.tearDown)
+                T, U, f = tc.world()
+                work, run, bk = tc.ready(T, "x")
+                tc.restore(T, work, run, bk)
+                dec = dict(r(os.path.join(run, "out", "restore-open.json"))["template"])
+                self.assertIn("restore ok", tc.restore(T, work, run, bk, dec))
+                land_only(T, run, {"threading", "summary"} - {which})
+                out = T.bootstrap(os.path.join(tc.d, "w2"))
+                self.assertIn("come from different writes but fit together", out)
+                new = synth.more(3040, 3, seed=8)
+                run2 = T.run(new)
+                tgt = T.db.merged()[0]["convs"][-1]["id"]
+                T.build(run2, {"join": {tgt: [m["i"] for m in new]}}, os.path.join(tc.d, "w2"))
+                T.write(run2)
+                cur = T.db.docs
+                self.assertEqual(cur["threading/current"]["rev"], cur["summary/current"]["rev"])
+
+    def test_relink_with_an_empty_spec_only_after_a_rollback(self):
+        live = small_live(self.t.name)
+        p = os.path.join(live.d, "empty.json")
+        w(p, {})
+        rrun = live.listing(os.path.join(live.d, "rrun"))
+        with self.assertRaisesRegex(AssertionError, r"\{\} only to write what bootstrap --rollback refiled"):
+            quiet(catchup.relink, live.work, rrun, p)
+
+
+class TestDealIndexAfterMoves(unittest.TestCase):
+    """Re-review of release A: a deal's index also shifts in the conversation a move takes a deal out of, and in a build
+    after a standalone move."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        d = self.t.name
+        self.live = live = Live(os.path.join(d, "live"), [], None, None, "new")
+        live.bootstrap()
+        run = live.run(
+            [
+                msg(0, "Ana", "WTS red tent $50", p="1"),
+                msg(1, "Ana", "WTS stove $20", p="2"),
+                msg(2, "Ana", "WTS lamp $10", p="3"),
+                msg(3, "Ben", "In"),
+            ]
+        )
+        deal = lambda text, i: {"kind": "sale", "tag": "For sale", "conv": "gear", "text": text, "refs": [i]}
+        live.build(
+            run,
+            {
+                "newconvs": [{"id": "gear", "title": "Gear"}, {"id": "ben", "title": "Ben"}],
+                "join": {"gear": [0, 1, 2], "ben": [3]},
+                "links": {"1": None, "2": None, "3": None},
+                "deals": [deal("red tent", 0), deal("stove", 1), deal("lamp", 2)],
+            },
+        )
+        live.write(run)
+        live.bootstrap()
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def test_a_deal_moved_out_shifts_the_source_indexes(self):
+        run = self.live.run([msg(4, "Cy", "In for the lamp")])
+        spec = {
+            "move": {"0": "ben"},
+            "join": {"gear": [4]},
+            "dealEdit": {"gear": {"index": 1, "status": "sold", "statusAt": 4}},
+        }
+        with self.assertRaisesRegex(
+            AssertionError, r'dealEdit gear: .*Its deals now: 0 "stove" \(refs \[1\]\); 1 "lamp"'
+        ):
+            self.live.build(run, spec)
+        out = self.live.build(run, dict(spec, dealEdit={"gear": {"ref": 1, "status": "sold", "statusAt": 4}}))
+        self.assertIn('deals in gear now: 0 "stove" (refs [1]); 1 "lamp" (refs [2])', out)
+        self.assertIn('deals in ben now: 0 "red tent" (refs [0])', out)
+        got = [(d["conv"], d["text"], d.get("status")) for d in r(self.live.work + "/base/summary.json")["deals"]]
+        self.assertEqual(got, [("ben", "red tent", None), ("gear", "stove", "sold"), ("gear", "lamp", None)])
+
+    def test_index_after_a_standalone_move_and_ref_with_index(self):
+        out, rrun = live_relink(self.live, {"move": {"0": "ben"}})
+        write_manifest(self.live.db, os.path.join(rrun, "out"), self.live.seen)
+        run = self.live.run([msg(4, "Cy", "In for the lamp")])
+        p = os.path.join(self.t.name, "s.json")
+        w(p, {"join": {"gear": [4]}, "dealEdit": {"gear": {"index": 1, "status": "sold", "statusAt": 4}}})
+        with self.assertRaisesRegex(AssertionError, r"since WORK was bootstrapped"):
+            quiet(catchup.build, self.live.work, run, p)
+        w(p, {"join": {"gear": [4]}, "dealEdit": {"gear": {"index": 1, "ref": 2, "status": "sold", "statusAt": 4}}})
+        with self.assertRaisesRegex(AssertionError, r'"ref" or "index", not both'):
+            quiet(catchup.build, self.live.work, run, p)
+        w(p, {"join": {"gear": [4]}, "dealEdit": {"gear": {"ref": 2, "status": "sold", "statusAt": 4}}})
+        quiet(catchup.build, self.live.work, run, p)
+        self.live.write(run)
+        # the next build no longer remembers the move
+        run2 = self.live.run([msg(5, "Dee", "hi")])
+        w(p, {"join": {"gear": [5]}, "dealEdit": {"gear": {"index": 0, "text": "Stove, $15"}}})
+        quiet(catchup.build, self.live.work, run2, p)
+
+
+class TestManifestDocs(unittest.TestCase):
+    """Every reference that tells Claude how to write a manifest names, for its versions and pins, exactly the current
+    documents that command's manifest pins (the restore procedure once said threading wasn't touched)."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    @staticmethod
+    def pins(run):
+        man = r(os.path.join(run, "out", "manifest.json"))
+        return sorted(e["collection"] for bt in man["batches"] for e in bt if e.get("pin"))
+
+    def test_references_name_what_each_manifest_pins(self):
+        ref = lambda *p: open(os.path.join(ROOT, "plugin", "skills", "refresh", *p), encoding="utf-8").read()
+        live = small_live(self.t.name)
+        _, run = live_relink(live, {"relink": {"10": [7, "i"]}}, "rl")
+        relink_only = self.pins(run)
+        quiet(catchup.restore, live.work)
+        _, run = live_relink(live, {"move": {"4": "sale"}, "relink": {"4": [0, "i"]}}, "mv")
+        move = self.pins(run)
+        quiet(catchup.restore, live.work)
+        # restore-summary: a backup holding one mention the stored summary lacks
+        s = copy.deepcopy(r(os.path.join(live.work, "base", "summary.json")))
+        s["mentions"].append({"note": "Named you", "refs": [[1]]})
+        for p, x in zip(("a", "b"), backup_parts(s)):
+            live.db.put("backups/summary-pre-prune-" + p, x)
+        bk = fetch_backups(live.db, os.path.join(self.t.name, "bk"))
+        rrun = live.listing(os.path.join(self.t.name, "rs"))
+        self.assertIn("restore ok", quiet(catchup.restore_summary, live.work, rrun, bk, None, False))
+        restore_summary = self.pins(rrun)
+        self.assertEqual(
+            (relink_only, move, restore_summary), (["threading"], ["summary", "threading"], ["summary", "threading"])
+        )
+        rs = ref("references", "restoring-a-summary.md")
+        step = lambda n: re.search(r"^%d\. .*$" % n, rs, re.M).group(0)
+        for c in restore_summary:
+            self.assertIn("`%s/current`" % c, step(2), "restore step 2 notes its version")
+            self.assertIn("`%s/current`" % c, step(6), "restore step 6 pins it")
+        for gone in ("Threading isn't touched", "(only `summary/current`)"):
+            self.assertNotIn(gone, rs)
+        wb = ref("references", "writing-the-build.md")
+        moving = re.search(r"^## Moving a message.*?(?=^## |\Z)", wb, re.M | re.S).group(0)
+        nothing_new = re.search(r"^- \*\*With nothing new to build:\*\*.*$", moving, re.M).group(0)
+        for c in move:
+            self.assertIn("`list %s`" % c, nothing_new, "a standalone move lists what it pins")
+        relink_line = re.search(r"^- \*\*Fixing a link with nothing new to build:\*\*.*$", ref("SKILL.md"), re.M).group(
+            0
+        )
+        for c in relink_only:
+            self.assertIn("`list %s`" % c, relink_line)
+        partly = re.search(r"^## A partly applied write.*?(?=^## )", wb, re.M | re.S).group(0)
+        self.assertIn("`list threading` and `list summary`", partly, "the {} relink pins both")
 
 
 class TestClaimsReview(unittest.TestCase):

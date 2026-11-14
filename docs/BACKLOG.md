@@ -801,4 +801,8 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - Bullets, outcome, key, join, deals, open or answered naming a conversation the same spec drops get a clear refusal (before: a raw KeyError); unknown conversations in bullets, outcome or key too.
   - The crosses-conversations WARN runs after the move; a standalone move refuses a `newconvs` entry no move fills; "new" ids avoid summary ids too; the printout no longer says "block lists".
   - `restore-summary` now also writes `threading/current` (unchanged but for `rev`).
+- **Re-review fixes (v1.23.0, before release):**
+  - `references/restoring-a-summary.md` noted and pinned only `summary/current` and said threading wasn't touched; following it left the page refusing every bootstrap. It now pins both, and `TestManifestDocs` checks every reference describing a manifest write against what that command's manifest pins.
+  - A pair from different writes no longer locks a page whose writing session is gone: bootstrap accepts it when it fits together (`_problems`), and `--rollback` refiles the summary to fit threading (`_heal`) when it doesn't; `relink` with `{}` writes it when there's nothing new to build. The same check catches a half-landed write on pages without `rev`.
+  - `dealEdit` `index` is refused on the conversation a move took a deal out of, and in the build after a standalone move (`state.json` `moved`); the "deals in X now" lines cover the source; `ref` and `index` together are refused.
 
