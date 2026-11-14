@@ -5103,7 +5103,7 @@ async function inParallel(names) {
       child.stderr.on('data', d => (out += d));
       child.on('exit', (code, sig) => {
         const secs = ((Date.now() - start) / 1000).toFixed(1);
-        process.stdout.write('--- ' + k + ' (' + secs + ' s)\n' + out);
+        process.stdout.write('--- ' + k + ' (' + secs + ' s)\n' + out.replace(/([^\n])$/, '$1\n'));
         if (code !== 0 && !/^FAIL /m.test(out)) console.log('FAIL ' + k + ' exited with ' + (sig || 'code ' + code));
         if (code !== 0) process.exitCode = 1;
         done();

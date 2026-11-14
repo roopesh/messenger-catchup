@@ -56,7 +56,7 @@ server.listen(0, '127.0.0.1', () => {
   if (process.argv.includes('--py')) jobs.push(run('npm run test:py', 'npm', ['run', '--silent', 'test:py'], true));
   Promise.all(jobs).then(rs => {
     for (const r of rs) {
-      if (r.out) process.stdout.write('--- ' + r.label + '\n' + r.out);
+      if (r.out) process.stdout.write('--- ' + r.label + '\n' + r.out.replace(/([^\n])$/, '$1\n'));
       if (r.code) console.log('FAIL ' + r.label + ' exited with ' + (r.sig || 'code ' + r.code));
     }
     server.close();

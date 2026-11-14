@@ -1349,6 +1349,11 @@ function pick(only) {
 }
 async function main() {
   const t0 = Date.now();
+  /* a promise a case left behind failing later fails the run, without taking the other cases' held lines with it */
+  process.on('unhandledRejection', e => {
+    console.log('FAIL unhandled rejection: ' + ((e && e.stack) || e));
+    process.exitCode = 1;
+  });
   const cases = pick(process.env.SIM_ONLY);
   const b = await chromium.launch();
   let free = JOBS;

@@ -26,7 +26,7 @@
 - **Repo:** public (since Nov 7), `github.com/roopesh/messenger-catchup`, branch `main`. **Never commit real names or text from a user's chat**: tests use the mock cast (Ana, Ben, Cy, Dee, You).
 
 ## Test suites
-`npm test` checks formatting, then runs all three (about 3 minutes); CI runs the same on every PR.
+`npm test` checks formatting, runs the Python suites beside the sim, then the page tests: about 1.5 minutes on the owner's Mac (Nov 13: Python 21 s and the sim 64 s side by side, the page 20 s; 12 minutes before v1.23.0 ran them in parallel). CI runs the same on every PR; its runner has 4 CPUs, so it runs fewer cases at a time. The sim runs its cases `SIM_JOBS` at a time (default three times the CPU count) and the page its sections `PAGE_JOBS` at a time (default the CPU count); each case's or section's lines print together under a `--- name (seconds)` header, and `=1` runs them one by one.
 
 | Suite | Command | What it covers | Now |
 |---|---|---|---|
@@ -73,7 +73,7 @@ From the repo root:
 npm install        # once: Playwright (pinned in package.json)
 npm run setup      # once: Playwright's Chromium, the pre-push hook, .venv with pinned Ruff
 npm run fmt        # before committing: Prettier + Ruff, then npm run sync
-npm test           # format check, Python suites, sim, page (about 3 minutes)
+npm test           # format check, Python suites and sim side by side, page (about 1.5 minutes)
 ```
 Exit code 0 means everything passed. The page suite reads `tests/out/sim_caps.json`, which the sim writes, so run `test:sim` before `test:page` when you run them separately. `tests/out/` is gitignored.
 

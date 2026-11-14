@@ -207,15 +207,15 @@ Nothing here ships: only `plugin/` reaches users, and a test keeps it to the shi
 
 | Path | What it is |
 |---|---|
-| `package.json` | `npm test` runs `test:py`, `test:sim`, `test:page`; `npm run sync`; Playwright pinned |
+| `package.json` | `npm test` checks formatting, runs the Python suites and the sim side by side (`tests/run.js --py`), then the page tests; `npm run sync`; Playwright pinned |
 | `.github/workflows/test.yml` | CI: `test` (`npm test`), `version-bump` (PRs must raise `VERSION`), `pr-only` (commits on `main` must come from a merged PR) |
 | `.githooks/pre-push` | Blocks direct pushes to `main` from a local clone (`npm run hooks`) |
 | `tools/sync.py` | Regenerates the page's `#jump-bm` bookmarklet from `helper.user.js` and the setup skill's copies of shared files; `--check` mode |
 | `tests/test_catchup.py` | `catchup.py` unit tests; the `Env` class fakes WORK and ArtifactData `out_dir`s; `FakeDB` and `Live` drive whole refreshes against a database with the real limits (256 KiB documents, 50-write and 1 MiB batches, pins) |
 | `tests/synth.py` | Synthetic chat histories (mock cast) calibrated to the owner's page, for the size and layout tests |
 | `tests/test_tools.py` | Sync, version strings, leftover names, SKILL.md file references, the plugin and marketplace manifests, ZIP contents |
-| `tests/sim.js`, `tests/run.js`, `tests/mock/` | The helper against a simulated Messenger (`mock_total` and `mock_skip` in localStorage control its history; `mock_*` modes simulate each failure the warnings catch; every context starts at 12:00 today); its composer runs Lexical core (devDependency `lexical`) with Messenger's Enter-sends rule; `run.js` serves the mock and `/node_modules/lexical/dist/` |
-| `tests/page.test.js` | The page with a stand-in `window.claude` (in-memory `db` with `onSnapshot`, a write log, the 256 KiB document limit, and Claude's `batch` with its limits and pins; `assets`, `sample`); reads `tests/out/sim_caps.json` from the sim for the pipeline test, which writes catchup.py's manifest as Claude does. `PAGE_FILE=<path>` tests another copy of the page (e.g. the last release's, to check that a new test fails on it) and `ONLY=messagesView,names` runs just those sections |
+| `tests/sim.js`, `tests/run.js`, `tests/mock/` | The helper against a simulated Messenger (`mock_total` and `mock_skip` in localStorage control its history; `mock_*` modes simulate each failure the warnings catch; every context starts at 12:00 today; each `sim(name, fn)` case runs in its own browser context, `SIM_JOBS` at a time, its lines printed together); its composer runs Lexical core (devDependency `lexical`) with Messenger's Enter-sends rule; `run.js` serves the mock and `/node_modules/lexical/dist/`, and runs `sim.js`, `composer.sim.js` and (with `--py`) the Python suites in parallel |
+| `tests/page.test.js` | The page with a stand-in `window.claude` (in-memory `db` with `onSnapshot`, a write log, the 256 KiB document limit, and Claude's `batch` with its limits and pins; `assets`, `sample`); reads `tests/out/sim_caps.json` from the sim for the pipeline test, which writes catchup.py's manifest as Claude does. `PAGE_FILE=<path>` tests another copy of the page (e.g. the last release's, to check that a new test fails on it) and `ONLY=messagesView,names` runs just those sections. Each section runs in its own process, `PAGE_JOBS` at a time (`PAGE_JOBS=1`: one by one in one process) |
 
 ## Versions in play
 | Thing | Where | Now |
