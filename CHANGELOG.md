@@ -40,6 +40,7 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
   - a repeated paste, or two runs in the same minute, could count a try twice or once.
 - In a mutation run of the photo rules, 15 of 16 changes to the page's slot and try rules and all 8 to the helper's tile code were caught; the remaining one changed nothing, so that code was removed.
 - R10 (the page's requirements don't mention the Claude Desktop app) stays open: its page wording follows in a later release.
+- Filed F23: a Messenger reply mid-conversation to a message in another conversation shows no "replying to…" line.
 
 ## [1.23.0] - 2026-11-13
 **Claims in buy/sell chats, moving a message to another conversation, scheduled runs that survive a crash, and a test suite 8× faster** (BACKLOG F19, F20, R14, T6; GitHub issue #41). MINOR: refresh procedure changes and new spec keys. Page and helper unchanged (`PAGE_VERSION` 2.7, helper 2.0).
