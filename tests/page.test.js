@@ -3630,6 +3630,10 @@ function hdays(msgs) {
   return span;
 }
 /* the page has read n days' digests (an older page has no S.digests: go on, so its checks fail on what it sends) */
+/* the summary lines that are a conversation's (not a day line, not an ungrouped run) */
+const convLines = dig => dig.filter(([, , l]) => !/\] [\d,]+ messages?(\.|, not grouped)/.test(l));
+const D3SMALL = 16384; /* conversation lines fit, no long digest does */
+const D5CAP = 65536; /* conversation lines fit; the room over the floor is smaller than one digest */
 const dgLoaded = (p, n) => until(p, n => !S.digests || S.digests.size === n, n);
 const digestLines = dig => dig.filter(([, , l]) => /\] [\d,]+ messages?\. Digest: /.test(l));
 const citedIn = l => (l.match(/\[#\d+(?:, #\d+)*\]/g) || []).flatMap(x => x.match(/\d+/g).map(Number));
@@ -3748,7 +3752,12 @@ async function digests() {
                   { t: 'No list', refs: 'x' },
                   { t: 7, refs: [ids[1]] },
                 ]
-              : [{ t: 'Plain day ' + k, refs: [ids[2]] }],
+              : k === 3
+                ? [
+                    { t: 'Plain\n day   3 end\u0001', refs: [ids[2]] },
+                    { t: 'Long '.repeat(100), refs: [ids[3]] },
+                  ]
+                : [{ t: 'Plain day ' + k, refs: [ids[2]] }],
     );
     const d2 = msgs[200].d;
     docs['digests/m' + d2.slice(0, 7)].days[d2].fromI = 199; /* claims a day that started a message earlier */
@@ -3775,11 +3784,24 @@ async function digests() {
       'D2: a bullet keeps only the numbers of its own day, and bullets with bad fields are left out: ' +
         (five && five[2]),
     );
+    const three = dayLine(3);
+    const long = 'Long '.repeat(100).trim().slice(0, 239) + '…';
+    ok(
+      three && three[2].endsWith('100 messages. Digest: Plain day 3 end [#302] | ' + long + ' [#303]'),
+      'D2: a bullet is one line, its spaces collapsed, cut to 240 characters: ' + (three && three[2].slice(0, 90)),
+    );
+    /* the day the cut splits (#600 on, part of it in conversation lines) keeps its title-only line */
+    const span = hdays(msgs);
+    const split = dig.filter(([a, b, l]) => /\] [\d,]+ messages?\./.test(l) && span.get(msgs[a].d)[1] > b);
+    ok(
+      split.length === 1 && split[0][0] === 600 && !/Digest: /.test(split[0][2]),
+      'D2: the day split by the cut is title-only, though it has a digest: ' + split.map(x => x[2].slice(0, 60)),
+    );
     ok(r.calls.length === 1 && r.calls[0].bytes <= 12288 - HMARGIN, 'D2: one call within the cap');
     ok(p.errors.length === 0, 'D2: no page errors ' + JSON.stringify(p.errors));
   });
 
-  /* D3: long digests at a small cap: within the cap, and they never push older days out: the first line is the same
+  /* D3: long digests at a small cap and a larger one: within the cap, and they never push older days out: the first line is the same
      as without digests (title-only lines are the floor) */
   await hcase('D3', async () => {
     const msgs = hmsgs(800, { perDay: 20 });
@@ -3790,12 +3812,13 @@ async function digests() {
           .slice(0, 238),
         refs: ids.slice(j, j + 10),
       }));
-    const first = {};
+    const first = {},
+      convs = {};
     for (const [label, docs] of [
       ['without', {}],
       ['with', hdigests(msgs, () => true, long)],
     ]) {
-      for (const cap of [12288, 32768]) {
+      for (const cap of [D3SMALL, 32768]) {
         const p = await hopen(
           hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: cap }, docs }),
           800,
@@ -3804,13 +3827,14 @@ async function digests() {
         const r = await hask(p, 'Anything about permits?', true);
         const { dig, raw } = parts(r.prompt);
         first[label + cap] = dig.length ? dig[0][0] : null;
+        convs[label + cap] = convLines(dig).length;
         ok(
           r.calls.length === 1 && r.calls[0].bytes <= cap - HMARGIN,
           'D3: ' + label + ' digests at ' + cap + ': one call of ' + r.calls[0].bytes + ' bytes',
         );
         if (label === 'with') {
           const dl = digestLines(dig);
-          /* at 12 KiB the digests' room (half the summaries' share) is smaller than one of these long ones */
+          /* at 16 KiB the digests' room (half the summaries' share) is smaller than one of these long ones */
           ok(
             (cap < 32768 || dl.length > 0) &&
               dl.every(([a, b, l]) => citedIn(l.slice(l.indexOf('Digest: '))).every(i => i >= a && i <= b)),
@@ -3835,10 +3859,89 @@ async function digests() {
               missing.length +
               ' messages missing',
           );
+          /* no digest fits at 16 KiB: none holds room back from conversation lines */
+          if (cap < 32768)
+            ok(
+              dl.length === 0 && convs['with' + cap] === convs['without' + cap] && convs['with' + cap] > 0,
+              'D3: at ' +
+                cap +
+                ', with no digest fitting, ' +
+                convs['with' + cap] +
+                ' conversation lines, as without digests (' +
+                convs['without' + cap] +
+                ')',
+            );
+          /* every whole day before the cut that's newer than a digest line carries one too: newest day first */
+          const span = hdays(msgs);
+          const whole = dig.filter(([a, b, l]) => /\] [\d,]+ messages?\./.test(l) && span.get(msgs[a].d)[1] === b);
+          const firstDg = whole.findIndex(([, , l]) => /Digest: /.test(l));
+          ok(
+            cap < 32768 ||
+              (firstDg > 0 && whole.slice(firstDg).every(([, , l]) => /Digest: /.test(l)) && convs['with' + cap] > 0),
+            'D3: at ' +
+              cap +
+              ', the digests are the newest ' +
+              (firstDg < 0 ? 0 : whole.length - firstDg) +
+              ' of ' +
+              whole.length +
+              ' whole day lines, beside ' +
+              convs['with' + cap] +
+              ' conversation lines',
+          );
         }
         await p.close();
       }
     }
+  });
+
+  /* D6: the browser's zone changed between captures, so #150 is dated the day before #149. A day never goes back:
+     #150 counts in Oct 2, as catchup.py counts it, and Oct 2's digest (#100-#199) is shown */
+  await hcase('D6', async () => {
+    const msgs = hmsgs(300, { perDay: 100 });
+    msgs[150].d = msgs[0].d;
+    const docs = hdigests(msgs.map((m, k) => (k === 150 ? Object.assign({}, m, { d: msgs[100].d }) : m)));
+    const p = await hopen(hseed(msgs, { threads: true, docs }), 300);
+    await dgLoaded(p, 3);
+    const ls = await p.evaluate(() => (typeof dayLines === 'function' ? dayLines(0, 299) : []));
+    ok(
+      ls.length === 3 &&
+        ls.every(l => l.dg) &&
+        ls[1].text.startsWith('[#100–#199, Oct 2] 100 messages. Digest: Ana sold a stove on day 1'),
+      'D6: a message dated back a day counts in the day before it, so each day keeps its digest: ' +
+        ls.map(l => l.text.slice(0, 40)).join(' / '),
+    );
+    ok(p.errors.length === 0, 'D6: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* D5: a digest that fits the digests' share but not the room left over the title-only floor holds nothing back:
+     the conversation lines are the same as without digests */
+  await hcase('D5', async () => {
+    const msgs = hmsgs(800, { perDay: 8 });
+    const mid = (k, ids) =>
+      Array.from({ length: 3 }, (_, j) => ({
+        t: ('Day ' + k + ' bullet ' + j + ' about the ridge trail permits ').repeat(4).slice(0, 200),
+        refs: ids.slice(j, j + 3),
+      }));
+    const got = {};
+    for (const [label, docs] of [
+      ['without', {}],
+      ['with', hdigests(msgs, () => true, mid)],
+    ]) {
+      const p = await hopen(
+        hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: D5CAP }, docs }),
+        800,
+      );
+      if (label === 'with') await dgLoaded(p, 100);
+      const r = await hask(p, 'Anything about permits?', true);
+      const { dig } = parts(r.prompt);
+      got[label] = { convs: convLines(dig).length, digests: digestLines(dig).length, bytes: r.calls[0].bytes };
+      await p.close();
+    }
+    ok(
+      got.with.digests === 0 && got.with.convs === got.without.convs && got.with.convs > 0,
+      'D5: no digest fits the room over the floor, and the conversation lines are as without digests: ' +
+        JSON.stringify(got),
+    );
   });
 
   /* D4: dayLines(fromI, toI), for other prompts that summarize a stretch by day */

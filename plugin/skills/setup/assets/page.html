@@ -4513,8 +4513,9 @@
     return "[#" + a + (b !== a ? "–#" + b : "") + (ds ? ", " + ds : "") + "] " + rest;
   }
   const plural = (n, w) => n.toLocaleString("en-US") + " " + w + (n === 1 ? "" : "s");
-  /* The days and the runs of ungrouped messages in x..y (indices in S.msgs), in one pass. A message without a date
-     belongs to the day before it. */
+  /* The days and the runs of ungrouped messages in x..y (indices in S.msgs), in one pass. A day never goes back: a
+     message without a date, or dated before the one before it (the browser's zone changed between captures), belongs
+     to that one's day, as catchup.py counts days for digests. */
   function dayScan(x, y, prevD = "") {
     const days = [],
       loose = [];
@@ -4522,7 +4523,7 @@
       run = null;
     for (let j = x; j <= y; j++) {
       const m = S.msgs[j];
-      const d = m.d || prevD;
+      const d = m.d && m.d > prevD ? m.d : prevD || m.d || "";
       prevD = d;
       if (!cur || cur.d !== d) {
         cur = { d, s: j, e: j, a: m.i, b: m.i, n: 0, by: new Map() };
@@ -4592,9 +4593,14 @@
     if (x.a > g.fromI || x.b < g.toI) return null;
     const bs = [];
     for (const b of g.bullets) {
-      if (!b || typeof b.t !== "string" || !b.t.trim() || !Array.isArray(b.refs)) continue;
+      if (!b || typeof b.t !== "string" || !Array.isArray(b.refs)) continue;
+      /* one line each, whatever was stored: control characters and runs of spaces become one space */
+      const t = b.t
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
       const refs = b.refs.filter(i => Number.isInteger(i) && i >= x.a && i <= x.b && S.byI.has(i)).slice(0, 10);
-      if (refs.length) bs.push(trunc(b.t.trim(), 240) + " [#" + refs.join(", #") + "]");
+      if (t && refs.length) bs.push(trunc(t, 240) + " [#" + refs.join(", #") + "]");
     }
     if (!bs.length) return null;
     const text = digLine(x.a, x.b, x.d, x.d, plural(x.n, "message") + ". Digest: " + bs.join(" | "));
@@ -4741,11 +4747,15 @@
     const units = digestUnits(S.msgs[a].i, hiI, rawLoI, sc.loose);
     /* where day lines stop when units[0..j-1] are taken: everything taken covers its own members */
     const edge = j => (j < units.length ? Math.min(rawLoI, units[j].b + 1) : S.msgs[a].i);
-    /* the days' digest lines, and the bytes they'd add over the floor: room kept from conversation lines for them */
+    /* the days' digest lines, and the room kept from conversation lines for them: what the swap below, newest day
+       first, would add within dgMax and the room left over the floor (0 when no digest fits, so none is held back) */
     const ups = sc.days.map(digestText);
-    let extra = 0;
-    ups.forEach((g, d) => g && (extra += Math.max(0, g.bytes - days[d].bytes)));
-    const keep = Math.min(extra, dgMax, Math.max(0, D - used - l2(edge(0))));
+    const most = Math.min(dgMax, Math.max(0, D - used - l2(edge(0))));
+    let keep = 0;
+    for (let d = ups.length - 1; d >= 0; d--) {
+      const add = ups[d] ? Math.max(0, ups[d].bytes - days[d].bytes) : 0;
+      if (ups[d] && keep + add <= most) keep += add;
+    }
     let l1 = 0,
       j = 0;
     const chosen = [];
