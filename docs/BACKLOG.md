@@ -110,7 +110,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.0) |
 | F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.20.0) |
 | F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
-| F14 | P3 | feature | The page shows when the next scheduled refresh is due (`refresh/schedule.nextAt`) |
+| F14 | P3 | feature | The page shows when the next scheduled refresh is due (`refresh/schedule.nextAt`) · **done** (v1.24.0) |
 | F15 | P3 | perf | "Show older messages" renders the whole history at once; page it by day (R4's remainder) |
 | F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
 | F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
@@ -718,9 +718,10 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - Full names: each avatar names only its own group, so two people shown as "Ben" back to back keep their own names (`E: two people shown as "Ben" back to back …`).
   - Also: outbox.md's call 1 now waits after focusing the box and before checking it. With Lexical, text typed the instant the box gets focus is dropped, and inserted text shows a moment later, so the old same-instant check would fail (`F: outbox.md's call 1 types the first line even when Reply leaves the composer unfocused`).
 
-### F14 · P3 · Show the next scheduled refresh on the page
+### F14 · P3 · Show the next scheduled refresh on the page · done (v1.24.0)
 - **What:** `refresh/schedule.nextAt` (v1.21.0) says when the next scheduled run is due, and `problem` why the schedule stopped. The page could show both next to the status line, so a dead schedule is visible without asking Claude.
 - **Fix:** read `refresh/schedule` by name (the page lists no `refresh` collection today); ship with the next page change.
+- **Done in v1.24.0:** the page reads `refresh/schedule` by name (a live snapshot) with `meta/chat.schedule` and shows, under the status line, in the schedule's time zone (labelled when it isn't the browser's): a summary ("Hourly, 7 AM–11 PM", "Every 2 hours, all day", hours that wrap past midnight; manual reads "Refreshes only when you ask"); "Next refresh about 10:05 AM" while `nextAt` is ahead; a calm line when a chain has stopped (scheduling.md's "Chain stopped" conditions, with `refresh/status`) or `problem` is set, saying to ask Claude for a refresh, which offers the restart; and "The last N scheduled runs couldn't reach Chrome" at `misses` ≥ 2. A minute timer brings "stopped" in without a reload. Missing, older or odd values show nothing. Tests: `page.test.js` section `schedule` (S1–S11).
 
 ### F15 · P3 · perf · Page "Show older messages" by day
 - **What:** with "Show older messages" on, the Messages tab renders every stored message. An earlier bench: 0.5 s and 79k elements at 6,400 messages, 2.0 s and 307k at 25,000, 4.2 s and 2.9 GB at 50,000. The default view (the window only) is unaffected. This is what remains of R4.

@@ -385,7 +385,10 @@ const SEED = () => ({
 });
 
 let browser;
+/* ctxOpts.clockAt (ms): install Playwright's clock at that time before the page loads (it keeps running; p.clock
+   moves it on) */
 async function open(seed, page = PAGE, ctxOpts) {
+  const { clockAt, ...cOpts } = ctxOpts || {};
   const ctx = await browser.newContext(
     Object.assign(
       {
@@ -393,9 +396,10 @@ async function open(seed, page = PAGE, ctxOpts) {
         locale: 'en-US',
         timezoneId: 'America/Los_Angeles',
       },
-      ctxOpts,
+      cOpts,
     ),
   );
+  if (clockAt != null) await ctx.clock.install({ time: clockAt });
   await ctx.route('https://fonts.googleapis.com/**', r => r.abort());
   await ctx.route(URL, r => r.fulfill({ body: page, contentType: 'text/html; charset=utf-8' }));
   await ctx.addInitScript(runtime, seed);
@@ -5269,6 +5273,430 @@ async function notices() {
   }
 }
 
+/* ---------- F14: the schedule on the page ----------
+   meta/chat.schedule and refresh/schedule (the refresh skill's references/scheduling.md), shown under the status line.
+   The clock is fixed at Fri Nov 13 2026, 10:00 AM in Los Angeles (the browser's and the chat's zone). */
+const T0 = Date.parse('2026-11-13T18:00:00Z');
+const tAt = min => new Date(T0 + min * 60000).toISOString();
+const HOURLY = { mode: 'chain', every: 60, hours: { from: '07:00', to: '23:00' }, tz: 'America/Los_Angeles' };
+const schedSeed = (schedule, live, extra) =>
+  withMeta(
+    metaWith(schedule === undefined ? {} : { schedule }),
+    Object.assign(live === undefined ? {} : { 'refresh/schedule': live }, extra),
+  );
+/* {line, warns} as shown ({line:'', warns:[]} when the area is hidden); null when the page has no schedule area */
+const schedShown = p =>
+  p.evaluate(() => {
+    const b = document.getElementById('sched');
+    if (!b) return null;
+    if (b.hidden) return { line: '', warns: [] };
+    const line = b.querySelector('.line');
+    return { line: line ? line.textContent : '', warns: [...b.querySelectorAll('.warn')].map(x => x.textContent) };
+  });
+const sopen = (seed, ctxOpts) => open(seed, PAGE, Object.assign({ clockAt: T0 }, ctxOpts));
+const STOP_TAIL = ' Ask Claude in chat to “refresh my catch-up”, and it offers to restart them.';
+async function schedule() {
+  /* one page per case: what it shows */
+  const shows = async (seed, what, want, ctxOpts) => {
+    const p = await sopen(seed, ctxOpts);
+    const s = await schedShown(p);
+    ok(
+      s && s.line === want.line && JSON.stringify(s.warns) === JSON.stringify(want.warns || []) && !p.errors.length,
+      'schedule: ' + what + ' (' + JSON.stringify([s, p.errors]) + ')',
+    );
+    await p.close();
+  };
+  /* S1: the summary and the next run */
+  await shows(
+    schedSeed(HOURLY, { armId: 'a', nextAt: tAt(5), misses: 0, problem: null }),
+    'S1: a chain, hourly 7 AM–11 PM, due in 5 minutes: "Hourly, 7 AM–11 PM. Next refresh about 10:05 AM."',
+    { line: 'Hourly, 7 AM–11 PM. Next refresh about 10:05 AM.' },
+  );
+  await shows(
+    schedSeed({ mode: 'recurring', every: 120, tz: 'America/Los_Angeles' }),
+    'S2: recurring every 2 hours with no hours and no refresh/schedule: "Every 2 hours, all day."',
+    { line: 'Every 2 hours, all day.' },
+  );
+  await shows(
+    schedSeed(
+      { mode: 'chain', every: 30, hours: { from: '07:30', to: '22:00' } },
+      { nextAt: tAt(26 * 60), lastRunAt: tAt(-4) },
+    ),
+    'S2b: every 30 minutes from 7:30 AM, next run tomorrow: the date is shown',
+    { line: 'Every 30 minutes, 7:30 AM–10 PM. Next refresh about Nov 14, 12:00 PM.' },
+  );
+  await shows(
+    schedSeed(
+      { mode: 'manual', every: 60, tz: 'America/Los_Angeles' },
+      { nextAt: tAt(5), misses: 4, problem: 'no scheduling tool in this app' },
+    ),
+    'S3: manual: "Refreshes only when you ask", and no next run, problem or misses',
+    { line: 'Refreshes only when you ask.' },
+  );
+  /* S4: hours that wrap past midnight; 5 minutes early counts as inside */
+  const night = { mode: 'chain', every: 60, hours: { from: '22:00', to: '06:00' }, tz: 'America/Los_Angeles' };
+  await shows(
+    schedSeed(night, { nextAt: null }),
+    'S4: 10 PM–6 AM at 10 AM: summary, and no stopped warning outside the hours',
+    { line: 'Hourly, 10 PM–6 AM.' },
+  );
+  for (const [h, when] of [
+    [13, '11 PM'],
+    [16, '2 AM'],
+    [11 + 55 / 60, '9:55 PM'],
+  ])
+    await shows(
+      schedSeed(night, { nextAt: null }),
+      'S4: 10 PM–6 AM at ' + when + ', nothing armed: stopped (inside the wrapped hours, or 5 minutes early)',
+      { line: 'Hourly, 10 PM–6 AM.', warns: ['Scheduled refreshes have stopped.' + STOP_TAIL] },
+      { clockAt: T0 + h * 3600000 },
+    );
+  await shows(
+    schedSeed(night, { nextAt: null }),
+    'S4: 10 PM–6 AM at 9:54 PM (6 minutes early): not stopped',
+    { line: 'Hourly, 10 PM–6 AM.' },
+    { clockAt: T0 + (11 + 54 / 60) * 3600000 },
+  );
+  await shows(
+    schedSeed(night, { nextAt: null }),
+    'S4: 10 PM–6 AM at 6:00 AM (to is excluded): not stopped',
+    { line: 'Hourly, 10 PM–6 AM.' },
+    { clockAt: T0 + 20 * 3600000 },
+  );
+  /* S5: missing and odd values show nothing, with no errors */
+  await shows(SEED(), 'S5: no meta/chat.schedule and no refresh/schedule: nothing', { line: '' });
+  await shows(schedSeed(HOURLY), 'S5: a chain with no refresh/schedule: the summary only, no warning', {
+    line: 'Hourly, 7 AM–11 PM.',
+  });
+  const odd = [
+    ['"B"', 'B'],
+    ['mode "A"', { mode: 'A', every: 60 }],
+    ['every "often"', { mode: 'chain', every: 'often' }],
+    ['every 0', { mode: 'chain', every: 0 }],
+    ['every 45.5', { mode: 'chain', every: 45.5 }],
+    ['hours "7-23"', { mode: 'chain', every: 60, hours: '7-23' }],
+    ['hours 7am to x', { mode: 'chain', every: 60, hours: { from: '7am', to: 'x' } }],
+    ['hours 25:00', { mode: 'chain', every: 60, hours: { from: '07:00', to: '25:00' } }],
+    ['from = to', { mode: 'chain', every: 60, hours: { from: '07:00', to: '07:00' } }],
+    ['tz "Mars/Base"', { mode: 'chain', every: 60, hours: { from: '7:00', to: 'x' }, tz: 'Mars/Base' }],
+  ];
+  for (const [what, sc] of odd) await shows(schedSeed(sc), 'S5: schedule ' + what + ': nothing', { line: '' });
+  await shows(
+    schedSeed(HOURLY, { nextAt: 'soon', lastRunAt: tAt(-5), misses: '3', problem: 7 }),
+    'S5: odd refresh/schedule fields (nextAt "soon", misses "3", problem 7): ignored',
+    { line: 'Hourly, 7 AM–11 PM.' },
+  );
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { tz: 'Mars/Base' }), { nextAt: tAt(5) }),
+    "S5: an unknown tz falls back to meta/chat.tz (the chat's zone)",
+    { line: 'Hourly, 7 AM–11 PM. Next refresh about 10:05 AM.' },
+  );
+  /* S6: Chain stopped (scheduling.md): inside the hours, nextAt missing or over 30 minutes past, no run going */
+  await shows(
+    schedSeed(HOURLY, { nextAt: tAt(-45), lastRunAt: tAt(-105) }),
+    'S6: nextAt 45 minutes past: stopped, with when it was due',
+    {
+      line: 'Hourly, 7 AM–11 PM.',
+      warns: ['Scheduled refreshes have stopped (the next run was due 9:15 AM).' + STOP_TAIL],
+    },
+  );
+  await shows(
+    schedSeed(HOURLY, { nextAt: '2026-11-12T17:55:00Z' }),
+    'S6: nextAt yesterday: stopped, the date included',
+    {
+      line: 'Hourly, 7 AM–11 PM.',
+      warns: ['Scheduled refreshes have stopped (the next run was due Nov 12, 9:55 AM).' + STOP_TAIL],
+    },
+  );
+  for (const [what, live, extra] of [
+    ['nextAt 20 minutes past', { nextAt: tAt(-20) }],
+    ['a run started 10 minutes ago (lastRunAt)', { nextAt: tAt(-45), lastRunAt: tAt(-10) }],
+    [
+      'refresh/status running from 10 minutes ago',
+      { nextAt: null },
+      { 'refresh/status': { state: 'running', startedAt: tAt(-10), step: 'scan' } },
+    ],
+  ])
+    await shows(schedSeed(HOURLY, live, extra), 'S6: ' + what + ': not stopped', { line: 'Hourly, 7 AM–11 PM.' });
+  await shows(
+    schedSeed(HOURLY, { nextAt: null }, { 'refresh/status': { state: 'running', startedAt: tAt(-25) } }),
+    'S6: a "running" status 25 minutes old is no run going: stopped',
+    { line: 'Hourly, 7 AM–11 PM.', warns: ['Scheduled refreshes have stopped.' + STOP_TAIL] },
+  );
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { mode: 'recurring' }), { nextAt: null }),
+    'S6: recurring with no nextAt: no stopped warning (that is for chains)',
+    { line: 'Hourly, 7 AM–11 PM.' },
+  );
+  /* S7: overdue shows up as time passes, and goes when a new run is armed, without a reload */
+  let p = await sopen(schedSeed(HOURLY, { nextAt: tAt(-29) }));
+  const before = await schedShown(p);
+  await p.clock.fastForward(120000);
+  const late = await until(p, () => document.querySelectorAll('#sched .warn').length === 1, null, 3000);
+  const lateS = await schedShown(p);
+  await p.evaluate(at => __rt.write('refresh/schedule', { nextAt: at, misses: 0 }), tAt(62));
+  const back = await until(p, () => !document.querySelector('#sched .warn'), null, 3000);
+  const backS = await schedShown(p);
+  ok(
+    before &&
+      before.line === 'Hourly, 7 AM–11 PM.' &&
+      !before.warns.length &&
+      late &&
+      lateS.warns[0] === 'Scheduled refreshes have stopped (the next run was due 9:31 AM).' + STOP_TAIL &&
+      back &&
+      backS.line === 'Hourly, 7 AM–11 PM. Next refresh about 11:02 AM.' &&
+      !p.errors.length,
+    'schedule S7: nextAt 29 minutes past is quiet; 2 minutes later "stopped" appears, and goes once a run is armed (' +
+      JSON.stringify([before, lateS, backS, p.errors]) +
+      ')',
+  );
+  await p.close();
+  /* S8: the problem sentence as text, never markup */
+  const evil = '<img src=x onerror="window.__x=1"> no scheduling tool in this app';
+  p = await sopen(schedSeed(HOURLY, { nextAt: null, problem: evil }));
+  let s = await schedShown(p);
+  ok(
+    s &&
+      s.warns.length === 1 &&
+      s.warns[0] === 'Scheduled refreshes have stopped: ' + evil + '.' + STOP_TAIL &&
+      (await p.evaluate(() => window.__x === undefined && !document.querySelector('#sched img'))),
+    'schedule S8: a problem with markup shows literally and runs nothing (' + JSON.stringify(s) + ')',
+  );
+  await p.close();
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { mode: 'recurring' }), { problem: 'The task was cancelled.' }),
+    'S8: a problem on a running recurring schedule: "hit a problem", the sentence as written',
+    {
+      line: 'Hourly, 7 AM–11 PM.',
+      warns: ['Scheduled refreshes hit a problem: The task was cancelled.' + STOP_TAIL],
+    },
+  );
+  /* S9: missed runs */
+  const MISS = "The last 3 scheduled runs couldn't reach Chrome.";
+  p = await sopen(schedSeed(HOURLY, { nextAt: tAt(50), misses: 3 }));
+  s = await schedShown(p);
+  ok(
+    s && s.line.endsWith('Next refresh about 10:50 AM.') && s.warns.length === 1 && s.warns[0].startsWith(MISS),
+    'schedule S9: misses 3: "' + MISS + '" (' + JSON.stringify(s) + ')',
+  );
+  await p.close();
+  await shows(schedSeed(HOURLY, { nextAt: tAt(50), misses: 1 }), 'S9: misses 1: no line (a single miss is normal)', {
+    line: 'Hourly, 7 AM–11 PM. Next refresh about 10:50 AM.',
+  });
+  /* S10: the chat's time zone, labelled when it isn't the browser's */
+  await shows(
+    schedSeed(Object.assign({}, HOURLY, { tz: 'America/New_York' }), { nextAt: tAt(5) }),
+    'S10: a New York schedule seen from Los Angeles: its times, labelled',
+    { line: 'Hourly, 7 AM–11 PM (EST). Next refresh about 1:05 PM (EST).' },
+  );
+  /* S11: dark mode and phone width */
+  const busy = () =>
+    schedSeed(HOURLY, { nextAt: tAt(-45), misses: 5, problem: 'Error: ' + 'x'.repeat(160) + ' (send_later refused)' });
+  p = await sopen(busy(), { viewport: { width: 390, height: 800 } });
+  const fit = await p.evaluate(() => ({
+    sw: document.documentElement.scrollWidth,
+    iw: innerWidth,
+    right: Math.max(...[...document.querySelectorAll('#sched p')].map(x => x.getBoundingClientRect().right)),
+    n: document.querySelectorAll('#sched p').length,
+  }));
+  ok(
+    fit.n === 3 && fit.sw <= fit.iw && fit.right <= fit.iw,
+    'schedule S11: summary, stopped and misses at 390 px fit the width, no sideways scroll (' +
+      JSON.stringify(fit) +
+      ')',
+  );
+  const colors = () =>
+    p.evaluate(() => {
+      const x = document.querySelector('#sched .warn'),
+        l = document.querySelector('#sched .line');
+      if (!x || !l) return null;
+      const probe = document.createElement('div');
+      probe.style.cssText = 'background:var(--warn-soft);color:var(--fg);border-color:var(--muted)';
+      document.body.append(probe);
+      const want = getComputedStyle(probe);
+      return {
+        bg: getComputedStyle(x).backgroundColor,
+        fg: getComputedStyle(x).color,
+        line: getComputedStyle(l).color,
+        wantBg: want.backgroundColor,
+        wantFg: want.color,
+        wantLine: want.borderTopColor,
+      };
+    });
+  const light = await colors();
+  await p.close();
+  p = await sopen(busy(), { colorScheme: 'dark' });
+  const dark = await colors();
+  ok(
+    light &&
+      dark &&
+      dark.bg === dark.wantBg &&
+      dark.fg === dark.wantFg &&
+      dark.line === dark.wantLine &&
+      dark.bg !== light.bg &&
+      !p.errors.length,
+    'schedule S11: dark mode uses the dark --warn-soft, --fg and --muted (' + JSON.stringify([light, dark]) + ')',
+  );
+  await p.close();
+}
+
+/* ---------- F19: claims on a deal ----------
+   The Messages-view chat with a sale on "packs" (#30) and claims written by the refresh: names as the page shows them,
+   first come first, each linking to its message; bad entries skipped. */
+async function claims() {
+  const V = viewSeed();
+  V.msgs[32].fn = 'Ben Brooks';
+  V.msgs[37].fn = 'Ben Ortiz'; /* two Bens: the one from #32 is shown with his full name */
+  const deal = (conv, extra) =>
+    Object.assign(
+      {
+        kind: 'sale',
+        tag: 'For sale',
+        conv,
+        text: 'Pack, $40',
+        refs: [V.th.convs.find(c => c.id === conv).members[0]],
+      },
+      extra,
+    );
+  V.sm.deals = [
+    deal('packs', {
+      claims: [
+        { i: 54, who: 'Dee', n: 1 },
+        { i: 35, who: 'Cy', n: 2 },
+        null,
+        'Ana',
+        { i: '33', who: 'Ana' },
+        { i: 34 },
+        { who: 'Dee' },
+        { i: -1, who: 'Dee' },
+        { i: 36, who: '  ' },
+        { i: 32, who: 'Ben' },
+        { i: 53, who: 'DD', n: 'x' },
+        { i: 1.5, who: 'Cy' },
+      ],
+    }),
+    deal('lend'),
+    deal('gone', { claims: [] }),
+    deal('t6', { claims: [{ i: 52 }, null, 'x'] }),
+    deal('t5', { claims: { i: 40, who: 'Ana' }, status: 'toString', statusAt: 39 }),
+    /* F22 (A2): status "sold" | "pending" with statusAt */
+    deal('t2', {
+      status: 'pending',
+      statusAt: 13,
+      claims: [
+        { i: 13, who: 'Cy' },
+        { i: 16, who: 'Ben', n: 2 },
+        { i: 25, who: 'Ana' },
+      ],
+    }),
+    deal('t3', { status: 'sold', statusAt: 'x', claims: [{ i: 20, who: 'Ana' }] }),
+    deal('t4', { status: 'SOLD', statusAt: 24, claims: [{ i: 26, who: 'Ben' }] }),
+    deal('t0', { status: null, statusAt: 2, claims: [{ i: 3, who: 'Cy' }] }),
+    deal('t1', { status: 'sold', statusAt: 8 }),
+  ];
+  const p = await open(SEED());
+  await paste(p, JSON.stringify(cap(V.msgs)));
+  await p.evaluate(
+    ([th, sm]) => {
+      const pi = __rt.get('people/index') || { people: {} };
+      pi.people['Dee Diaz'] = { shown: ['DD'] };
+      __rt.write('people/index', pi);
+      __rt.write('threading/current', th);
+      __rt.write('summary/current', sm);
+      location.hash = '#summary';
+    },
+    [V.th, V.sm],
+  );
+  await until(p, () => document.querySelector('[data-conv="packs"] .callout.deal'));
+  await p.waitForTimeout(200);
+  const got = await p.evaluate(() => {
+    const line = c => {
+      const x = document.querySelector('[data-conv="' + c + '"] .callout.deal .claims');
+      return x ? x.textContent : null;
+    };
+    const links = [...document.querySelectorAll('[data-conv="packs"] .callout.deal .claims a')].map(a => ({
+      t: a.textContent,
+      href: a.getAttribute('href'),
+    }));
+    return { packs: line('packs'), links, others: ['lend', 'gone', 't6', 't5'].map(line) };
+  });
+  ok(
+    got.packs === 'Claimed: Ben Brooks, Cy (2), DD (Dee), Dee' &&
+      JSON.stringify(got.links.map(a => a.t)) === JSON.stringify(['Ben Brooks', 'Cy', 'DD (Dee)', 'Dee']) &&
+      got.links.every(a => a.href === '#messages'),
+    'claims C1: first come first, names as shown elsewhere, "(n)" only above 1, bad entries skipped (' +
+      JSON.stringify(got) +
+      ')',
+  );
+  ok(
+    !!got.packs && JSON.stringify(got.others) === JSON.stringify([null, null, null, null]),
+    'claims C2: beside a deal with claims, no claims, an empty list, only bad entries, or not a list: no line (' +
+      JSON.stringify(got.others) +
+      ')',
+  );
+  /* C4 (F22): "Sold" or "Pending" beside the deal, linking to statusAt; claims after it say so; unknown values ignored */
+  const sts = await p.evaluate(() =>
+    ['t2', 't3', 't4', 't0', 't1', 't5', 'packs'].map(c => {
+      const d = document.querySelector('[data-conv="' + c + '"] .callout.deal');
+      const x = d && d.querySelector('.lab .dstat');
+      const cl = d && d.querySelector('.claims');
+      return [
+        c,
+        x ? x.tagName + ':' + x.textContent + ':' + (x.getAttribute('href') || '') : null,
+        cl && cl.textContent,
+      ];
+    }),
+  );
+  const wantSts = [
+    ['t2', 'A:Pending:#messages', 'Claimed: Cy, Ben (2) (after pending), Ana (after pending)'],
+    ['t3', 'SPAN:Sold:', 'Claimed: Ana'],
+    ['t4', null, 'Claimed: Ben'],
+    ['t0', null, 'Claimed: Cy'],
+    ['t1', 'A:Sold:#messages', null],
+    ['t5', null, null],
+    ['packs', null, 'Claimed: Ben Brooks, Cy (2), DD (Dee), Dee'],
+  ];
+  ok(
+    JSON.stringify(sts) === JSON.stringify(wantSts),
+    'claims C4: status shows "Pending"/"Sold" linking to statusAt (a plain label without one), claims after statusAt marked, unknown or null status ignored (' +
+      JSON.stringify(sts) +
+      ')',
+  );
+  const stClicked = await tryClick(p, '[data-conv="t2"] .callout.deal .lab a.dstat');
+  const stOpen =
+    stClicked &&
+    (await until(p, () => {
+      const d = document.querySelector('[data-conv="t2"] details.thr');
+      return d && d.open && location.hash === '#summary';
+    }));
+  ok(!!stOpen && !p.errors.length, 'claims C5: the "Pending" label opens its card\'s thread at statusAt (#13)');
+  /* C3: a claim in the card opens its thread at that message; one in another conversation goes to Messages */
+  const c2 = await tryClick(p, '[data-conv="packs"] .callout.deal .claims a:nth-of-type(2)');
+  const inCard =
+    c2 &&
+    (await until(p, () => {
+      const d = document.querySelector('[data-conv="packs"] details.thr');
+      return d && d.open && location.hash === '#summary';
+    }));
+  const c4 = await tryClick(p, '[data-conv="packs"] .callout.deal .claims a:nth-of-type(4)');
+  const away =
+    c4 &&
+    !!(await until(
+      p,
+      () =>
+        location.hash === '#messages' &&
+        !document.getElementById('v-messages').hidden &&
+        document.getElementById('m54'),
+    ));
+  ok(
+    inCard && away && !p.errors.length,
+    'claims C3: Cy (#35, in the card) opens its thread; Dee (#54, another conversation) goes to Messages (' +
+      JSON.stringify([inCard, away, p.errors]) +
+      ')',
+  );
+  await p.context().close();
+}
+
 const SECTIONS = {
   importer,
   robustness,
@@ -5284,6 +5712,8 @@ const SECTIONS = {
   standIn,
   history,
   notices,
+  schedule,
+  claims,
 };
 (async () => {
   browser = await chromium.launch();
