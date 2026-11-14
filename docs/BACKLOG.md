@@ -23,6 +23,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
+| F26 | P3 | feature | Remove questions asked on the Ask tab: there's no way to delete a saved question (`qa/*`) today (the owner's request, Nov 14) |
 | F21 | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
 | F23 | P3 | feature | A Messenger reply mid-conversation to a message in another conversation shows no "replying to…" line (27 on the owner's page) |
 | F24 | P3 | feature | Optional views of the per-day digests (F16), such as a "By day" tab; today only Ask reads them |
@@ -81,6 +82,12 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Ask (owner, Nov 14):** besides a Messenger group chat, catch up with the posts in a Facebook group.
 - **How it differs:** a group is a feed of posts (text, photos, links), each with its own comment threads and reactions, at `facebook.com/groups/<id>`, not a single message log. The feed's default order isn't by time, posts and comments load lazily, and old posts get new comments, so "what's new since I last looked" means new posts **and** new comments on older ones. Claude in Chrome reads it from the owner's own logged-in Chrome, as for Messenger, read only.
 - **To design with the owner:** which groups; what counts as new; one page per group or groups on the chat's page (F1 is related); what the summary covers (posts, comment threads, deals in buy/sell groups, mentions); whether replying is in scope; how capture works (a helper mode for the group feed, sorted by new activity) and its markup risks (like R3).
+
+### F26 · P3 · Remove saved Ask questions
+- **Ask (owner, Nov 14):** a way to remove questions asked earlier on the Ask tab.
+- **Today:** the page saves every question and answer in `qa/*` (`collection("qa").add`) and lists them all. Nothing deletes them, and the list keeps only `d.data()`, so it doesn't even hold the document ids a delete would need. Only Claude can remove one, with a database delete the user approves.
+- **Fix:** keep each row's id; give each saved question a Remove action (undo for a few seconds rather than a confirm dialog), and maybe "Clear all". Claude reads `qa` for context (`database.md` › Questions asked on the page), so removed ones simply stop being read.
+- **Test:** a page test that removes one saved question (it's gone from the list and from `qa`), undoes another, and checks markup in a question still shows as text.
 
 ### F23 · P3 · Show cross-conversation replies mid-conversation
 - **Found:** cleaning up the owner's page (Nov 13). Of 122 links whose parent sat in another conversation, 52 were wrong guesses (fixed live with `relink` and `move`). The 70 left are real Messenger replies where the topic drifted. 43 start a conversation, and the page shows their parent as context (B40). 27 sit mid-conversation, where the page draws no link at all.
