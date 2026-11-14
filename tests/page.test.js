@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const ROOT = path.join(__dirname, '..');
 /* PAGE_FILE: test another copy, e.g. an older page. The page is stored without the document skeleton; the Artifact tool
    adds this exact one when it publishes, so the test adds it too (older copies that already carry it are served as is). */
@@ -3273,7 +3273,9 @@ async function history() {
       await p.close();
     }
   });
-
+}
+/* history, continued: a section of its own, so the two halves run in parallel */
+async function history2() {
   /* H5b: real membership at 2,000 messages, the two layouts a review measured missing messages with */
   await hcase('H5b', async () => {
     for (const [label, th, cap] of [
@@ -3975,6 +3977,10 @@ async function photos() {
     'P13: the re-paste stores the rest (one asset duplicated: the late one)',
   );
   await p.close();
+}
+/* photos, continued: a section of its own, so the two halves run in parallel */
+async function photos2() {
+  let p, r, st, up;
   // P14: messages #499 and #500 fall in two blocks; the page shows both and picks up a live block change
   p = await openR2();
   r = await paste(p, JSON.stringify(cap(range(0, 502), { photos: [PH(499), PH(500)] })));
@@ -5058,19 +5064,62 @@ const SECTIONS = {
   messagesView,
   speed,
   photos,
+  photos2,
   bigPaste,
   standIn,
   history,
+  history2,
   notices,
 };
-(async () => {
+/* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
+   CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1
+   runs them one by one in this process, as before. To add a section: write async function mySection() and add it to
+   SECTIONS. It runs alongside the others, so it may share nothing with them but files it only reads. A long section
+   can be split in two at a case boundary (photos and photos2, history and history2): close the function and open the
+   next. */
+const PAGE_JOBS = Math.max(1, +process.env.PAGE_JOBS || os.cpus().length);
+/* the slowest sections first, so they don't start last */
+const SLOW_FIRST = ['photos', 'layouts', 'photos2', 'notices', 'history2', 'history', 'messagesView', 'pipeline'];
+async function inProcess(names) {
   browser = await chromium.launch();
   try {
-    /* ONLY=messagesView,names runs just those sections (e.g. to check new tests against an older page) */
-    for (const [k, f] of Object.entries(SECTIONS))
-      if (!process.env.ONLY || process.env.ONLY.split(',').includes(k)) await f();
+    for (const k of names) await SECTIONS[k]();
   } catch (e) {
     ok(false, 'crashed: ' + ((e && e.stack) || e));
   }
   await browser.close();
-})();
+}
+async function inParallel(names) {
+  const t0 = Date.now();
+  const rank = k => (SLOW_FIRST.includes(k) ? SLOW_FIRST.indexOf(k) : SLOW_FIRST.length);
+  const queue = names.slice().sort((a, b) => rank(a) - rank(b));
+  const one = k =>
+    new Promise(done => {
+      const start = Date.now();
+      const env = Object.assign({}, process.env, { PAGE_SECTION: k });
+      const child = spawn(process.execPath, [__filename], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      child.stdout.on('data', d => (out += d));
+      child.stderr.on('data', d => (out += d));
+      child.on('exit', (code, sig) => {
+        const secs = ((Date.now() - start) / 1000).toFixed(1);
+        process.stdout.write('--- ' + k + ' (' + secs + ' s)\n' + out);
+        if (code !== 0 && !/^FAIL /m.test(out)) console.log('FAIL ' + k + ' exited with ' + (sig || 'code ' + code));
+        if (code !== 0) process.exitCode = 1;
+        done();
+      });
+    });
+  const worker = async () => {
+    while (queue.length) await one(queue.shift());
+  };
+  await Promise.all(Array.from({ length: Math.min(PAGE_JOBS, queue.length) }, worker));
+  const secs = ((Date.now() - t0) / 1000).toFixed(1);
+  console.log('page: ' + names.length + ' sections in ' + secs + ' s, ' + PAGE_JOBS + ' at a time');
+}
+/* ONLY=messagesView,names runs just those sections (e.g. to check new tests against an older page); a name also
+   picks the sections it begins (ONLY=photos runs photos and photos2). PAGE_SECTION is one section, for the runner. */
+const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
+const WANT = process.env.PAGE_SECTION
+  ? [process.env.PAGE_SECTION]
+  : Object.keys(SECTIONS).filter(k => !ONLY.length || ONLY.some(o => k.startsWith(o)));
+(process.env.PAGE_SECTION || PAGE_JOBS === 1 || WANT.length === 1 ? inProcess : inParallel)(WANT);
