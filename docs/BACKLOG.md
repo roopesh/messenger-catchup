@@ -28,13 +28,13 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
 | R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up · **done** (v1.23.0) |
-| R18 (A3) | P3 | risk | Now that a chain run arms as it starts, a run still going when the next one fires (`every` minus 3 minutes after it started) has a lock older than 20 minutes for usual settings, which the next run takes over |
+| R18 | P3 | risk | Now that a chain run arms as it starts, a run still going when the next one fires (`every` minus 3 minutes after it started) has a lock older than 20 minutes for usual settings, which the next run takes over |
 | R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 715 and adds about 55 a day (to design) |
 | R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
 | R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
-| R18 (A1) | P2 | tooling | `npm test` took 12 minutes, mostly the sim waiting one case at a time · **done** (v1.23.0) |
-| R19 (A1) | P3 | tooling | `tools/sync.py` leaves files open: the Python suite prints "Exception ignored … ResourceWarning" noise that `-W error::ResourceWarning` doesn't catch |
+| T6 | P2 | test | `npm test` took 12 minutes, mostly the sim waiting one case at a time · **done** (v1.23.0) |
+| C8 | P3 | cleanup | `tools/sync.py` leaves files open: the Python suite prints "Exception ignored … ResourceWarning" noise that `-W error::ResourceWarning` doesn't catch |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
@@ -381,12 +381,12 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.
 - **Options:** run `tools/release.sh` straight after every merge that bumps the helper (today's practice, so the gap is usually minutes); or have the page hold E until a day after `versions.helper` first appears (a `since` the skill keeps), which the owner turned down for F5 ("flagged right away").
 
-### R18 (A1) · P2 · The test suite took 12 minutes · done (v1.23.0)
+### T6 · P2 · The test suite took 12 minutes · done (v1.23.0)
 - **Found:** on the owner's Mac, `npm test` took 737 s at 12% CPU: the sim 590 s (its cases one after another, mostly waiting on the helper's timers), the page tests 125 s, Python 20 s. CI took 11–14 minutes.
 - **Done in v1.23.0:** `tests/sim.js` registers each case with `sim(name, fn)` and runs them in parallel, each in its own browser context, three times the CPU count at a time (`SIM_JOBS`), each case's lines printed together under its name. A3 and A5 go on from A2's storage (`after`, `SHARED`). `tests/page.test.js` runs each section in its own process, the CPU count at a time (`PAGE_JOBS`); `photos` and `history` are split in two. `tests/run.js` runs `composer.sim.js` and, for `npm test`, the Python suites alongside the sim. Same PASS lines as before. Now about 1.5 minutes on the Mac.
 - **Floor:** the sim's longest chain is A1, A2 then A3, A5 (about 64 s), which has no top-of-chat wait, so helper 2.1's `topMs` shortens other cases but not the sim's total here; it helps on CI, which runs fewer at a time.
 
-### R19 (A1) · P3 · `tools/sync.py` leaves files open
+### C8 · P3 · `tools/sync.py` leaves files open
 - **Found:** R18. The Python suite prints "Exception ignored while finalizing file … ResourceWarning: unclosed file" for `tools/sync.py`'s `read()` (`open(p).read()`), once per copied file. The warning is raised in a finalizer, so `-W error::ResourceWarning` doesn't fail on it. Use `with open(...)`.
 
 ### R3 · P3 · Messenger markup dependency (known) · done (v1.20.0, option B)
@@ -492,7 +492,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Shortened:** the reference list, the quote-match CHECK note (the line prints its reason), and the relink's refused write (step 7's rule covers it).
   - **Tests:** `test_tools.TestSkillRoom`, plus seven new `TestScheduling` tests. Each failed before the change.
 
-### R18 (A3) · P3 · A run older than the lock's 20 minutes when the next one fires
+### R18 · P3 · A run older than the lock's 20 minutes when the next one fires
 - **What:** since R14, a chain run arms as it starts, so the next run fires `every` minus 3 minutes after this one started, not after it ended. If this run is still going then (a large backlog, a long photo wait, a slow outbox) and `every` is 23 minutes or more, its `refresh/status` lock is more than 20 minutes old, and the next run treats it as stale and takes over. That run scans in the same Messenger tab. Pinned writes keep the database whole: a run whose write is refused while the other's `running` is in `refresh/status` stops (writing-the-build.md › Refused writes). But the two can disturb each other's scan, and the first to finish marks the status done while the other is still going. Before R14 this could only happen with a refresh the user asked for. `references/scheduling.md` › A scheduled run, Overlap, describes it.
 - **Unverified, check live:** a follow-up that comes due while this conversation is mid-turn (the run it would follow is still going) may be queued until the turn ends, or dropped. If the scheduling tool drops it, the chain stops at that run, and only a refresh the user asks for finds it stopped. Check with each follow-up tool (a short `every` and a run kept busy past it).
 - **Fix (if it shows up):** have a run that finds the lock 20+ minutes old check `lastRunAt` and the lock's `step` before taking over, or renew `startedAt` at each step.
