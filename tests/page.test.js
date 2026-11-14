@@ -3970,6 +3970,229 @@ async function digests() {
   });
 }
 
+/* ---------- F24: the By day tab ----------
+   The per-day digests, a card per day, newest first, each bullet's numbers opening the message as Ask's citations do.
+   Days without a digest are left out (one quiet line says why). Bullet text is data. */
+/* 5 days of 100 (Oct 1–5, 2026); the window is the last 20 messages; the newest day has no digest yet */
+const bdSeed = (o = {}) => {
+  const msgs = hmsgs(o.n || 500, { perDay: o.perDay || 100 });
+  const days = new Set(msgs.map(m => m.d)).size;
+  const docs = o.noDigests ? {} : hdigests(msgs, k => k < days - 1, o.make);
+  return { msgs, seed: hseed(msgs, { threads: true, meta: { caughtUpI: msgs.length - 21 }, docs, opts: o.opts }) };
+};
+const bdOpen = async (o = {}, ctx) => {
+  const { msgs, seed } = bdSeed(o);
+  const p = await open(seed, PAGE, ctx);
+  HP.push(p);
+  await until(p, n => S.msgs.length === n && S.threading, msgs.length, 120000);
+  return { p, msgs };
+};
+const bdCards = p =>
+  p.evaluate(() =>
+    [...document.querySelectorAll('#days-list article')].map(a => ({
+      day: a.dataset.day,
+      title: (a.querySelector('h3') || {}).textContent,
+      text: a.textContent,
+      bullets: [...a.querySelectorAll('li')].map(li => li.textContent),
+    })),
+  );
+const bdShow = async p => {
+  await p.evaluate(() => (location.hash = '#days'));
+  await until(p, () => document.querySelector('#days-list article, #days-list .empty'), null, 5000);
+};
+
+async function byDay() {
+  /* BD1: the tab opens from the keyboard and lists the digested days newest first, with their bullets and counts; the
+     day still waiting is absent and the quiet line names it; a page opened at #days draws them too */
+  await hcase('BD1', async () => {
+    const { p } = await bdOpen();
+    await p.focus('nav a[data-tab="days"]');
+    await p.keyboard.press('Enter');
+    await until(p, () => document.querySelector('#days-list article'), null, 5000);
+    const st = await p.evaluate(() => ({
+      hash: location.hash,
+      shown: !document.getElementById('v-days').hidden,
+      cur: document.querySelector('nav a[data-tab="days"]').getAttribute('aria-current'),
+      others: [...document.querySelectorAll('section.view')].filter(v => !v.hidden).length,
+      note: (document.querySelector('#days-list > p.note') || {}).textContent || '',
+    }));
+    const cards = await bdCards(p);
+    ok(
+      st.hash === '#days' && st.shown && st.cur === 'page' && st.others === 1,
+      'F24 BD1: Enter on the By day tab opens it alone and marks it current ' + JSON.stringify(st),
+    );
+    ok(
+      cards.map(c => c.day).join() === '2026-10-04,2026-10-03,2026-10-02,2026-10-01' &&
+        cards[0].title === 'Sun, Oct 4' &&
+        cards[3].title === 'Thu, Oct 1' &&
+        cards[0].text.includes('100 messages') &&
+        cards[0].bullets.join(' / ') ===
+          'Ana sold a stove on day 3 #301 #302 / Ben asked about permits on day 3 #305' &&
+        cards[3].bullets[0] === 'Ana sold a stove on day 0 #1 #2',
+      'F24 BD1: the digested days, newest first, with weekday, date, count and bullets: ' +
+        JSON.stringify(cards.map(c => [c.day, c.title, c.bullets[0]])),
+    );
+    ok(
+      !cards.some(c => c.day === '2026-10-05') && /Mon, Oct 5 gets its digest at a refresh after it ends/.test(st.note),
+      'F24 BD1: the day without a digest (Oct 5) is left out, and the quiet line says why: "' + st.note + '"',
+    );
+    await p.reload();
+    await until(p, () => document.querySelectorAll('#days-list article').length === 4, null, 10000);
+    ok(
+      (await bdCards(p)).length === 4 && p.errors.length === 0,
+      'F24 BD1: a page opened at #days draws the days once its data loads; no page errors ' + JSON.stringify(p.errors),
+    );
+  });
+
+  /* BD2: a bullet's number opens that message in Messages, loading its day when it's before the window */
+  await hcase('BD2', async () => {
+    const { p } = await bdOpen();
+    await bdShow(p);
+    await p.click('#days-list article[data-day="2026-10-02"] li a.cite');
+    await until(p, () => document.querySelector('#m101.flash'), null, 5000);
+    const r = await p.evaluate(() => {
+      const n = document.getElementById('m101');
+      const b = n && n.getBoundingClientRect();
+      return {
+        hash: location.hash,
+        older: document.getElementById('msg-all').checked,
+        seen: !!b && b.height > 0 && b.top >= 0 && b.bottom <= innerHeight,
+        flash: !!n && n.classList.contains('flash'),
+      };
+    });
+    ok(
+      r.hash === '#messages' && r.older && r.seen && r.flash,
+      'F24 BD2: #101 (Oct 2, before the window) opens in Messages, on screen and highlighted ' + JSON.stringify(r),
+    );
+    ok(p.errors.length === 0, 'F24 BD2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* BD3: markup in a bullet shows as literal text */
+  await hcase('BD3', async () => {
+    const bad = '<img src=x onerror="window.__xss=1"><b>Ben</b> & Cy <script>window.__xss=2</script>';
+    const { p } = await bdOpen({ make: (k, ids) => [{ t: bad, refs: [ids[3]] }] });
+    await bdShow(p);
+    await p.waitForTimeout(200);
+    const r = await p.evaluate(() => ({
+      li: (document.querySelector('#days-list li') || {}).textContent || '',
+      tags: document.querySelectorAll('#days-list img, #days-list b, #days-list script').length,
+      xss: window.__xss || null,
+    }));
+    ok(
+      r.li.startsWith(bad) && r.tags === 0 && r.xss === null,
+      'F24 BD3: markup in a bullet is shown as text, nothing runs ' + JSON.stringify(r),
+    );
+  });
+
+  /* BD4: no digests at all: a short empty state, no errors */
+  await hcase('BD4', async () => {
+    const { p } = await bdOpen({ noDigests: true });
+    await bdShow(p);
+    const r = await p.evaluate(() => ({
+      empty: (document.querySelector('#days-list .empty') || {}).textContent || '',
+      cards: document.querySelectorAll('#days-list article').length,
+    }));
+    ok(
+      /^No day digests yet\./.test(r.empty) && r.cards === 0 && p.errors.length === 0,
+      'F24 BD4: with no digests the tab shows an empty state ' + JSON.stringify(r) + ' ' + JSON.stringify(p.errors),
+    );
+  });
+
+  /* BD5: no database (signed out): the tab shows an empty state, no errors, also when the page opens at #days */
+  await hcase('BD5', async () => {
+    const p = await open(Object.assign(SEED(), { __opts: { noDb: true } }));
+    HP.push(p);
+    await bdShow(p);
+    const e1 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
+    await p.reload();
+    await p.waitForTimeout(400);
+    const e2 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
+    ok(
+      e1.length > 0 && e2 === e1 && p.errors.length === 0,
+      'F24 BD5: with no database, an empty state ("' + e1 + '") and no page errors ' + JSON.stringify(p.errors),
+    );
+  });
+
+  /* BD6: at 390 px a long bullet with ten numbers wraps: nothing scrolls sideways */
+  await hcase('BD6', async () => {
+    const long = 'Ana listed ' + 'tentpolesandstakes'.repeat(8) + ' with a long note about the ridge trail and spares';
+    const { p } = await bdOpen(
+      { make: (k, ids) => [{ t: long, refs: ids.slice(80, 90) }] },
+      { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
+    );
+    await bdShow(p);
+    await p.waitForTimeout(200);
+    const r = await p.evaluate(() => {
+      const a = document.querySelector('#days-list article');
+      return {
+        cards: document.querySelectorAll('#days-list article').length,
+        sw: document.documentElement.scrollWidth,
+        w: innerWidth,
+        right: a ? Math.round(a.getBoundingClientRect().right) : null,
+      };
+    });
+    ok(
+      r.cards === 4 && r.sw <= r.w && r.right <= r.w,
+      'F24 BD6: at 390 px the cards fit the width, no sideways scroll ' + JSON.stringify(r),
+    );
+  });
+
+  /* BD7: dark mode: the cards, their text and the numbers use the dark theme's colors */
+  await hcase('BD7', async () => {
+    const { p } = await bdOpen({}, { colorScheme: 'dark' });
+    await bdShow(p);
+    const c = await p.evaluate(() => {
+      const a = document.querySelector('#days-list article');
+      const cs = x => x && getComputedStyle(x);
+      return a
+        ? {
+            card: cs(a).backgroundColor,
+            border: cs(a).borderTopColor,
+            text: cs(a.querySelector('li')).color,
+            cite: cs(a.querySelector('a.cite')).color,
+            note: cs(document.querySelector('#days-list > p.note')).color,
+          }
+        : null;
+    });
+    ok(
+      !!c &&
+        c.card === 'rgb(33, 35, 31)' &&
+        c.border === 'rgb(54, 57, 49)' &&
+        c.text === 'rgb(233, 232, 224)' &&
+        c.cite === 'rgb(122, 165, 255)' &&
+        c.note === 'rgb(163, 166, 152)',
+      'F24 BD7: in dark mode the cards use the theme tokens ' + JSON.stringify(c),
+    );
+  });
+
+  /* BD8: a long history draws 30 days at first; "Show 9 more days" adds the rest and moves focus to the first added */
+  await hcase('BD8', async () => {
+    const { p } = await bdOpen({ n: 400, perDay: 10 });
+    await bdShow(p);
+    const n0 = (await bdCards(p)).length;
+    const btn = await p.evaluate(() => (document.querySelector('#days-list > button') || {}).textContent || '');
+    await p.focus('#days-list > button');
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(200);
+    const r = await p.evaluate(() => ({
+      n: document.querySelectorAll('#days-list article').length,
+      btn: !!document.querySelector('#days-list > button'),
+      focus: document.activeElement && document.activeElement.dataset && document.activeElement.dataset.day,
+      last: [...document.querySelectorAll('#days-list article')].pop().dataset.day,
+    }));
+    ok(
+      n0 === 30 &&
+        btn === 'Show 9 more days' &&
+        r.n === 39 &&
+        !r.btn &&
+        r.focus === '2026-10-09' &&
+        r.last === '2026-10-01',
+      'F24 BD8: 30 days first (' + n0 + '), then "' + btn + '" adds the rest ' + JSON.stringify(r),
+    );
+    ok(p.errors.length === 0, 'F24 BD8: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
 /* ---------- R2: photos stored as they upload ----------
    Each photo is indexed (photos/b<start>) the moment it lands, refresh/lastImport says "uploading" with a heartbeat
    while they store, owed slots are on record (null, and meta/chat.photosOwed), every upload error code has its own
@@ -7734,6 +7957,7 @@ const SECTIONS = {
   history,
   history2,
   digests,
+  byDay,
   notices,
   schedule,
   claims,

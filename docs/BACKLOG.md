@@ -26,7 +26,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F26 | P3 | feature | Remove questions asked on the Ask tab: there's no way to delete a saved question (`qa/*`) today (the owner's request, Nov 14) |
 | F21 | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
 | F23 | P3 | feature | A Messenger reply mid-conversation to a message in another conversation shows no "replying to…" line (27 on the owner's page) |
-| F24 | P3 | feature | Optional views of the per-day digests (F16), such as a "By day" tab; today only Ask reads them |
+| F27 (F24) | P3 | feature | More views of the per-day digests beyond the By day tab: in the Messages tab's day headers, or a week's digests as a catch-up after time away |
 
 ---
 
@@ -93,9 +93,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Found:** cleaning up the owner's page (Nov 13). Of 122 links whose parent sat in another conversation, 52 were wrong guesses (fixed live with `relink` and `move`). The 70 left are real Messenger replies where the topic drifted. 43 start a conversation, and the page shows their parent as context (B40). 27 sit mid-conversation, where the page draws no link at all.
 - **Fix:** for a message whose link crosses conversations, show a short "replying to Ben: …" line that opens the parent, like B40's context line. Moving these would misfile them, so the page should show them instead.
 
-### F24 · P3 · Optional views of the per-day digests
-- **What:** since v1.25.0 (F16) each finished day has a few bullets citing its messages (`digests/m<YYYY-MM>`), but only Ask reads them. The owner wants other ways to use them recorded for later: a "By day" view (one card per day, newest first, each bullet opening its messages), digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
-- **Cost:** page only; the data is there (after the backfill, for every day).
+### F27 (F24) · P3 · More views of the per-day digests
+- **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
+- **Cost:** page only; the data is there.
 - **Trigger:** the owner asks.
 
 ## Live checks
