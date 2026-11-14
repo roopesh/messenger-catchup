@@ -29,9 +29,10 @@
                                      RUNDIR/out/manifest.json as a build does and advances WORK's summary (`restore` undoes it).
                                      The refresh skill's references/restoring-a-summary.md has the whole procedure.
 LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summary are collections of documents:
-  threading/current {layout:2, block, blocks:[ids], to, note, builtAt, convs:[conversations with no messages yet]}
+  threading/current {layout:2, block, blocks:[ids], to, note, builtAt, rev, summaryRev?, convs:[conversations with no
+                   messages yet]}
   threading/b<start>-<hash> {start, convs:[{id,title}] starting in the block, members:{conv:[i...]}, links:{i:[p,t]}}
-  summary/current {layout:2, block, blocks:[ids], activeFrom, version, toI, generatedAt, fromI?, mentionsNote?,
+  summary/current {layout:2, block, blocks:[ids], activeFrom, version, toI, generatedAt, rev, fromI?, mentionsNote?,
                    convs, open, answered, mentions, deals: the items whose messages reach activeFrom}
   summary/b<start>-<hash> {start, convs (by last message), open, answered, mentions, deals (by first message):
                    older items by the block of their messages; syn:{conv:[bullets]}: a conversation's bullets
@@ -45,16 +46,21 @@ LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summ
   summary.fromI (optional, pages from before v1.17): the first message the stored summary covers. Earlier sessions
   dropped older conversations and moved it; the page offers to summarize spans before it. A build keeps it as is;
   restore-summary moves it back to what the backup covered (or removes it when the summary covers everything).
+  rev: every write puts one new revision token in both `current` documents (a relink with no move writes only
+  threading, naming summary's rev in summaryRev). Bootstrap refuses a pair from different writes (one that only
+  partly landed), and a build or relink refuses a database whose rev isn't the one WORK was built from.
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
   "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs,claims?,status?,statusAt?}],
-  "dealEdit":{"convid":{"text":"...","addRefs":[...],"addClaims":[{i,who,n}],"status":"sold"|"pending"|null,"statusAt":i,
-  "index":n}} (index only when the conv has several deals), "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
+  "dealEdit":{"convid":{"text":"...","addRefs":[...],"addClaims":[{i,who,n}],"removeClaims":[i],
+  "status":"sold"|"pending"|null,"statusAt":i,"index":n,"ref":i}} (index or ref only when the conv has several deals;
+  ref: a message of the deal; index is refused where the same spec moves or adds deals), "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
   "answered":[{conv,ask,answer,refs}], "mentions":[{"note","refs":[[i],...]}],
   "relink":{"i":[parent,type] or null} (relink: messages an earlier build threaded; null removes the link),
-  "move":{"i":"convid" or "new"} (a built message and its replies into another conversation: an existing one, one in
-  newconvs, or "new"; its own link must end up in that conversation or null; a conversation left empty is dropped and
-  its summary items go along, otherwise the items whose messages all moved)}
+  "move":{"i":"convid" or "new"} (a built message and its Messenger replies (r, rq, rg) into another conversation: an
+  existing one, one in newconvs, or "new"; its own link must end up in that conversation or null. Messages linked to
+  it by a guess (i, c) stay, re-pointed to its old parent: printed as LEFT. A conversation left empty is dropped (DROP
+  prints its title, tag and outcome) and its summary items go along, otherwise the items whose messages all moved)}
 Link defaults per new message: Messenger reply link (pi / pmid) -> 'r' ('rq' if matched by quote in-browser);
 else quote match against stored history (same author + first 20 chars, latest wins) -> 'rq';
 reply to a photo with no Messenger link -> latest photo by that author, 'rg' + a CHECK warning;
@@ -63,10 +69,12 @@ else 'c' if same author as the previous member of its conversation, otherwise 'i
 for review; none if that member is over 3 h older -> ROOT). Override any GUESS in "links" and rebuild.
 A link whose parent sits in another conversation prints a WARN (the page would show it as a new thread).
 A deal may carry claims [{i, who: f of message i, n: count, default 1}] ordered by i, and status "sold"|"pending" with
-statusAt (the message that closed it). In a chat whose meta/chat.topic suggests buying, selling or trading, a short
-claim ("In", "in for 2", "Dibs", "Sold", "PM'd", ...) prints REACT? i (who: "text") -> up to 3 posts it may react to
-(photo posts, offers and open deals' messages by others in the 3 days before, newest first); the seller's own "Sold",
-"SPF" or "pending" after their own post prints CLOSE?. These lines only inform: nothing is linked."""
+statusAt (the message that closed it). In a chat whose meta/chat.topic or threadName suggests buying, selling or
+trading, a short claim ("In", "in for 2", "In x2", "Dibs", "Sold", "PM'd", ...) prints REACT? i (who: "text") -> up to
+3 posts it may react to, by others in the 3 days before: photo posts and open deals' messages first, then text offers,
+newest first in each; a raffle post is marked "(raffle)". The seller's own "Sold", "SPF" or "pending" (with a short
+tail) after their own post prints CLOSE?. These lines only inform: nothing is linked. A build on a chat with no
+meta/chat.topic prints a NOTE to set it."""
 
 import json, sys, re, os, glob, collections, shutil, datetime, hashlib, copy, time
 
