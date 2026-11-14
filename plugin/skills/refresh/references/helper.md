@@ -21,6 +21,7 @@ An installed helper reports its version in `data-mc-helper` (and `ping`). When i
 - **`24-hour clock`**: times like 17:52 are read and stored as 12-hour times. Glance at a few new messages' times on the page.
 - **`reply link(s) without an "X replied to Y" line`** or **`"Original message:" quote but no reply link`**: Messenger reworded a reply marker. Those replies get no Messenger link (`perr:"noreplyline"`, or nothing), and the build prints a CHECK for each (`CHECK reply with no readable reply line`): read them in context and set `links` by hand.
 - **`photo link(s) with no Facebook image`**: those photos are missing from the capture.
+- **`message(s) whose photos share one Messenger id`**: the helper can't tell those photos apart by id, so they're stored by position, as before helper 2.1 (a slot may shift if an image loads late). Messenger may have changed its photo links.
 - **`time labels go backwards`** or **`dated in the future`**: some dates were read wrong (for example a time-only label that isn't today). Name the messages in the report; check them in Messenger before relying on their dates.
 - **`"X" shows as A and B`**: one full name may come from the wrong avatar. Don't use it to tell people apart until a later capture agrees.
 - **`no full names`** or **`sender avatars (full names)`**: avatars can't be read, so new messages carry no `fn` (`references/people.md`).

@@ -648,11 +648,19 @@ class TestPhotos(unittest.TestCase):
         self.assertIn("follow Waiting even if the summary shows `photos 0`", backfill)
         helper = in_skill("assets", "helper.user.js")
         self.assertIn("skip: a.skip || null", helper)
-        self.assertIn("mcCapture(p.base, { skip: p.skip })", helper)
+        self.assertIn("mcCapture(p.base, { skip: p.skip, run: p.run })", helper)
         self.assertIn("sk.some(x => x === j || (t.aid && x === t.aid))", helper)
         db = in_skill("references", "database.md")
         for s in ("`aids`", "`tries`", "`retry` `[{i,k,n}]`"):
             self.assertIn(s, db)
+        # review of v1.24: a skip the page doesn't hold is reported back, and photos.md tells Claude what to do
+        self.assertIn("skipOwed", self.page)
+        self.assertIn("`refresh/lastImport.skipOwed`", backfill)
+        for s in ("`skipOwed` `[{i,k}]`", "`h` `{"):
+            self.assertIn(s, db)
+        # the shared-id warning the helper gives is explained where Claude looks warnings up
+        self.assertIn("whose photos share one Messenger id", helper)
+        self.assertIn("message(s) whose photos share one Messenger id", in_skill("references", "helper.md"))
         # a capture that shows only FAILED still sends Claude to photos.md › Waiting
         step4 = re.search(r"^4\. Import by paste:.*?(?=^5\. )", self.skill, re.M | re.S).group(0)
         self.assertIn("Photos or `FAILED`: never close the page tab", step4)

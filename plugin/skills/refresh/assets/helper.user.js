@@ -159,49 +159,84 @@
       /fbcdn/.test(i.currentSrc || i.getAttribute('src') || ''),
     );
   }
-  /* R16: a message's photos, one per photo link ("tile") in page order, so a photo keeps its slot k even when an image
-     before it hasn't loaded yet (a quick backfill scan). Each tile: u = its loaded Facebook image ('' while it hasn't
-     loaded) and aid = Messenger's attachment id from the link's attachment_id (the same on every visit; '' when there is
-     none). A tile holding only a small Facebook image (a GIF's still) or an image from elsewhere (GIPHY) is no photo;
-     one whose image has no source yet, or only a data:/blob: placeholder, is a photo that hasn't loaded. */
-  function photoTiles(e) {
+  /* R16: a message's photo links ("tiles") in page order, so a photo keeps its slot k even when an image before it
+     hasn't loaded yet (a quick backfill scan). Each: {u, aid, kind}. aid = Messenger's attachment id from the link's
+     attachment_id ('' when there is none). kind: "photo" (a Facebook image, u its URL), "gif" (only a small Facebook
+     image, a GIF's still, or a GIF or video), "other" (an image from elsewhere: GIPHY), or "unloaded": nothing loaded
+     yet (no image at all, an image with no source, or a data:/blob: placeholder). */
+  function photoRaw(e) {
     const links = Array.from(e.querySelectorAll('a[href*="messenger_media"]'));
     let cands = links.length ? links : Array.from(e.querySelectorAll('[aria-label^="Open photo"]'));
     cands = cands.filter(x => !cands.some(y => y !== x && y.contains(x)));
-    const out = [];
-    for (const t of cands) {
+    const src = i => i.currentSrc || i.getAttribute('src') || '';
+    return cands.map(t => {
       const a = t.matches('a[href*="messenger_media"]') ? t : t.querySelector('a[href*="messenger_media"]');
       const m = a && (a.getAttribute('href') || '').match(/[?&]attachment_id=(\d+)/);
       const aid = m ? m[1] : '';
       const im = Array.from(t.querySelectorAll('img'));
-      const fb = im.filter(i => i.currentSrc && /fbcdn/.test(i.currentSrc));
+      const fb = im.filter(i => /fbcdn/.test(src(i)));
       const big = fb.filter(i => !(i.naturalWidth && i.naturalWidth <= 220 && i.naturalHeight <= 120));
-      const src = i => i.currentSrc || i.getAttribute('src') || '';
-      let u = '';
-      if (big.length) u = big[0].currentSrc;
-      else if (fb.length) continue;
-      else if (!im.some(i => i.alt !== 'GIF Image' && (!src(i) || /^(data|blob):/.test(src(i))))) continue;
-      if (out.some(o => (aid && o.aid === aid) || (u && o.u === u))) continue;
-      out.push({ u, aid });
-    }
-    return out;
-  }
-  /* The scan reads a message many times while it scrolls: keep what each read saw. The read with more tiles wins, and a
-     tile it saw unloaded takes the URL another read saw for the same attachment id (or the same place, when neither
-     read had ids and both saw as many tiles). */
-  function mergePh(a, b) {
-    if (!a) return b;
-    const at = a.tiles || [];
-    const bt = b.tiles || [];
-    const base = bt.length >= at.length ? bt : at;
-    const other = base === bt ? at : bt;
-    const tiles = base.map((t, j) => {
-      if (t.u) return t;
-      const o = t.aid ? other.find(x => x.aid === t.aid) : other.length === base.length && !other[j].aid && other[j];
-      return o && o.u ? { u: o.u, aid: t.aid } : t;
+      if (big.length) return { u: src(big[0]), aid, kind: 'photo' };
+      if (fb.length || t.querySelector('video') || im.some(i => i.alt === 'GIF Image'))
+        return { u: '', aid, kind: 'gif' };
+      if (im.some(i => /^https?:/.test(src(i)))) return { u: '', aid, kind: 'other' };
+      return { u: '', aid, kind: 'unloaded' };
     });
-    return { srcs: a.srcs.length > b.srcs.length ? a.srcs : b.srcs, tiles, gif: !!(a.gif || b.gif) };
   }
+  /* The photos among the tiles (loaded or not). The same image twice is one photo, as before. When photos of one
+     message share an attachment id, the ids can't tell them apart: all of that message's ids are dropped, so its photos
+     match by position as before helper 2.1, and shared is set (a scan warning). */
+  function tilesOf(raw) {
+    let t = raw.filter(x => x.kind === 'photo' || x.kind === 'unloaded');
+    t = t.filter((x, j) => !x.u || t.findIndex(y => y.u === x.u) === j);
+    const ids = t.map(x => x.aid).filter(Boolean);
+    const shared = new Set(ids).size < ids.length;
+    return { tiles: t.map(x => ({ u: x.u, aid: shared ? '' : x.aid })), shared };
+  }
+  function photoInfo(e) {
+    const imgs = Array.from(
+      e.querySelectorAll('a[href*="messenger_media"] img, [aria-label^="Open photo"] img'),
+    ).filter(i => i.currentSrc && /fbcdn/.test(i.currentSrc));
+    const big = imgs.filter(i => !(i.naturalWidth && i.naturalWidth <= 220 && i.naturalHeight <= 120));
+    const raw = photoRaw(e);
+    return Object.assign(
+      {
+        srcs: [...new Set(big.map(i => i.currentSrc))],
+        raw,
+        gif: !!e.querySelector('img[alt="GIF Image"]') || (imgs.length > 0 && big.length === 0),
+      },
+      tilesOf(raw),
+    );
+  }
+  /* The scan reads a message many times while it scrolls: keep what each read saw, tile by tile. Two reads line up when
+     they saw as many tiles with no ids that disagree, or when both have distinct ids on every tile; then each tile keeps
+     the better read: a loaded photo over a GIF or another image, over one not loaded yet. Reads that don't line up: the
+     one that saw more tiles loaded (or recognised), then the one with more tiles. */
+  const RANK = { photo: 3, gif: 2, other: 2, unloaded: 1 };
+  function mergePh(a, b) {
+    if (!a || !a.raw) return b;
+    const ar = a.raw;
+    const br = b.raw;
+    const better = (x, y) => (RANK[y.kind] > RANK[x.kind] ? y : x);
+    const ided = r => r.every(x => x.aid) && new Set(r.map(x => x.aid)).size === r.length;
+    let raw;
+    if (ar.length === br.length && ar.every((x, j) => !x.aid || !br[j].aid || x.aid === br[j].aid))
+      raw = ar.map((x, j) => better(x, br[j]));
+    else if (ided(ar) && ided(br)) {
+      const base = br.length >= ar.length ? br : ar;
+      const other = base === br ? ar : br;
+      raw = base.map(x => better(x, other.find(y => y.aid === x.aid) || x));
+    } else {
+      const known = r => r.filter(x => x.kind !== 'unloaded').length;
+      raw = known(br) > known(ar) || (known(br) === known(ar) && br.length >= ar.length) ? br : ar;
+    }
+    return Object.assign(
+      { srcs: a.srcs.length > b.srcs.length ? a.srcs : b.srcs, raw, gif: !!(a.gif || b.gif) },
+      tilesOf(raw),
+    );
+  }
+  /* for tests: read and merge photo tiles as the scan does */
+  window.__mcPh = { photoInfo, mergePh };
   const refList = refs => refs.slice(0, 3).join(', ') + (refs.length > 3 ? ', …' : '');
   /* Reply markers that disagree. Without this a reworded "X replied to Y" line reads as a reply to nobody, and both
      markers reworded read as no replies at all. items: [{text, reply (has a "Go to replied message" link), ref}]. */
@@ -477,17 +512,6 @@
             return h;
           }
         };
-        function photos(e) {
-          const imgs = Array.from(
-            e.querySelectorAll('a[href*="messenger_media"] img, [aria-label^="Open photo"] img'),
-          ).filter(i => i.currentSrc && /fbcdn/.test(i.currentSrc));
-          const big = imgs.filter(i => !(i.naturalWidth && i.naturalWidth <= 220 && i.naturalHeight <= 120));
-          return {
-            srcs: [...new Set(big.map(i => i.currentSrc))],
-            tiles: photoTiles(e),
-            gif: !!e.querySelector('img[alt="GIF Image"]') || (imgs.length > 0 && big.length === 0),
-          };
-        }
         function collect() {
           const ids = [];
           log()
@@ -498,7 +522,7 @@
               const labels = Array.from(e.querySelectorAll('[aria-label]')).map(x => x.getAttribute('aria-label'));
               const prev = R.info[id];
               const text = e.innerText;
-              const ph = photos(e);
+              const ph = photoInfo(e);
               const av = avatar(e);
               if (!prev || text.length > prev.text.length)
                 R.info[id] = {
@@ -776,6 +800,15 @@
           if (m.links.some(l => /messenger_media/.test(l)) && !m.ph.srcs.length && !m.ph.gif && !m.vid)
             noImg.push(ref(k));
         });
+        const shared = [];
+        wins.forEach((m, k) => m.ph && m.ph.shared && shared.push(ref(k)));
+        if (shared.length)
+          W.push(
+            shared.length +
+              ' message(s) whose photos share one Messenger id (' +
+              refList(shared) +
+              '): their photos are matched by position, as before helper 2.1 (Messenger may have changed its photo links)',
+          );
         if (noImg.length)
           W.push(
             noImg.length +
@@ -1168,6 +1201,7 @@
         phfail,
         phskip,
       };
+      if (OPT && typeof OPT.run === 'string' && OPT.run) cap.run = OPT.run.slice(0, 64);
       const text = JSON.stringify(cap);
       window.__capText = text;
       document.body.innerHTML = '';
@@ -1701,7 +1735,7 @@
       out.verify = v;
       if (v.ok) {
         out.stage = 'captured';
-        out.capture = await mcCapture(p.base, { skip: p.skip });
+        out.capture = await mcCapture(p.base, { skip: p.skip, run: p.run });
       } else out.stage = 'verify-failed';
     } catch (e) {
       out.err = String(e);

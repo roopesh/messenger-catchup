@@ -4900,8 +4900,9 @@
      loses nothing: what landed is indexed, and what's left is owed (a null slot, counted in meta/chat.photosOwed) for a
      re-paste or the next refresh's backfill to store. photos/b<start> holds the slots of messages start..start+499:
      byK[i][k] = "/_blob/<id>" (stored) | null (owed) | {e:code} (given up), aids[i][k] = Messenger's attachment id of
-     that slot (R16: captures from helper 2.1 on; older slots have none and match by k) and tries[i][k] = {n, run}, the
-     refresh runs that couldn't fetch an owed photo (R15). photos/index (pages up to 2.6) is read, never written. Tests
+     that slot (R16: captures from helper 2.1 on; older slots have none and match by k), h[i][k] = the first 12 hex
+     characters of the SHA-256 of the photo's base64 as captured (v1.24: a photo whose id changed is still found), and
+     tries[i][k] = {n, run}, the refresh runs that couldn't fetch an owed photo (R15). photos/index (pages up to 2.6) is read, never written. Tests
      shorten the timings with window.__mcImportTune; nothing in production sets it. */
   const PHOTO_BLOCK = 500;
   const IMPORT_TUNE = Object.freeze(
@@ -4927,6 +4928,7 @@
     const byK = {};
     const aids = {};
     const tries = {};
+    const h = {};
     const gifs = new Set();
     const put = (i, k, v) => {
       const m = byK[i] || (byK[i] = {});
@@ -4948,6 +4950,7 @@
         Object.entries(d.byK || {}).forEach(([i, m]) => Object.entries(m || {}).forEach(([k, v]) => put(i, k, v)));
         Object.entries(d.aids || {}).forEach(([i, m]) => Object.assign(aids[i] || (aids[i] = {}), m));
         Object.entries(d.tries || {}).forEach(([i, m]) => Object.assign(tries[i] || (tries[i] = {}), m));
+        Object.entries(d.h || {}).forEach(([i, m]) => Object.assign(h[i] || (h[i] = {}), m));
         (d.gifs || []).forEach(g => gifs.add(+g));
       });
     const byI = {};
@@ -4958,13 +4961,14 @@
         .filter(isStored);
       if (l.length) byI[i] = l;
     });
-    return { byK, byI, gifs, aids, tries };
+    return { byK, byI, gifs, aids, tries, h };
   }
   /* R16: the slot each capture entry (a photo, a phfail or a phskip) stands for. By Messenger's attachment id when the
-     entry and a slot of its message both have one; otherwise by k, as before helper 2.1 (slots stored before then have
-     no id). A slot whose recorded id is another photo's is never used: the photo gets the message's next free slot, so
-     a photo is never stored under another photo's slot, and one id is never given two slots. A phskip never takes a new
-     slot. Returns copies with k set to the slot (ck = the capture's k). */
+     entry and a slot of its message both have one; then, for a photo, by its content hash (h) when a slot of its message
+     has the same (the same photo under a new id: byHash, so its id is updated and it isn't uploaded again); otherwise by
+     k, as before helper 2.1 (slots stored before then have neither). A slot whose recorded id is another photo's is never
+     used: the entry gets the message's next free slot, so a photo is never stored under another photo's slot, and one id
+     is never given two slots. Returns copies with k set to the slot (ck = the capture's k). */
   function resolveSlots(M, items) {
     const used = {};
     const out = items.map(x => Object.assign({}, x, { ck: x.k }));
@@ -4979,12 +4983,20 @@
       else x.k = null;
     });
     out.forEach(x => {
+      if (x.k != null || !x.h) return;
+      const hs = M.h[x.i] || {};
+      const u = used[x.i] || new Set();
+      const hit = Object.keys(hs).find(s => hs[s] === x.h && !u.has(+s));
+      if (hit == null) return;
+      use(x, +hit);
+      x.byHash = true;
+    });
+    out.forEach(x => {
       if (x.k != null) return;
       const a = M.aids[x.i] || {};
       const u = used[x.i] || new Set();
       const k = x.ck;
       if (!(x.aid && a[k] && a[k] !== x.aid) && !u.has(k)) return use(x, k);
-      if (x.skip) return (x.k = -1);
       const ks = Object.keys(M.byK[x.i] || {}).concat(Object.keys(a), [...u]);
       use(x, Math.max(-1, ...ks.map(Number)) + 1);
     });
@@ -5024,9 +5036,11 @@
     }
     const M = mergePhotos(Object.assign({ index: idx }, blocks));
     const val = ph => (M.byK[ph.i] || {})[ph.k];
+    const hashed = [];
+    for (const ph of P.photos) hashed.push(Object.assign({}, ph, { h: (await sha256hex(ph.b64)).slice(0, 12) }));
     const all = resolveSlots(
       M,
-      P.photos.concat(
+      hashed.concat(
         P.phfail.map(x => Object.assign({ fail: true }, x)),
         P.phskip.map(x => Object.assign({ skip: true }, x)),
       ),
@@ -5042,7 +5056,7 @@
       todo,
       photos,
       fails: all.filter(x => x.fail),
-      skips: all.filter(x => x.skip && x.k >= 0),
+      skips: all.filter(x => x.skip),
       skipped: photos.length - todo.length,
       bytes,
     };
@@ -5091,8 +5105,9 @@
        to write; gifs are merged with a fresh read, since update replaces an array whole. */
     const pend = {};
     const known = new Set(Object.keys(blocks).filter(id => L.exists[id]));
-    const pendOf = id => pend[id] || (pend[id] = { byK: {}, aids: {}, tries: {}, gifs: [] });
-    /* f: "byK" (the slot), "aids" or "tries" */
+    const FIELDS = ["aids", "tries", "h"];
+    const pendOf = id => pend[id] || (pend[id] = { byK: {}, aids: {}, tries: {}, h: {}, gifs: [] });
+    /* f: "byK" (the slot), or one of FIELDS */
     const put = (f, i, k, v) => {
       const id = photoBlock(i);
       const b = blocks[id][f] || (blocks[id][f] = {});
@@ -5113,15 +5128,13 @@
           const g = !known.has(id) || p.gifs.length ? await ref.get() : null;
           if (g && !g.exists) {
             const d = { start: +id.slice(1), byK: p.byK };
-            if (Object.keys(p.aids).length) d.aids = p.aids;
-            if (Object.keys(p.tries).length) d.tries = p.tries;
+            FIELDS.forEach(f => Object.keys(p[f]).length && (d[f] = p[f]));
             d.gifs = p.gifs.sort((x, y) => x - y);
             await ref.set(d);
           } else {
             const up = {};
             if (Object.keys(p.byK).length) up.byK = p.byK;
-            if (Object.keys(p.aids).length) up.aids = p.aids;
-            if (Object.keys(p.tries).length) up.tries = p.tries;
+            FIELDS.forEach(f => Object.keys(p[f]).length && (up[f] = p[f]));
             if (p.gifs.length)
               up.gifs = [...new Set([...((g && g.data().gifs) || []), ...p.gifs])].sort((x, y) => x - y);
             await ref.update(up);
@@ -5163,18 +5176,29 @@
          helper 2.1 records its attachment id with its slot (R16) */
       todo.forEach(ph => val(ph.i, ph.k) !== null && slot(ph.i, ph.k, null));
       todo.forEach(ph => ph.aid && (M.aids[ph.i] || {})[ph.k] !== ph.aid && put("aids", ph.i, ph.k, ph.aid));
+      todo.forEach(ph => ph.h && (M.h[ph.i] || {})[ph.k] !== ph.h && put("h", ph.i, ph.k, ph.h));
+      /* a stored photo found by its hash under a new id: the slot takes the new id; nothing is uploaded */
+      L.photos
+        .filter(ph => ph.byHash && ph.aid && val(ph.i, ph.k) != null && (M.aids[ph.i] || {})[ph.k] !== ph.aid)
+        .forEach(ph => put("aids", ph.i, ph.k, ph.aid));
       /* R15: a photo the helper couldn't get (phfail) is owed, so the next refresh's backfill retries it. Each refresh
          run that holds an owed photo's message but not the photo (a phfail, or with helper 2.1 neither brought nor
          skipped) is one try; meta/chat.lastRefresh tells runs apart, so pasting again counts once. At fetchTries the
          photo is given up ("no-fetch"). Photos brought but not uploaded yet never count. */
-      L.fails.forEach(x => {
+      /* a skip the page doesn't hold stored or given up (Claude's skip list named an owed or unknown slot): owed like a
+         phfail, and listed in skipOwed so Claude sees its list was wrong */
+      const skipOwed = L.skips.filter(x => val(x.i, x.k) == null);
+      if (skipOwed.length) R.skipOwed = skipOwed.map(x => ({ i: x.i, k: x.k }));
+      L.fails.concat(skipOwed).forEach(x => {
         if (val(x.i, x.k) !== undefined) return;
         slot(x.i, x.k, null);
         if (x.aid) put("aids", x.i, x.k, x.aid);
       });
       remerge();
-      const run = String(P.meta.lastRefresh || "");
-      const got = new Set(L.photos.concat(L.skips).map(x => x.i + "." + x.k));
+      /* the capture's run id (helper 2.1's full), else the last refresh: one try per run */
+      const run = P.run ? "run:" + P.run : String(P.meta.lastRefresh || "");
+      /* skips on stored or given-up slots never touch an owed one, so only the photos brought count as got */
+      const got = new Set(L.photos.map(x => x.i + "." + x.k));
       const fail = new Set(L.fails.map(x => x.i + "." + x.k));
       owedOf(M)
         .filter(o => P.inCap.has(o.i) && !got.has(o.i + "." + o.k) && (P.v21 || fail.has(o.i + "." + o.k)))
@@ -5386,6 +5410,15 @@
         " Messenger didn't give (" +
         [...new Set(R.retry.map(g => "#" + g.i))].join(", ") +
         "): still owed, the next refresh tries again.";
+    if (R.skipOwed)
+      s +=
+        " " +
+        plural(R.skipOwed.length, "photo") +
+        " the helper skipped " +
+        (R.skipOwed.length === 1 ? "isn't" : "aren't") +
+        " stored here (" +
+        [...new Set(R.skipOwed.map(g => "#" + g.i))].join(", ") +
+        "): owed, so the next refresh fetches it.";
     const left = ph.todo - ph.done - ph.failed;
     const part = " Photos: " + ph.done + " of " + ph.todo + " stored";
     const again = " Paste again to store the rest.";
@@ -5624,6 +5657,7 @@
     const plan = { photos, gifs: gifsNew, meta, inCap, firstI: ms.length ? ms[0].i : null, oldLastI: lastI };
     plan.lab = !!cap.lab;
     Object.assign(plan, { phfail, phskip, v21: !cap.lab && Array.isArray(cap.phfail) });
+    plan.run = typeof cap.run === "string" && cap.run.length <= 64 ? cap.run : null;
     let dryPh = "";
     if (dry && photos.length) {
       const L = await planPhotos(plan);
@@ -5740,7 +5774,8 @@
       if (P && !R.dry) {
         let end = null;
         const owed = P.meta.photosOwed && P.meta.photosOwed.n;
-        if (P.photos.length || P.gifs.length || P.phfail.length || owed) end = await storePhotos(R, P, show);
+        if (P.photos.length || P.gifs.length || P.phfail.length || P.phskip.length || owed)
+          end = await storePhotos(R, P, show);
         if (!end || end.stop !== "lease") await recordUsage(R, P);
         if (end) R.msg += photoNote(R, P, end);
         const n = usageNote(R.usage);

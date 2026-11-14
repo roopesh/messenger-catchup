@@ -368,6 +368,7 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - Tries are counted per slot in the block (`tries[i][k] = {n, run}`), once per refresh run: `run` is the `meta/chat.lastRefresh` the import saw, so pasting again in the same run counts once. A run counts when its capture holds the message but not the photo: a `phfail` entry, or with a 2.1 capture a photo neither brought nor skipped. An older helper's capture never counts, and a photo owed only because its upload stopped never counts.
   - The third run gives it up as `{e:"no-fetch"}`, listed in `gaveUp`; the toast and `photos.md` › Waiting report it. Photos still being tried are in `refresh/lastImport.retry`.
 - **Tests:** page K1–K3 and K8, sim H2 and H4; all fail on the 2.0 helper or the 2.7 page.
+- **Review fixes (v1.24.0, before release):** a skip landing on a slot the page doesn't hold stored (Claude's skip list named an owed or unknown photo) is owed again, counted as a try and listed in `refresh/lastImport.skipOwed`, instead of being taken as stored; tries count once per `full` run id carried in the capture (`run`), falling back to `lastRefresh`, so a paste after step 7 or two refreshes in the same minute can't count twice or once. Tests: page K2 (a capture without the message), K10, K12, K13.
 
 ### R16 · P3 · Backfill captures can misplace a photo's slot, and fetch every photo again
 - **Found:** the review of PR #42 (v1.22.0).
@@ -382,6 +383,11 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
   - **Left as is:** a slot stored by position from an earlier shifted capture (helper 2.0 on a backfill since v1.22.0) can't be told apart from a correct one without comparing bytes, so it keeps matching by `k` as the owner decided; at worst a photo is missing or shown twice for that message, as it would be today.
 - **Tests:** page K4–K8, sim H1–H3; all but K6 (an older helper's capture still works, a compatibility check) fail on the 2.0 helper or the 2.7 page.
 - **Also:** `topMs` (scan, verify, `full`), a test option that shortens the 12 s top-of-chat wait; sim H5.
+- **Review fixes (v1.24.0, before release), guarding the id assumption both ways:**
+  - **Unstable ids:** the page keeps a 12-hex content hash per slot (`h`); a photo whose id changed is found by it, its slot takes the new id, and it isn't uploaded again (before, each new id opened a new slot and uploaded a copy). A full block with ids and hashes is about 190 KB (K7).
+  - **Shared ids:** when photos of one message share an id, the helper drops that message's ids (position, as before 2.1) and the scan warns, instead of keeping only the first photo.
+  - **Tiles:** a photo link with no image yet (a placeholder) counts as an unloaded photo, so it keeps its slot and is listed; the reads of a message merge tile by tile (a loaded photo over a recognised GIF or other image over an unloaded tile), so a GIF read before its still loaded no longer leaves a phantom unloaded photo, and two unloaded tiles no longer beat one loaded one.
+  - **Tests:** page K9, K11 and K14, sim H6–H9. In a mutation run, 15 of 16 changes to the page's slot and try rules and all 8 to the helper's tile code were caught; the other (dropping skips on stored slots from `got`) changed nothing, so that code was removed.
 
 ### R17 · P3 · The helper notice runs ahead of the release
 - **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.

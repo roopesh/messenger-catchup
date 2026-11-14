@@ -4477,7 +4477,7 @@ async function photoKeys() {
       ')',
   );
   // K2: a try per refresh run, not per paste; 2.1 captures that hold the message but not the photo count, an older
-  // helper's capture (no phfail) and a skipped photo don't; the third run gives it up ("no-fetch") and says so
+  // helper's capture (no phfail) and a capture without the message don't; the third run gives it up ("no-fetch")
   r = await paste(p, cap21(range(0, 9), [PHA(2, 0, '200')], [{ i: 5, k: 0, aid: '500', e: 'fetch' }]));
   const t1 = await tryOf(p, 5);
   await setRun(p, 'r2');
@@ -4486,7 +4486,7 @@ async function photoKeys() {
   await setRun(p, 'r3');
   await paste(p, JSON.stringify(cap(range(3, 13))));
   await setRun(p, 'r4');
-  await paste(p, cap21(range(3, 14), [], [], [{ i: 5, k: 0, aid: '500' }]));
+  await paste(p, cap21(range(6, 14), []));
   const t4 = (await tryOf(p, 5)) || {};
   await setRun(p, 'r5');
   r = await paste(p, cap21(range(3, 15), [], [{ i: 5, k: 0, aid: '500', e: 'unloaded' }]));
@@ -4503,7 +4503,8 @@ async function photoKeys() {
       (await get(p, 'meta/chat')).photosOwed === null &&
       /couldn't be stored \(#5, Messenger didn't give it in 3 refreshes\)/.test(r.msg) &&
       (await uploads(p)).length === 1,
-    'K2: tries count once per run (re-paste 1, absent 2, older helper 2, skipped 2), the third failed run gives it ' +
+    'K2: tries count once per run (re-paste 1, absent 2, older helper 2, #5 not in the capture 2), the third ' +
+      'failed run gives it ' +
       'up as "no-fetch", reported (' +
       JSON.stringify([t1, t2, t4, r && r.msg]) +
       ')',
@@ -4615,16 +4616,22 @@ async function photoKeys() {
   // K7: a full block with an id on every slot still fits the 256 KiB cap (17-digit ids, as Messenger's)
   const byK7 = {};
   const aids7 = {};
+  const h7 = {};
   for (let i = 0; i < 500; i++) {
     byK7[i] = {};
     aids7[i] = {};
+    h7[i] = {};
     for (let k = 0; k < 4; k++) {
       byK7[i][k] = '/_blob/' + 'a'.repeat(32);
       aids7[i][k] = String(10000000000000000 + i * 4 + k);
+      h7[i][k] = sha(i + '.' + k).slice(0, 12);
     }
   }
-  const size7 = Buffer.byteLength(JSON.stringify({ start: 0, byK: byK7, aids: aids7, gifs: [] }));
-  ok(size7 < 262144, 'K7: 500 messages × 4 photos with ids in one block is ' + size7 + ' bytes, under 256 KiB');
+  const size7 = Buffer.byteLength(JSON.stringify({ start: 0, byK: byK7, aids: aids7, h: h7, gifs: [] }));
+  ok(
+    size7 < 262144,
+    'K7: 500 messages × 4 photos with ids and hashes in one block is ' + size7 + ' bytes, under 256 KiB',
+  );
   // K8: the real helper's captures (sim section H): the lazy capture leaves #104's first photo owed, and the capture
   // with every image loaded stores just that one
   if (!fs.existsSync(KEYS)) ok(false, 'K8: ' + path.relative(ROOT, KEYS) + ' missing: run tests/sim.js first');
@@ -4652,6 +4659,119 @@ async function photoKeys() {
     );
     await p.close();
   }
+  /* the same bytes (tag) under another id */
+  const PHX = (i, k, aid, tag) => Object.assign(PHA(i, k, tag), { aid });
+  // K9: an id that changes between visits (unstable ids): the photo is found by its content hash, its slot takes the
+  // new id, and it isn't uploaded again
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHX(3, 0, 'A1', 'same')]));
+  await paste(p, cap21(range(0, 9), [PHX(3, 0, 'A2', 'same')]));
+  r = await paste(p, cap21(range(0, 9), [PHX(3, 0, 'A3', 'same'), PHX(3, 1, 'A4', 'other')]));
+  b = await get(p, 'photos/b0');
+  ok(
+    r &&
+      r.state === 'done' &&
+      (await uploads(p)).length === 2 &&
+      Object.keys(b.byK['3']).join() === '0,1' &&
+      JSON.stringify((b.aids || {})['3']) === '{"0":"A3","1":"A4"}' &&
+      ((b.h || {})['3'] || {})['0'] === sha(PHX(3, 0, 'A1', 'same').b64).slice(0, 12),
+    'K9: one photo seen as A1, A2, A3 stays one slot and one upload, its id updated; a different photo still gets ' +
+      'its own slot (' +
+      JSON.stringify([b.byK['3'], b.aids, b.h]) +
+      ')',
+  );
+  await p.close();
+  // K10: a phfail for a photo already stored never turns its slot back to owed
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHA(2, 0, '200')]));
+  r = await paste(p, cap21(range(0, 9), [], [{ i: 2, k: 0, aid: '200', e: 'fetch' }]));
+  st = await photoState(p);
+  ok(
+    r && r.state === 'done' && st.stored(2).length === 1 && !st.owed.length && !(r.retry || []).length,
+    'K10: a phfail on a stored photo leaves it stored, nothing owed (' + JSON.stringify(st.byK) + ')',
+  );
+  await p.close();
+  // K11: a photo whose slot k holds another photo's id gets the next free slot, even alone in its capture
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHA(6, 0, 'X0'), PHA(6, 1, 'X1')]));
+  r = await paste(p, cap21(range(0, 9), [PHA(6, 1, 'Y')]));
+  b = await get(p, 'photos/b0');
+  ok(
+    r &&
+      r.state === 'done' &&
+      (await uploads(p)).length === 3 &&
+      typeof b.byK['6']['2'] === 'string' &&
+      JSON.stringify((b.aids || {})['6']) === '{"0":"X0","1":"X1","2":"Y"}',
+    'K11: Y arriving as slot 1, which holds X1, is stored in slot 2 (' + JSON.stringify([b.byK['6'], b.aids]) + ')',
+  );
+  await p.close();
+  // K12: a skip on a slot the page doesn't hold stored (Claude's skip list was wrong): owed, counted as a try, and
+  // listed in skipOwed; a skip on an unknown photo opens an owed slot for it (by id, beside another photo's slot)
+  p = await openR2();
+  await setRun(p, 'r1');
+  await paste(p, cap21(range(0, 9), [PHA(6, 0, 'X0')], [{ i: 5, k: 0, aid: '500', e: 'fetch' }]));
+  await setRun(p, 'r2');
+  r = await paste(
+    p,
+    cap21(
+      range(0, 9),
+      [],
+      [],
+      [
+        { i: 5, k: 0, aid: '500' },
+        { i: 6, k: 0, aid: 'Z' },
+      ],
+    ),
+  );
+  b = await get(p, 'photos/b0');
+  ok(
+    r &&
+      r.state === 'done' &&
+      JSON.stringify(r.skipOwed) === '[{"i":5,"k":0},{"i":6,"k":1}]' &&
+      ((b.tries || {})['5'] || {})['0'].n === 2 &&
+      b.byK['6']['1'] === null &&
+      ((b.aids || {})['6'] || {})['1'] === 'Z' &&
+      (await get(p, 'meta/chat')).photosOwed.n === 2 &&
+      /2 photos the helper skipped aren't stored here \(#5, #6\)/.test(r.msg),
+    'K12: skips on an owed slot and on an unknown photo: both owed, listed in skipOwed, the owed one counted (' +
+      JSON.stringify([r && r.skipOwed, b.byK, b.tries]) +
+      ')',
+  );
+  await p.close();
+  // K14: the id wins over bytes and position: the same id with other bytes (another size of the image) at another
+  // place is the stored photo, not uploaded again
+  p = await openR2();
+  await paste(p, cap21(range(0, 9), [PHX(4, 0, 'A', 'v1'), PHX(4, 1, 'B', 'v1b')]));
+  r = await paste(p, cap21(range(0, 9), [PHX(4, 0, 'B', 'v2')]));
+  b = await get(p, 'photos/b0');
+  ok(
+    r &&
+      /0 photos stored \(1 already stored\)/.test(r.msg) &&
+      (await uploads(p)).length === 2 &&
+      Object.keys(b.byK['4']).join() === '0,1',
+    'K14: photo B with other bytes, arriving as slot 0, is matched by its id to slot 1: nothing uploaded (' +
+      (r && r.msg) +
+      ')',
+  );
+  await p.close();
+  // K13: a capture with full's run id counts once for that run, even after the refresh wrote lastRefresh
+  p = await openR2();
+  await setRun(p, 'r1');
+  const runCap = (msgs, run) =>
+    JSON.stringify(Object.assign(JSON.parse(cap21(msgs, [], [{ i: 5, k: 0, aid: '500', e: 'fetch' }])), { run }));
+  await paste(p, runCap(range(0, 9), 'run-a'));
+  await setRun(p, 'r1-done');
+  await paste(p, runCap(range(0, 9), 'run-a'));
+  const k13a = await tryOf(p, 5);
+  await paste(p, runCap(range(0, 9), 'run-b'));
+  const k13b = await tryOf(p, 5);
+  ok(
+    k13a && k13a.n === 1 && k13a.run === 'run:run-a' && k13b && k13b.n === 2,
+    'K13: the same run id pasted again after lastRefresh changed counts once; a new run id counts (' +
+      JSON.stringify([k13a, k13b]) +
+      ')',
+  );
+  await p.close();
 }
 /* P23: a 20 MB capture through a real clipboard and a real paste keystroke */
 async function bigPaste() {

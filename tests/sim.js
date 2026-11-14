@@ -622,6 +622,67 @@ async function photoKeys(b) {
     'H4: a fetch that fails is listed in phfail {i, k, aid, e:"fetch"} (' + (F.res && F.res.capture) + ')',
   );
   fs.writeFileSync(D + 'tests/out/sim_cap_keys.json', JSON.stringify({ loaded: L.cap, lazy: Z.cap }));
+  // H6: the capture carries the run id of `full`, so the page counts a failed photo once per run
+  ok(L.cap.run === 'h' && Z.cap.run === 'h', 'H6: the capture carries full’s run id (' + L.cap.run + ')');
+  // H7: photos of one message that share an attachment id: none is lost; ids dropped, matched by position, a warning
+  const SH = await capture({ photos: '4', sharedaid: '1' });
+  ok(
+    SH.res &&
+      SH.res.stage === 'captured' &&
+      at(SH.cap, 104).join() === '0:undefined,1:undefined,2:undefined' &&
+      at(SH.cap, 112).join() === '0:undefined,1:undefined' &&
+      at(SH.cap, 108).join() === '0:92108' &&
+      has(SH.res.warn, 'share one Messenger id'),
+    'H7: photos sharing one id keep all their slots (no id), others keep theirs, and the scan warns (' +
+      JSON.stringify([at(SH.cap, 104), SH.res && SH.res.warn]) +
+      ')',
+  );
+  // H8: a photo link with no image yet (a placeholder box) is an unloaded photo: it keeps its slot and is listed
+  const SK = await capture({ photos: '4', skeleton: '104-0' });
+  ok(
+    SK.res &&
+      at(SK.cap, 104).join() === '1:921041,2:921042' &&
+      JSON.stringify(SK.cap.phfail) === '[{"i":104,"k":0,"aid":"921040","e":"unloaded"}]',
+    'H8: a photo link holding only a placeholder keeps its slot and is listed as unloaded (' +
+      JSON.stringify([at(SK.cap, 104), SK.cap.phfail]) +
+      ')',
+  );
+  // H9: merging two reads of a message, tile by tile (window.__mcPh: the scan's own functions)
+  await mode(p, {}, 120);
+  const mg = await p.evaluate(() => {
+    const P = window.__mcPh;
+    if (!P) return null;
+    const ph = (raw, gif = false) => ({ srcs: raw.filter(x => x.u).map(x => x.u), raw, gif });
+    const T = (kind, aid = '', u = '') => ({ u: kind === 'photo' ? u || 'u' + aid : '', aid, kind });
+    const show = r => r.tiles.map(t => (t.u || '-') + '/' + t.aid).join() + (r.gif ? ' gif' : '');
+    const out = {};
+    // an image loaded in the first read, not in a later one (by id, and by place without ids): the URL is kept
+    out.fillId = show(P.mergePh(ph([T('photo', 'A'), T('photo', 'B')]), ph([T('unloaded', 'A'), T('photo', 'B')])));
+    out.fillPlace = show(P.mergePh(ph([T('photo', '', 'x'), T('unloaded')]), ph([T('unloaded'), T('photo', '', 'y')])));
+    // a GIF read before its still loaded, then recognised: a GIF, no phantom unloaded photo
+    out.gif = show(P.mergePh(ph([T('unloaded', '5')]), ph([T('gif', '5')], true)));
+    // one loaded photo against two unloaded tiles that don't line up: the loaded read wins
+    out.known = show(P.mergePh(ph([T('photo', '', 'x')]), ph([T('unloaded'), T('unloaded')])));
+    // a message with a placeholder box in its first photo link
+    const d = document.createElement('div');
+    d.innerHTML =
+      '<a href="https://www.facebook.com/messenger_media/?attachment_id=71"><div style="width:9px;height:9px"></div></a>' +
+      '<a href="https://www.facebook.com/messenger_media/?attachment_id=72"><img src="/mock/fbcdn/p100.jpg?m=t"></a>';
+    out.skeleton = show(P.photoInfo(d));
+    return out;
+  });
+  ok(
+    mg &&
+      mg.fillId === 'uA/A,uB/B' &&
+      mg.fillPlace === 'x/,y/' &&
+      mg.gif === ' gif' &&
+      mg.known === 'x/' &&
+      /^-\/71,.*p100\.jpg\?m=t\/72$/.test(mg.skeleton),
+    'H9: reads merge tile by tile: a URL seen once is kept, a recognised GIF beats an unloaded tile, a loaded read ' +
+      'beats unloaded tiles that don’t line up, and a placeholder is an unloaded photo (' +
+      JSON.stringify(mg) +
+      ')',
+  );
   // H5: topMs shortens the top-of-chat wait in the scan, verify and full (a 30-message chat, a first run of 50)
   await mode(p, {}, 30);
   await bridge(p, 'full', { first: { count: 50 }, base: -1, run: 'htop', topMs: 1500 });
