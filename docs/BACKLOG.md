@@ -24,7 +24,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R8 | P2 | risk | The PR rule is by convention only: `main` accepts direct pushes and no CI runs on PRs · **done** (v1.7.2: repo public, branch protection) |
 | R9 | P3 | risk | Outbox name matching assumes Messenger's "Replying to …" and stored sender names agree. Live (Nov 7): labels are the nickname or the first name, and `to` uses the same; the reply bar itself is still unverified |
 | R6 | P2 | risk | SKILL.md names scheduling tools (`send_later`, `create_trigger`) that depend on the environment · **done** (v1.21.0) |
-| R10 | P3 | risk | The page's requirements text doesn't say the Claude Desktop app must be open |
+| R10 | P3 | risk | The page's requirements text doesn't say the Claude Desktop app must be open · **done** (v1.25.0; the claude.ai-in-Chrome case is still unchecked live) |
 | R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
 | R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up · **done** (v1.23.0) |
@@ -479,10 +479,11 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **What:** each `mcScan` adds a capture-phase click listener that is never removed. It goes inert after a scan, but turns on again during the next one. A `setInterval` polls `location.href` every 800 ms for as long as the tab is open. Both are harmless today.
 - **Done in v1.3.0:** the listener is registered once per page load. The 800 ms URL poll stays on purpose: Messenger navigates with `pushState`, which fires no `hashchange`, and the poll is what notices a `#mcjump=` URL arriving that way. It costs one string compare.
 
-### R10 · P3 · The page doesn't mention the Claude Desktop app
+### R10 · P3 · The page doesn't mention the Claude Desktop app · done (v1.25.0)
 - **Where:** `page.html` › "Your computer has to be online…" (about line 1388)
 - **What:** v1.21.0 added "the Claude Desktop app is open" to the requirements in the setup skill and README: Claude in Chrome needs it when Claude runs from claude.ai, the phone, Cowork or a scheduled run. The page's own requirements text doesn't say so.
-- **Fix:** add the line with the next page change (it bumps `PAGE_VERSION` and republishes every page, too much for one sentence). Check first whether claude.ai in the same Chrome needs Desktop open (R6's live checks); if not, drop that case from the wording everywhere.
+- **Done in v1.25.0:** the page's "Your computer has to be online" item says to keep the Claude Desktop app open, in the same words as setup and the README (claude.ai, the phone or a schedule). The live check below is still open; the owner runs refreshes from the Desktop app, the phone and schedules, which the wording covers.
+- **Fix (original):** add the line with the next page change (it bumps `PAGE_VERSION` and republishes every page, too much for one sentence). Check first whether claude.ai in the same Chrome needs Desktop open (R6's live checks); if not, drop that case from the wording everywhere.
 
 ### R11 · P3 · Desktop local scheduled tasks
 - **What:** the Desktop app's local scheduled tasks run on the computer while the app is open, with one catch-up run after waking. If such a task's session has Claude in Chrome, it would be a sturdier recurring option than a device-bound cloud task. Unchecked, so `references/scheduling.md` doesn't list it.

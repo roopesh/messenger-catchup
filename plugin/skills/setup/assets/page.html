@@ -1491,8 +1491,9 @@
       <li>
         <b>Your computer has to be online.</b> Every refresh, scheduled or not, drives the Messenger tab in your Chrome:
         the computer must be on and awake, the screen unlocked, Chrome open with the Claude in Chrome extension
-        connected, Facebook signed in, and the Messenger tab open. If it isn't, that run is skipped and the next one
-        catches up.
+        connected, Facebook signed in, and the Messenger tab open. Keep the Claude Desktop app open on that computer
+        too, signed in to the same account: Claude in Chrome needs it when a refresh runs from claude.ai, the phone or a
+        schedule. If any of this isn't so, that run is skipped and the next one catches up.
       </li>
       <li>
         <b>Mark caught up</b> (Summary tab) sets the "Last Mark caught up" marker to the newest stored message and
@@ -1597,7 +1598,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "2.8";
+  const PAGE_VERSION = "2.9";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
