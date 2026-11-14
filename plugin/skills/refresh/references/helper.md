@@ -1,6 +1,17 @@
-# Helper: browsers, versions, warnings and stalls
+# Helper: commands, browsers, versions, warnings and stalls
 
-Read the part SKILL.md points you to: Which Chrome (more than one Chrome is connected), Versions (the installed helper is older than `assets/helper.user.js`), Warnings (`selfcheck` or a scan returned `warn`), Scan results (`err:"stalled"`, `top`, `scroller`), or Injecting (no helper installed).
+Read the part SKILL.md points you to: Commands (before your first command in each conversation), Which Chrome (more than one Chrome is connected), Versions (the installed helper is older than `assets/helper.user.js`), Warnings (`selfcheck` or a scan returned `warn`), Scan results (`err:"stalled"`, `top`, `scroller`), or Injecting (no helper installed).
+
+## Commands
+Start each with the bridge in SKILL.md › Helper, with a fresh id, and poll until it's no longer running.
+- `ping` → `{v}`, the helper's version.
+- `probe{anchor}` → `{vis,n,found,after}`.
+- `scan{stops}` or `scan{first:{count}}`; `verify`; `capture{base}`: the steps `full` runs, one at a time (Injecting, below).
+- `full{stops|first, base, run}`: scan, reload, verify, capture. Pass a fresh `run` id; after the reload, poll `sessionStorage.mc_result` in new calls (the first poll often fails with "Inspected target navigated": expected, poll again) and accept it only when its `run` equals yours: `stage:'captured'`, `'verify-failed'`, or `'scan'` (with `err` = scan error; with `err:null, win:0` = nothing new since the last run). Results carry `warn`, `top` and `scroller` (Warnings, Scan results). Messages that arrive during the run (`extra>0`) wait for the next run.
+- `selfcheck` → `{ok,missing,warn,counts}` (SKILL.md › Refresh steps, step 2).
+- `jump{mid,reply}`: opens that message, with Reply open unless `reply:false` (`references/open-message.md`, `references/outbox.md`).
+- `people{count}`: `references/people.md`.
+- `post` only when `meta/chat.helperPost` is true (`references/posting-with-helper.md`).
 
 ## Which Chrome
 - Claude in Chrome's `list_connected_browsers` lists every connected Chrome with its name, and marks the one this session uses (`inUse`). One browser, or one already in use: use it.
@@ -9,8 +20,10 @@ Read the part SKILL.md points you to: Which Chrome (more than one Chrome is conn
 - Every report names the browser used and its helper version, for example "Chrome 'Work Mac', helper 2.0". The same name and version go into `meta/chat.versions.browsers` (`references/database.md` › Versions), with `"none"` when you injected the helper.
 
 ## Versions
+Install link (also on the page; steps in the setup skill): https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js
+
 An installed helper reports its version in `data-mc-helper` (and `ping`). When it's older than `@version` in `assets/helper.user.js` (compare number by number), keep using it, and in the report:
-- **older than 1.5:** it was installed by pasting and can't update itself. Tell the user to open the install link (SKILL.md › Helper) once and press Install. It replaces the old copy and updates itself from then on.
+- **older than 1.5:** it was installed by pasting and can't update itself. Tell the user to open the install link (below) once and press Install. It replaces the old copy and updates itself from then on.
 - **1.5 or later:** it updates itself within a day. To get it now: the extension's menu › Check for updates, or open the install link again.
 - The page shows it too, from `meta/chat.versions.browsers` (`references/database.md` › Versions): below 1.5 until a refresh in that Chrome finds it up to date, 1.5 or later only while that Chrome ran the last refresh; the user can dismiss either.
 - What an older helper can't do: before 1.6, no full names (`fn`); before 1.7, no `people` scan; before 1.8, no `selfcheck` (skip that check and say so); before 2.0, no warnings, no `top`, no stall timeout, no More actions › Reply, and no `post`.
@@ -24,7 +37,7 @@ An installed helper reports its version in `data-mc-helper` (and `ping`). When i
 - **`time labels go backwards`** or **`dated in the future`**: some dates were read wrong (for example a time-only label that isn't today). Name the messages in the report; check them in Messenger before relying on their dates.
 - **`"X" shows as A and B`**: one full name may come from the wrong avatar. Don't use it to tell people apart until a later capture agrees.
 - **`no full names`** or **`sender avatars (full names)`**: avatars can't be read, so new messages carry no `fn` (`references/people.md`).
-- **`date labels (n of m unreadable)`**: with `DATES-GUESSED` in the capture, Messenger's date labels may have changed.
+- **`date labels (n of m unreadable)`**, or a capture summary (`mc_result.capture`, or the `capture` command's result) ending with `DATES-GUESSED #…`: those messages' date labels couldn't be read and took the previous message's date. List them in the report, since Messenger may have changed its labels.
 
 ## Scan results
 - **`err:"stalled"`**: nothing new loaded for 30 s (Messenger stopped loading older messages). Navigate the tab to `chatUrl` again, wait about 5 s, and start the scan (`full` with a new `run` id) once more. If it stalls again, stop with `refresh/status` `{state:"error",message:"Messenger stopped loading older messages"}`; the next run tries again.

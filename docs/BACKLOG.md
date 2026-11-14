@@ -27,11 +27,14 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R10 | P3 | risk | The page's requirements text doesn't say the Claude Desktop app must be open |
 | R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
-| R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up |
+| R14 | P3 | risk | A chain arms at the end of a run, so a run that dies mid-refresh leaves no follow-up · **done** (v1.23.0) |
+| R18 | P3 | risk | Now that a chain run arms as it starts, a run still going when the next one fires (`every` minus 3 minutes after it started) has a lock older than 20 minutes for usual settings, which the next run takes over |
 | R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 715 and adds about 55 a day (to design) |
 | R15 | P3 | risk | Photos the helper couldn't fetch aren't recorded as owed, so nothing retries them |
 | R16 | P3 | risk | Backfill captures: lazy-loaded images can shift photo slots, and every photo in the window is fetched again |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
+| T6 | P2 | test | `npm test` took 12 minutes, mostly the sim waiting one case at a time · **done** (v1.23.0) |
+| C8 | P3 | cleanup | `tools/sync.py` leaves files open: the Python suite prints "Exception ignored … ResourceWarning" noise that `-W error::ResourceWarning` doesn't catch |
 | C2 | P2 | cleanup | Helper lives in three copies plus four version strings; sync is manual · **done** |
 | T1 | P2 | test | No `package.json`; Playwright must be installed by hand · **done** |
 | T2 | P2 | test | No tests for `catchup.py`; the "pipeline replay" isn't in the repo · **done** |
@@ -106,7 +109,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F7 | P3 | feature | Ship as a plugin (marketplace) so claude.ai installs update automatically · **done** (v1.15.0, v1.16.0) |
 | F8 | P2 | feature | Userscript installs from the release URL and updates itself; drop the page's 30 KB embedded copy · **done** (v1.8.0) |
 | F9 | P2 | feature | Full names and nicknames: capture, store, show (part 1, v1.10.0); one-time backfill scan and alias question (part 2, v1.11.0) · **done** |
-| F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection · **done** (v1.18.1; run on the live page still to do) |
+| F10 | P2 | feature | Restore the summary items that pre-1.17 refreshes dropped, from the page's `backups` collection · **done** (v1.18.1; run on the owner's page Nov 13) |
 | F11 | P2 | perf | Outbox: fewer round trips per reply, about 3 calls instead of 6 (issue #32 §1) · **done** (v1.18.0) |
 | F12 | P3 | feature | Two connected Chromes: choose one by the newest helper and name it in the report (#32 §5) · **done** (v1.20.0) |
 | F13 | P2 | feature | Opt-in helper `post` command: a queued reply in one bridge call (#32 §1, option B) · **done** (v1.20.0) |
@@ -115,6 +118,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F16 | P3 | feature | Per-day digests written during refresh, for Ask about stretches older than the conversation lines reach |
 | F17 | P3 | feature | A two-step or tool-using Ask: Claude picks the stretch it needs, then reads it word for word |
 | F18 | P3 | feature | Range summaries longer than one request: split into parts and merge |
+| F19 | P2 | feature | Short claims ("In", "dibs", "in for 2") in buy/sell chats thread to the latest open offer, not to whatever came before (issue #41) · **done** (v1.23.0: `REACT?` lines, Claude decides; deal `claims` and `status`) |
+| F20 | P2 | feature | A `move` spec key: put an already-built message into another conversation (`relink` can only change its link) (issue #41) · **done** (v1.23.0) |
+| F21 | P3 | feature | `catchup.py relink` with a `move` takes no `bullets` or `dealEdit`, so a claim moved at the user's request gets its bullet and `claims` entry only at the next build |
+| F22 | P3 | feature | The page could show a deal's `status` ("sold", "pending"), which v1.23.0 stores; release B shows `claims` only |
 
 ---
 
@@ -374,6 +381,14 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.
 - **Options:** run `tools/release.sh` straight after every merge that bumps the helper (today's practice, so the gap is usually minutes); or have the page hold E until a day after `versions.helper` first appears (a `since` the skill keeps), which the owner turned down for F5 ("flagged right away").
 
+### T6 · P2 · The test suite took 12 minutes · done (v1.23.0)
+- **Found:** on the owner's Mac, `npm test` took 737 s at 12% CPU: the sim 590 s (its cases one after another, mostly waiting on the helper's timers), the page tests 125 s, Python 20 s. CI took 11–14 minutes.
+- **Done in v1.23.0:** `tests/sim.js` registers each case with `sim(name, fn)` and runs them in parallel, each in its own browser context, three times the CPU count at a time (`SIM_JOBS`), each case's lines printed together under its name. A3 and A5 go on from A2's storage (`after`, `SHARED`). `tests/page.test.js` runs each section in its own process, the CPU count at a time (`PAGE_JOBS`); `photos` and `history` are split in two. `tests/run.js` runs `composer.sim.js` and, for `npm test`, the Python suites alongside the sim. Same PASS lines as before. Now about 1.5 minutes on the Mac.
+- **Floor:** the sim's longest chain is A1, A2 then A3, A5 (about 64 s), which has no top-of-chat wait, so helper 2.1's `topMs` shortens other cases but not the sim's total here; it helps on CI, which runs fewer at a time.
+
+### C8 · P3 · `tools/sync.py` leaves files open
+- **Found:** R18. The Python suite prints "Exception ignored while finalizing file … ResourceWarning: unclosed file" for `tools/sync.py`'s `read()` (`open(p).read()`), once per copied file. The warning is raised in a finalizer, so `-W error::ResourceWarning` doesn't fail on it. Use `with open(...)`.
+
 ### R3 · P3 · Messenger markup dependency (known) · done (v1.20.0, option B)
 - English UI labels, `[role="log"]`, `data-message-id`, "Go to replied message", "Reply to this message", the `At <time>, <name>: ` aria-label shape. See F4.
 - **Silent failures found in a review of helper 1.9:** a reply whose "X replied to Y" line can't be read accepted any focused message as a photo-reply parent; both reply markers reworded at once read as no replies; time-only labels became "today" whatever the day; photo selectors (`messenger_media`, `fbcdn`, the GIF size rule); the avatar picking the wrong image; the scroller being the first scrollable div; the top of the chat declared after 8 tries; English label lists.
@@ -453,13 +468,34 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 - **Fix:** create one in a Desktop Code-tab session and look for the Claude in Chrome tools in its run; if they're there, add the tool to `references/scheduling.md` › Tools.
 
 ### R12 · P3 · A chain conversation keeps growing
-- **What:** every hourly run adds tool output to the same conversation, so each run costs more over weeks. Predates v1.21.0. Arming at `every` minus 5 minutes keeps runs inside the prompt cache, but the context still grows.
+- **What:** every hourly run adds tool output to the same conversation, so each run costs more over weeks. Predates v1.21.0. Arming at `every` minus 5 minutes (minus 3 from a run's start since v1.23.0) keeps runs inside the prompt cache, but the context still grows.
 - **Also:** a claude.ai conversation has a hard length limit. Once a chain's conversation reaches it, follow-ups can't be delivered and the chain stops (a refresh the user asks for then finds it stopped).
 - **Fix:** measure a chain's cost per run after a week or two; if it climbs, or the conversation nears its limit, have a run move the chain to a fresh conversation now and then (setup's Stop or change, then arm from the new one).
 
-### R14 · P3 · Arming at the end of a run
+### R14 · P3 · Arming at the end of a run · done (v1.23.0)
 - **What:** a chain run arms the next one after the refresh steps, however they end. A run that dies mid-refresh (the session is cut off, a tool call never returns) arms nothing, and the chain stops until a refresh the user asks for offers to restart it.
 - **Option:** arm early, right after the stale and hours checks, so the next run is already pending; the run would then only update `misses` at the end. Kept at the end for v1.21.0 (owner's call after the second PR #39 review: less churn).
+- **Done in v1.23.0** (owner's call: arm early). `references/scheduling.md` › A scheduled run:
+  - **Step 5:** after `lastRunAt`, a chain run Arms before the refresh steps. The early arm writes a new `armId` and `nextAt` and leaves `misses` alone (Arm step 4).
+  - **Losing or failing the arm:** if Arm stops because another session armed (a duplicate delivery), the run is superseded and stops without refreshing. If Arm fails (no tool, or a tool error), it writes `problem` and `nextAt:null` as before, and the refresh still goes ahead.
+  - **Step 6, the end of a chain run** (what "reschedule" means in the refresh steps): get `refresh/schedule`. If `armId` is still the last token this run wrote, set `misses`, pinned: 0 if Chrome was reached (a lock skip counts as reached), otherwise its current value plus 1. `nextAt` and `problem` stay as Arm left them, so a failed early arm is still reported. If `armId` changed, write nothing.
+  - **Overlap:** the early-armed next run can fire while this one is going. It arms its own successor first. With `every` under 23 minutes (a delay under 20) the lock is fresh and it skips; for usual settings the lock is over 20 minutes old and it takes it over (R18). Either way this run's end finds `armId` changed and writes nothing, so there's one chain and no miss is counted twice.
+  - **Other paths:** a run outside the hours arms for the window and stops, skipping step 6. Stale runs, older messages and recurring runs are unchanged.
+  - **The dead-chain check** (After a refresh the user asked for) is unchanged. Its "no run going" guards now cover the moments before a run arms, and runs by older copies of the skill. A live chain's `nextAt` is ahead even mid-run.
+  - **Delay:** `every` minus 3 minutes, counted from a run's start (it was `every` minus 5 minutes from a run's end). Runs start 57 minutes apart for hourly, close to the user's choice, and a wake 1–2 minutes late after a run of a minute or two still lands inside the prompt cache (review of release A: exactly `every` would just miss it).
+  - **An approval on the early arm** holds the refresh up until the user answers. Only a run with the user present meets one, since unattended chain runs need none (review of release A).
+  - **Sizes:** the reference's cap rose to 10,500 bytes (10,266).
+- **Also in v1.23.0 (A3), room in the refresh `SKILL.md`** (19,847 → 18,293 bytes; 18,487 after the release merged F19/F20 and the review's fixes) for F19/F20 and release C's per-day digests. Text that only some refreshes need moved out, and SKILL.md names its new place in the step where it was:
+  - **To `references/helper.md`:** the command list (new › Commands, read before the first command in each conversation), the install link (› Versions), the `DATES-GUESSED` rule (› Warnings) and `extra>0`.
+  - **To `references/troubleshooting.md`:** what to do with nothing new while WORK is behind (its `base` below `meta/chat.lastI`; the review of release A restored that condition in step 3, since a conversation that reuses WORK never sees bootstrap's "stored but not built yet"), the `selfcheck` failure message, and COPY FAILED (› Import toasts).
+  - **To `references/writing-the-build.md`:** the list of what `catchup.py` checks (new › What catchup.py checks).
+  - **Shortened:** the reference list, the quote-match CHECK note (the line prints its reason), and the relink's refused write (step 7's rule covers it).
+  - **Tests:** `test_tools.TestSkillRoom`, plus seven new `TestScheduling` tests. Each failed before the change.
+
+### R18 · P3 · A run older than the lock's 20 minutes when the next one fires
+- **What:** since R14, a chain run arms as it starts, so the next run fires `every` minus 3 minutes after this one started, not after it ended. If this run is still going then (a large backlog, a long photo wait, a slow outbox) and `every` is 23 minutes or more, its `refresh/status` lock is more than 20 minutes old, and the next run treats it as stale and takes over. That run scans in the same Messenger tab. Pinned writes keep the database whole: a run whose write is refused while the other's `running` is in `refresh/status` stops (writing-the-build.md › Refused writes). But the two can disturb each other's scan, and the first to finish marks the status done while the other is still going. Before R14 this could only happen with a refresh the user asked for. `references/scheduling.md` › A scheduled run, Overlap, describes it.
+- **Unverified, check live:** a follow-up that comes due while this conversation is mid-turn (the run it would follow is still going) may be queued until the turn ends, or dropped. If the scheduling tool drops it, the chain stops at that run, and only a refresh the user asks for finds it stopped. Check with each follow-up tool (a short `every` and a run kept busy past it).
+- **Fix (if it shows up):** have a run that finds the lock 20+ minutes old check `lastRunAt` and the lock's `step` before taking over, or renew `startedAt` at each step.
 
 ## Doc and instruction gaps (SKILL.md / page text vs code)
 
@@ -729,3 +765,44 @@ A fresh agent reviewed only what changed since v1.4.1. B34 was confirmed by runn
 ### F18 · P3 · Split long range summaries
 - **What:** a span before `summary.fromI` too long for one request (about 1,990 live-sized messages, 4.3 days) is refused since v1.22.0. Splitting it into parts and merging (conversations joined by id, bullets concatenated, lists joined) would let any span work, at k× the usage and time, with a merge to test.
 - **Trigger:** the owner wants long spans summarized and `catchup.py restore-summary` (which moves `fromI` back on the owner's page) hasn't removed the need.
+
+### F19 · P2 · Short claims thread to the latest open offer · done (v1.23.0)
+- **Found:** GitHub issue #41, a field report from a buy/sell/trade chat. A short message is often a claim on an item just offered ("In", "I'm in", "in for 1", "Dibs", "Mine", "I'll take it", "PM'd", "Interested", a raffle spot like "In for 2" or "#7"). These are rarely sent as Messenger replies, so the build links them by position (usually `i` to the message before), or Claude files them as a new conversation. Either way the page shows them with no context.
+- **Proposed rule** (SKILL.md step 6's GUESS review and `writing-the-spec.md`):
+  - In a chat whose `meta/chat.topic` suggests buying, selling or trading, a short claim-type message (any case, optionally with a count) is a claim on the most recent open offer by someone else.
+  - An open offer is a for-sale post, a raffle, a group buy or an "anyone want…" offer not yet marked sold or closed.
+  - Join the claim to that offer's conversation, linked `i` to the offer, and mention it in the bullets ("Ben is in"). On a deal it's deal activity.
+  - If there's no open offer in about the last day, or two are equally likely, keep the build's guess and list it in the report as a possible claim. Never invent an offer.
+- **Meanwhile:** the owner's scheduled refresh prompt carries the rule.
+- **Design questions:** the word list (fixed list, or Claude's judgment with examples); how "open" is decided (deals' state, or "sold" in later messages); whether the page shows claims on a deal.
+- **Owner's calls (Nov 13):** a fixed word list in the tool, but the tool only flags and Claude decides, because "In" often just means "I like that bag" and the bag may not be for sale. A window of 3 days, not 1. Raffle spot claims ("#7", "in for 2 spots") stay as they are. The page shows claims on a deal (release B).
+- **Done in v1.23.0:**
+  - `catchup.py build`, only when `meta/chat.topic` suggests buying, selling or trading (read from RUN's `meta/chat`), prints `REACT? i (who: "text") -> a, b, c` for each new short claim: up to 3 posts by someone else in the 3 days before it (by timestamp), newest first, that are photo posts, look like offers (`looks_like_offer`: offer words, "let me know if you're interested…", a price) or belong to an open deal. The seller's own "Sold", "SPF" or "pending" prints `CLOSE?`. The lines link nothing.
+  - The rules for Claude are in the refresh skill's `references/writing-the-build.md` › Claims (a pointer in SKILL.md step 6): link to the post; on an offer or deal it's a claim (a bullet and the deal's `claims`), otherwise appreciation; the seller's close sets the deal's `status`; no candidate or a tie: keep the guess and list it in the report.
+  - A deal gains optional `claims: [{i, who, n}]` (ordered by `i`, one per message, `who` as `f` on the message, `n` a positive whole number, default 1) and `status` (`sold` | `pending`) with `statusAt`. `dealEdit` takes `addClaims`, `status` (`null` reopens) and `statusAt`, and now refuses keys it doesn't know.
+- **Review fixes (v1.23.0, before release; two independent reviews):**
+  - The gate also reads `meta/chat.threadName`, because setup never asked for `topic`. Setup now asks what the chat is about and stores `topic`; a build on a page without one prints a NOTE, and the refresh fills it in once (`references/writing-the-build.md` › The chat's topic).
+  - Raffle and paffle posts (by text, or a deal of kind `raffle`) are marked "(raffle)" in the candidates rather than dropped: Claude sees the post, and › Claims says a reaction to it is a spot claim, threaded as before, with no `claims` entry.
+  - `dealEdit.removeClaims: [i]` takes a claim back ("he just liked it"), and removing then re-adding corrects a count.
+  - More phrasings: closes with a short tail ("Sold to Ben", "SPF Ben", "pending pickup", "sold ppu"; never "sold out"), and claims with a count ("In x2", "In (2)", "in 2", "in for 2 please") or "I'm interested".
+  - Fewer noisy candidates: loose phrases ("let me know if you are coming", "who wants to hike", "dm me when…", bare "shipped", what someone paid) no longer count as offers; photos and open deals rank before text offers; "someone else" compares full names (`fn`) when both messages have one.
+  - `dealEdit` refuses non-list `addClaims`/`removeClaims`, `statusAt` without `status`, `status` without `statusAt`, and a boolean `statusAt`.
+
+### F20 · P2 · `move` an already-built message to another conversation · done (v1.23.0)
+- **Found:** GitHub issue #41. `relink` (F3) changes a built message's link, but its conversation stays the same, so fixing a misfiled claim gives `WARN link … crosses conversations` and the page still shows the message as its own thread.
+- **Proposed:** a spec key `{"move": {"i": "convId"}}` for messages already built. It updates membership in the threading blocks, keeps summary refs valid (a conversation left empty is dropped or merged, its summary items moved), lands through the manifest like any build, and `restore` can undo it.
+- **Pairs with F19:** F19 stops new misfiles; `move` fixes the ones already on pages.
+- **Done in v1.23.0:** `move: {"<i>": "<conv id>" | "new"}` in a build spec, or on its own through `catchup.py relink` (which takes `relink`, `move` and `newconvs`; with a move it reads the summary listing too and writes both collections). The target is an existing conversation, one in the same spec's `newconvs` (title and tag), or `"new"` (`mv<i>`, titled with the message's text). The message moves with everything threaded under it in its old conversation; its own link must end up in the target or be null (a `relink` in the same spec), or the move is refused. A conversation left empty is dropped and its summary items (bullets merged in message order, key messages, open, answered, deals; tag and outcome where the target has none) go to the target; otherwise items whose refs all moved go along (questions follow their ask) and the rest lose the moved refs. It prints `MOVE`, `DROP` and what moved, goes through `layout_docs`, `_roundtrip`, `_plan` and the manifest like a build, and `restore` undoes it. Routed from SKILL.md (next to relink) and `references/writing-the-build.md` › Moving a message.
+- **Review fixes (v1.23.0, before release; two independent reviews):**
+  - A move follows only Messenger reply links (`r`, `rq`, `rg`). A message linked by a guess (`i`, `c`) stays, re-pointed to the moved message's old parent, and prints `LEFT 5 (i -> 4), now -> 3`, so a misfiled "In" in a guessed chain no longer drags everything after it along. Claude moves the answers that belong with it.
+  - Both `current` documents carry one revision token, `rev`, per write (a relink with no move writes threading only, with `summaryRev`). Bootstrap refuses a pair from different writes (a move that only partly landed used to pass, then crash the next build), and `_fresh` compares `rev`, so a WORK restored after its write landed is refused even within the same minute. After a move's write lands, the undo is a reverse move.
+  - A `dealEdit` with `index` on a conversation the same spec moves or adds deals to is refused; `ref` (one of the deal's messages) names it instead, and the MOVE output and the "add index" refusal list the deals with their indexes.
+  - The DROP line prints the dropped conversation's title, tag and outcome, and an outcome the target already has its own of is kept as a bullet.
+  - Bullets, outcome, key, join, deals, open or answered naming a conversation the same spec drops get a clear refusal (before: a raw KeyError); unknown conversations in bullets, outcome or key too.
+  - The crosses-conversations WARN runs after the move; a standalone move refuses a `newconvs` entry no move fills; "new" ids avoid summary ids too; the printout no longer says "block lists".
+  - `restore-summary` now also writes `threading/current` (unchanged but for `rev`).
+- **Re-review fixes (v1.23.0, before release):**
+  - `references/restoring-a-summary.md` noted and pinned only `summary/current` and said threading wasn't touched; following it left the page refusing every bootstrap. It now pins both, and `TestManifestDocs` checks every reference describing a manifest write against what that command's manifest pins.
+  - A pair from different writes no longer locks a page whose writing session is gone: bootstrap accepts it when it fits together (`_problems`), and `--rollback` refiles the summary to fit threading (`_heal`) when it doesn't; `relink` with `{}` writes it when there's nothing new to build. The same check catches a half-landed write on pages without `rev`.
+  - `dealEdit` `index` is refused on the conversation a move took a deal out of, and in the build after a standalone move (`state.json` `moved`); the "deals in X now" lines cover the source; `ref` and `index` together are refused.
+

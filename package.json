@@ -1,6 +1,6 @@
 {
   "name": "messenger-catchup",
-  "version": "1.22.0",
+  "version": "1.23.0",
   "private": true,
   "description": "Dev tooling for the Messenger Catch-up skill (tests only; the plugin itself is the plugin/ folder)",
   "scripts": {
@@ -9,7 +9,7 @@
     "hooks": "git config core.hooksPath .githooks",
     "fmt": "prettier --write 'plugin/skills/*/assets/*.html' 'plugin/skills/*/assets/*.js' 'tests/*.js' 'tests/mock/*.html' && .venv/bin/ruff format plugin tests tools && npm run sync",
     "fmt:check": "prettier --check 'plugin/skills/*/assets/*.html' 'plugin/skills/*/assets/*.js' 'tests/*.js' 'tests/mock/*.html' && .venv/bin/ruff format --check plugin tests tools",
-    "test": "npm run fmt:check && npm run test:py && npm run test:sim && npm run test:page",
+    "test": "npm run fmt:check && node tests/run.js --py && npm run test:page",
     "test:py": "python3 -W error::ResourceWarning -m unittest discover -s tests",
     "test:sim": "node tests/run.js",
     "test:page": "node tests/page.test.js",

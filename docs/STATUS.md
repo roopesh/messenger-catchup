@@ -15,7 +15,7 @@
 - **Restoring the dropped summary (v1.18.1, F10):** `catchup.py restore-summary` and the refresh skill's `references/restoring-a-summary.md` put back what pre-1.17 sessions dropped, from the copy saved in the page's `backups` collection: a dry run the user confirms, the backup's open questions checked against later messages first, then a pinned write like a build's. Not yet run on the owner's page (it waits for their go-ahead); the backup stays until they decide.
 - **Storage (v1.17.0, B43):** `threading` and `summary` are collections of 1,000-message block documents named by their `current` document; the page merges them back. Measured on synthetic chats calibrated to the owner's page: the largest document stays at most 85 KB up to 50,000 messages (EXPERIMENTS.md §13). Old pages convert on their next refresh; nothing is dropped, and `summary.fromI` is kept.
 - **Helper 2.0 (v1.20.0):** R3 option B (silent failures warn), B41 (full names across a run, reported until captured), B48 (photo-only Reply), B49 (stalls), F12 (two Chromes), F13 (opt-in `post`). Tested on the mock only; see Where to start.
-- **Open:** live-only risks (R5, R9; R3's English-label dependency remains), R6's live checks, R10 (the page's Desktop wording), R11 (Desktop local tasks), R12 (chain context growth), R13 (the 5,000-file limit), R14 (arming at the end of a run), R15 (photos the helper couldn't fetch), features F1, F14–F18. F7 is done; its one open question (whether marketplace installs update by themselves in web and Desktop chat) needs a live check. See [BACKLOG.md](BACKLOG.md).
+- **Open:** live-only risks (R5, R9; R3's English-label dependency remains), R6's live checks, R10 (the page's Desktop wording), R11 (Desktop local tasks), R12 (chain context growth), R13 (the 5,000-file limit), R15 (photos the helper couldn't fetch), R18 (a run still going when the next one fires), features F1, F14–F18, F21, F22. F7 is done; its one open question (whether marketplace installs update by themselves in web and Desktop chat) needs a live check. See [BACKLOG.md](BACKLOG.md).
 - **Workflow:** every change goes branch → PR → version bump → CI → squash-merge → `tools/release.sh`. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
 - **Enforcement:** GitHub branch protection on `main` (since Nov 7): changes only through a PR, `test` and `version-bump` must pass, the branch must be up to date, linear history, no force-push or deletion, admins included. CI also flags any commit on `main` that didn't come from a merged PR, and a local `pre-push` hook blocks direct pushes before they reach GitHub.
 - **In use:** the original user's page and hourly loop run the generic skill.
@@ -26,7 +26,7 @@
 - **Repo:** public (since Nov 7), `github.com/roopesh/messenger-catchup`, branch `main`. **Never commit real names or text from a user's chat**: tests use the mock cast (Ana, Ben, Cy, Dee, You).
 
 ## Test suites
-`npm test` checks formatting, then runs all three (about 3 minutes); CI runs the same on every PR.
+`npm test` checks formatting, runs the Python suites beside the sim, then the page tests: about 1.5 minutes on the owner's Mac (Nov 13: Python 21 s and the sim 64 s side by side, the page 20 s; 12 minutes before v1.23.0 ran them in parallel). CI runs the same on every PR; its runner has 4 CPUs, so it runs fewer cases at a time. The sim runs its cases `SIM_JOBS` at a time (default three times the CPU count) and the page its sections `PAGE_JOBS` at a time (default the CPU count); each case's or section's lines print together under a `--- name (seconds)` header, and `=1` runs them one by one.
 
 | Suite | Command | What it covers | Now |
 |---|---|---|---|
@@ -73,7 +73,7 @@ From the repo root:
 npm install        # once: Playwright (pinned in package.json)
 npm run setup      # once: Playwright's Chromium, the pre-push hook, .venv with pinned Ruff
 npm run fmt        # before committing: Prettier + Ruff, then npm run sync
-npm test           # format check, Python suites, sim, page (about 3 minutes)
+npm test           # format check, Python suites and sim side by side, page (about 1.5 minutes)
 ```
 Exit code 0 means everything passed. The page suite reads `tests/out/sim_caps.json`, which the sim writes, so run `test:sim` before `test:page` when you run them separately. `tests/out/` is gitignored.
 

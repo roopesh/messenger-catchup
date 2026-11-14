@@ -2,6 +2,48 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.23.0] - 2026-11-13
+**Claims in buy/sell chats, moving a message to another conversation, scheduled runs that survive a crash, and a test suite 8× faster** (BACKLOG F19, F20, R14, T6; GitHub issue #41). MINOR: refresh procedure changes and new spec keys. Page and helper unchanged (`PAGE_VERSION` 2.7, helper 2.0).
+
+### Added
+- **Short reactions and claims (F19, issue #41).** In a chat whose `meta/chat.topic` or name suggests buying, selling or trading, `catchup.py build` flags short messages like "In", "In!!", "in for 2", "In x2", "Dibs", "Mine", "I'll take it", "Sold", "PM'd", "DM sent" and "Interested" with a `REACT?` line. The line lists up to 3 posts by someone else from the 3 days before: photos and open deals first, then text offers (a price, "let me know if you're interested in…"). Claude reads the context and links the message to the post it reacts to (`references/writing-the-build.md` › Claims):
+  - **For sale:** it's a claim, with a bullet ("Ben is in for 2") and an entry in the deal's new `claims: [{i, who, n}]`.
+  - **Not for sale:** it's appreciation, with a short bullet ("Ben and Cy liked it").
+  - **Raffle posts** are marked "(raffle)". Spot claims keep today's threading and get no `claims` entry.
+- **The seller's own "Sold", "SPF" or "pending"** (with a short tail such as "Sold to Ben") prints `CLOSE?`. The deal records `status` (`sold`/`pending`) and `statusAt`, and later claims are noted "after it was sold".
+- **`dealEdit` gains `addClaims`, `removeClaims`, `status`/`statusAt` (always together) and `ref`** (names a deal by one of its messages). It refuses keys it doesn't know.
+- **Setup asks what the chat is about** and stores it as `topic`. A refresh on a page without one sets it once (› The chat's topic).
+- **`move` (F20, issue #41).** `move: {"<i>": "<conv id>" | "new"}` puts an already-built message into another conversation, in a build or with `catchup.py relink`:
+  - **What moves:** its Messenger replies (`r`/`rq`/`rg`) move with it. Messages linked by a guess stay, re-pointed to its old parent, and are printed as `LEFT` lines so Claude can move the ones that belong with it.
+  - **An emptied conversation is dropped,** and its bullets, key, questions, answers and deals go to the target. The `DROP` line prints its title, tag and outcome.
+  - **Who uses it:** Claude, when it spots an earlier misfile, and the user, on request ("move #3232 into the bag-sale conversation").
+  - **Undo:** `restore WORK` undoes a move until its write lands. After that, the undo is a reverse move.
+
+### Changed
+- **Scheduled chains arm early (R14).** A chain run arms the next run right after its stale and hours checks, before refreshing, so a run that dies midway no longer stops the schedule. The run's end only records whether Chrome was reached (`misses`), and only while it still owns the chain. Runs start `every` minus 3 minutes apart (about 57 minutes for hourly), counted from each run's start, so the prompt cache stays warm. An early arm stuck on an approval holds up that refresh; only runs with the user present can meet one.
+- **The refresh skill's `SKILL.md` is smaller** (19,847 → 18,496 bytes, with room for what's next). The helper commands, the install link, `DATES-GUESSED`, rare troubleshooting paths and `catchup.py`'s checks moved to `references/helper.md`, `references/troubleshooting.md` and `references/writing-the-build.md`. SKILL.md says where and when to read each.
+- **Both `current` documents (threading and summary) share a `rev` per write.** Bootstrap catches a write that only partly landed (below), and a stale WORK is refused even within the same minute. `restore-summary` also writes `threading/current`, but only its `rev` changes.
+- **A write that partly landed never leaves a page stuck.** When the two `current` documents come from different writes but still fit together, bootstrap carries on and the next write restamps both. When they don't fit, `catchup.py bootstrap --rollback` files every summary item under the conversation threading has its messages in, dropping nothing, and `relink` with the spec `{}` writes it. The restore procedure now pins `threading/current` too, and `dealEdit` refuses `index` on any conversation a move changed (`ref` instead).
+- **Tests run in parallel (T6):** `npm test` takes about 1.5 minutes instead of 12.
+  - The sim's 42 cases each run in their own browser context (`SIM_JOBS`), and the page sections each run in their own process (`PAGE_JOBS`).
+  - The Python suites run beside the sim.
+  - The same 480 checks run, each case's lines print together, and a failure still fails the run.
+
+### Fixed
+- A refresh that finds nothing new again builds messages an earlier run imported but didn't build, even when the conversation reuses its working folder without bootstrapping. The SKILL.md trim had briefly narrowed this condition; caught in review.
+
+### Review
+- An independent review of the release and a separate adversarial review of `move` found real defects, all fixed before merge, each with a test that fails without the fix:
+  - a move followed guessed links and dragged the rest of a conversation along;
+  - a partly applied move went undetected;
+  - a `dealEdit` index could mark the wrong deal sold after a move;
+  - the claims gate depended on a field setup never filled;
+  - raffle spots were flagged as claims;
+  - there was no way to correct a claim;
+  - common closing phrasings were missed;
+  - the cadence ran 5 minutes early.
+- Filed: R18 (a run still going when the next one fires), F21 (a standalone move takes no bullets), F22 (the page showing a deal's status; built in 1.24.0) and C8 (`tools/sync.py` leaves files open).
+
 ## [1.22.0] - 2026-11-12
 **Photos stored as they upload, Ask Claude over long histories, and update notices** (BACKLOG R2, F6 and R4, F5; B50). MINOR: new page behavior and refresh procedure changes. Page **`PAGE_VERSION` 2.7** (from 2.6); the helper stays 2.0. No re-setup: Claude republishes your page on its next refresh.
 

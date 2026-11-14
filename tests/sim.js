@@ -1,19 +1,48 @@
+'use strict'; /* an assignment to an undeclared name throws, instead of making a global the parallel cases would share */
 /* Simulated-Messenger tests for the helper (installed and injected paths).
    Run from the repo root: npm test (tests/run.js serves the mock and sets MOCK_URL).
-   Or by hand: cd tests && python3 -m http.server 8765 &  then  node sim.js */
+   Or by hand: cd tests && python3 -m http.server 8765 &  then  node sim.js
+
+   The cases run in parallel: each sim('name', async b => {...}) below is one case, run on the shared browser b in its
+   own browser context (so its own localStorage, sessionStorage and clock), up to SIM_JOBS at a time (default: three
+   times the CPU count, at least 4: the cases mostly wait on the helper's timers; SIM_JOBS=1 runs them one by one).
+   A case's PASS/FAIL lines are held and printed together under a "--- name (seconds)" header when it ends; a case
+   that throws prints FAIL "name crashed" and the rest go on.
+   SIM_ONLY=E (or EF, AG...) runs the cases whose name starts with those letters; SIM_ONLY=people,stall runs the cases
+   whose name contains one of those words (and any case they wait for).
+   To add a case, put this anywhere above the runner at the end of the file:
+     sim('X: what it checks', async b => {
+       const { ctx, p, capOf } = await fresh(b);
+       ...
+       await ctx.close();
+     });
+   Start it from a known state (mode(p, {...}), or seedStorage), never from what another case left behind. A case that
+   needs another's result waits for it, sim('name', { after: ['other'] }, async b => ...), and reads it from SHARED.
+   Pass { s: seconds } when it takes more than about 10 s, so the longest cases start first. Keep the options before
+   the function: that keeps the case body at the file's indent, so cases stay easy to merge. */
 const { chromium } = require('playwright');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { AsyncLocalStorage } = require('async_hooks');
 const D = path.join(__dirname, '..') + '/';
 fs.mkdirSync(D + 'tests/out', { recursive: true });
 const URL = process.env.MOCK_URL || 'http://localhost:8765/mock/messenger.html';
 const HELPER = fs.readFileSync(D + 'plugin/skills/refresh/assets/helper.user.js', 'utf8');
 const HV = HELPER.match(/@version\s+(\S+)/)[1];
 
+/* Each case's lines go to its own buffer (printed when the case ends), found through the async context it runs in */
+const LINES = new AsyncLocalStorage();
+const say = line => (LINES.getStore() ? LINES.getStore().push(line) : console.log(line));
 const ok = (c, msg) => {
-  console.log((c ? 'PASS ' : 'FAIL ') + msg);
+  say((c ? 'PASS ' : 'FAIL ') + msg);
   if (!c) process.exitCode = 1;
 };
+const CASES = [];
+/* sim(name, fn) or sim(name, { s, after }, fn): s = rough seconds (longest start first), after = cases to wait for */
+const sim = (name, o, fn) => CASES.push(Object.assign({ name, s: 10, after: [] }, fn ? o : {}, { fn: fn || o }));
+/* Results one case hands to another, and the files written once every case is done (see main) */
+const SHARED = {};
 const bridge = async (p, cmd, args) =>
   p.evaluate(
     async ([cmd, args]) => {
@@ -72,16 +101,28 @@ const newCtx = async (b, helper) => {
   if (helper) await c.addInitScript('document.addEventListener("DOMContentLoaded",function(){' + HELPER + '\n});');
   return c;
 };
-(async () => {
-  const b = await chromium.launch();
-  if (process.env.SIM_ONLY) {
-    /* SIM_ONLY=E, F, G or EF runs just those sections (quicker while working on them) */
-    if (process.env.SIM_ONLY.includes('E')) await helper2(b);
-    if (process.env.SIM_ONLY.includes('F')) await posting(b);
-    if (process.env.SIM_ONLY.includes('G')) await photoCaps(b);
-    return b.close();
-  }
-  // ---------- A: helper installed (userscript manager emulated with an init script) ----------
+/* A new context (helper installed unless helper is false) and page; capOf() reads the page's last capture */
+const fresh = async (b, helper = true) => {
+  const ctx = await newCtx(b, helper);
+  const p = await ctx.newPage();
+  const capOf = async () => JSON.parse((await p.evaluate(() => window.__capText)) || '{"msgs":[]}');
+  return { ctx, p, capOf };
+};
+/* Load the mock with this localStorage (and sessionStorage), then reload so the page starts from it */
+const seedStorage = async (p, local, session = {}) => {
+  await p.goto(URL);
+  await p.evaluate(
+    ([l, s]) => {
+      localStorage.clear();
+      sessionStorage.clear();
+      for (const [k, v] of Object.entries(l)) localStorage.setItem(k, v);
+      for (const [k, v] of Object.entries(s)) sessionStorage.setItem(k, v);
+    },
+    [local, session],
+  );
+};
+// ---------- A: helper installed (userscript manager emulated with an init script) ----------
+sim('A1, A2: first run, incremental', { s: 42 }, async b => {
   const ctxA = await newCtx(b, true);
   const p = await ctxA.newPage();
   await p.goto(URL);
@@ -200,6 +241,17 @@ const newCtx = async (b, helper) => {
     'A2: 2 messages arrived mid-run: verify extra=2 accepted (prefix identical)',
   );
   const cap2 = checkCap(JSON.parse(await p.evaluate(() => window.__capText)), 49, 120, 5, 'A2');
+  SHARED.cap1 = cap1;
+  SHARED.cap2 = cap2;
+  /* A3 goes on from this tab's storage (A2's captured result, 127 messages) */
+  SHARED.afterA2 = await p.evaluate(() => [Object.assign({}, localStorage), Object.assign({}, sessionStorage)]);
+  await ctxA.close();
+});
+/* The mock as A2 leaves it: 127 messages */
+const MOCK127 = { mock_total: '127' };
+sim('A: jump link, selfcheck', { s: 14 }, async b => {
+  const { ctx, p } = await fresh(b);
+  await seedStorage(p, MOCK127);
   // jump
   await p.goto('about:blank');
   await p.goto(URL + '#mcjump=' + encodeURIComponent('mid.$mock80') + '&noreply');
@@ -248,6 +300,11 @@ const newCtx = async (b, helper) => {
   await broken('a missing chat log', () => document.querySelector('[role="log"]').setAttribute('role', 'region'), {
     has: 'chat log',
   });
+  await ctx.close();
+});
+sim('A: people scan', { s: 40 }, async b => {
+  const { ctx, p } = await fresh(b);
+  await seedStorage(p, MOCK127);
   // people: read-only scroll back reading avatars (the one-time name backfill)
   await p.goto(URL);
   await p.waitForTimeout(600);
@@ -264,6 +321,12 @@ const newCtx = async (b, helper) => {
       ![...pairs].some(x => x.startsWith('You=')),
     'A: people scans back to the top and maps shown names to full names (' + [...pairs].join(', ') + ')',
   );
+  await ctx.close();
+});
+sim('A3, A5: stale result, message deleted mid-run', { s: 20, after: ['A1, A2: first run, incremental'] }, async b => {
+  const { ctx, p } = await fresh(b);
+  await seedStorage(p, ...SHARED.afterA2);
+  let r, res;
   // stale result guard: a new full() clears the old mc_result and tags the new one with its run id
   await p.goto(URL);
   await p.waitForTimeout(600);
@@ -295,6 +358,11 @@ const newCtx = async (b, helper) => {
       res.verify.mode === 'slow',
     'A5: message gone after the scan: verify-failed after the slow retry, no capture (' + (res && res.stage) + ')',
   );
+  await ctx.close();
+});
+sim('A4: short chat', { s: 55 }, async b => {
+  const { ctx, p } = await fresh(b);
+  let r, res;
   // short chat: 30 messages total, first run asks for 50 -> all 30, none dropped; old label forms parse
   await p.goto(URL);
   await p.evaluate(() => {
@@ -363,7 +431,11 @@ const newCtx = async (b, helper) => {
     'A4: "Yesterday" label -> ' + m22.t + ' ' + m22.d + ' (today ' + m27.d + ')',
   );
   fs.writeFileSync(D + 'tests/out/sim_cap4.json', JSON.stringify(cap4));
-  // ---------- B: no helper; Claude injects the file on each step ----------
+  await ctx.close();
+});
+// ---------- B: no helper; Claude injects the file on each step ----------
+sim('B: helper injected', async b => {
+  let r;
   const ctxB = await newCtx(b, false);
   const q = await ctxB.newPage();
   await q.goto(URL);
@@ -391,8 +463,11 @@ const newCtx = async (b, helper) => {
   const c = await bridge(q, 'capture', { base: 54 });
   ok(/^count 2 /.test(c), 'B: capture ' + c);
   const cap3 = checkCap(JSON.parse(await q.evaluate(() => window.__capText)), 54, 125, 2, 'B');
-  fs.writeFileSync(D + 'tests/out/sim_caps.json', JSON.stringify([cap1, cap2, cap3]));
-  // ---------- D: photo replies whose parents are far up the chat (not loaded; Messenger takes seconds to bring them) ----------
+  SHARED.cap3 = cap3; /* main writes tests/out/sim_caps.json [cap1, cap2, cap3] */
+  await ctxB.close();
+});
+// ---------- D: photo replies whose parents are far up the chat (not loaded; Messenger takes seconds to bring them) ----------
+sim('D: far-up photo-reply parents', { s: 30 }, async b => {
   const ctxD = await newCtx(b, true);
   const dp = await ctxD.newPage();
   await dp.goto(URL);
@@ -441,7 +516,10 @@ const newCtx = async (b, helper) => {
       ')',
   );
   await dp.evaluate(() => localStorage.removeItem('mock_parent_delay'));
-  // ---------- C: the page's jump bookmarklet, run as a browser runs a javascript: URL (no helper) ----------
+  await ctxD.close();
+});
+// ---------- C: the page's jump bookmarklet, run as a browser runs a javascript: URL (no helper) ----------
+sim('C: jump bookmarklet', async b => {
   const PAGE = fs.readFileSync(D + 'plugin/skills/refresh/assets/page.html', 'utf8');
   const bm = PAGE.match(/<textarea id="jump-bm"[^>]*>([^<]*)<\/textarea>/)[1]
     .replace(/&quot;/g, '"')
@@ -464,17 +542,14 @@ const newCtx = async (b, helper) => {
     });
   }
   ok(bmJumped, 'C: the bookmarklet scrolled back and highlighted #mock80');
-  await helper2(b);
-  await posting(b);
-  await photoCaps(b);
-  await b.close();
-})();
+  await ctxC.close();
+});
 
 /* ---------- G: photos (R2): the next run's backfill scan, and messages with several photos ----------
    A photo the page couldn't store is "owed" (meta/chat.photosOwed); the next refresh scans from just before it
    (references/photos.md › Backfill: STOPS = the three messages before it, BASE = the one before it). Writes
    tests/out/sim_cap_photos.json {first, backfill, multi} for the page suite (P18). */
-async function photoCaps(b) {
+sim('G: photo backfill scan', { s: 45 }, async b => {
   const c = await newCtx(b, true);
   const p = await c.newPage();
   await mode(p, {}, 120);
@@ -517,6 +592,13 @@ async function photoCaps(b) {
       backfill.photos[0].i === 30,
     'G: backfill capture #30-#54: its ids line up with the stored ones, the owed photo #30 is in it, verify ok',
   );
+  SHARED.first = first;
+  SHARED.backfill = backfill;
+  await c.close();
+});
+sim('G: several photos per message', { s: 32 }, async b => {
+  const { ctx, p } = await fresh(b);
+  let r, res;
   // mock_photos=4: every 4th message carries 1-3 photos (a caption too)
   await mode(p, { photos: '4' }, 120);
   r = await bridge(p, 'full', { first: { count: 30 }, base: -1, run: 'g3' });
@@ -540,9 +622,9 @@ async function photoCaps(b) {
       (res && res.capture) +
       ')',
   );
-  fs.writeFileSync(D + 'tests/out/sim_cap_photos.json', JSON.stringify({ first, backfill, multi }));
-  await c.close();
-}
+  SHARED.multi = multi; /* main writes tests/out/sim_cap_photos.json {first, backfill, multi} */
+  await ctx.close();
+});
 
 /* ---------- E: helper 2.0: silent failures become warnings (R3), the scroller, the stall timeout, full names (B41) ---------- */
 const STOPS99 = ['mid.$mock99', 'mid.$mock98', 'mid.$mock97']; /* window #100-#119 (base 99) of the 120-message mock */
@@ -562,7 +644,7 @@ async function mode(p, m, total) {
 }
 const has = (list, s) => (list || []).some(x => x.includes(s));
 const short = r => JSON.stringify(r && { err: r.err, win: r.win, top: r.top, scroller: r.scroller, warn: r.warn });
-async function helper2(b) {
+sim('E: normal mock: no warnings', async b => {
   const ctx = await newCtx(b, true);
   const p = await ctx.newPage();
   // the normal mock: selfcheck and the scan stay quiet, and report the scroller they used
@@ -588,6 +670,11 @@ async function helper2(b) {
       short(r) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: page language not English', async b => {
+  const { ctx, p } = await fresh(b);
+  let sck, r;
   // the page language isn't English: warn and keep reading
   await mode(p, { lang: 'de' });
   sck = await bridge(p, 'selfcheck', {});
@@ -604,6 +691,11 @@ async function helper2(b) {
       JSON.stringify(sck.warn) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: 24-hour clock', async b => {
+  const { ctx, p } = await fresh(b);
+  let sck, r;
   // a 24-hour clock: its own warning, not "Messenger changed", and the times are read
   await mode(p, { h24: '1' });
   sck = await bridge(p, 'selfcheck', {});
@@ -627,6 +719,11 @@ async function helper2(b) {
       m110.b === 'Message number 110 about trail shoes and packs',
     'E: 24-hour labels: "10:50" captured as ' + JSON.stringify([m110.t, m110.d, m110.f, m110.b]),
   );
+  await ctx.close();
+});
+sim('E: time labels across midnight', async b => {
+  const { ctx, p } = await fresh(b);
+  let sck, r;
   // time-only labels across midnight: dates in the future and times going backwards
   await mode(p, { midnight: '1' });
   sck = await bridge(p, 'selfcheck', {});
@@ -635,6 +732,11 @@ async function helper2(b) {
     has(r.warn, 'dated in the future') && has(r.warn, 'go backwards') && has(sck.warn, 'go backwards'),
     'E: time-only labels across midnight: the scan and selfcheck warn (' + JSON.stringify(r.warn) + ')',
   );
+  await ctx.close();
+});
+sim('E: photo link with no image', async b => {
+  const { ctx, p } = await fresh(b);
+  let sck, r;
   // a photo link with no Facebook image
   await mode(p, { noimg: '1' });
   sck = await bridge(p, 'selfcheck', {});
@@ -643,6 +745,11 @@ async function helper2(b) {
     has(sck.warn, 'photo link') && has(r.warn, 'photo link(s) with no Facebook image (#100)'),
     'E: a photo link with no image: selfcheck and the scan warn, naming #100 (' + JSON.stringify(r.warn) + ')',
   );
+  await ctx.close();
+});
+sim('E: reworded reply lines', async b => {
+  const { ctx, p, capOf } = await fresh(b);
+  let sck, r, cap;
   // "X replied to Y" reworded: a warning, and a photo reply whose reply line can't be read is never linked (perr)
   await mode(p, { reword: '1' });
   sck = await bridge(p, 'selfcheck', {});
@@ -662,6 +769,11 @@ async function helper2(b) {
       JSON.stringify([p103, c103.perr, c103.pi]) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: one shown name, two people', async b => {
+  const { ctx, p } = await fresh(b);
+  let r;
   // one shown name with full names that don't share a first name (the wrong avatar)
   await mode(p, { wrongav: '1' });
   r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
@@ -669,6 +781,11 @@ async function helper2(b) {
     has(r.warn, '"Ben" shows as') && has(r.warn, 'Dee Diaz'),
     'E: one shown name mapping to two people warns (' + JSON.stringify(r.warn) + ')',
   );
+  await ctx.close();
+});
+sim('E: runs with one avatar (B41)', async b => {
+  const { ctx, p, capOf } = await fresh(b);
+  let r, cap;
   // B41: runs of messages with one avatar: every message in the run gets the run's full name
   await mode(p, { group: '1' });
   r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
@@ -688,6 +805,11 @@ async function helper2(b) {
       JSON.stringify(wrongFn.map(m => [m.i, m.f, m.fn])) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: two Bens back to back', async b => {
+  const { ctx, p, capOf } = await fresh(b);
+  let r, cap;
   // review #7: two people shown as "Ben" post back to back: each group takes its own avatar's name, never the other's
   await mode(p, { group: '1', twobens: '1' });
   r = await bridge(p, 'scan', { stops: STOPS99, base: 99 });
@@ -701,6 +823,11 @@ async function helper2(b) {
       JSON.stringify(bens) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: nested scrolling box', { s: 20 }, async b => {
+  const { ctx, p } = await fresh(b);
+  let sck, r;
   // review #4: a message inside its own small scrolling box is not the list: a first run still reads all it asked for
   await mode(p, { nested: '1' }, 120);
   sck = await bridge(p, 'selfcheck', {});
@@ -711,6 +838,11 @@ async function helper2(b) {
       short(r) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: progress bars inside messages', { s: 25 }, async b => {
+  const { ctx, p } = await fresh(b);
+  let r;
   // review #2: a progress bar inside a message (a poll, a voice clip), or a hidden one, isn't a loading spinner
   await mode(p, { msgbar: '1' }, 30);
   let t0 = Date.now();
@@ -723,6 +855,11 @@ async function helper2(b) {
       short(r) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: inner scrollable bar', async b => {
+  const { ctx, p } = await fresh(b);
+  let sck, r;
   // a scrollable pinned bar before the message list: the scroller is found from a message, not the first scrollable div
   await mode(p, { inner: '1' });
   sck = await bridge(p, 'selfcheck', {});
@@ -733,6 +870,11 @@ async function helper2(b) {
       short(r) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: stalled scan, no spinner', async b => {
+  const { ctx, p } = await fresh(b);
+  let r, t0;
   // a scan that stops growing: an error instead of hanging (stops) or calling it the top of the chat (first run).
   // Without a spinner (the list keeps snapping back to the bottom): "stalled".
   await mode(p, { stall: 'stuck' });
@@ -746,6 +888,11 @@ async function helper2(b) {
       short(r) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: spinner that stays: scan and first run', { s: 18 }, async b => {
+  const { ctx, p } = await fresh(b);
+  let r, t0;
   // With a loading spinner that stays at the top: "top-spinner", for a stop scan and for a first run
   await mode(p, { stall: '1' });
   t0 = Date.now();
@@ -766,6 +913,11 @@ async function helper2(b) {
       JSON.stringify(r && [r.stage, r.err, r.top, r.win, r.anchor]) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: people scan under a spinner', async b => {
+  const { ctx, p } = await fresh(b);
+  let t0;
   // the people scan and verify don't hang on that spinner either
   await mode(p, { stall: '1' });
   t0 = Date.now();
@@ -778,6 +930,11 @@ async function helper2(b) {
       JSON.stringify(pp && { seen: pp.seen, top: pp.top, stalled: pp.stalled, spinner: pp.spinner }) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: verify under a spinner', { s: 32 }, async b => {
+  const { ctx, p } = await fresh(b);
+  let r, t0;
   await mode(p, {}, 30);
   r = await bridge(p, 'scan', { first: { count: 50 } });
   await p.evaluate(() => localStorage.setItem('mock_stall', '1'));
@@ -793,6 +950,11 @@ async function helper2(b) {
       JSON.stringify(vr) +
       ')',
   );
+  await ctx.close();
+});
+sim('E: top of a short chat, anchors gone', { s: 42 }, async b => {
+  const { ctx, p } = await fresh(b);
+  let r, t0;
   // the top of a short chat is reported (top:true), and a stop scan that reaches the top ends with a clear error
   await mode(p, {}, 30);
   r = await bridge(p, 'scan', { first: { count: 50 } });
@@ -811,12 +973,12 @@ async function helper2(b) {
       ')',
   );
   await ctx.close();
-}
+});
 
 /* ---------- F: Reply on photo-only messages (More actions) and the opt-in post command ---------- */
-async function posting(b) {
-  const ctx = await newCtx(b, true);
-  const p = await ctx.newPage();
+/* fresh() plus the composer's state, waitTip() (the state once the jump's tip is done) and the reply the cases post */
+const freshF = async b => {
+  const { ctx, p } = await fresh(b);
   const state = () =>
     p.evaluate(() => ({
       sent: window.mockSent.slice(),
@@ -834,6 +996,11 @@ async function posting(b) {
     }
     return state();
   };
+  const row = { mid: 'mid.$mock110', to: 'Ana', snip: 'Message number 110 about trail shoes', text: 'Sounds good' };
+  return { ctx, p, state, waitTip, row };
+};
+sim('F: jump{reply} through More actions or the Reply button', async b => {
+  const { ctx, p, state, waitTip } = await freshF(b);
   // jump{reply} on a photo-only message: its toolbar has no Reply button, so it goes through More actions -> Reply
   await mode(p, {});
   await bridge(p, 'jump', { mid: 'mid.$mock100', reply: true });
@@ -851,7 +1018,11 @@ async function posting(b) {
       /^Replying to Ana\nMessage number 110/.test(s.bar),
     'F: jump{reply} on a text message still uses its Reply button (' + JSON.stringify([s.tip, (s.res || {}).via]) + ')',
   );
-  const row = { mid: 'mid.$mock110', to: 'Ana', snip: 'Message number 110 about trail shoes', text: 'Sounds good' };
+  await ctx.close();
+});
+sim('F: More actions menus without Reply, or left open', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s;
   // review #5: a More actions menu without Reply is closed again, and a menu left open elsewhere is never used
   await mode(p, { noreplymenu: '1' });
   await bridge(p, 'jump', { mid: 'mid.$mock100', reply: true });
@@ -875,6 +1046,11 @@ async function posting(b) {
     /reply box is ready/.test(s.tip) && /^Replying to Ana\nPhoto/.test(s.bar),
     "F: with another message's menu still open, jump uses the menu it opened (" + JSON.stringify(s.bar) + ')',
   );
+  await ctx.close();
+});
+sim('F: post not opted in', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s;
   // not opted in: refused before anything happens
   await mode(p, {});
   let r = await bridge(p, 'post', row);
@@ -885,6 +1061,11 @@ async function posting(b) {
   );
   r = await bridge(p, 'post', Object.assign({}, row, { helperPost: 'true' }));
   ok(r && r.err === 'not-opted-in', 'F: post with helperPost:"true" (not the boolean) is refused too');
+  await ctx.close();
+});
+sim('F: post: bar names someone else', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // the "Replying to" bar names someone else: refused, nothing typed or sent
   await mode(p, {});
   r = await bridge(p, 'post', Object.assign({}, row, { to: 'Ben', helperPost: true }));
@@ -895,6 +1076,11 @@ async function posting(b) {
       JSON.stringify([r, s.bar]) +
       ')',
   );
+  await ctx.close();
+});
+sim('F: post: bar shows another message', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // the right person but a different message (snip doesn't match)
   await mode(p, {});
   r = await bridge(p, 'post', Object.assign({}, row, { snip: 'Message number 105 about', helperPost: true }));
@@ -905,6 +1091,11 @@ async function posting(b) {
       JSON.stringify(r && r.detail) +
       ')',
   );
+  await ctx.close();
+});
+sim('F: post: box already has text', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // a box that already holds text
   await mode(p, {});
   await p.evaluate(async () => {
@@ -920,6 +1111,11 @@ async function posting(b) {
       JSON.stringify(r) +
       ')',
   );
+  await ctx.close();
+});
+sim('F: post: shift+Enter taken as Enter', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // review #1: Messenger reads a scripted shift+Enter as Enter: the first line goes out. Never "nothing sent".
   await mode(p, { shiftsends: '1' });
   r = await bridge(p, 'post', Object.assign({}, row, { text: 'First line\nSecond line', helperPost: true }));
@@ -937,6 +1133,11 @@ async function posting(b) {
       JSON.stringify([r, s.sent]) +
       ')',
   );
+  await ctx.close();
+});
+sim('F: post: bar moves while typing', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // review #6: the reply bar moves to another message while typing: caught before Enter, nothing sent, all tidied
   await mode(p, { retarget: '1' });
   r = await bridge(p, 'post', Object.assign({}, row, { helperPost: true }));
@@ -947,6 +1148,11 @@ async function posting(b) {
       JSON.stringify(r) +
       ')',
   );
+  await ctx.close();
+});
+sim('F: post while a Reply link jumps', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // review #6: a jump from a page Reply link is running: post refuses instead of racing it
   await mode(p, {});
   await p.evaluate(() => {
@@ -960,6 +1166,11 @@ async function posting(b) {
     r && r.err === 'jump-running' && !r.entered && !s.sent.length && !s.box,
     'F: a page Reply link still jumping: post refuses with "jump-running", nothing typed (' + JSON.stringify(r) + ')',
   );
+  await ctx.close();
+});
+sim('F: a second post while one runs', { s: 18 }, async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s;
   // review #3: a second post while one runs: "post-running", never a second send; the first records its stage
   await mode(p, { trusted: '1' });
   const firstPost = p.evaluate(
@@ -996,6 +1207,11 @@ async function posting(b) {
       JSON.stringify([fp.stages, fp.post && fp.post.stage, fp.r && fp.r.err]) +
       ')',
   );
+  await ctx.close();
+});
+sim('F: post a multi-line reply', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // multi-line: paragraphs with shift+Enter between them, then Enter; returns sent and the new message id
   await mode(p, {});
   const text = 'First line\nSecond line\n\nFourth line, after a blank one';
@@ -1018,6 +1234,11 @@ async function posting(b) {
       JSON.stringify([r, s.sent]) +
       ')',
   );
+  await ctx.close();
+});
+sim('F: post to a photo-only message', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // a photo-only message: post goes through More actions as well
   await mode(p, {});
   r = await bridge(p, 'post', { mid: 'mid.$mock100', to: 'Ana', snip: '[photo]', text: 'Nice pack', helperPost: true });
@@ -1026,6 +1247,11 @@ async function posting(b) {
     r && r.sent === true && r.via === 'menu' && s.sent.length === 1 && s.sent[0].to === 'mid.$mock100',
     'F: post replies to a photo-only message through More actions (' + JSON.stringify(r) + ')',
   );
+  await ctx.close();
+});
+sim('F: Enter or line breaks not accepted', { s: 25 }, async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // Messenger ignores the helper's Enter (synthetic keys refused): nothing is sent, the text stays for a real Enter
   await mode(p, { trusted: '1' });
   r = await bridge(p, 'post', Object.assign({}, row, { helperPost: true }));
@@ -1065,6 +1291,11 @@ async function posting(b) {
       JSON.stringify(r) +
       ')',
   );
+  await ctx.close();
+});
+sim('F: outbox.md call 1, composer not focused', async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s, r;
   // (c) outbox.md's call 1 when the composer isn't focused yet: Lexical needs a moment after focus before it takes text
   const call1 = [
     ...fs.readFileSync(D + 'plugin/skills/refresh/references/outbox.md', 'utf8').matchAll(/```js\n([\s\S]*?)```/g),
@@ -1080,6 +1311,11 @@ async function posting(b) {
       JSON.stringify([r, s.box]) +
       ')',
   );
+  await ctx.close();
+});
+sim('F: a URL hash never posts', { s: 13 }, async b => {
+  const { ctx, p, state, waitTip, row } = await freshF(b);
+  let s;
   // nothing but the bridge command can post: not a link or URL hash, which only ever opens Reply
   await mode(p, {});
   await p.goto(URL + '#mcjump=' + encodeURIComponent('mid.$mock110') + '&post=1&text=hi&helperPost=true');
@@ -1099,4 +1335,61 @@ async function posting(b) {
       ')',
   );
   await ctx.close();
+});
+
+/* ---------- the runner: the cases above, SIM_JOBS at a time, each case's lines printed together when it ends ---------- */
+const JOBS = Math.max(1, +process.env.SIM_JOBS || Math.max(4, 3 * os.cpus().length));
+function pick(only) {
+  if (!only) return CASES;
+  const letters = /^[A-Z]+$/.test(only);
+  const words = only.split(',').filter(Boolean);
+  const want = new Set(CASES.filter(c => (letters ? only.includes(c.name[0]) : words.some(w => c.name.includes(w)))));
+  for (const c of [...want]) for (const n of c.after) want.add(CASES.find(x => x.name === n));
+  return CASES.filter(c => want.has(c));
 }
+async function main() {
+  const t0 = Date.now();
+  /* a promise a case left behind failing later fails the run, without taking the other cases' held lines with it */
+  process.on('unhandledRejection', e => {
+    console.log('FAIL unhandled rejection: ' + ((e && e.stack) || e));
+    process.exitCode = 1;
+  });
+  const cases = pick(process.env.SIM_ONLY);
+  const b = await chromium.launch();
+  let free = JOBS;
+  const waiting = [];
+  const take = () => (free > 0 ? (free--, Promise.resolve()) : new Promise(r => waiting.push(r)));
+  const give = () => (waiting.length ? waiting.shift()() : free++);
+  const done = {};
+  /* longest first, so the slowest cases don't start last; a case with "after" queues once those have ended */
+  for (const c of cases.slice().sort((x, y) => y.s - x.s))
+    done[c.name] = (async () => {
+      await Promise.all(c.after.map(n => done[n]));
+      await take();
+      const lines = [];
+      const start = Date.now();
+      const secs = () => ((Date.now() - start) / 1000).toFixed(1) + ' s';
+      const slow = setInterval(() => console.log('... ' + c.name + ' still running (' + secs() + ')'), 120000);
+      try {
+        await LINES.run(lines, () => c.fn(b));
+      } catch (e) {
+        lines.push('FAIL ' + c.name + ' crashed: ' + ((e && e.stack) || e));
+        process.exitCode = 1;
+      }
+      clearInterval(slow);
+      give();
+      console.log('--- ' + c.name + ' (' + secs() + ')\n' + lines.join('\n'));
+    })();
+  await Promise.all(Object.values(done));
+  if (SHARED.cap1 && SHARED.cap2 && SHARED.cap3)
+    fs.writeFileSync(D + 'tests/out/sim_caps.json', JSON.stringify([SHARED.cap1, SHARED.cap2, SHARED.cap3]));
+  if (SHARED.first && SHARED.backfill && SHARED.multi) {
+    const { first, backfill, multi } = SHARED;
+    fs.writeFileSync(D + 'tests/out/sim_cap_photos.json', JSON.stringify({ first, backfill, multi }));
+  }
+  await b.close();
+  console.log(
+    'sim: ' + cases.length + ' cases in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s, ' + JOBS + ' at a time',
+  );
+}
+main();
