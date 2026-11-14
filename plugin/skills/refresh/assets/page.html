@@ -2855,28 +2855,80 @@
     if (lk) return lk[1] === "c" && run.includes(lk[0]);
     return !m.r && !(T && i <= (T.to ?? -1));
   }
-  function flatRows(list, into, divider) {
-    let run = [];
-    const flush = () => {
-      if (run.length)
-        into.append(
-          run.length > 1 ? blockOf(run, (i, pos) => msgRow(S.byI.get(i), null, false, pos)) : msgRow(S.byI.get(run[0])),
-        );
-      run = [];
-    };
+  /* the runs of a timeline: {run: [numbers]} per block or single row, {d} for a divider before the message it returns */
+  function flatRuns(list, divider) {
+    const items = [];
+    let run = null;
     list.forEach(m => {
       const d = divider && divider(m);
       if (d) {
-        flush();
-        into.append(d);
+        items.push({ d });
+        run = null;
       }
-      if (run.length && joinsFlat(m.i, run)) run.push(m.i);
-      else {
-        flush();
-        run = [m.i];
-      }
+      if (run && joinsFlat(m.i, run)) run.push(m.i);
+      else items.push({ run: (run = [m.i]) });
     });
-    flush();
+    return items;
+  }
+  function drawRuns(items, into) {
+    items.forEach(x =>
+      into.append(
+        x.d ||
+          (x.run.length > 1
+            ? blockOf(x.run, (i, pos) => msgRow(S.byI.get(i), null, false, pos))
+            : msgRow(S.byI.get(x.run[0]))),
+      ),
+    );
+  }
+  function flatRows(list, into, divider) {
+    drawRuns(flatRuns(list, divider), into);
+  }
+  /* F15: a day's rows added to rows already drawn (in into, after or before edge), as one flatRows pass over both
+     draws them: a run of bubbles across the boundary (11:59 PM and 12:00 AM) is one block either way, so a later full
+     redraw moves nothing. Added above, the rows below the boundary are drawn again up to the first that starts a run
+     of its own (from there both passes agree); added below, the last row above it is drawn again with the day. */
+  const rowNums = e =>
+    !e
+      ? null
+      : e.matches(".msg[id]")
+        ? [+e.id.slice(1)]
+        : e.matches(".grp")
+          ? [...e.querySelectorAll(":scope > .msg[id]")].map(x => +x.id.slice(1))
+          : null;
+  function flatAdd(into, add, dir, divider, edge) {
+    const f = document.createDocumentFragment();
+    if (dir < 0) {
+      const items = flatRuns(add, divider);
+      let run = items.length ? items[items.length - 1].run : null;
+      let next = edge ? edge.nextElementSibling : into.firstElementChild;
+      for (let ids = rowNums(next); run && ids && joinsFlat(ids[0], run); ids = rowNums(next)) {
+        ids.forEach(i => {
+          if (joinsFlat(i, run)) run.push(i);
+          else items.push({ run: (run = [i]) });
+        });
+        const gone = next;
+        next = next.nextElementSibling;
+        gone.remove();
+      }
+      drawRuns(items, f);
+      if (edge) edge.after(f);
+      else into.prepend(f);
+      return;
+    }
+    const prev = edge ? edge.previousElementSibling : into.lastElementChild;
+    const ids = rowNums(prev);
+    let list = add;
+    if (ids && add.length && !(divider && divider(add[0])) && joinsFlat(add[0].i, ids)) {
+      list = ids.map(i => S.byI.get(i)).concat(add);
+      prev.remove();
+    }
+    /* the rows drawn again already have their divider above them */
+    drawRuns(
+      flatRuns(list, m => (m.i >= add[0].i && divider ? divider(m) : null)),
+      f,
+    );
+    if (edge) edge.before(f);
+    else into.append(f);
   }
   /* B40: when threading put a reply in a new conversation, or the conversation's start is outside the window, the
    message it answers is shown first, so the conversation says what it's about. */
@@ -4062,6 +4114,14 @@
     winOpen.k = { T, R, s };
     return s;
   }
+  /* the sticky toolbar sits under the tabs, whose height can change after load (a late font, a turned phone) */
+  function setNavH() {
+    const nav = document.querySelector("nav.tabs");
+    document.documentElement.style.setProperty("--navh", (nav ? nav.offsetHeight : 0) + "px");
+  }
+  if (typeof ResizeObserver === "function" && document.querySelector("nav.tabs"))
+    new ResizeObserver(setNavH).observe(document.querySelector("nav.tabs"), { box: "border-box" });
+  else addEventListener("resize", setNavH);
   let edgeIO = null;
   function watchEdges() {
     if (edgeIO) edgeIO.disconnect();
@@ -4101,8 +4161,7 @@
       bot.append(b);
       box.append(bot);
     }
-    const nav = document.querySelector("nav.tabs");
-    document.documentElement.style.setProperty("--navh", (nav ? nav.offsetHeight : 0) + "px");
+    setNavH();
     const n = r.b - r.a + 1,
       mode = box.dataset.mode;
     let s = null;
@@ -4144,11 +4203,9 @@
     const add = S.msgs.slice(x, y + 1);
     const mode = box.dataset.mode;
     if (mode === "flat") {
-      const f = document.createDocumentFragment();
       const ws = windowStart();
-      flatRows(add, f, m => (m.i === ws + 1 ? el("div", "divider", "Catch-up window starts") : null));
-      if (dir < 0) box.querySelector(":scope > .edge.top").after(f);
-      else box.querySelector(":scope > .edge.bot").before(f);
+      const div = m => (m.i === ws + 1 ? el("div", "divider", "Catch-up window starts") : null);
+      flatAdd(box, add, dir, div, box.querySelector(":scope > .edge." + (dir < 0 ? "top" : "bot")));
     } else if (mode === "conv") convStep(add, dir);
     else renderMessages(); /* replies matched by quote (no stored threading): the span drawn again */
     const act = document.activeElement;
@@ -4205,11 +4262,7 @@
       else box.append(d);
       return;
     }
-    const f = document.createDocumentFragment();
-    flatRows(loose, f);
-    const t = rest.querySelector(":scope > .msgs");
-    if (dir < 0) t.prepend(f);
-    else t.append(f);
+    flatAdd(rest.querySelector(":scope > .msgs"), loose, dir, null, null);
     restCount(rest, +rest.dataset.n + loose.length);
   }
   function restCount(d, n) {

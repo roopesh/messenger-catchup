@@ -7226,6 +7226,137 @@ async function olderByDay() {
       'F15 O9: in dark mode the start line is muted and the toolbar dark ' + JSON.stringify(c),
     );
   });
+
+  /* O10: a run of bubbles across midnight, where one loaded day meets the next, is one block whether the day was added by
+     scrolling or drawn in a full redraw: Ana at 11:58 and 11:59 PM, then 12:00 and 12:01 AM (added above); Cy the same
+     across the next midnight (added below, a date range with an end). In the timeline and in "Not grouped yet". */
+  const days = ['2026-10-05', '2026-10-06', '2026-10-07'],
+    dow = ['Mon', 'Tue', 'Wed'];
+  const mid = [];
+  const say = (k, h, mi, f) =>
+    mid.push(
+      mk(mid.length, {
+        t: dow[k] + ' ' + (h % 12 || 12) + ':' + String(mi).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM'),
+        d: days[k],
+        f,
+        b: 'bubble ' + mid.length,
+      }),
+    );
+  for (let k = 0; k < 3; k++) {
+    if (k === 1) [0, 1].forEach(mi => say(1, 0, mi, 'Ana'));
+    if (k === 2) [0, 1].forEach(mi => say(2, 0, mi, 'Cy'));
+    for (let j = 0; j < 10; j++) say(k, 8 + j, 0, j % 2 ? 'Dee' : 'Ben');
+    if (k === 0) [58, 59].forEach(mi => say(0, 23, mi, 'Ana'));
+    if (k === 1) [58, 59].forEach(mi => say(1, 23, mi, 'Cy'));
+  }
+  /* the rows of the timeline and of "Not grouped yet": each block or single row as its message numbers */
+  const shape = p =>
+    p.evaluate(() =>
+      [...document.querySelectorAll('#msgs > .grp, #msgs > .msg[id], #msgs .msgs > .grp, #msgs .msgs > .msg[id]')]
+        .map(e => (e.id ? e.id : [...e.querySelectorAll(':scope > .msg[id]')].map(x => x.id).join('+')))
+        .join(' '),
+    );
+  const midOpen = async (meta, threaded) => {
+    const p = await open(SEED(), PAGE);
+    OP.push(p);
+    await paste(p, JSON.stringify(cap(mid)));
+    await p.evaluate(
+      ([meta, th]) => {
+        __rt.write('meta/chat', Object.assign({}, __rt.get('meta/chat'), meta));
+        /* one conversation on the middle day, so the rest go to "Not grouped yet" */
+        if (th) __rt.write('threading/current', { convs: [th], links: {}, to: -1, note: '' });
+        location.hash = '#messages';
+      },
+      [meta, threaded ? { id: 'plans', title: 'Plans', members: [16, 17] } : null],
+    );
+    await until(p, () => S.meta && S.meta.markerMode && S.msgs.length === 38);
+    await p.waitForTimeout(200);
+    if (!threaded) await p.click('#lay-flat');
+    else await p.click('#lay-thread');
+    await p.click('#msg-all');
+    if (threaded) await p.evaluate(() => (document.querySelector('details.conv[data-conv="_rest"]').open = true));
+    /* scroll to whichever end still has a day to load */
+    for (let k = 0; k < 6; k++) {
+      const more = await p.evaluate(() => {
+        const t = document.querySelector('#msgs > .edge.top.more'),
+          b = document.querySelector('#msgs > .edge.bot.more');
+        if (t) scrollTo(0, 0);
+        else if (b) scrollTo(0, document.documentElement.scrollHeight);
+        return !!(t || b);
+      });
+      if (!more) break;
+      await p.waitForTimeout(300);
+    }
+    const inc = await shape(p);
+    await p.evaluate(() => renderMessages());
+    return { p, inc, full: await shape(p) };
+  };
+  await ocase('O10', async () => {
+    const res = [];
+    for (const threaded of [false, true]) {
+      const up = await midOpen({ markerMode: 'caught', caughtUpI: 25 }, threaded);
+      const down = await midOpen(
+        { markerMode: 'time', markerFrom: days[1] + 'T00:00', markerTo: days[1] + 'T23:59' },
+        threaded,
+      );
+      res.push(up, down);
+      ok(
+        up.inc === up.full && / m10\+m11\+m12\+m13 /.test(' ' + up.full + ' '),
+        'F15 O10: ' +
+          (threaded ? '"Not grouped yet"' : 'the timeline') +
+          ': a day added above joins the run across midnight as a full redraw does (#10–#13) [' +
+          up.inc +
+          '] vs [' +
+          up.full +
+          ']',
+      );
+      ok(
+        down.inc === down.full && / m24\+m25\+m26\+m27 /.test(' ' + down.full + ' '),
+        'F15 O10: ' +
+          (threaded ? '"Not grouped yet"' : 'the timeline') +
+          ': a day added below joins the run across midnight as a full redraw does (#24–#27) [' +
+          down.inc +
+          '] vs [' +
+          down.full +
+          ']',
+      );
+    }
+    ok(
+      res.every(r => !r.p.errors.length),
+      'F15 O10: no page errors ' + JSON.stringify(res.map(r => r.p.errors)),
+    );
+  });
+
+  /* O11: the toolbar stays right under the tabs when their height changes after it first stuck (a late font, a turn of
+     the phone) */
+  await ocase('O11', async () => {
+    const n = 1500;
+    const { p } = await oopen(n, () => ({ markerMode: 'caught', caughtUpI: n - 50 }));
+    await p.click('#msg-all');
+    await p.waitForTimeout(400);
+    const gap = () =>
+      p.evaluate(() => {
+        scrollTo(0, 2000);
+        return Math.round(
+          document.querySelector('#v-messages .toolbar').getBoundingClientRect().top -
+            document.querySelector('nav.tabs').getBoundingClientRect().bottom,
+        );
+      });
+    const g0 = await gap();
+    await p.evaluate(() => document.querySelectorAll('nav.tabs a').forEach(a => (a.style.fontSize = '1.8rem')));
+    await p.waitForTimeout(300);
+    const g1 = await gap();
+    await p.evaluate(() => document.querySelectorAll('nav.tabs a').forEach(a => (a.style.fontSize = '')));
+    await p.setViewportSize({ width: 700, height: 800 });
+    await p.waitForTimeout(300);
+    const g2 = await gap();
+    ok(
+      [g0, g1, g2].every(g => Math.abs(g) <= 2),
+      'F15 O11: the sticky toolbar stays under the tabs as they grow and shrink back (gaps ' +
+        [g0, g1, g2].join(', ') +
+        ' px)',
+    );
+  });
 }
 
 const SECTIONS = {
