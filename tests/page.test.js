@@ -150,6 +150,14 @@ function runtime(seed) {
         writes.push({ p, op: 'update', v: clone(o) });
         notify(p);
       },
+      /* idempotent, as the real one is (db.d.ts DocumentRef.delete) */
+      delete: async () => {
+        failIf(p, 'delete');
+        store.delete(p);
+        bump(p);
+        writes.push({ p, op: 'delete' });
+        notify(p);
+      },
       acquire: async o => {
         const now = Date.now(),
           l = leases.get(p);
@@ -254,6 +262,7 @@ function runtime(seed) {
     },
   };
   if (opts.tune) window.__mcImportTune = opts.tune; /* the page's photo timings, shortened (R2 tests) */
+  if (opts.undoMs) window.__mcUndoMs = opts.undoMs; /* the saved questions' undo delay, shortened (F26 tests) */
   Object.entries(opts.leases || {}).forEach(([p, l]) => leases.set(p, l)); /* a lease another tab left behind */
   /* The real cap (sample.d.ts, SampleLimits.maxPromptBytes): every turn's content together, in UTF-8 bytes; over it the
      call rejects with prompt_too_large and nothing is sent. opts.promptMax is what limits() reports, opts.enforce what
@@ -7905,6 +7914,337 @@ async function crossReply() {
     }, t);
     ok(!before && shown, 'F23: the line on #' + i + ' opens #' + t + ' (10 days back, not loaded) by loading its day');
     ok(p.errors.length === 0, 'F23 older: no page errors ' + JSON.stringify(p.errors));
+/* ---------- saved questions: Remove, Undo and Clear all on the Ask tab (F26) ---------- */
+const QA_MARKUP = '<img src=x onerror="window.__x=1"><b>Bold?</b>';
+const QA_UNDO = 400;
+const QA_DOCS = () => ({
+  'qa/q1': { q: 'Who sold a stove?', a: 'Ben did [#1].', at: '2026-11-10T10:00:00.000Z', scope: 'window', toI: 19 },
+  'qa/q2': { q: QA_MARKUP, a: 'Ana asked [#2].', at: '2026-11-11T10:00:00.000Z', scope: 'all', toI: 19 },
+  'qa/q3': { q: 'What did Cy want?', a: 'A tent [#3].', at: '2026-11-12T10:00:00.000Z', scope: 'window', toI: 19 },
+});
+/* every case counts the dialogs its page opens; the page must never open one */
+let qaDialogs = 0;
+async function qopen(ctx, docs = QA_DOCS()) {
+  const seed = hseed(hmsgs(20), { meta: { markerMode: null }, docs, opts: { undoMs: QA_UNDO } });
+  const p = await open(seed, PAGE, ctx);
+  HP.push(p);
+  p.on('dialog', d => {
+    qaDialogs++;
+    d.dismiss().catch(() => {});
+  });
+  await until(p, () => S.msgs.length === 20 && document.querySelectorAll('#qa-list .item, #qa-list details').length);
+  await p.evaluate(() => (location.hash = '#ask'));
+  return p;
+}
+/* what the list, the undo line and the store show */
+const qstate = p =>
+  p.evaluate(() => ({
+    list: [...document.querySelectorAll('#qa-list .item.qa')].map(c => c.dataset.id),
+    stored: Object.keys(__rt.all())
+      .filter(k => /^qa\//.test(k))
+      .map(k => k.slice(3))
+      .sort(),
+    undo: document.getElementById('qa-undo') ? document.getElementById('qa-undo').textContent : null,
+    clear: !!document.getElementById('qa-clear') && !document.getElementById('qa-clear').hidden,
+    dels: __rt.writes.filter(w => w.op === 'delete').map(w => w.p),
+    empty: /No questions yet/.test(document.getElementById('qa-list').textContent),
+  }));
+const qclick = (p, id) => p.click('#qa-list .item.qa[data-id="' + id + '"] .qa-rm', { timeout: 2000 });
+const qundo = (p, k = 0) => p.click('#qa-undo p:nth-child(' + (k + 1) + ') button', { timeout: 2000 });
+async function savedQuestions() {
+  /* Q1: Remove (from the keyboard) hides it at once, shows "Removed … · Undo" in a live region, then deletes qa/<id> */
+  await hcase('Q1', async () => {
+    const p = await qopen();
+    const a11y = await p.evaluate(() => {
+      const u = document.getElementById('qa-undo');
+      const b = document.querySelector('#qa-list .item.qa[data-id="q1"] .qa-rm');
+      return {
+        live: u.getAttribute('aria-live') === 'polite' && u.getAttribute('role') === 'status',
+        label: b.tagName === 'BUTTON' && b.getAttribute('aria-label') === 'Remove the question “Who sold a stove?”',
+        text: b.textContent,
+      };
+    });
+    await p.focus('#qa-list .item.qa[data-id="q1"] .qa-rm');
+    await p.keyboard.press('Enter');
+    await sleep(50);
+    const now = await qstate(p);
+    const focus = await p.evaluate(() => document.activeElement.textContent);
+    ok(
+      a11y.live &&
+        a11y.label &&
+        a11y.text === 'Remove' &&
+        now.list.join() === 'q3,q2' &&
+        now.stored.join() === 'q1,q2,q3' &&
+        now.undo === 'Removed “Who sold a stove?” · Undo' &&
+        focus === 'Undo' &&
+        !now.dels.length,
+      'saved Q1: Remove (a labelled button, pressed with Enter) hides the question at once, keeps qa/q1 for now, says "' +
+        now.undo +
+        '" in a polite live region and moves focus to Undo (' +
+        JSON.stringify({ a11y, now, focus }) +
+        ')',
+    );
+    await sleep(QA_UNDO + 300);
+    const later = await qstate(p);
+    ok(
+      later.list.join() === 'q3,q2' && later.stored.join() === 'q2,q3' && later.dels.join() === 'qa/q1' && !later.undo,
+      'saved Q1: after the delay qa/q1 is deleted, the list stays without it and the undo line is gone (' +
+        JSON.stringify(later) +
+        ')',
+    );
+  });
+
+  /* Q2: Undo within the delay keeps the question in the list and in qa */
+  await hcase('Q2', async () => {
+    const p = await qopen();
+    await qclick(p, 'q3');
+    await sleep(50);
+    await p.keyboard.press('Enter'); /* focus is on Undo */
+    await sleep(50);
+    const back = await qstate(p);
+    const focus = await p.evaluate(() => document.activeElement.closest('.item.qa')?.dataset.id ?? null);
+    await sleep(QA_UNDO + 300);
+    const later = await qstate(p);
+    ok(
+      back.list.join() === 'q3,q2,q1' &&
+        !back.undo &&
+        focus === 'q3' &&
+        later.list.join() === 'q3,q2,q1' &&
+        later.stored.join() === 'q1,q2,q3' &&
+        !later.dels.length,
+      'saved Q2: Undo (Enter) brings the question back at once, focus on it, and after the delay nothing was deleted (' +
+        JSON.stringify({ back, focus, later }) +
+        ')',
+    );
+  });
+
+  /* Q3: several removals in a row each have their own Undo and timer */
+  await hcase('Q3', async () => {
+    const p = await qopen();
+    await qclick(p, 'q1');
+    await qclick(p, 'q3');
+    await sleep(50);
+    const two = await qstate(p);
+    await qundo(p, 0); /* q1's line */
+    await sleep(QA_UNDO + 300);
+    const later = await qstate(p);
+    ok(
+      two.list.join() === 'q2' &&
+        /Removed “Who sold a stove\?” · Undo/.test(two.undo) &&
+        /Removed “What did Cy want\?” · Undo/.test(two.undo) &&
+        !two.clear &&
+        later.list.join() === 'q2,q1' &&
+        later.stored.join() === 'q1,q2' &&
+        later.dels.join() === 'qa/q3',
+      'saved Q3: two removals in a row show two Undo lines; undoing the first keeps q1 and only qa/q3 is deleted; Clear all hides with one question left (' +
+        JSON.stringify({ two, later }) +
+        ')',
+    );
+  });
+
+  /* Q4: Clear all (2 or more saved) hides every question with one Undo; Undo restores them all; again deletes them */
+  await hcase('Q4', async () => {
+    const p = await qopen();
+    const label = await p.evaluate(() => document.getElementById('qa-clear').getAttribute('aria-label'));
+    const before = await qstate(p);
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(50);
+    const cleared = await qstate(p);
+    await qundo(p);
+    await sleep(QA_UNDO + 300);
+    const undone = await qstate(p);
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(QA_UNDO + 400);
+    const gone = await qstate(p);
+    ok(
+      before.clear &&
+        label === 'Clear all 3 saved questions' &&
+        cleared.list.length === 0 &&
+        cleared.empty &&
+        cleared.undo === 'Removed 3 questions · Undo' &&
+        !cleared.clear &&
+        cleared.stored.length === 3,
+      'saved Q4: Clear all (labelled "' +
+        label +
+        '") hides all three at once and says "' +
+        cleared.undo +
+        '" (' +
+        JSON.stringify({ before, cleared }) +
+        ')',
+    );
+    ok(
+      undone.list.join() === 'q3,q2,q1' &&
+        undone.stored.length === 3 &&
+        !undone.dels.length &&
+        undone.clear &&
+        gone.list.length === 0 &&
+        gone.stored.length === 0 &&
+        gone.dels.slice().sort().join() === 'qa/q1,qa/q2,qa/q3' &&
+        !gone.undo,
+      'saved Q4: Undo restores all three; Clear all again deletes every qa document after the delay (' +
+        JSON.stringify({ undone, gone }) +
+        ')',
+    );
+  });
+
+  /* Q5: a failed delete brings the question back with a short line */
+  await hcase('Q5', async () => {
+    const p = await qopen();
+    await p.evaluate(() => __rt.fails.push({ p: 'qa/q1', op: 'delete' }));
+    await qclick(p, 'q1');
+    await sleep(QA_UNDO + 300);
+    const s = await qstate(p);
+    ok(
+      s.list.join() === 'q3,q2,q1' &&
+        s.stored.join() === 'q1,q2,q3' &&
+        s.undo === "Couldn't remove “Who sold a stove?”. It's back in the list.",
+      'saved Q5: when the delete fails the question is back in the list with "' +
+        s.undo +
+        '" (' +
+        JSON.stringify(s) +
+        ')',
+    );
+    /* and a Clear all where one delete fails puts back just that one */
+    await p.evaluate(() => {
+      __rt.fails.push({ p: 'qa/q2', op: 'delete' });
+      document.querySelectorAll('#qa-undo p').forEach(x => x.remove());
+    });
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(QA_UNDO + 400);
+    const c = await qstate(p);
+    ok(
+      c.list.join() === 'q2' &&
+        c.stored.join() === 'q2' &&
+        c.undo === "Couldn't remove 1 of 3 questions. They're back in the list.",
+      'saved Q5: a Clear all with one failed delete puts back just that question, saying "' +
+        c.undo +
+        '" (' +
+        JSON.stringify(c) +
+        ')',
+    );
+  });
+
+  /* Q6: markup in a saved question shows as literal text, in the list, the Remove label and the undo line */
+  await hcase('Q6', async () => {
+    const p = await qopen();
+    const shown = await p.evaluate(() => ({
+      h3: document.querySelector('#qa-list .item.qa[data-id="q2"] h3').textContent,
+      label: document.querySelector('#qa-list .item.qa[data-id="q2"] .qa-rm').getAttribute('aria-label'),
+    }));
+    await qclick(p, 'q2');
+    await sleep(50);
+    const s = await qstate(p);
+    const ran = await p.evaluate(() => ({
+      x: window.__x,
+      img: document.querySelectorAll('#qa-list img, #qa-undo img').length,
+      b: document.querySelectorAll('#qa-list b, #qa-undo b').length,
+    }));
+    ok(
+      shown.h3.startsWith(QA_MARKUP) &&
+        shown.label.startsWith('Remove the question “<img src=x') &&
+        s.undo.startsWith('Removed “<img src=x onerror=') &&
+        ran.x === undefined &&
+        !ran.img &&
+        !ran.b,
+      'saved Q6: markup in a question shows as literal text in the list, the Remove label and the undo line, and runs nothing (' +
+        JSON.stringify({ shown, undo: s.undo, ran }) +
+        ')',
+    );
+  });
+
+  /* Q7: Look deeper on an answer still works after a saved question is removed */
+  await hcase('Q7', async () => {
+    const { p } = await deepOpen({ undoMs: QA_UNDO });
+    await until(p, () => document.querySelectorAll('#qa-list .item.qa').length === 1);
+    await p.evaluate(() =>
+      __rt.write('qa/z1', {
+        q: 'An older question',
+        a: 'Old answer [#3].',
+        at: '2026-10-01T10:00:00.000Z',
+        scope: 'window',
+      }),
+    );
+    await until(p, () => document.querySelectorAll('#qa-list .item.qa').length === 2);
+    const kept = await p.evaluate(() => document.querySelector('#qa-list .item.qa').dataset.id);
+    await qclick(p, 'z1');
+    await sleep(QA_UNDO + 300);
+    await scriptJson(p, [{ stretches: [{ from: 100, to: 160, focus: 130, why: 'the stove sale' }] }]);
+    const d = await deepPress(p);
+    await sleep(200);
+    const s = await p.evaluate(() =>
+      Object.entries(__rt.all())
+        .filter(([k]) => /^qa\//.test(k))
+        .map(([k, v]) => k.slice(3) + ':' + v.scope),
+    );
+    const list = await qstate(p);
+    ok(
+      d.json === 1 &&
+        d.plain === 1 &&
+        d.hidden &&
+        /^Looked deeper/.test(d.status) &&
+        !s.some(x => x.startsWith('z1:')) &&
+        s.includes(kept + ':all') &&
+        s.some(x => /:deeper$/.test(x)) &&
+        list.list.length === 2 &&
+        list.list.includes(kept),
+      'saved Q7: with a saved question removed, Look deeper on the remaining answer still reads and saves its answer (' +
+        JSON.stringify({ status: d.status, s, list: list.list }) +
+        ')',
+    );
+  });
+
+  /* Q8: at 390 px the list, Remove links, Clear all and the undo line fit the width */
+  await hcase('Q8', async () => {
+    const docs = QA_DOCS();
+    docs['qa/q4'] = {
+      q: 'A long question about a stove, a tent, a pack and a water filter that goes on and on ' + 'x'.repeat(80),
+      a: 'Long answer '.repeat(40),
+      at: '2026-11-13T10:00:00.000Z',
+      scope: 'window',
+    };
+    const p = await qopen({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, docs);
+    await p.evaluate(() => document.querySelector('#qa-list .item.qa[data-id="q4"] details').setAttribute('open', ''));
+    await qclick(p, 'q1');
+    await sleep(50);
+    const fit = await p.evaluate(() => {
+      const r = s => Math.max(0, ...[...document.querySelectorAll(s)].map(x => x.getBoundingClientRect().right));
+      return {
+        sw: document.documentElement.scrollWidth,
+        iw: innerWidth,
+        rm: r('#qa-list .qa-rm'),
+        clear: r('#qa-clear'),
+        undo: r('#qa-undo p'),
+        items: r('#qa-list .item.qa'),
+        n: document.querySelectorAll('#qa-list .qa-rm').length,
+      };
+    });
+    ok(
+      fit.n === 3 && fit.sw <= fit.iw && Math.max(fit.rm, fit.clear, fit.undo, fit.items) <= fit.iw && fit.undo > 0,
+      'saved Q8: at 390 px the saved questions, their Remove links, Clear all and the undo line fit, no sideways scroll (' +
+        JSON.stringify(fit) +
+        ')',
+    );
+  });
+
+  /* Q9: removing, undoing and clearing never opens a dialog, here or in the cases above */
+  await hcase('Q9', async () => {
+    const p = await qopen();
+    await p.evaluate(() => {
+      window.__dlg = [];
+      ['alert', 'confirm', 'prompt'].forEach(f => (window[f] = () => __dlg.push(f)));
+    });
+    await qclick(p, 'q1');
+    await qundo(p);
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(QA_UNDO + 400);
+    const s = await qstate(p);
+    const dlg = await p.evaluate(() => __dlg);
+    ok(
+      s.stored.length === 0 && s.dels.length === 3 && !dlg.length && qaDialogs === 0,
+      'saved Q9: Remove, Undo and Clear all never call alert, confirm or prompt, here or in Q1–Q8 (' +
+        JSON.stringify({ dlg, qaDialogs, dels: s.dels }) +
+        ')',
+    );
   });
 }
 
@@ -7935,6 +8275,7 @@ const SECTIONS = {
   longRanges2,
   olderByDay,
   crossReply,
+  savedQuestions,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1
