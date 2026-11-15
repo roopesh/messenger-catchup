@@ -21,6 +21,12 @@ The owner's standing rule. No exceptions for "small" changes, docs or tests.
   - Keep both minor parts one digit (1.9 → 2.0, never 1.10). Read as decimals, 1.1 and 1.10 look equal. A test enforces it.
   - Note either change in the changelog entry.
 
+## Page changes: check them on the real host
+The page tests run the page as its own document in Chromium with a stand-in runtime. That isn't claude.ai: the artifact viewer handles links, navigation and storage its own way (v1.26.1: tab clicks did nothing there while every test passed).
+- The stand-in imitates what's known of the viewer (a same-page `#hash` link doesn't reach the page). When the real host turns out to behave differently, make the stand-in do the same, so the whole suite runs under it.
+- Before calling a page release done, open it on claude.ai: publish the PR's `page.html` to a scratch artifact of your own (never the owner's page), open it in Chrome, and click through every tab and every new or changed control. Say in the PR what you checked.
+- "Released" isn't "working on the owner's page": their page updates at their next refresh. Check it then (`meta/chat.pageVersion`, a look at the page) before saying it works for them.
+
 ## Other rules
 - The repo is **public**. Never commit real names, nicknames or message text from anyone's chat (code, tests, docs, commit messages, PR bodies). Use the mock cast (Ana, Ben, Cy, Dee, You).
 - Run `npm run fmt` before committing: Prettier for the page, helper and JS tests, and Ruff for Python. It also runs `npm run sync`, which regenerates the page's embedded copies of the helper. `npm test` starts with `fmt:check` and fails on unformatted files. One statement per line keeps merge conflicts down to edits that really overlap.

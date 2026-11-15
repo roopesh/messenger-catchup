@@ -6,7 +6,9 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 **The tabs switch again in claude.ai's artifact viewer** (found live on the owner's page). PATCH: a page fix. Page **`PAGE_VERSION` 3.2** (from 3.1); helper unchanged (2.1).
 
 ### Fixed
-- **Tab clicks did nothing.** The tabs switched only on `hashchange`. In claude.ai's artifact viewer, a click on a tab link put the `#hash` on the viewer's own address instead of the page's, so no `hashchange` reached the page and it stayed on Summary, whichever tab was clicked (the owner saw an empty By day tab). The tab links now switch in code, as message jumps already did (`history.pushState`, then `route()`), and Back works through `popstate`. Test: page `byDay` BD11, which takes `#hash` links away from the page the way the viewer does; it fails on 3.1.
+- **Tab clicks did nothing.** The tabs switched only on `hashchange`. In claude.ai's artifact viewer, a click on a tab link put the `#hash` on the viewer's own address instead of the page's, so no `hashchange` reached the page and it stayed on Summary, whichever tab was clicked (the owner saw an empty By day tab). The tab links now switch in code, as message jumps already did (`history.pushState`, then `route()`), and Back works through `popstate`. Test: page `byDay` BD11 clicks every tab and goes Back; it fails on 3.1.
+- **Why the tests missed it:** the stand-in runtime let `#hash` links navigate the page, which the real viewer doesn't. It now swallows them the way the viewer does, for every page test (`opts.hashLinks` restores the old behavior). Under it, the 3.1 page fails BD1 and BD11, the live bug; 3.2 passes the whole suite.
+- **CLAUDE.md:** page releases are checked on claude.ai itself before they're called done (a scratch artifact, every tab and new control), and on the owner's page after it updates.
 
 ### Changed
 - **Backlog:** F28 filed (rethink Views, to define with the owner). R12's note corrected: refreshes stayed on an old version because an older copy of the skill was uploaded to the owner's account, not because of the chain.

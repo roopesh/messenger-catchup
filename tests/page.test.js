@@ -369,6 +369,17 @@ function runtime(seed) {
     calls: () => calls,
     usage,
   };
+  /* Like claude.ai's artifact viewer, a same-page #hash link doesn't navigate the page (the viewer takes the hash onto its
+     own address), so no hashchange reaches it: every test runs with this unless opts.hashLinks (v1.26.1). */
+  if (!opts.hashLinks)
+    addEventListener(
+      'click',
+      e => {
+        const a = e.target && e.target.closest && e.target.closest('a[href^="#"]');
+        if (a) e.preventDefault();
+      },
+      true,
+    );
   window.claude = {
     use: async n =>
       ({ db: opts.noDb ? null : { doc, collection }, assets: opts.noAssets ? null : assets, sample })[n] || null,
