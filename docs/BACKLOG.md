@@ -24,6 +24,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F27 | P3 | feature | More views of the per-day digests beyond the By day tab: in the Messages tab's day headers, or a week's digests as a catch-up after time away |
+| F28 | P2 | feature | Rethink Views: collapsing or sub-tabs, saving and deleting views, and how they fit with By day (to define with the owner; not ready to build) |
 
 ---
 
@@ -79,6 +80,16 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Ask (owner, Nov 14):** besides a Messenger group chat, catch up with the posts in a Facebook group.
 - **How it differs:** a group is a feed of posts (text, photos, links), each with its own comment threads and reactions, at `facebook.com/groups/<id>`, not a single message log. The feed's default order isn't by time, posts and comments load lazily, and old posts get new comments, so "what's new since I last looked" means new posts **and** new comments on older ones. Claude in Chrome reads it from the owner's own logged-in Chrome, as for Messenger, read only.
 - **To design with the owner:** which groups; what counts as new; one page per group or groups on the chat's page (F1 is related); what the summary covers (posts, comment threads, deals in buy/sell groups, mentions); whether replying is in scope; how capture works (a helper mode for the group feed, sorted by new activity) and its markup risks (like R3).
+
+### F28 · P2 · Rethink Views (to define)
+- **The owner (Nov 14):** a great idea that works moderately well, but not great. Needs digging in to define before anything is built.
+- **What the owner raised:**
+  - **Collapsing:** views don't feel collapsible. Today a just-built view is drawn in full under the composer (`#view-out`), and saved views are `<details>` items further down the tab, newest first, mixed with method ideas and above "Notes from Claude". Find out what the owner sees as not collapsible.
+  - **Navigation:** collapsible views, sub-tabs, a dropdown, or something else.
+  - **Saving and deleting:** every built view is saved at once (`views/*`, `kind:"view"`), and there's no way to delete one or choose not to keep it. F26's Remove with Undo is a model.
+  - **By day (F24):** how views relate to the By day tab. A view could be scoped to a day or range, By day could be one built-in view, or the two could share navigation.
+- **Also to settle:** whether a view refreshes as new messages arrive or stays a snapshot, renaming, where method ideas and Notes from Claude belong, and what the Views tab is for next to Summary, Messages, By day and Ask.
+- **Next step:** a design conversation with the owner (questions first, then a short design), then a build plan.
 
 ### F27 · P3 · More views of the per-day digests
 - **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
