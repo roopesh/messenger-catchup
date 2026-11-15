@@ -8137,6 +8137,9 @@ async function crossReply() {
     }, t);
     ok(!before && shown, 'F23: the line on #' + i + ' opens #' + t + ' (10 days back, not loaded) by loading its day');
     ok(p.errors.length === 0, 'F23 older: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
 /* ---------- saved questions: Remove, Undo and Clear all on the Ask tab (F26) ---------- */
 const QA_MARKUP = '<img src=x onerror="window.__x=1"><b>Bold?</b>';
 const QA_UNDO = 400;

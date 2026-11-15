@@ -2,6 +2,22 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.26.0] - 2026-11-14
+**A By day tab for the digests, removing saved questions, a line for replies across conversations, and claims moved in one step** (BACKLOG F24, F26, F23, F21, C8, R9). MINOR: new page features and a refresh procedure change. Page **`PAGE_VERSION` 3.1** (from 3.0); helper unchanged (2.1).
+
+### Added
+- **By day tab (F24).** The page shows the per-day digests: one card per finished day, newest first, with its date, message count and bullets. Each bullet's message numbers open the message, as Ask's citations do (loading its day under Show older). Days still waiting for a digest are left out, with one quiet line saying which and why. 30 days at a time, with "Show N more days". Test: page section `byDay` (BD1–BD8, all fail on 3.0).
+- **Removing saved questions (F26).** Each question saved on the Ask tab has a quiet Remove link, and Clear all appears from 2 saved questions. Either hides them at once and shows "Removed … · Undo", announced to screen readers, for 6 seconds before deleting `qa/<id>`; a failed delete brings the question back with a short message. No confirm dialogs. `references/database.md` says the user can remove them, so Claude doesn't bring them back. The test stand-in gains `DocumentRef.delete`. Test: page section `savedQuestions` (Q1–Q9, all fail on 3.0).
+- **"↩ replying to" line (F23).** In the threaded views, a Messenger reply mid-conversation to a message in another conversation shows a short line above its bubble with the parent's sender and the start of its text (or [photo]). It opens the parent in its own conversation, loading its day under Show older. It replaces that row's reply link and quote. Guessed links (answers, continues), replies within the same conversation, and a conversation's first message (which already shows its parent, B40) get no line. Also in the Summary cards' "Show the thread". Test: page section `crossReply` (11 of 13 fail on 3.0; the other two are no-error checks).
+- **Claims moved in one step (F21).** `catchup.py relink` takes `bullets` and `dealEdit` with a `move`, with links, or on their own. A claim moved to its offer at the user's request gets its summary bullet and its deal `claims` entry in the same write, instead of at the next build. They get the build's checks, through the build's own code: refs in the right conversation after the move, the claim and status rules, no `dealEdit` `index` where a move changed that conversation's deals, and one `rev` on both `current` documents. `references/writing-the-build.md` (Claims, Moving a message) tells Claude to pass them together. Builds now refuse a bullet that isn't `[text, [refs]]` with a clear message. Test: `TestRelinkClaims` (5, all fail before).
+
+### Fixed
+- **Unclosed files (C8).** `tools/sync.py` and two tests closed their files only when garbage-collected, which printed "Exception ignored … ResourceWarning" in the Python suite. They use `with open(...)` now, and `TestNoUnclosedFiles` fails on any `open(...).read()` or `.write()` one-liner in the repo (it fails before).
+
+### Changed
+- **R9 closed:** the owner's 31 posted replies (8 to multi-word names) all passed the "Replying to …" bar check live.
+- **Backlog:** F21, F23, F24, F26, C8 and R9 removed; F27 filed (more digest views: in the Messages day headers, a week as a catch-up); an F23 live check added to L1.
+
 ## [1.25.1] - 2026-11-14
 **Update notices laid out as text again, and the backlog trimmed to open items** (BACKLOG B52, GitHub issue #43). PATCH: a page fix. Page **`PAGE_VERSION` 3.0** (from 2.9); helper unchanged (2.1).
 
