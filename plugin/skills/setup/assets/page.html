@@ -1732,7 +1732,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.1";
+  const PAGE_VERSION = "3.2";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -1860,6 +1860,16 @@
     if (typeof renderMessages === "function" && S.msgs.length) renderMessages();
   }
   addEventListener("hashchange", route);
+  addEventListener("popstate", route);
+  /* The tabs switch in code, as goMsg does: claude.ai's artifact viewer can take a link's #hash onto its own address
+     instead of the page's, and then hashchange never fires here and a tab click does nothing. */
+  document.querySelectorAll("nav a[data-tab]").forEach(a =>
+    a.addEventListener("click", e => {
+      e.preventDefault();
+      if (location.hash !== "#" + a.dataset.tab) history.pushState(null, "", "#" + a.dataset.tab);
+      route();
+    }),
+  );
   route();
 
   /* ---------- data helpers ---------- */
