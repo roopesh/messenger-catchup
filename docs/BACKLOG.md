@@ -23,7 +23,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
-| F24 | P3 | feature | Optional views of the per-day digests (F16), such as a "By day" tab; today only Ask reads them |
+| F27 | P3 | feature | More views of the per-day digests beyond the By day tab: in the Messages tab's day headers, or a week's digests as a catch-up after time away |
 
 ---
 
@@ -80,9 +80,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **How it differs:** a group is a feed of posts (text, photos, links), each with its own comment threads and reactions, at `facebook.com/groups/<id>`, not a single message log. The feed's default order isn't by time, posts and comments load lazily, and old posts get new comments, so "what's new since I last looked" means new posts **and** new comments on older ones. Claude in Chrome reads it from the owner's own logged-in Chrome, as for Messenger, read only.
 - **To design with the owner:** which groups; what counts as new; one page per group or groups on the chat's page (F1 is related); what the summary covers (posts, comment threads, deals in buy/sell groups, mentions); whether replying is in scope; how capture works (a helper mode for the group feed, sorted by new activity) and its markup risks (like R3).
 
-### F24 · P3 · Optional views of the per-day digests
-- **What:** since v1.25.0 (F16) each finished day has a few bullets citing its messages (`digests/m<YYYY-MM>`), but only Ask reads them. The owner wants other ways to use them recorded for later: a "By day" view (one card per day, newest first, each bullet opening its messages), digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
-- **Cost:** page only; the data is there (after the backfill, for every day).
+### F27 · P3 · More views of the per-day digests
+- **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
+- **Cost:** page only; the data is there.
 - **Trigger:** the owner asks.
 
 ## Live checks

@@ -900,7 +900,14 @@ class TestDigests(unittest.TestCase):
         db = in_skill("references", "database.md")
         line = re.search(r"^- `digests/m<YYYY-MM>`.*$", db, re.M)
         self.assertTrue(line)
-        for part in ("`{month, days:", "bullets:[{t, refs}]", "fromI", "toI", "the page's Ask reads them"):
+        for part in (
+            "`{month, days:",
+            "bullets:[{t, refs}]",
+            "fromI",
+            "toI",
+            "Ask sends them",
+            "the By day tab shows them",
+        ):
             self.assertIn(part, line.group(0))
         self.assertIn("`digests` (when present) `{n, from, to}`", db)
         self.assertIn("digests: P.digests", self.page)
