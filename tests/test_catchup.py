@@ -3288,6 +3288,123 @@ class TestDealIndexAfterMoves(unittest.TestCase):
         quiet(catchup.build, self.live.work, run2, p)
 
 
+class TestRelinkClaims(MoveEnv, unittest.TestCase):
+    """F21: `relink` takes `bullets` and `dealEdit` with a move, so a claim moved to its offer gets its bullet and its
+    `claims` entry in the same write, checked as a build checks them."""
+
+    CLAIM = {
+        "move": {"8": "sale"},
+        "relink": {"8": [0, "i"]},
+        "bullets": {"sale": [["Ben is in for the pack", [8, 9]]]},
+        "dealEdit": {"sale": {"addClaims": [{"i": 8, "who": "Ben"}]}},
+    }
+
+    def test_a_move_with_its_bullet_and_claim_lands_in_one_write(self):
+        live = small_live(self.t.name)
+        out, rrun = live_relink(live, self.CLAIM)
+        self.assertIn("MOVE 8 (with its Messenger replies 9) hike -> sale", out)
+        self.assertIn("relink ok: 1 change(s), 1 move(s), 1 bullet(s), 1 dealEdit(s)", out)
+        man = r(os.path.join(rrun, "out", "manifest.json"))
+        currents = [e["collection"] for bt in man["batches"] for e in bt if e["doc_id"] == "current"]
+        self.assertEqual(sorted(currents), ["summary", "threading"], "one write: both current documents, once")
+        write_manifest(live.db, os.path.join(rrun, "out"), live.seen)
+        t, s = live.db.merged()
+        self.assertEqual(t["rev"], s["rev"], "both current documents carry this write's rev")
+        self.assertNotIn("summaryRev", t)
+        self.assertEqual({c["id"]: c["members"] for c in t["convs"]}["sale"], [0, 1, 2, 3, 8, 9])
+        sale = next(c for c in s["convs"] if c["id"] == "sale")
+        self.assertEqual(sale["synopsis"][-1], {"t": "Ben is in for the pack", "refs": [8, 9]})
+        self.assertEqual(s["deals"][0]["claims"], [{"i": 8, "who": "Ben", "n": 1}])
+        # WORK follows, a fresh bootstrap reads back the same, and the next build's dealEdit "index" there is refused
+        self.assertEqual(
+            (t, s), tuple(r(os.path.join(live.work, "base", f + ".json")) for f in ("threading", "summary"))
+        )
+        self.assertEqual(r(os.path.join(live.work, "state.json"))["moved"], ["hike", "sale"])
+        live.bootstrap(os.path.join(self.t.name, "work2"))
+        self.assertEqual(r(os.path.join(self.t.name, "work2", "base", "summary.json")), s)
+
+    def test_bad_refs_and_claims_are_refused_with_nothing_written(self):
+        before = self.base()
+        run = os.path.join(self.t.name, "mrun")
+        for extra, why in (
+            ({"bullets": {"sale": [["Ben is in", [10]]]}}, "bullet ref not in conv"),  # #10 stays in hike
+            ({"bullets": {"sale": [["Ben is in", []]]}}, "a new bullet needs refs"),
+            (
+                {"bullets": {"sale": [["one two three four five six seven eight nine ten 11 12 13 14 15 16", [8]]]}},
+                "over 15 words",
+            ),
+            ({"bullets": {"sale": ["Ben is in"]}}, r"a bullet is \[text, \[refs\]\]"),
+            ({"bullets": {"nope": [["x", [8]]]}}, "bullets: unknown conv"),
+            ({"dealEdit": {"sale": {"addClaims": [{"i": 99, "who": "Ben"}]}}}, "claim i must be a stored message"),
+            ({"dealEdit": {"sale": {"addClaims": [{"i": 8, "who": "Cy"}]}}}, "claim who must be the name stored"),
+            ({"dealEdit": {"sale": {"removeClaims": [8]}}}, "isn't among the deal's claims"),
+            ({"dealEdit": {"sale": {"status": "sold"}}}, "status needs statusAt"),
+            ({"dealEdit": {"sale": {"statusAt": 9}}}, "statusAt needs status"),
+            ({"dealEdit": {"sale": {"ref": 8}}}, r'"ref" 8 is in 0 of its deals'),
+            ({"dealEdit": {"sale": {"addRefs": [10]}}}, "addRefs must be in the conversation"),
+            ({"dealEdit": {"hike": {"text": "x"}}}, "no deal in conversation"),
+            ({"dealEdit": {"sale": {"price": 5}}}, "dealEdit takes"),
+        ):
+            with self.subTest(extra=extra):
+                with self.assertRaisesRegex(AssertionError, why):
+                    self.move(dict(self.CLAIM, **extra))
+                self.assertEqual(self.base(), before, "WORK untouched")
+                self.assertFalse(os.path.exists(os.path.join(run, "out", "manifest.json")), "nothing to write")
+        # a conversation the same move empties and drops
+        spec = {"move": {"4": "sale"}, "relink": {"4": [0, "i"]}, "bullets": {"dee": [["Dee is in", [4]]]}}
+        with self.assertRaisesRegex(AssertionError, 'bullets names dee, which this spec\'s move empties .*use "sale"'):
+            self.move(spec)
+        self.assertEqual(self.base(), before)
+
+    def test_refs_are_checked_after_the_move(self):
+        """#9 is a Messenger reply to #8, so it moves along: citing it in sale is right; citing #8 in hike isn't."""
+        out, _, s, _ = self.move(dict(self.CLAIM, bullets={"sale": [["Cy asked Ben", [9]]]}))
+        self.assertIn("relink ok", out)
+        quiet(catchup.restore, self.e.work)
+        with self.assertRaisesRegex(AssertionError, "bullet ref not in conv"):
+            self.move(dict(self.CLAIM, bullets={"hike": [["Ben is in", [8]]]}))
+
+    def test_dealEdit_index_where_the_move_changed_the_deals_is_refused(self):
+        p = os.path.join(self.e.work, "base", "summary.json")
+        sm = r(p)
+        sm["deals"].insert(
+            0, {"kind": "sale", "tag": "For sale", "conv": "hike", "text": "Ben's stove $30", "refs": [8]}
+        )
+        w(p, sm)
+        before = self.base()
+        spec = dict(self.CLAIM, dealEdit={"sale": {"index": 1, "addClaims": [{"i": 8, "who": "Ben"}]}})
+        with self.assertRaisesRegex(AssertionError, r'dealEdit sale: a move .*"ref".*0 "Ben\'s stove \$30"'):
+            self.move(spec)
+        self.assertEqual(self.base(), before)
+        out, _, s, _ = self.move(dict(spec, dealEdit={"sale": {"ref": 0, "addClaims": [{"i": 8, "who": "Ben"}]}}))
+        self.assertIn('deals in sale now: 0 "Ben\'s stove $30" (refs [8]); 1 "Blue pack $120" (refs [0])', out)
+        self.assertEqual(
+            [(d["text"], d.get("claims")) for d in s["deals"]],
+            [
+                ("Ben's stove $30", None),
+                ("Blue pack $120", [{"i": 8, "who": "Ben", "n": 1}]),
+            ],
+        )
+
+    def test_bullets_or_dealEdit_without_a_move(self):
+        """Allowed: the user marks a deal sold, or asks for a bullet, with nothing new to build. Both documents are
+        written with one rev, and "index" is fine where no move changed the deals."""
+        out, t, s, d = self.move({"dealEdit": {"sale": {"index": 0, "status": "sold", "statusAt": 3}}})
+        self.assertIn("relink ok: 0 change(s), 1 dealEdit(s)", out)
+        self.assertEqual((s["deals"][0]["status"], s["deals"][0]["statusAt"]), ("sold", 3))
+        self.assertEqual(t["rev"], s["rev"])
+        self.assertNotIn("summaryRev", t)
+        self.assertNotIn("moved", r(os.path.join(self.e.work, "state.json")))
+        quiet(catchup.restore, self.e.work)
+        out, t, s, _ = self.move({"bullets": {"hike": [["Dee can do Saturday", [10]]]}, "relink": {"10": [7, "i"]}})
+        self.assertIn("relink ok: 1 change(s), 1 bullet(s)", out)
+        self.assertEqual(next(c for c in s["convs"] if c["id"] == "hike")["synopsis"][-1]["t"], "Dee can do Saturday")
+        for spec in ({"bullets": {}}, {"newconvs": [{"id": "x", "title": "X"}], "bullets": {"hike": [["x", [10]]]}}):
+            with self.subTest(spec=spec):
+                with self.assertRaisesRegex(AssertionError, "relink SPEC takes only"):
+                    self.move(spec)
+
+
 class TestManifestDocs(unittest.TestCase):
     """Every reference that tells Claude how to write a manifest names, for its versions and pins, exactly the current
     documents that command's manifest pins (the restore procedure once said threading wasn't touched)."""
@@ -3304,7 +3421,10 @@ class TestManifestDocs(unittest.TestCase):
         return sorted(e["collection"] for bt in man["batches"] for e in bt if e.get("pin"))
 
     def test_references_name_what_each_manifest_pins(self):
-        ref = lambda *p: open(os.path.join(ROOT, "plugin", "skills", "refresh", *p), encoding="utf-8").read()
+        def ref(*p):
+            with open(os.path.join(ROOT, "plugin", "skills", "refresh", *p), encoding="utf-8") as f:
+                return f.read()
+
         live = small_live(self.t.name)
         _, run = live_relink(live, {"relink": {"10": [7, "i"]}}, "rl")
         relink_only = self.pins(run)

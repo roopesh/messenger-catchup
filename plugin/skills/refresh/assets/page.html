@@ -5,7 +5,7 @@
   href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap"
 />
 <style>
-  /* Layout: one reading column with a tab bar (Summary / Ask / Messages / Views). Data lives in the artifact db; Claude seeds and refreshes it. Palette: warm olive neutrals with a bright-blue accent. */
+  /* Layout: one reading column with a tab bar (Summary / Ask / Messages / By day / Views). Data lives in the artifact db; Claude seeds and refreshes it. Palette: warm olive neutrals with a bright-blue accent. */
   :root {
     --bg: #f5f4ef;
     --surface: #fbfaf6;
@@ -165,6 +165,23 @@
     border-bottom: 3px solid transparent;
     white-space: nowrap;
   }
+  /* on a phone the five tabs share the width (each stretches, so the spare room is tappable too): smaller, tighter,
+     "Ask" for "Ask Claude"; still about 40 px tall */
+  @media (max-width: 560px) {
+    nav.tabs {
+      gap: 0;
+    }
+    nav.tabs a {
+      flex: 1 1 auto;
+      text-align: center;
+      font-size: 0.85rem;
+      letter-spacing: 0;
+      padding: 10px 2px;
+    }
+    nav.tabs .wide {
+      display: none;
+    }
+  }
   nav.tabs a[aria-current="page"] {
     color: var(--fg);
     border-bottom-color: var(--accent);
@@ -308,6 +325,59 @@
   }
   details.item[open] summary h3::after {
     content: " –";
+  }
+  /* F26: a saved question is a card holding its details and a quiet Remove link */
+  .item.qa {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px 12px;
+  }
+  .item.qa > details {
+    min-width: 0;
+  }
+  .item.qa > details > .txt {
+    margin-top: 8px;
+  }
+  .item.qa > details > summary {
+    cursor: pointer;
+    list-style: none;
+    display: grid;
+    gap: 5px;
+  }
+  .item.qa > details > summary::-webkit-details-marker {
+    display: none;
+  }
+  .item.qa > details > summary h3 {
+    overflow-wrap: anywhere;
+  }
+  .item.qa > details > summary h3::after {
+    content: " +";
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .item.qa > details[open] > summary h3::after {
+    content: " –";
+  }
+  button.link.qa-rm {
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 0.82rem;
+    padding: 2px 0;
+  }
+  .qa-undo {
+    display: grid;
+    gap: 6px;
+  }
+  .qa-undo:not(:empty) {
+    margin-bottom: 10px;
+  }
+  .qa-undo p {
+    font-size: 0.9rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .qa-undo p.err {
+    color: var(--warn);
   }
   .tablewrap {
     overflow-x: auto;
@@ -604,6 +674,38 @@
     overflow-wrap: anywhere;
     white-space: pre-line;
     padding-right: 6px;
+  }
+  /* F23: above a reply to a message in another conversation, one quiet line naming it; it opens that message */
+  .msg > .xr {
+    grid-column: 3;
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    text-align: left;
+    background: none;
+    border: 0;
+    border-left: 2px solid var(--olive);
+    padding: 0 0 0 7px;
+    font: 0.8rem/1.4 var(--body);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .msg > .xr b {
+    font-weight: 600;
+  }
+  .msg > .xr:hover .xq,
+  .msg > .xr:focus-visible .xq {
+    color: var(--fg);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  @media (max-width: 560px) {
+    .msg > .xr {
+      grid-column: 1/-1;
+    }
   }
   .divider {
     font-family: var(--mono);
@@ -1103,6 +1205,25 @@
     border-radius: 6px;
     color: var(--muted);
   }
+  /* By day (F24): a card per day's digest */
+  .dg-day .row h3 {
+    font-size: 1.15rem;
+  }
+  .dg-day ul {
+    margin: 0;
+    padding-left: 1.1em;
+    display: grid;
+    gap: 5px;
+  }
+  .dg-day li {
+    overflow-wrap: anywhere;
+  }
+  .dg-day li .cite {
+    white-space: nowrap;
+  }
+  .dg-more {
+    justify-self: start;
+  }
   .method ul {
     margin: 0;
     padding-left: 1.1em;
@@ -1385,8 +1506,9 @@
 
   <nav class="tabs" aria-label="Sections">
     <a href="#summary" data-tab="summary">Summary</a>
-    <a href="#ask" data-tab="ask">Ask Claude</a>
+    <a href="#ask" data-tab="ask" aria-label="Ask Claude">Ask<span class="wide"> Claude</span></a>
     <a href="#messages" data-tab="messages">Messages</a>
+    <a href="#days" data-tab="days">By day</a>
     <a href="#views" data-tab="views">Views</a>
   </nav>
 
@@ -1423,7 +1545,9 @@
       <div class="sec-head">
         <h2>Earlier questions</h2>
         <p>Saved here so Claude can see what you asked.</p>
+        <button type="button" class="link qa-rm" id="qa-clear" hidden>Clear all</button>
       </div>
+      <div class="qa-undo" id="qa-undo" role="status" aria-live="polite"></div>
       <div class="list" id="qa-list"></div>
     </div>
   </section>
@@ -1441,6 +1565,16 @@
       <p class="rangebox" id="msg-older" role="status" hidden></p>
       <p class="note" id="msg-note"></p>
       <div class="msgs" id="msgs"></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-days" hidden>
+    <div class="block">
+      <div class="sec-head">
+        <h2>By day</h2>
+        <p>A few lines on each finished day, newest first. A number opens that message.</p>
+      </div>
+      <div class="list" id="days-list"></div>
     </div>
   </section>
 
@@ -1598,7 +1732,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.0";
+  const PAGE_VERSION = "3.1";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -1703,7 +1837,7 @@
   };
 
   /* ---------- routing ---------- */
-  const TABS = ["summary", "ask", "messages", "views"];
+  const TABS = ["summary", "ask", "messages", "days", "views"];
   function route() {
     const h = (location.hash || "").slice(1);
     const tab = TABS.includes(h) ? h : "summary";
@@ -1715,6 +1849,8 @@
     });
     /* Older messages switched on only to show one jumped-to message are switched off again when you leave Messages. */
     if (tab !== "messages" && S.autoOlder) backToWindow();
+    /* By day is drawn only while it's open (F24) */
+    if (tab === "days") renderDays();
   }
   function backToWindow() {
     S.autoOlder = null;
@@ -2796,14 +2932,20 @@
       const lk = L[i];
       return lk && lk[1] === "c" && run.includes(lk[0]) && sameRun(S.byI.get(run[run.length - 1]), S.byI.get(i));
     };
+    /* F23: a Messenger reply to a message in another conversation gets a "replying to" line, except the first message
+       shown, whose parent the conversation already shows above it (B40's ctxLine) */
+    const xo = i => {
+      const xr = i !== mem[0] && crossParent(i, L[i]);
+      return xr ? { xr } : undefined;
+    };
     (function add(arr, into) {
       arr.forEach(h => {
         const grp = [h].concat(conts.get(h) || []);
         runsOf(grp, joins).forEach(run =>
           into.append(
             run.length > 1
-              ? blockOf(run, (i, pos) => onRow(i, L[i], shown(i), pos))
-              : onRow(run[0], L[run[0]], shown(run[0])),
+              ? blockOf(run, (i, pos) => onRow(i, L[i], shown(i), pos, xo(i)))
+              : onRow(run[0], L[run[0]], shown(run[0]), undefined, xo(run[0])),
           ),
         );
         const g = [].concat(...grp.map(i => kids.get(i) || [])).sort((a, b) => a - b);
@@ -2973,6 +3115,30 @@
     }
     return run;
   }
+  /* F23: the stored parent of message i when its link lk is a Messenger reply (r, rq, rg; never a guessed i or c) and
+     the parent sits in another conversation (or in none); else null */
+  const REPLY_LINKS = new Set(["r", "rq", "rg"]);
+  function crossParent(i, lk) {
+    if (!lk || lk[0] == null || !REPLY_LINKS.has(lk[1])) return null;
+    const p = S.byI.get(lk[0]);
+    return p && convOfMsg(p.i) !== convOfMsg(i) ? p : null;
+  }
+  /* the line above such a reply: "↩ replying to Ana: <start of her text>", opening the parent where it is */
+  function xrLine(p) {
+    const b = el("button", "xr");
+    b.type = "button";
+    const pc = convOfMsg(p.i);
+    b.title = "Show #" + p.i + (pc ? " in “" + pc.title + "”" : "");
+    const body = p.b && !/^\w[\w ]* sent \d+ photos$/.test(p.b) ? trunc(p.b, 120) : "";
+    b.append(
+      "↩ replying to ",
+      el("b", null, nameOf(p)),
+      ": ",
+      el("span", "xq", body || (p.p ? "[photo]" : "[attachment]")),
+    );
+    b.onclick = () => goMsg(p.i);
+    return b;
+  }
   function ctxLine(mem, convId) {
     const m0 = S.byI.get(mem[0]);
     const lk = ((S.threading || {}).links || {})[mem[0]];
@@ -3022,8 +3188,8 @@
   }
   function threadTree(mem) {
     const set = new Set(mem);
-    const tree = convTree(mem, (i, lk, showQ, pos) => {
-      const r = msgRow(S.byI.get(i), lk, showQ, pos);
+    const tree = convTree(mem, (i, lk, showQ, pos, o) => {
+      const r = msgRow(S.byI.get(i), lk, showQ, pos, o);
       r.removeAttribute("id");
       r.dataset.i = i;
       return r;
@@ -4209,16 +4375,23 @@
   };
   /* pos: this row is a bubble in a block (blockOf); pos.more: not the first, so no header of its own */
   /* o.ctx: a copy shown as context in another conversation (B40): no row id, no Reply here */
+  /* o.xr: the parent of a reply across conversations (F23): a "replying to" line above the bubble stands in for the
+     reply link and the quote */
   function msgRow(m, lk, showQuote, pos, o = {}) {
     const r = el("div", "msg" + (m.f === "You" ? " own" : "") + (pos ? " bub" + (pos.more ? " more" : " first") : ""));
     if (o.ctx) r.dataset.ctx = m.i;
     else r.id = "m" + m.i;
+    if (o.xr) {
+      r.classList.add("has-xr");
+      r.append(xrLine(o.xr));
+      lk = null;
+    }
     r.append(el("span", "n", "#" + m.i), el("span", "t", m.t));
     const c = el("div", "c");
     const head = el("div");
     if (pos && pos.more) head.className = "sr";
     head.append(el("span", pos && pos.more ? null : "who", nameOf(m)));
-    if (m.r && !lk) head.append(el("span", "muted", " ↪ " + m.r));
+    if (m.r && !lk && !o.xr) head.append(el("span", "muted", " ↪ " + m.r));
     if (lk && lk[0] != null && !(pos && pos.more)) {
       const k = LK[lk[1]] || LK.i;
       const p = S.byI.get(lk[0]);
@@ -4232,7 +4405,7 @@
       head.append(a);
     }
     c.append(head);
-    if (m.q && (layout === "flat" || showQuote)) c.append(el("div", "quote", m.q));
+    if (m.q && !o.xr && (layout === "flat" || showQuote)) c.append(el("div", "quote", m.q));
     if (m.b && !/^\w[\w ]* sent \d+ photos$/.test(m.b)) c.append(el("div", "body", m.b));
     const pics = (S.photos && S.photos[m.i]) || [];
     if (pics.length) {
@@ -4763,7 +4936,7 @@
     d.append(s);
     const cx = ctxLine(mem, cv.id);
     if (cx) d.append(cx);
-    const tree = convTree(mem, (i, lk, showQ, pos) => msgRow(S.byI.get(i), lk, showQ, pos));
+    const tree = convTree(mem, (i, lk, showQ, pos, o) => msgRow(S.byI.get(i), lk, showQ, pos, o));
     d.append(tree);
     return d;
   }
@@ -5902,18 +6075,107 @@
       }[c] || "Something went wrong. Try again."
     );
   }
+  /* ---------- removing saved questions (F26) ----------
+     Remove (or Clear all, from 2 saved questions) hides them at once and puts "Removed … · Undo" in #qa-undo, a
+     polite live region, for QA_UNDO_MS; then all its qa/<id> deletes start together. Undo within the delay keeps
+     them; a failed delete puts that question back with a short line saying so. Each removal has its own line and
+     timer, so several in a row each work on their own. No dialogs. A deleted id stays in qaGone, so a late snapshot
+     can't show it again. Closing the page, or the page going hidden (a phone may discard a background tab without
+     pagehide), during the delay deletes at once (best effort). Tests shorten the delay with window.__mcUndoMs;
+     nothing in production sets it. */
+  const QA_UNDO_MS = window.__mcUndoMs || 6000;
+  const qaGone = new Set(); /* ids hidden: waiting to be deleted, or deleted */
+  const qaPending = new Set(); /* {ids, row, timer} */
+  const qaShort = q => {
+    const s = String(q ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return s.length > 48 ? s.slice(0, 47) + "…" : s;
+  };
+  const qaVisible = () => S.qa.filter(x => x._id && !qaGone.has(x._id));
+  function qaLine(text, err) {
+    const row = el("p", err ? "err" : null, text);
+    $("#qa-undo").append(row);
+    if (err) setTimeout(() => row.remove(), 8000);
+    return row;
+  }
+  function qaRemove(ids) {
+    ids = ids.filter(id => !qaGone.has(id));
+    if (!ids.length || !S.db) return;
+    const one = ids.length === 1 ? S.qa.find(x => x._id === ids[0]) : null;
+    const what = one ? "“" + qaShort(one.q) + "”" : ids.length + " questions";
+    ids.forEach(id => qaGone.add(id));
+    const row = qaLine("Removed " + what + " · ");
+    const u = el("button", "link", "Undo");
+    u.type = "button";
+    u.setAttribute("aria-label", "Undo: keep " + what);
+    row.append(u);
+    const P = { ids, row, what };
+    P.timer = setTimeout(() => qaCommit(P), QA_UNDO_MS);
+    qaPending.add(P);
+    u.onclick = () => {
+      if (!qaPending.delete(P)) return;
+      clearTimeout(P.timer);
+      ids.forEach(id => qaGone.delete(id));
+      row.remove();
+      renderQA();
+      const back = [...$("#qa-list").querySelectorAll(".item.qa")].find(c => c.dataset.id === ids[0]);
+      if (back) back.querySelector("summary").focus();
+    };
+    renderQA();
+    u.focus();
+  }
+  async function qaCommit(P) {
+    if (!qaPending.delete(P)) return;
+    clearTimeout(P.timer);
+    P.row.remove();
+    /* every delete starts now, before the first await: on pagehide only the code up to it runs */
+    const del = id => {
+      try {
+        return S.db.doc("qa/" + id).delete();
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    };
+    const res = await Promise.allSettled(P.ids.map(del));
+    const failed = P.ids.filter((id, k) => res[k].status === "rejected");
+    if (!failed.length) return;
+    failed.forEach(id => qaGone.delete(id));
+    renderQA();
+    qaLine(
+      failed.length === 1 && P.ids.length === 1
+        ? "Couldn't remove " + P.what + ". It's back in the list."
+        : "Couldn't remove " + failed.length + " of " + P.ids.length + " questions. They're back in the list.",
+      true,
+    );
+  }
+  /* qaCommit runs once per removal, so pagehide after going hidden commits nothing twice */
+  const qaFlush = () => [...qaPending].forEach(qaCommit);
+  addEventListener("pagehide", qaFlush);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") qaFlush();
+  });
+  $("#qa-clear").onclick = () => qaRemove(qaVisible().map(x => x._id));
   function renderQA() {
     const l = $("#qa-list");
+    const open = new Set([...l.querySelectorAll(".item.qa > details[open]")].map(d => d.parentNode.dataset.id));
     l.textContent = "";
-    if (!S.qa.length) {
+    const list = qaVisible();
+    const clr = $("#qa-clear");
+    clr.hidden = list.length < 2;
+    clr.setAttribute("aria-label", "Clear all " + list.length + " saved questions");
+    if (!list.length) {
       l.append(el("p", "note", "No questions yet."));
       return;
     }
-    S.qa
+    list
       .slice()
       .sort((a, b) => (b.at || "").localeCompare(a.at || ""))
       .forEach(x => {
-        const d = el("details", "item");
+        const c = el("div", "item qa");
+        c.dataset.id = x._id;
+        const d = el("details");
+        d.open = open.has(x._id);
         const s = el("summary");
         s.append(
           el("h3", null, x.q),
@@ -5930,7 +6192,12 @@
         t.style.whiteSpace = "pre-wrap";
         renderCites(t, x.a || "");
         d.append(s, t);
-        l.append(d);
+        const rm = el("button", "link qa-rm", "Remove");
+        rm.type = "button";
+        rm.setAttribute("aria-label", "Remove the question “" + qaShort(x.q) + "”");
+        rm.onclick = () => qaRemove([x._id]);
+        c.append(d, rm);
+        l.append(c);
       });
   }
 
@@ -7468,6 +7735,126 @@
     return d;
   };
 
+  /* ---------- By day (F24) ----------
+      The per-day digests (S.digests, from digests/m<YYYY-MM>), a card per day, newest first, DAYS_STEP at a time. Drawn
+      only while the tab is open, and again when the digests or the messages change. Bullet text is shown as text. Days
+      without a digest are left out; one line at the top says why. route() calls this while the page script is still
+      loading (an opened #days link): S.digestsIn is unset then, so only the empty state is drawn. S.digestsIn is true
+      once the digests are in, "nodb" with no database (signed out, or not on claude.ai) and "error" when the listener
+      fails before they arrive; each has its own line. */
+  const DAYS_STEP = 30;
+  /* "Sat, Nov 14" (with the year when it isn't this year in the chat's time zone): the day's own date, as stored */
+  function dayTitle(k) {
+    const [y, mo, d] = k.split("-").map(Number);
+    const now = new Date().toLocaleDateString("en-CA", { timeZone: validTz(S.meta && S.meta.tz) });
+    const o = { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" };
+    if (String(y) !== now.slice(0, 4)) o.year = "numeric";
+    return new Date(Date.UTC(y, mo - 1, d)).toLocaleDateString("en-US", o);
+  }
+  function dayCite(i) {
+    const a = el("a", "cite", "#" + i);
+    a.href = "#messages";
+    a.onclick = e => {
+      e.preventDefault();
+      goMsg(i);
+    };
+    return a;
+  }
+  function dayCard(k, g) {
+    const art = el("article", "item dg-day");
+    art.dataset.day = k;
+    art.tabIndex = -1;
+    const head = el("div", "row");
+    head.append(el("h3", null, dayTitle(k)));
+    if (Number.isInteger(g.n) && g.n > 0) head.append(el("span", "note", plural(g.n, "message")));
+    art.append(head);
+    const ul = el("ul");
+    g.bullets.forEach(b => {
+      if (!b || typeof b.t !== "string") return;
+      const t = b.t
+        .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!t) return;
+      const li = el("li", null, t);
+      (Array.isArray(b.refs) ? b.refs : [])
+        .filter(i => Number.isInteger(i) && i >= 0)
+        .slice(0, 10)
+        .forEach(i => li.append(" ", dayCite(i)));
+      ul.append(li);
+    });
+    if (ul.children.length) art.append(ul);
+    return art;
+  }
+  /* the quiet line: which stored days have no digest yet, and why */
+  function daysWhy(days) {
+    const newest = days[0][1],
+      oldest = days[days.length - 1][0];
+    const after = Number.isInteger(newest.toI) ? newest.toI : Infinity;
+    const wait = new Set();
+    for (let j = S.msgs.length - 1; j >= 0 && S.msgs[j].i > after; j--) {
+      const d = S.msgs[j].d;
+      if (/^\d{4}-\d\d-\d\d$/.test(d || "") && d > days[0][0]) wait.add(d);
+    }
+    const w = [...wait].sort();
+    let s;
+    if (!w.length) s = "A day gets its digest at the first refresh after it ends.";
+    else if (w.length === 1) s = dayTitle(w[0]) + " gets its digest at a refresh after it ends.";
+    else if (w.length === 2) s = dayTitle(w[0]) + " and " + dayTitle(w[1]) + " get theirs at a refresh after they end.";
+    else s = w.length + " newer days, from " + dayTitle(w[0]) + ", get theirs at the next refreshes, a few at a time.";
+    const first = S.msgs.length && S.msgs[0].d;
+    if (/^\d{4}-\d\d-\d\d$/.test(first || "") && first < oldest)
+      s += " Days before " + dayTitle(oldest) + " have none: ask Claude to write digests for past days.";
+    return s;
+  }
+  function renderDays() {
+    const box = $("#days-list"),
+      v = $("#v-days");
+    if (!box || !v || v.hidden) return;
+    const key = [S.digests, S.msgs, S.daysN, S.meta, S.digestsIn];
+    if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
+    renderDays.k = key;
+    box.textContent = "";
+    if (S.digestsIn !== true) {
+      const why = {
+        nodb: "The day digests can't load in this view. Open the page on claude.ai while signed in.",
+        error: "Couldn't load the day digests. Reload the page to try again.",
+      };
+      box.append(el("div", "empty", why[S.digestsIn] || "Day digests show here once the chat data loads."));
+      return;
+    }
+    const days = [...S.digests]
+      .filter(([k, g]) => /^\d{4}-\d\d-\d\d$/.test(k) && g && Array.isArray(g.bullets) && g.bullets.length)
+      .sort((p, q) => (p[0] < q[0] ? 1 : -1));
+    if (!days.length) {
+      box.append(
+        el(
+          "div",
+          "empty",
+          "No day digests yet. A refresh writes a few lines on each day after it ends; to fill in earlier days, ask Claude to write digests for past days.",
+        ),
+      );
+      return;
+    }
+    box.append(el("p", "note", daysWhy(days)));
+    const n = S.daysN || DAYS_STEP;
+    days.slice(0, n).forEach(([k, g]) => box.append(dayCard(k, g)));
+    if (days.length > n) {
+      const more = el(
+        "button",
+        "secondary dg-more",
+        "Show " + plural(Math.min(DAYS_STEP, days.length - n), "more day"),
+      );
+      more.onclick = () => {
+        S.daysN = n + DAYS_STEP;
+        renderDays();
+        const next = box.querySelectorAll("article.dg-day")[n];
+        if (next) next.focus();
+      };
+      box.append(more);
+    }
+  }
+
   /* ---------- boot ---------- */
   function rebuild() {
     const all = [];
@@ -7483,6 +7870,7 @@
       renderSummary();
       renderMessages();
     });
+    renderDays();
   }
   renderSummary();
   renderQA();
@@ -7516,6 +7904,8 @@
     }
     if (!db) {
       $("#window").textContent = "The chat data can't load in this view. Open the page on claude.ai while signed in.";
+      S.digestsIn = "nodb";
+      renderDays();
       return;
     }
     db.doc("meta/chat").onSnapshot(
@@ -7551,7 +7941,7 @@
     );
     db.collection("qa").onSnapshot(
       q => {
-        S.qa = q.docs.map(d => d.data());
+        S.qa = q.docs.map(d => Object.assign({}, d.data(), { _id: d.id }));
         renderQA();
       },
       () => {},
@@ -7603,7 +7993,7 @@
       },
       () => {},
     );
-    /* per-day digests (F16): read only, for Ask's day lines; Claude's refresh writes them */
+    /* per-day digests (F16): read only, for Ask's day lines and the By day tab (F24); Claude's refresh writes them */
     db.collection("digests").onSnapshot(
       q => {
         const m = new Map();
@@ -7612,8 +8002,15 @@
           if (days && typeof days === "object") Object.entries(days).forEach(([k, v]) => v && m.set(k, v));
         });
         S.digests = m;
+        S.digestsIn = true;
+        renderDays();
       },
-      () => {},
+      () => {
+        /* digests already shown stay; only a tab still waiting says it failed */
+        if (S.digestsIn === true) return;
+        S.digestsIn = "error";
+        renderDays();
+      },
     );
     db.doc("people/index").onSnapshot(
       s => {

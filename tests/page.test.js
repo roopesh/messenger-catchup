@@ -130,6 +130,12 @@ function runtime(seed) {
       throw Object.assign(new Error('injected failure'), { code: 'unavailable' });
     }
   };
+  /* opts.snapFail: ['c:<collection>' | 'd:<path>']: that listener calls its error callback instead of ever answering */
+  const snapFail = (k, err) => {
+    if (!(opts.snapFail || []).includes(k)) return false;
+    setTimeout(() => err && err(Object.assign(new Error('injected listener failure'), { code: 'unavailable' })), 0);
+    return true;
+  };
   function doc(p) {
     const ref = {
       get: async () => docSnap(p),
@@ -150,6 +156,14 @@ function runtime(seed) {
         writes.push({ p, op: 'update', v: clone(o) });
         notify(p);
       },
+      /* idempotent, as the real one is (db.d.ts DocumentRef.delete) */
+      delete: async () => {
+        failIf(p, 'delete');
+        store.delete(p);
+        bump(p);
+        writes.push({ p, op: 'delete' });
+        notify(p);
+      },
       acquire: async o => {
         const now = Date.now(),
           l = leases.get(p);
@@ -159,7 +173,8 @@ function runtime(seed) {
         leases.set(p, { holder: o.holder, exp });
         return { acquired: true, version: 1, expiresAt: new Date(exp).toISOString(), holder: o.holder };
       },
-      onSnapshot: cb => {
+      onSnapshot: (cb, err) => {
+        if (snapFail('d:' + p, err)) return () => {};
         sub('d:' + p, cb);
         setTimeout(() => cb(docSnap(p)), 0);
         return () => {};
@@ -183,7 +198,8 @@ function runtime(seed) {
       if (lim) docs = docs.slice(0, lim);
       return { docs, size: docs.length, empty: !docs.length };
     },
-    onSnapshot: cb => {
+    onSnapshot: (cb, err) => {
+      if (snapFail('c:' + c, err)) return () => {};
       sub('c:' + c, cb);
       setTimeout(() => cb(collSnap(c)), 0);
       return () => {};
@@ -254,6 +270,7 @@ function runtime(seed) {
     },
   };
   if (opts.tune) window.__mcImportTune = opts.tune; /* the page's photo timings, shortened (R2 tests) */
+  if (opts.undoMs) window.__mcUndoMs = opts.undoMs; /* the saved questions' undo delay, shortened (F26 tests) */
   Object.entries(opts.leases || {}).forEach(([p, l]) => leases.set(p, l)); /* a lease another tab left behind */
   /* The real cap (sample.d.ts, SampleLimits.maxPromptBytes): every turn's content together, in UTF-8 bytes; over it the
      call rejects with prompt_too_large and nothing is sent. opts.promptMax is what limits() reports, opts.enforce what
@@ -2019,6 +2036,7 @@ function viewSeed() {
 }
 async function viewPage(o = {}) {
   const V = viewSeed();
+  if (o.tweak) o.tweak(V);
   const p = await open(SEED(), PAGE, o.ctx);
   await paste(p, JSON.stringify(cap(V.msgs)));
   await p.evaluate(
@@ -3967,6 +3985,292 @@ async function digests() {
       'D4: a stretch starting mid-day gets that day title-only (the digest covers the whole day); an empty stretch, nothing',
     );
     ok(p.errors.length === 0, 'D4: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
+/* ---------- F24: the By day tab ----------
+   The per-day digests, a card per day, newest first, each bullet's numbers opening the message as Ask's citations do.
+   Days without a digest are left out (one quiet line says why). Bullet text is data. */
+/* 5 days of 100 (Oct 1–5, 2026); the window is the last 20 messages; the newest day has no digest yet */
+const bdSeed = (o = {}) => {
+  const msgs = hmsgs(o.n || 500, { perDay: o.perDay || 100 });
+  const days = new Set(msgs.map(m => m.d)).size;
+  const docs = o.noDigests ? {} : hdigests(msgs, k => k < days - 1, o.make);
+  return { msgs, seed: hseed(msgs, { threads: true, meta: { caughtUpI: msgs.length - 21 }, docs, opts: o.opts }) };
+};
+const bdOpen = async (o = {}, ctx) => {
+  const { msgs, seed } = bdSeed(o);
+  const p = await open(seed, PAGE, ctx);
+  HP.push(p);
+  await until(p, n => S.msgs.length === n && S.threading, msgs.length, 120000);
+  return { p, msgs };
+};
+const bdCards = p =>
+  p.evaluate(() =>
+    [...document.querySelectorAll('#days-list article')].map(a => ({
+      day: a.dataset.day,
+      title: (a.querySelector('h3') || {}).textContent,
+      text: a.textContent,
+      bullets: [...a.querySelectorAll('li')].map(li => li.textContent),
+    })),
+  );
+const bdShow = async p => {
+  await p.evaluate(() => (location.hash = '#days'));
+  await until(p, () => document.querySelector('#days-list article, #days-list .empty'), null, 5000);
+};
+
+async function byDay() {
+  /* BD1: the tab opens from the keyboard and lists the digested days newest first, with their bullets and counts; the
+     day still waiting is absent and the quiet line names it; a page opened at #days draws them too */
+  await hcase('BD1', async () => {
+    const { p } = await bdOpen();
+    await p.focus('nav a[data-tab="days"]');
+    await p.keyboard.press('Enter');
+    await until(p, () => document.querySelector('#days-list article'), null, 5000);
+    const st = await p.evaluate(() => ({
+      hash: location.hash,
+      shown: !document.getElementById('v-days').hidden,
+      cur: document.querySelector('nav a[data-tab="days"]').getAttribute('aria-current'),
+      others: [...document.querySelectorAll('section.view')].filter(v => !v.hidden).length,
+      note: (document.querySelector('#days-list > p.note') || {}).textContent || '',
+    }));
+    const cards = await bdCards(p);
+    ok(
+      st.hash === '#days' && st.shown && st.cur === 'page' && st.others === 1,
+      'F24 BD1: Enter on the By day tab opens it alone and marks it current ' + JSON.stringify(st),
+    );
+    ok(
+      cards.map(c => c.day).join() === '2026-10-04,2026-10-03,2026-10-02,2026-10-01' &&
+        cards[0].title === 'Sun, Oct 4' &&
+        cards[3].title === 'Thu, Oct 1' &&
+        cards[0].text.includes('100 messages') &&
+        cards[0].bullets.join(' / ') ===
+          'Ana sold a stove on day 3 #301 #302 / Ben asked about permits on day 3 #305' &&
+        cards[3].bullets[0] === 'Ana sold a stove on day 0 #1 #2',
+      'F24 BD1: the digested days, newest first, with weekday, date, count and bullets: ' +
+        JSON.stringify(cards.map(c => [c.day, c.title, c.bullets[0]])),
+    );
+    ok(
+      !cards.some(c => c.day === '2026-10-05') && /Mon, Oct 5 gets its digest at a refresh after it ends/.test(st.note),
+      'F24 BD1: the day without a digest (Oct 5) is left out, and the quiet line says why: "' + st.note + '"',
+    );
+    await p.reload();
+    await until(p, () => document.querySelectorAll('#days-list article').length === 4, null, 10000);
+    ok(
+      (await bdCards(p)).length === 4 && p.errors.length === 0,
+      'F24 BD1: a page opened at #days draws the days once its data loads; no page errors ' + JSON.stringify(p.errors),
+    );
+  });
+
+  /* BD2: a bullet's number opens that message in Messages, loading its day when it's before the window */
+  await hcase('BD2', async () => {
+    const { p } = await bdOpen();
+    await bdShow(p);
+    await p.click('#days-list article[data-day="2026-10-02"] li a.cite');
+    await until(p, () => document.querySelector('#m101.flash'), null, 5000);
+    const r = await p.evaluate(() => {
+      const n = document.getElementById('m101');
+      const b = n && n.getBoundingClientRect();
+      return {
+        hash: location.hash,
+        older: document.getElementById('msg-all').checked,
+        seen: !!b && b.height > 0 && b.top >= 0 && b.bottom <= innerHeight,
+        flash: !!n && n.classList.contains('flash'),
+      };
+    });
+    ok(
+      r.hash === '#messages' && r.older && r.seen && r.flash,
+      'F24 BD2: #101 (Oct 2, before the window) opens in Messages, on screen and highlighted ' + JSON.stringify(r),
+    );
+    ok(p.errors.length === 0, 'F24 BD2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* BD3: markup in a bullet shows as literal text */
+  await hcase('BD3', async () => {
+    const bad = '<img src=x onerror="window.__xss=1"><b>Ben</b> & Cy <script>window.__xss=2</script>';
+    const { p } = await bdOpen({ make: (k, ids) => [{ t: bad, refs: [ids[3]] }] });
+    await bdShow(p);
+    await p.waitForTimeout(200);
+    const r = await p.evaluate(() => ({
+      li: (document.querySelector('#days-list li') || {}).textContent || '',
+      tags: document.querySelectorAll('#days-list img, #days-list b, #days-list script').length,
+      xss: window.__xss || null,
+    }));
+    ok(
+      r.li.startsWith(bad) && r.tags === 0 && r.xss === null,
+      'F24 BD3: markup in a bullet is shown as text, nothing runs ' + JSON.stringify(r),
+    );
+  });
+
+  /* BD4: no digests at all: a short empty state, no errors */
+  await hcase('BD4', async () => {
+    const { p } = await bdOpen({ noDigests: true });
+    await bdShow(p);
+    const r = await p.evaluate(() => ({
+      empty: (document.querySelector('#days-list .empty') || {}).textContent || '',
+      cards: document.querySelectorAll('#days-list article').length,
+    }));
+    ok(
+      /^No day digests yet\./.test(r.empty) && r.cards === 0 && p.errors.length === 0,
+      'F24 BD4: with no digests the tab shows an empty state ' + JSON.stringify(r) + ' ' + JSON.stringify(p.errors),
+    );
+  });
+
+  /* BD5: no database (signed out): the tab says the digests can't load here, not "once the chat data loads" forever;
+     no errors, also when the page opens at #days */
+  await hcase('BD5', async () => {
+    const p = await open(Object.assign(SEED(), { __opts: { noDb: true } }));
+    HP.push(p);
+    await bdShow(p);
+    await p.waitForTimeout(300);
+    const e1 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
+    await p.reload();
+    await p.waitForTimeout(400);
+    const e2 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
+    ok(
+      e1 === "The day digests can't load in this view. Open the page on claude.ai while signed in." &&
+        e2 === e1 &&
+        p.errors.length === 0,
+      'F24 BD5: with no database, the tab says "' + e1 + '" and no page errors ' + JSON.stringify(p.errors),
+    );
+  });
+
+  /* BD10: the digests listener fails: the tab says so instead of waiting for the data forever, also opened at #days */
+  await hcase('BD10', async () => {
+    const p = await open(Object.assign(SEED(), { __opts: { snapFail: ['c:digests'] } }));
+    HP.push(p);
+    await bdShow(p);
+    await p.waitForTimeout(300);
+    const e1 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
+    await p.reload();
+    await p.waitForTimeout(400);
+    const e2 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
+    ok(
+      e1 === "Couldn't load the day digests. Reload the page to try again." && e2 === e1 && p.errors.length === 0,
+      'F24 BD10: when the digests listener fails, the tab says "' +
+        e1 +
+        '"; no page errors ' +
+        JSON.stringify(p.errors),
+    );
+  });
+
+  /* BD6: at 390 px a long bullet with ten numbers wraps: nothing scrolls sideways */
+  await hcase('BD6', async () => {
+    const long = 'Ana listed ' + 'tentpolesandstakes'.repeat(8) + ' with a long note about the ridge trail and spares';
+    const { p } = await bdOpen(
+      { make: (k, ids) => [{ t: long, refs: ids.slice(80, 90) }] },
+      { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
+    );
+    await bdShow(p);
+    await p.waitForTimeout(200);
+    const r = await p.evaluate(() => {
+      const a = document.querySelector('#days-list article');
+      return {
+        cards: document.querySelectorAll('#days-list article').length,
+        sw: document.documentElement.scrollWidth,
+        w: innerWidth,
+        right: a ? Math.round(a.getBoundingClientRect().right) : null,
+      };
+    });
+    ok(
+      r.cards === 4 && r.sw <= r.w && r.right <= r.w,
+      'F24 BD6: at 390 px the cards fit the width, no sideways scroll ' + JSON.stringify(r),
+    );
+  });
+
+  /* BD7: dark mode: the cards, their text and the numbers use the dark theme's colors */
+  await hcase('BD7', async () => {
+    const { p } = await bdOpen({}, { colorScheme: 'dark' });
+    await bdShow(p);
+    const c = await p.evaluate(() => {
+      const a = document.querySelector('#days-list article');
+      const cs = x => x && getComputedStyle(x);
+      return a
+        ? {
+            card: cs(a).backgroundColor,
+            border: cs(a).borderTopColor,
+            text: cs(a.querySelector('li')).color,
+            cite: cs(a.querySelector('a.cite')).color,
+            note: cs(document.querySelector('#days-list > p.note')).color,
+          }
+        : null;
+    });
+    ok(
+      !!c &&
+        c.card === 'rgb(33, 35, 31)' &&
+        c.border === 'rgb(54, 57, 49)' &&
+        c.text === 'rgb(233, 232, 224)' &&
+        c.cite === 'rgb(122, 165, 255)' &&
+        c.note === 'rgb(163, 166, 152)',
+      'F24 BD7: in dark mode the cards use the theme tokens ' + JSON.stringify(c),
+    );
+  });
+
+  /* BD8: a long history draws 30 days at first; "Show 9 more days" adds the rest and moves focus to the first added */
+  await hcase('BD8', async () => {
+    const { p } = await bdOpen({ n: 400, perDay: 10 });
+    await bdShow(p);
+    const n0 = (await bdCards(p)).length;
+    const btn = await p.evaluate(() => (document.querySelector('#days-list > button') || {}).textContent || '');
+    await p.focus('#days-list > button');
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(200);
+    const r = await p.evaluate(() => ({
+      n: document.querySelectorAll('#days-list article').length,
+      btn: !!document.querySelector('#days-list > button'),
+      focus: document.activeElement && document.activeElement.dataset && document.activeElement.dataset.day,
+      last: [...document.querySelectorAll('#days-list article')].pop().dataset.day,
+    }));
+    ok(
+      n0 === 30 &&
+        btn === 'Show 9 more days' &&
+        r.n === 39 &&
+        !r.btn &&
+        r.focus === '2026-10-09' &&
+        r.last === '2026-10-01',
+      'F24 BD8: 30 days first (' + n0 + '), then "' + btn + '" adds the rest ' + JSON.stringify(r),
+    );
+    ok(p.errors.length === 0, 'F24 BD8: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* BD9: at 390 px all five tabs fit the bar (none hidden off its right edge, no sideways scroll in the bar or the
+     page) and stay easy to tap; also with a wide stand-in for the display font, as a machine without the web font or
+     Arial Narrow draws them */
+  await hcase('BD9', async () => {
+    const p = await open(SEED(), PAGE, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    HP.push(p);
+    const measure = () =>
+      p.evaluate(() => {
+        const nav = document.querySelector('nav.tabs');
+        const nr = nav.getBoundingClientRect();
+        const tabs = [...nav.querySelectorAll('a')].map(a => {
+          const r = a.getBoundingClientRect();
+          return { t: a.dataset.tab, l: Math.round(r.left), r: Math.round(r.right), h: Math.round(r.height) };
+        });
+        return {
+          tabs,
+          navL: Math.round(nr.left),
+          navR: Math.round(nr.left + nav.clientWidth),
+          scroll: nav.scrollWidth - nav.clientWidth,
+          sw: document.documentElement.scrollWidth,
+          iw: innerWidth,
+        };
+      });
+    const fits = m =>
+      m.tabs.length === 5 &&
+      m.tabs.every(t => t.l >= m.navL && t.r <= m.navR && t.h >= 32) &&
+      m.scroll <= 0 &&
+      m.sw <= m.iw;
+    const m1 = await measure();
+    await p.evaluate(() =>
+      document.documentElement.style.setProperty('--display', 'Verdana, "DejaVu Sans", sans-serif'),
+    );
+    const m2 = await measure();
+    ok(
+      fits(m1) && fits(m2),
+      'F24 BD9: at 390 px all five tabs fit the bar, at least 32 px tall, no sideways scroll, also in a wide font ' +
+        JSON.stringify({ m1, m2 }),
+    );
   });
 }
 
@@ -7716,6 +8020,590 @@ async function olderByDay() {
   });
 }
 
+/* ---------- crossReply: Messenger replies across conversations, mid-conversation (F23) ----------
+   viewSeed with more links in "Maps" (t5, #39-#49 without #44): #45 is Cy's Messenger reply to Ana's #34 (in "packs"),
+   #46 replies to #45 (same conversation), #47 and #48 carry guessed links (i, c) to "gap" and "Stove", #49 replies to
+   #53 (in "Snacks"), whose text is markup, #43 replies to Ana's photo #31, and #42 to her long #30. "lend" still starts
+   with Dee's reply to #30 (B40). */
+const XR_MARKUP = '<img src=x onerror="window.__xss=1"><b>bold</b> & <i>more</i>';
+function xrTweak(V) {
+  const set = (i, o) => Object.assign(V.msgs[i], o);
+  set(45, { f: 'Cy', b: 'Does it fit a bear can?', r: 'Ana', q: 'Can meet Saturday at the trailhead' });
+  set(46, { f: 'Ben', b: 'Mine does', r: 'Cy', q: 'Does it fit a bear can?' });
+  set(49, { f: 'Dee', b: 'Ha, same', r: 'Cy', q: '<b>bold</b>' });
+  set(53, { f: 'Cy', b: XR_MARKUP });
+  set(43, { f: 'Ben', b: 'Which color is that?', r: 'Ana', q: '' });
+  set(42, { f: 'Cy', b: 'Is the hip belt padded?', r: 'Ana', q: 'Selling my old pack' });
+  Object.assign(V.th.links, {
+    42: [30, 'r'],
+    43: [31, 'rg'],
+    45: [34, 'r'],
+    46: [45, 'r'],
+    47: [36, 'i'],
+    48: [37, 'c'],
+    49: [53, 'rq'],
+  });
+}
+const xrOf = (p, i) =>
+  p.evaluate(i => {
+    const r = document.getElementById('m' + i);
+    const x = r && r.querySelector(':scope > .xr');
+    return x ? { text: x.textContent, title: x.title, html: x.innerHTML, lk: !!r.querySelector('a.lk') } : null;
+  }, i);
+async function crossReply() {
+  let p = await viewPage({ tweak: xrTweak });
+  await p.click('#lay-thread');
+  await p.evaluate(() => {
+    document.querySelectorAll('#msgs details.conv').forEach(d => (d.open = ['t5', 'lend'].includes(d.dataset.conv)));
+  });
+  await p.waitForTimeout(150);
+  const x45 = await xrOf(p, 45);
+  ok(
+    x45 &&
+      x45.text === '↩ replying to Ana: Can meet Saturday at the trailhead' &&
+      /Show #34 in “Pack for sale”/.test(x45.title) &&
+      !x45.lk,
+    'F23: a Messenger reply mid-conversation to a message in another conversation shows "↩ replying to Ana: <her text>" ' +
+      'in place of the reply link (' +
+      JSON.stringify(x45) +
+      ')',
+  );
+  const x43 = await xrOf(p, 43);
+  const x42 = await xrOf(p, 42);
+  ok(
+    x43 &&
+      x43.text === '↩ replying to Ana: [photo]' &&
+      x42 &&
+      x42.text.startsWith('↩ replying to Ana: Selling my old pack, $40.') &&
+      x42.text.length < 160,
+    'F23: a reply to a photo says [photo], and a long parent is cut to its start (' +
+      JSON.stringify([x43 && x43.text, x42 && x42.text.length]) +
+      ')',
+  );
+  ok(
+    x45 && !(await xrOf(p, 46)) && (await p.$('#m46 a.lk')) && (await p.$eval('#m46', r => !!r.closest('.kids'))),
+    'F23: a reply to a message in the same conversation nests as before, with no "replying to" line (while #45 has one)',
+  );
+  ok(
+    x45 && !(await xrOf(p, 47)) && !(await xrOf(p, 48)) && (await p.$('#m47 a.lk.i')) && (await p.$('#m48 a.lk.c')),
+    'F23: guessed links across conversations (answers, continues) keep their link and get no "replying to" line',
+  );
+  const x49 = await xrOf(p, 49);
+  ok(
+    x49 &&
+      x49.text === '↩ replying to Cy: ' + XR_MARKUP &&
+      !/<img|<b>bold/.test(x49.html) &&
+      (await p.evaluate(() => !window.__xss && !document.querySelector('#m49 img, #m49 .xr i'))),
+    "F23: markup in the parent's text shows as literal text (" + JSON.stringify(x49 && x49.text) + ')',
+  );
+  const lend = await p.evaluate(() => {
+    const d = document.querySelector('#msgs details.conv[data-conv="lend"]');
+    return {
+      ctx: d.querySelectorAll(':scope > .ctx').length,
+      xr: d.querySelectorAll('.xr').length,
+      lk: !!d.querySelector('#m50 a.lk'),
+      ctxText: (d.querySelector(':scope > .ctx .lab') || {}).textContent,
+    };
+  });
+  ok(
+    x45 && lend.ctx === 1 && lend.xr === 0 && lend.lk && /Pack for sale/.test(lend.ctxText),
+    'F23: B40 unchanged: a conversation that starts with such a reply shows its context block once and no ' +
+      '"replying to" line (' +
+      JSON.stringify(lend) +
+      ')',
+  );
+  await tryClick(p, '#m45 > .xr');
+  ok(
+    await until(p, () => {
+      const n = document.querySelector('#m34.flash');
+      const r = n && n.getBoundingClientRect();
+      return r && r.height && r.top >= 0 && r.bottom <= innerHeight && n.closest('details').dataset.conv === 'packs';
+    }),
+    'F23: clicking the line shows #34 in its own conversation ("packs", opened)',
+  );
+  await p.evaluate(() => {
+    location.hash = '#summary';
+  });
+  await p.waitForTimeout(200);
+  await p.click('#v-summary article.cv[data-conv="t5"] details.thr > summary');
+  await p.waitForTimeout(200);
+  ok(
+    (await p
+      .$eval('#v-summary article.cv[data-conv="t5"] .msg[data-i="45"] > .xr', x => x.textContent)
+      .catch(() => '')) === '↩ replying to Ana: Can meet Saturday at the trailhead' &&
+      !(await p.$('#v-summary article.cv[data-conv="t5"] .msg[data-i="46"] > .xr')),
+    "F23: the summary card's thread shows the same line",
+  );
+  ok(p.errors.length === 0, 'F23: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  /* a phone, dark: one line, cut with an ellipsis, nothing scrolls sideways */
+  p = await viewPage({
+    tweak: xrTweak,
+    ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme: 'dark' },
+  });
+  await p.click('#lay-thread');
+  await p.evaluate(() => {
+    document.querySelectorAll('#msgs details.conv').forEach(d => (d.open = d.dataset.conv === 't5'));
+  });
+  await p.waitForTimeout(150);
+  const ph = await p.evaluate(() => {
+    const x = document.querySelector('#m42 > .xr');
+    const r = x && x.getBoundingClientRect();
+    const row = document.getElementById('m42').getBoundingClientRect();
+    const who = document.querySelector('#m42 .who').getBoundingClientRect();
+    const cs = x && getComputedStyle(x);
+    return {
+      line: !!x,
+      oneLine: !!r && r.height < 30,
+      inRow: !!r && r.left >= row.left && r.right <= row.right + 0.5,
+      above: !!r && r.bottom <= who.top + 0.5,
+      cut: !!x && x.scrollWidth > x.clientWidth && cs.textOverflow === 'ellipsis',
+      color: cs && cs.color,
+      scrollW: document.documentElement.scrollWidth,
+    };
+  });
+  ok(
+    ph.line && ph.oneLine && ph.inRow && ph.above && ph.cut && ph.scrollW <= 390 && ph.color === 'rgb(163, 166, 152)',
+    'F23: at 390 px (dark) the line sits above the bubble on one line, cut with an ellipsis, in the muted color, and ' +
+      'nothing scrolls sideways (' +
+      JSON.stringify(ph) +
+      ')',
+  );
+  ok(p.errors.length === 0, 'F23 phone: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  /* the parent on a day Show older hasn't loaded (F15): the line loads that day and shows it */
+  await ocase('F23 older', async () => {
+    const n = 6400;
+    const { p, msgs } = await oopen(n, lastTwoDays(n));
+    await p.click('#lay-thread');
+    const t = msgs[n - 10 * 460].i;
+    const i = await p.evaluate(t => {
+      const T = S.threading;
+      const shown = new Set([...document.querySelectorAll('#msgs .msg[id]')].map(x => +x.id.slice(1)));
+      const c = T.convs.find(c => c.members.filter(k => shown.has(k)).length >= 3 && !c.members.includes(t));
+      const mem = c.members.filter(k => shown.has(k));
+      const i = mem[mem.length - 1];
+      __rt.write('threading/current', {
+        convs: T.convs,
+        links: Object.assign({}, T.links, { [i]: [t, 'r'] }),
+        to: T.to,
+        note: '',
+      });
+      return i;
+    }, t);
+    await until(p, i => document.querySelector('#m' + i + ' > .xr'), i, 5000);
+    const before = await p.evaluate(t => !!document.getElementById('m' + t), t);
+    await p.evaluate(i => {
+      const r = document.getElementById('m' + i);
+      r.closest('details').open = true;
+      r.querySelector(':scope > .xr').click();
+    }, i);
+    await p.waitForTimeout(700);
+    const shown = await p.evaluate(t => {
+      const x = document.getElementById('m' + t);
+      const r = x && x.getBoundingClientRect();
+      return !!x && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight && x.classList.contains('flash');
+    }, t);
+    ok(!before && shown, 'F23: the line on #' + i + ' opens #' + t + ' (10 days back, not loaded) by loading its day');
+    ok(p.errors.length === 0, 'F23 older: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
+/* ---------- saved questions: Remove, Undo and Clear all on the Ask tab (F26) ---------- */
+const QA_MARKUP = '<img src=x onerror="window.__x=1"><b>Bold?</b>';
+const QA_UNDO = 400;
+const QA_DOCS = () => ({
+  'qa/q1': { q: 'Who sold a stove?', a: 'Ben did [#1].', at: '2026-11-10T10:00:00.000Z', scope: 'window', toI: 19 },
+  'qa/q2': { q: QA_MARKUP, a: 'Ana asked [#2].', at: '2026-11-11T10:00:00.000Z', scope: 'all', toI: 19 },
+  'qa/q3': { q: 'What did Cy want?', a: 'A tent [#3].', at: '2026-11-12T10:00:00.000Z', scope: 'window', toI: 19 },
+});
+/* every case counts the dialogs its page opens; the page must never open one */
+let qaDialogs = 0;
+async function qopen(ctx, docs = QA_DOCS()) {
+  const seed = hseed(hmsgs(20), { meta: { markerMode: null }, docs, opts: { undoMs: QA_UNDO } });
+  const p = await open(seed, PAGE, ctx);
+  HP.push(p);
+  p.on('dialog', d => {
+    qaDialogs++;
+    d.dismiss().catch(() => {});
+  });
+  await until(p, () => S.msgs.length === 20 && document.querySelectorAll('#qa-list .item, #qa-list details').length);
+  await p.evaluate(() => (location.hash = '#ask'));
+  return p;
+}
+/* what the list, the undo line and the store show */
+const qstate = p =>
+  p.evaluate(() => ({
+    list: [...document.querySelectorAll('#qa-list .item.qa')].map(c => c.dataset.id),
+    stored: Object.keys(__rt.all())
+      .filter(k => /^qa\//.test(k))
+      .map(k => k.slice(3))
+      .sort(),
+    undo: document.getElementById('qa-undo') ? document.getElementById('qa-undo').textContent : null,
+    clear: !!document.getElementById('qa-clear') && !document.getElementById('qa-clear').hidden,
+    dels: __rt.writes.filter(w => w.op === 'delete').map(w => w.p),
+    empty: /No questions yet/.test(document.getElementById('qa-list').textContent),
+  }));
+const qclick = (p, id) => p.click('#qa-list .item.qa[data-id="' + id + '"] .qa-rm', { timeout: 2000 });
+const qundo = (p, k = 0) => p.click('#qa-undo p:nth-child(' + (k + 1) + ') button', { timeout: 2000 });
+async function savedQuestions() {
+  /* Q1: Remove (from the keyboard) hides it at once, shows "Removed … · Undo" in a live region, then deletes qa/<id> */
+  await hcase('Q1', async () => {
+    const p = await qopen();
+    const a11y = await p.evaluate(() => {
+      const u = document.getElementById('qa-undo');
+      const b = document.querySelector('#qa-list .item.qa[data-id="q1"] .qa-rm');
+      return {
+        live: u.getAttribute('aria-live') === 'polite' && u.getAttribute('role') === 'status',
+        label: b.tagName === 'BUTTON' && b.getAttribute('aria-label') === 'Remove the question “Who sold a stove?”',
+        text: b.textContent,
+      };
+    });
+    await p.focus('#qa-list .item.qa[data-id="q1"] .qa-rm');
+    await p.keyboard.press('Enter');
+    await sleep(50);
+    const now = await qstate(p);
+    const focus = await p.evaluate(() => document.activeElement.textContent);
+    ok(
+      a11y.live &&
+        a11y.label &&
+        a11y.text === 'Remove' &&
+        now.list.join() === 'q3,q2' &&
+        now.stored.join() === 'q1,q2,q3' &&
+        now.undo === 'Removed “Who sold a stove?” · Undo' &&
+        focus === 'Undo' &&
+        !now.dels.length,
+      'saved Q1: Remove (a labelled button, pressed with Enter) hides the question at once, keeps qa/q1 for now, says "' +
+        now.undo +
+        '" in a polite live region and moves focus to Undo (' +
+        JSON.stringify({ a11y, now, focus }) +
+        ')',
+    );
+    await sleep(QA_UNDO + 300);
+    const later = await qstate(p);
+    ok(
+      later.list.join() === 'q3,q2' && later.stored.join() === 'q2,q3' && later.dels.join() === 'qa/q1' && !later.undo,
+      'saved Q1: after the delay qa/q1 is deleted, the list stays without it and the undo line is gone (' +
+        JSON.stringify(later) +
+        ')',
+    );
+  });
+
+  /* Q2: Undo within the delay keeps the question in the list and in qa */
+  await hcase('Q2', async () => {
+    const p = await qopen();
+    await qclick(p, 'q3');
+    await sleep(50);
+    await p.keyboard.press('Enter'); /* focus is on Undo */
+    await sleep(50);
+    const back = await qstate(p);
+    const focus = await p.evaluate(() => document.activeElement.closest('.item.qa')?.dataset.id ?? null);
+    await sleep(QA_UNDO + 300);
+    const later = await qstate(p);
+    ok(
+      back.list.join() === 'q3,q2,q1' &&
+        !back.undo &&
+        focus === 'q3' &&
+        later.list.join() === 'q3,q2,q1' &&
+        later.stored.join() === 'q1,q2,q3' &&
+        !later.dels.length,
+      'saved Q2: Undo (Enter) brings the question back at once, focus on it, and after the delay nothing was deleted (' +
+        JSON.stringify({ back, focus, later }) +
+        ')',
+    );
+  });
+
+  /* Q3: several removals in a row each have their own Undo and timer */
+  await hcase('Q3', async () => {
+    const p = await qopen();
+    await qclick(p, 'q1');
+    await qclick(p, 'q3');
+    await sleep(50);
+    const two = await qstate(p);
+    await qundo(p, 0); /* q1's line */
+    await sleep(QA_UNDO + 300);
+    const later = await qstate(p);
+    ok(
+      two.list.join() === 'q2' &&
+        /Removed “Who sold a stove\?” · Undo/.test(two.undo) &&
+        /Removed “What did Cy want\?” · Undo/.test(two.undo) &&
+        !two.clear &&
+        later.list.join() === 'q2,q1' &&
+        later.stored.join() === 'q1,q2' &&
+        later.dels.join() === 'qa/q3',
+      'saved Q3: two removals in a row show two Undo lines; undoing the first keeps q1 and only qa/q3 is deleted; Clear all hides with one question left (' +
+        JSON.stringify({ two, later }) +
+        ')',
+    );
+  });
+
+  /* Q4: Clear all (2 or more saved) hides every question with one Undo; Undo restores them all; again deletes them */
+  await hcase('Q4', async () => {
+    const p = await qopen();
+    const label = await p.evaluate(() => document.getElementById('qa-clear').getAttribute('aria-label'));
+    const before = await qstate(p);
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(50);
+    const cleared = await qstate(p);
+    await qundo(p);
+    await sleep(QA_UNDO + 300);
+    const undone = await qstate(p);
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(QA_UNDO + 400);
+    const gone = await qstate(p);
+    ok(
+      before.clear &&
+        label === 'Clear all 3 saved questions' &&
+        cleared.list.length === 0 &&
+        cleared.empty &&
+        cleared.undo === 'Removed 3 questions · Undo' &&
+        !cleared.clear &&
+        cleared.stored.length === 3,
+      'saved Q4: Clear all (labelled "' +
+        label +
+        '") hides all three at once and says "' +
+        cleared.undo +
+        '" (' +
+        JSON.stringify({ before, cleared }) +
+        ')',
+    );
+    ok(
+      undone.list.join() === 'q3,q2,q1' &&
+        undone.stored.length === 3 &&
+        !undone.dels.length &&
+        undone.clear &&
+        gone.list.length === 0 &&
+        gone.stored.length === 0 &&
+        gone.dels.slice().sort().join() === 'qa/q1,qa/q2,qa/q3' &&
+        !gone.undo,
+      'saved Q4: Undo restores all three; Clear all again deletes every qa document after the delay (' +
+        JSON.stringify({ undone, gone }) +
+        ')',
+    );
+  });
+
+  /* Q5: a failed delete brings the question back with a short line */
+  await hcase('Q5', async () => {
+    const p = await qopen();
+    await p.evaluate(() => __rt.fails.push({ p: 'qa/q1', op: 'delete' }));
+    await qclick(p, 'q1');
+    await sleep(QA_UNDO + 300);
+    const s = await qstate(p);
+    ok(
+      s.list.join() === 'q3,q2,q1' &&
+        s.stored.join() === 'q1,q2,q3' &&
+        s.undo === "Couldn't remove “Who sold a stove?”. It's back in the list.",
+      'saved Q5: when the delete fails the question is back in the list with "' +
+        s.undo +
+        '" (' +
+        JSON.stringify(s) +
+        ')',
+    );
+    /* and a Clear all where one delete fails puts back just that one */
+    await p.evaluate(() => {
+      __rt.fails.push({ p: 'qa/q2', op: 'delete' });
+      document.querySelectorAll('#qa-undo p').forEach(x => x.remove());
+    });
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(QA_UNDO + 400);
+    const c = await qstate(p);
+    ok(
+      c.list.join() === 'q2' &&
+        c.stored.join() === 'q2' &&
+        c.undo === "Couldn't remove 1 of 3 questions. They're back in the list.",
+      'saved Q5: a Clear all with one failed delete puts back just that question, saying "' +
+        c.undo +
+        '" (' +
+        JSON.stringify(c) +
+        ')',
+    );
+  });
+
+  /* Q6: markup in a saved question shows as literal text, in the list, the Remove label and the undo line */
+  await hcase('Q6', async () => {
+    const p = await qopen();
+    const shown = await p.evaluate(() => ({
+      h3: document.querySelector('#qa-list .item.qa[data-id="q2"] h3').textContent,
+      label: document.querySelector('#qa-list .item.qa[data-id="q2"] .qa-rm').getAttribute('aria-label'),
+    }));
+    await qclick(p, 'q2');
+    await sleep(50);
+    const s = await qstate(p);
+    const ran = await p.evaluate(() => ({
+      x: window.__x,
+      img: document.querySelectorAll('#qa-list img, #qa-undo img').length,
+      b: document.querySelectorAll('#qa-list b, #qa-undo b').length,
+    }));
+    ok(
+      shown.h3.startsWith(QA_MARKUP) &&
+        shown.label.startsWith('Remove the question “<img src=x') &&
+        s.undo.startsWith('Removed “<img src=x onerror=') &&
+        ran.x === undefined &&
+        !ran.img &&
+        !ran.b,
+      'saved Q6: markup in a question shows as literal text in the list, the Remove label and the undo line, and runs nothing (' +
+        JSON.stringify({ shown, undo: s.undo, ran }) +
+        ')',
+    );
+  });
+
+  /* Q7: Look deeper on an answer still works after a saved question is removed */
+  await hcase('Q7', async () => {
+    const { p } = await deepOpen({ undoMs: QA_UNDO });
+    await until(p, () => document.querySelectorAll('#qa-list .item.qa').length === 1);
+    await p.evaluate(() =>
+      __rt.write('qa/z1', {
+        q: 'An older question',
+        a: 'Old answer [#3].',
+        at: '2026-10-01T10:00:00.000Z',
+        scope: 'window',
+      }),
+    );
+    await until(p, () => document.querySelectorAll('#qa-list .item.qa').length === 2);
+    const kept = await p.evaluate(() => document.querySelector('#qa-list .item.qa').dataset.id);
+    await qclick(p, 'z1');
+    await sleep(QA_UNDO + 300);
+    await scriptJson(p, [{ stretches: [{ from: 100, to: 160, focus: 130, why: 'the stove sale' }] }]);
+    const d = await deepPress(p);
+    await sleep(200);
+    const s = await p.evaluate(() =>
+      Object.entries(__rt.all())
+        .filter(([k]) => /^qa\//.test(k))
+        .map(([k, v]) => k.slice(3) + ':' + v.scope),
+    );
+    const list = await qstate(p);
+    ok(
+      d.json === 1 &&
+        d.plain === 1 &&
+        d.hidden &&
+        /^Looked deeper/.test(d.status) &&
+        !s.some(x => x.startsWith('z1:')) &&
+        s.includes(kept + ':all') &&
+        s.some(x => /:deeper$/.test(x)) &&
+        list.list.length === 2 &&
+        list.list.includes(kept),
+      'saved Q7: with a saved question removed, Look deeper on the remaining answer still reads and saves its answer (' +
+        JSON.stringify({ status: d.status, s, list: list.list }) +
+        ')',
+    );
+  });
+
+  /* Q8: at 390 px the list, Remove links, Clear all and the undo line fit the width */
+  await hcase('Q8', async () => {
+    const docs = QA_DOCS();
+    docs['qa/q4'] = {
+      q: 'A long question about a stove, a tent, a pack and a water filter that goes on and on ' + 'x'.repeat(80),
+      a: 'Long answer '.repeat(40),
+      at: '2026-11-13T10:00:00.000Z',
+      scope: 'window',
+    };
+    const p = await qopen({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, docs);
+    await p.evaluate(() => document.querySelector('#qa-list .item.qa[data-id="q4"] details').setAttribute('open', ''));
+    await qclick(p, 'q1');
+    await sleep(50);
+    const fit = await p.evaluate(() => {
+      const r = s => Math.max(0, ...[...document.querySelectorAll(s)].map(x => x.getBoundingClientRect().right));
+      return {
+        sw: document.documentElement.scrollWidth,
+        iw: innerWidth,
+        rm: r('#qa-list .qa-rm'),
+        clear: r('#qa-clear'),
+        undo: r('#qa-undo p'),
+        items: r('#qa-list .item.qa'),
+        n: document.querySelectorAll('#qa-list .qa-rm').length,
+      };
+    });
+    ok(
+      fit.n === 3 && fit.sw <= fit.iw && Math.max(fit.rm, fit.clear, fit.undo, fit.items) <= fit.iw && fit.undo > 0,
+      'saved Q8: at 390 px the saved questions, their Remove links, Clear all and the undo line fit, no sideways scroll (' +
+        JSON.stringify(fit) +
+        ')',
+    );
+  });
+
+  /* Q10: closing the page (pagehide) during the delay starts every pending delete before its first await, so a Clear
+     all of 3 sends 3 deletes before unload; going hidden (a phone may discard a background tab without pagehide)
+     flushes too, and a removal never commits twice */
+  await hcase('Q10', async () => {
+    const p = await qopen();
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(50);
+    const sync = await p.evaluate(() => {
+      const n = () => __rt.writes.filter(w => w.op === 'delete').length;
+      const before = n();
+      dispatchEvent(new Event('pagehide'));
+      const now = n();
+      return Promise.resolve().then(() => ({ before, now, tick: n() }));
+    });
+    await sleep(QA_UNDO + 300);
+    const s = await qstate(p);
+    ok(
+      sync.before === 0 &&
+        sync.now === 3 &&
+        sync.tick === 3 &&
+        s.dels.slice().sort().join() === 'qa/q1,qa/q2,qa/q3' &&
+        s.stored.length === 0 &&
+        !s.undo,
+      'saved Q10: pagehide after Clear all of 3 starts all 3 deletes at once, and none again after the delay (' +
+        JSON.stringify({ sync, s }) +
+        ')',
+    );
+    const p2 = await qopen();
+    await qclick(p2, 'q1');
+    await qclick(p2, 'q3');
+    await sleep(50);
+    const vis = await p2.evaluate(() => {
+      const n = () => __rt.writes.filter(w => w.op === 'delete').map(w => w.p);
+      const before = n().length;
+      document.dispatchEvent(new Event('visibilitychange')); /* still visible: nothing */
+      const visible = n().length;
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      const hidden = n().slice().sort();
+      dispatchEvent(new Event('pagehide'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      return { before, visible, hidden, again: n().length };
+    });
+    await sleep(QA_UNDO + 300);
+    const s2 = await qstate(p2);
+    ok(
+      vis.before === 0 &&
+        vis.visible === 0 &&
+        vis.hidden.join() === 'qa/q1,qa/q3' &&
+        vis.again === 2 &&
+        s2.dels.length === 2 &&
+        s2.stored.join() === 'q2' &&
+        !s2.undo,
+      'saved Q10: going hidden commits both pending removals at once; a later pagehide, hide or the timers delete nothing twice (' +
+        JSON.stringify({ vis, s2 }) +
+        ')',
+    );
+  });
+
+  /* Q9: removing, undoing and clearing never opens a dialog, here or in the cases above */
+  await hcase('Q9', async () => {
+    const p = await qopen();
+    await p.evaluate(() => {
+      window.__dlg = [];
+      ['alert', 'confirm', 'prompt'].forEach(f => (window[f] = () => __dlg.push(f)));
+    });
+    await qclick(p, 'q1');
+    await qundo(p);
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(QA_UNDO + 400);
+    const s = await qstate(p);
+    const dlg = await p.evaluate(() => __dlg);
+    ok(
+      s.stored.length === 0 && s.dels.length === 3 && !dlg.length && qaDialogs === 0,
+      'saved Q9: Remove, Undo and Clear all never call alert, confirm or prompt, here or in the cases above (' +
+        JSON.stringify({ dlg, qaDialogs, dels: s.dels }) +
+        ')',
+    );
+  });
+}
+
 const SECTIONS = {
   importer,
   robustness,
@@ -7734,6 +8622,7 @@ const SECTIONS = {
   history,
   history2,
   digests,
+  byDay,
   notices,
   schedule,
   claims,
@@ -7742,6 +8631,8 @@ const SECTIONS = {
   longRanges,
   longRanges2,
   olderByDay,
+  crossReply,
+  savedQuestions,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1
