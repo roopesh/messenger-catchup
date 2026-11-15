@@ -25,6 +25,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F27 | P3 | feature | More views of the per-day digests beyond the By day tab: in the Messages tab's day headers, or a week's digests as a catch-up after time away |
 | F28 | P2 | feature | Rethink Views: collapsing or sub-tabs, saving and deleting views, and how they fit with By day (to define with the owner; not ready to build) |
+| F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (to define with F28; notes in [design/day-summaries.md](design/day-summaries.md)) |
 
 ---
 
@@ -89,7 +90,20 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - **Saving and deleting:** every built view is saved at once (`views/*`, `kind:"view"`), and there's no way to delete one or choose not to keep it. F26's Remove with Undo is a model.
   - **By day (F24):** how views relate to the By day tab. A view could be scoped to a day or range, By day could be one built-in view, or the two could share navigation.
 - **Also to settle:** whether a view refreshes as new messages arrive or stays a snapshot, renaming, where method ideas and Notes from Claude belong, and what the Views tab is for next to Summary, Messages, By day and Ask.
-- **Next step:** a design conversation with the owner (questions first, then a short design), then a build plan.
+- **Next step:** a design conversation with the owner (questions first, then a short design), then a build plan. Design it together with F29 (fuller day summaries, [design/day-summaries.md](design/day-summaries.md)).
+
+### F29 · P2 · Fuller day summaries (to define)
+- **The owner (Nov 15):**
+  - The By day digests are weak.
+  - Ask Claude's "summary of yesterday" is far better and doesn't match them.
+  - Wants a fuller day summary, refreshed at every refresh, that they can choose to share.
+- **Why:** a digest is capped at 8 bullets of 15 words, as a compact index for Ask's long-history prompt; By day shows those index cards.
+- **Direction:** two levels.
+  - Keep the short digest for Ask.
+  - Add a fuller summary written by the refresh: incremental during the day, then one final rewrite after the day ends.
+  - Sharing by "Copy for chat" and/or a shared link, the owner's call.
+- **Everything discussed:** options, the owner's decisions, Claude's proposed shape and the open questions are in [design/day-summaries.md](design/day-summaries.md).
+- **Designed together with F28.**
 
 ### F27 · P3 · More views of the per-day digests
 - **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
