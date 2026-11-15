@@ -13,6 +13,11 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 
 ### Fixed
 - **Unclosed files (C8).** `tools/sync.py` and two tests closed their files only when garbage-collected, which printed "Exception ignored … ResourceWarning" in the Python suite. They use `with open(...)` now, and `TestNoUnclosedFiles` fails on any `open(...).read()` or `.write()` one-liner in the repo (it fails before).
+- **Release review fixes:**
+  - **Closing the page after Clear all deleted only one question.** The deletes ran one after another, and on `pagehide` only the first started before the page unloaded. They all start at once now, and the page going hidden commits pending removals too (a phone may discard a background tab without `pagehide`), never twice. Test: `savedQuestions` Q10 (fails on the release candidate).
+  - **`TestNoUnclosedFiles` passed vacuously in a checkout under `.claude/`** (Claude Code worktrees): it skipped any folder whose full path held ".claude", and `.github` with ".git". It skips folders by their name inside the repo now, and it also finds a one-liner the formatter wrapped across lines. Test: `test_scanner_finds_planted_files_under_a_claude_path` (fails before).
+  - **The fifth tab hid "Views" on phones.** The tab bar was 505 px wide, so at 390 px "Views" was off-screen with no hint. Under 560 px the five tabs share the width, smaller, with "Ask" for "Ask Claude" (its accessible name stays "Ask Claude"), and are still 43 px tall. Test: `byDay` BD9, which also checks a wide fallback font (fails before).
+  - **By day could say "once the chat data loads" forever.** With no database it now says the digests can't load in this view (as the page's header does), and when the digests listener fails, "Couldn't load the day digests. Reload the page to try again." BD5 checks the exact text. The test stand-in's listeners can now fail (`snapFail`). Test: `byDay` BD5 and BD10 (both fail before).
 
 ### Changed
 - **R9 closed:** the owner's 31 posted replies (8 to multi-word names) all passed the "Replying to …" bar check live.

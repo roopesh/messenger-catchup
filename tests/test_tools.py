@@ -2115,23 +2115,54 @@ class TestPlugin(unittest.TestCase):
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
 
+def unclosed_files(root):
+    """`path:line` of every `.py` file under root that reads or writes straight off `open()`. Folders are skipped by
+    their name inside root, never by root's own path (a worktree under `.claude/` must still be scanned). The pattern
+    runs over the whole file, so a call the formatter wrapped across lines is found too (`[^()]` matches newlines);
+    the line given is the one `open(` is on."""
+    pattern = re.compile(r"open\([^()]*(\([^()]*\)[^()]*)*\)\s*\.(read|write)\(")
+    skip = {".git", "node_modules", ".venv", ".claude"}
+    found = []
+    for d, dirs, files in os.walk(root):
+        dirs[:] = [x for x in dirs if x not in skip]
+        for name in files:
+            if name.endswith(".py"):
+                path = os.path.join(d, name)
+                with open(path, encoding="utf-8") as f:
+                    text = f.read()
+                for m in pattern.finditer(text):
+                    found.append("%s:%d" % (os.path.relpath(path, root), text.count("\n", 0, m.start()) + 1))
+    return sorted(found)
+
+
 class TestNoUnclosedFiles(unittest.TestCase):
     def test_no_open_read_or_write_one_liners(self):
         """Reading or writing straight off `open()` leaves the file to the garbage collector, which prints "Exception ignored … ResourceWarning"
         that `-W error::ResourceWarning` can't fail on (BACKLOG C8). Use `with open(...)`."""
-        one_liner = re.compile(r"open\([^()]*(\([^()]*\)[^()]*)*\)\.(read|write)\(")
-        found = []
-        for d, _, files in os.walk(ROOT):
-            if any(x in d for x in (".git", "node_modules", ".venv", ".claude")):
-                continue
-            for name in files:
-                if name.endswith(".py"):
-                    path = os.path.join(d, name)
-                    with open(path, encoding="utf-8") as f:
-                        for n, line in enumerate(f, 1):
-                            if one_liner.search(line) and "one_liner" not in line:
-                                found.append("%s:%d" % (os.path.relpath(path, ROOT), n))
-        self.assertEqual(found, [])
+        self.assertEqual(unclosed_files(ROOT), [])
+
+    def test_scanner_finds_planted_files_under_a_claude_path(self):
+        """The scan must not pass vacuously: Claude Code worktrees live under `.claude/worktrees/`, so a checkout's own path
+        can contain `.claude`. Only folders inside the checkout are skipped, `.github` is scanned, and a call the formatter
+        wrapped across lines is still found."""
+        op = "op" + "en"  # spelled apart so this file doesn't plant a match in the real scan
+        planted = {
+            "tools/a.py": "x = %s('a').read()\n" % op,
+            "tools/b.py": "import os\n%s(\n    os.path.join('a', 'b'), 'w'\n).write('x')\n" % op,
+            ".github/c.py": "%s('c', 'w').write('x')\n" % op,
+            "tools/ok.py": "with %s('a') as f:\n    f.read()\n" % op,
+            "node_modules/d.py": "%s('d').read()\n" % op,
+            ".claude/e.py": "%s('e').read()\n" % op,
+            ".venv/lib/f.py": "%s('f').read()\n" % op,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, ".claude", "worktrees", "agent-x")
+            for rel, text in planted.items():
+                path = os.path.join(root, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+            self.assertEqual(unclosed_files(root), [".github/c.py:1", "tools/a.py:1", "tools/b.py:2"])
 
 
 if __name__ == "__main__":

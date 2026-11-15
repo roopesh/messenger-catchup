@@ -130,6 +130,12 @@ function runtime(seed) {
       throw Object.assign(new Error('injected failure'), { code: 'unavailable' });
     }
   };
+  /* opts.snapFail: ['c:<collection>' | 'd:<path>']: that listener calls its error callback instead of ever answering */
+  const snapFail = (k, err) => {
+    if (!(opts.snapFail || []).includes(k)) return false;
+    setTimeout(() => err && err(Object.assign(new Error('injected listener failure'), { code: 'unavailable' })), 0);
+    return true;
+  };
   function doc(p) {
     const ref = {
       get: async () => docSnap(p),
@@ -167,7 +173,8 @@ function runtime(seed) {
         leases.set(p, { holder: o.holder, exp });
         return { acquired: true, version: 1, expiresAt: new Date(exp).toISOString(), holder: o.holder };
       },
-      onSnapshot: cb => {
+      onSnapshot: (cb, err) => {
+        if (snapFail('d:' + p, err)) return () => {};
         sub('d:' + p, cb);
         setTimeout(() => cb(docSnap(p)), 0);
         return () => {};
@@ -191,7 +198,8 @@ function runtime(seed) {
       if (lim) docs = docs.slice(0, lim);
       return { docs, size: docs.length, empty: !docs.length };
     },
-    onSnapshot: cb => {
+    onSnapshot: (cb, err) => {
+      if (snapFail('c:' + c, err)) return () => {};
       sub('c:' + c, cb);
       setTimeout(() => cb(collSnap(c)), 0);
       return () => {};
@@ -4108,18 +4116,41 @@ async function byDay() {
     );
   });
 
-  /* BD5: no database (signed out): the tab shows an empty state, no errors, also when the page opens at #days */
+  /* BD5: no database (signed out): the tab says the digests can't load here, not "once the chat data loads" forever;
+     no errors, also when the page opens at #days */
   await hcase('BD5', async () => {
     const p = await open(Object.assign(SEED(), { __opts: { noDb: true } }));
     HP.push(p);
     await bdShow(p);
+    await p.waitForTimeout(300);
     const e1 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
     await p.reload();
     await p.waitForTimeout(400);
     const e2 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
     ok(
-      e1.length > 0 && e2 === e1 && p.errors.length === 0,
-      'F24 BD5: with no database, an empty state ("' + e1 + '") and no page errors ' + JSON.stringify(p.errors),
+      e1 === "The day digests can't load in this view. Open the page on claude.ai while signed in." &&
+        e2 === e1 &&
+        p.errors.length === 0,
+      'F24 BD5: with no database, the tab says "' + e1 + '" and no page errors ' + JSON.stringify(p.errors),
+    );
+  });
+
+  /* BD10: the digests listener fails: the tab says so instead of waiting for the data forever, also opened at #days */
+  await hcase('BD10', async () => {
+    const p = await open(Object.assign(SEED(), { __opts: { snapFail: ['c:digests'] } }));
+    HP.push(p);
+    await bdShow(p);
+    await p.waitForTimeout(300);
+    const e1 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
+    await p.reload();
+    await p.waitForTimeout(400);
+    const e2 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
+    ok(
+      e1 === "Couldn't load the day digests. Reload the page to try again." && e2 === e1 && p.errors.length === 0,
+      'F24 BD10: when the digests listener fails, the tab says "' +
+        e1 +
+        '"; no page errors ' +
+        JSON.stringify(p.errors),
     );
   });
 
@@ -4200,6 +4231,46 @@ async function byDay() {
       'F24 BD8: 30 days first (' + n0 + '), then "' + btn + '" adds the rest ' + JSON.stringify(r),
     );
     ok(p.errors.length === 0, 'F24 BD8: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* BD9: at 390 px all five tabs fit the bar (none hidden off its right edge, no sideways scroll in the bar or the
+     page) and stay easy to tap; also with a wide stand-in for the display font, as a machine without the web font or
+     Arial Narrow draws them */
+  await hcase('BD9', async () => {
+    const p = await open(SEED(), PAGE, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    HP.push(p);
+    const measure = () =>
+      p.evaluate(() => {
+        const nav = document.querySelector('nav.tabs');
+        const nr = nav.getBoundingClientRect();
+        const tabs = [...nav.querySelectorAll('a')].map(a => {
+          const r = a.getBoundingClientRect();
+          return { t: a.dataset.tab, l: Math.round(r.left), r: Math.round(r.right), h: Math.round(r.height) };
+        });
+        return {
+          tabs,
+          navL: Math.round(nr.left),
+          navR: Math.round(nr.left + nav.clientWidth),
+          scroll: nav.scrollWidth - nav.clientWidth,
+          sw: document.documentElement.scrollWidth,
+          iw: innerWidth,
+        };
+      });
+    const fits = m =>
+      m.tabs.length === 5 &&
+      m.tabs.every(t => t.l >= m.navL && t.r <= m.navR && t.h >= 32) &&
+      m.scroll <= 0 &&
+      m.sw <= m.iw;
+    const m1 = await measure();
+    await p.evaluate(() =>
+      document.documentElement.style.setProperty('--display', 'Verdana, "DejaVu Sans", sans-serif'),
+    );
+    const m2 = await measure();
+    ok(
+      fits(m1) && fits(m2),
+      'F24 BD9: at 390 px all five tabs fit the bar, at least 32 px tall, no sideways scroll, also in a wide font ' +
+        JSON.stringify({ m1, m2 }),
+    );
   });
 }
 
@@ -8452,6 +8523,65 @@ async function savedQuestions() {
     );
   });
 
+  /* Q10: closing the page (pagehide) during the delay starts every pending delete before its first await, so a Clear
+     all of 3 sends 3 deletes before unload; going hidden (a phone may discard a background tab without pagehide)
+     flushes too, and a removal never commits twice */
+  await hcase('Q10', async () => {
+    const p = await qopen();
+    await p.click('#qa-clear', { timeout: 2000 });
+    await sleep(50);
+    const sync = await p.evaluate(() => {
+      const n = () => __rt.writes.filter(w => w.op === 'delete').length;
+      const before = n();
+      dispatchEvent(new Event('pagehide'));
+      const now = n();
+      return Promise.resolve().then(() => ({ before, now, tick: n() }));
+    });
+    await sleep(QA_UNDO + 300);
+    const s = await qstate(p);
+    ok(
+      sync.before === 0 &&
+        sync.now === 3 &&
+        sync.tick === 3 &&
+        s.dels.slice().sort().join() === 'qa/q1,qa/q2,qa/q3' &&
+        s.stored.length === 0 &&
+        !s.undo,
+      'saved Q10: pagehide after Clear all of 3 starts all 3 deletes at once, and none again after the delay (' +
+        JSON.stringify({ sync, s }) +
+        ')',
+    );
+    const p2 = await qopen();
+    await qclick(p2, 'q1');
+    await qclick(p2, 'q3');
+    await sleep(50);
+    const vis = await p2.evaluate(() => {
+      const n = () => __rt.writes.filter(w => w.op === 'delete').map(w => w.p);
+      const before = n().length;
+      document.dispatchEvent(new Event('visibilitychange')); /* still visible: nothing */
+      const visible = n().length;
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      const hidden = n().slice().sort();
+      dispatchEvent(new Event('pagehide'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      return { before, visible, hidden, again: n().length };
+    });
+    await sleep(QA_UNDO + 300);
+    const s2 = await qstate(p2);
+    ok(
+      vis.before === 0 &&
+        vis.visible === 0 &&
+        vis.hidden.join() === 'qa/q1,qa/q3' &&
+        vis.again === 2 &&
+        s2.dels.length === 2 &&
+        s2.stored.join() === 'q2' &&
+        !s2.undo,
+      'saved Q10: going hidden commits both pending removals at once; a later pagehide, hide or the timers delete nothing twice (' +
+        JSON.stringify({ vis, s2 }) +
+        ')',
+    );
+  });
+
   /* Q9: removing, undoing and clearing never opens a dialog, here or in the cases above */
   await hcase('Q9', async () => {
     const p = await qopen();
@@ -8467,7 +8597,7 @@ async function savedQuestions() {
     const dlg = await p.evaluate(() => __dlg);
     ok(
       s.stored.length === 0 && s.dels.length === 3 && !dlg.length && qaDialogs === 0,
-      'saved Q9: Remove, Undo and Clear all never call alert, confirm or prompt, here or in Q1–Q8 (' +
+      'saved Q9: Remove, Undo and Clear all never call alert, confirm or prompt, here or in the cases above (' +
         JSON.stringify({ dlg, qaDialogs, dels: s.dels }) +
         ')',
     );

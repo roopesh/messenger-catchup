@@ -165,6 +165,23 @@
     border-bottom: 3px solid transparent;
     white-space: nowrap;
   }
+  /* on a phone the five tabs share the width (each stretches, so the spare room is tappable too): smaller, tighter,
+     "Ask" for "Ask Claude"; still about 40 px tall */
+  @media (max-width: 560px) {
+    nav.tabs {
+      gap: 0;
+    }
+    nav.tabs a {
+      flex: 1 1 auto;
+      text-align: center;
+      font-size: 0.85rem;
+      letter-spacing: 0;
+      padding: 10px 2px;
+    }
+    nav.tabs .wide {
+      display: none;
+    }
+  }
   nav.tabs a[aria-current="page"] {
     color: var(--fg);
     border-bottom-color: var(--accent);
@@ -1489,7 +1506,7 @@
 
   <nav class="tabs" aria-label="Sections">
     <a href="#summary" data-tab="summary">Summary</a>
-    <a href="#ask" data-tab="ask">Ask Claude</a>
+    <a href="#ask" data-tab="ask" aria-label="Ask Claude">Ask<span class="wide"> Claude</span></a>
     <a href="#messages" data-tab="messages">Messages</a>
     <a href="#days" data-tab="days">By day</a>
     <a href="#views" data-tab="views">Views</a>
@@ -6060,11 +6077,12 @@
   }
   /* ---------- removing saved questions (F26) ----------
      Remove (or Clear all, from 2 saved questions) hides them at once and puts "Removed … · Undo" in #qa-undo, a
-     polite live region, for QA_UNDO_MS; then each qa/<id> is deleted, one at a time. Undo within the delay keeps
+     polite live region, for QA_UNDO_MS; then all its qa/<id> deletes start together. Undo within the delay keeps
      them; a failed delete puts that question back with a short line saying so. Each removal has its own line and
      timer, so several in a row each work on their own. No dialogs. A deleted id stays in qaGone, so a late snapshot
-     can't show it again. Closing the page during the delay deletes at once (best effort). Tests shorten the delay
-     with window.__mcUndoMs; nothing in production sets it. */
+     can't show it again. Closing the page, or the page going hidden (a phone may discard a background tab without
+     pagehide), during the delay deletes at once (best effort). Tests shorten the delay with window.__mcUndoMs;
+     nothing in production sets it. */
   const QA_UNDO_MS = window.__mcUndoMs || 6000;
   const qaGone = new Set(); /* ids hidden: waiting to be deleted, or deleted */
   const qaPending = new Set(); /* {ids, row, timer} */
@@ -6111,14 +6129,16 @@
     if (!qaPending.delete(P)) return;
     clearTimeout(P.timer);
     P.row.remove();
-    const failed = [];
-    for (const id of P.ids) {
+    /* every delete starts now, before the first await: on pagehide only the code up to it runs */
+    const del = id => {
       try {
-        await S.db.doc("qa/" + id).delete();
+        return S.db.doc("qa/" + id).delete();
       } catch (e) {
-        failed.push(id);
+        return Promise.reject(e);
       }
-    }
+    };
+    const res = await Promise.allSettled(P.ids.map(del));
+    const failed = P.ids.filter((id, k) => res[k].status === "rejected");
     if (!failed.length) return;
     failed.forEach(id => qaGone.delete(id));
     renderQA();
@@ -6129,7 +6149,12 @@
       true,
     );
   }
-  addEventListener("pagehide", () => [...qaPending].forEach(qaCommit));
+  /* qaCommit runs once per removal, so pagehide after going hidden commits nothing twice */
+  const qaFlush = () => [...qaPending].forEach(qaCommit);
+  addEventListener("pagehide", qaFlush);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") qaFlush();
+  });
   $("#qa-clear").onclick = () => qaRemove(qaVisible().map(x => x._id));
   function renderQA() {
     const l = $("#qa-list");
@@ -7714,7 +7739,9 @@
       The per-day digests (S.digests, from digests/m<YYYY-MM>), a card per day, newest first, DAYS_STEP at a time. Drawn
       only while the tab is open, and again when the digests or the messages change. Bullet text is shown as text. Days
       without a digest are left out; one line at the top says why. route() calls this while the page script is still
-      loading (an opened #days link): S.digestsIn is unset then, so only the empty state is drawn. */
+      loading (an opened #days link): S.digestsIn is unset then, so only the empty state is drawn. S.digestsIn is true
+      once the digests are in, "nodb" with no database (signed out, or not on claude.ai) and "error" when the listener
+      fails before they arrive; each has its own line. */
   const DAYS_STEP = 30;
   /* "Sat, Nov 14" (with the year when it isn't this year in the chat's time zone): the day's own date, as stored */
   function dayTitle(k) {
@@ -7784,12 +7811,16 @@
     const box = $("#days-list"),
       v = $("#v-days");
     if (!box || !v || v.hidden) return;
-    const key = [S.digests, S.msgs, S.daysN, S.meta];
+    const key = [S.digests, S.msgs, S.daysN, S.meta, S.digestsIn];
     if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
     renderDays.k = key;
     box.textContent = "";
-    if (!S.digestsIn) {
-      box.append(el("div", "empty", "Day digests show here once the chat data loads."));
+    if (S.digestsIn !== true) {
+      const why = {
+        nodb: "The day digests can't load in this view. Open the page on claude.ai while signed in.",
+        error: "Couldn't load the day digests. Reload the page to try again.",
+      };
+      box.append(el("div", "empty", why[S.digestsIn] || "Day digests show here once the chat data loads."));
       return;
     }
     const days = [...S.digests]
@@ -7873,6 +7904,8 @@
     }
     if (!db) {
       $("#window").textContent = "The chat data can't load in this view. Open the page on claude.ai while signed in.";
+      S.digestsIn = "nodb";
+      renderDays();
       return;
     }
     db.doc("meta/chat").onSnapshot(
@@ -7972,7 +8005,12 @@
         S.digestsIn = true;
         renderDays();
       },
-      () => {},
+      () => {
+        /* digests already shown stay; only a tab still waiting says it failed */
+        if (S.digestsIn === true) return;
+        S.digestsIn = "error";
+        renderDays();
+      },
     );
     db.doc("people/index").onSnapshot(
       s => {
