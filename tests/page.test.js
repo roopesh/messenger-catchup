@@ -369,6 +369,17 @@ function runtime(seed) {
     calls: () => calls,
     usage,
   };
+  /* Like claude.ai's artifact viewer, a same-page #hash link doesn't navigate the page (the viewer takes the hash onto its
+     own address), so no hashchange reaches it: every test runs with this unless opts.hashLinks (v1.26.1). */
+  if (!opts.hashLinks)
+    addEventListener(
+      'click',
+      e => {
+        const a = e.target && e.target.closest && e.target.closest('a[href^="#"]');
+        if (a) e.preventDefault();
+      },
+      true,
+    );
   window.claude = {
     use: async n =>
       ({ db: opts.noDb ? null : { doc, collection }, assets: opts.noAssets ? null : assets, sample })[n] || null,
@@ -4020,6 +4031,47 @@ const bdShow = async p => {
 };
 
 async function byDay() {
+  /* BD11: every tab switches even when the host takes a link's #hash away from the page (claude.ai's artifact viewer
+     puts it on its own address, so no hashchange reaches the page); clicking the tab marks it current; Back returns */
+  await hcase('BD11', async () => {
+    const { p } = await bdOpen();
+    await p.evaluate(() =>
+      addEventListener(
+        'click',
+        e => {
+          const a = e.target.closest && e.target.closest('a[href^="#"]');
+          if (a) e.preventDefault();
+        },
+        true,
+      ),
+    );
+    const seen = [];
+    for (const t of ['messages', 'days', 'views', 'ask', 'summary']) {
+      await p.click('nav a[data-tab="' + t + '"]');
+      await p.waitForTimeout(100);
+      seen.push(
+        await p.evaluate(
+          t => ({
+            t,
+            shown: !document.getElementById('v-' + t).hidden,
+            alone: [...document.querySelectorAll('section.view')].filter(v => !v.hidden).length === 1,
+            cur: document.querySelector('nav a[data-tab="' + t + '"]').getAttribute('aria-current') === 'page',
+          }),
+          t,
+        ),
+      );
+    }
+    await p.goBack();
+    await p.waitForTimeout(150);
+    const back = await p.evaluate(() => !document.getElementById('v-ask').hidden);
+    ok(
+      seen.every(x => x.shown && x.alone && x.cur) && back,
+      'BD11: with the host taking #hash links, each tab click opens that tab alone and marks it current; Back returns to the tab before (' +
+        JSON.stringify([seen, back]) +
+        ')',
+    );
+    await p.close();
+  });
   /* BD1: the tab opens from the keyboard and lists the digested days newest first, with their bullets and counts; the
      day still waiting is absent and the quiet line names it; a page opened at #days draws them too */
   await hcase('BD1', async () => {

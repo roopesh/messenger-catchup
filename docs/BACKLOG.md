@@ -24,6 +24,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F27 | P3 | feature | More views of the per-day digests beyond the By day tab: in the Messages tab's day headers, or a week's digests as a catch-up after time away |
+| F28 | P2 | feature | Rethink Views: collapsing or sub-tabs, saving and deleting views, and how they fit with By day (to define with the owner; not ready to build) |
 
 ---
 
@@ -58,7 +59,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### R12 · P3 · A chain conversation keeps growing
 - **What:** every hourly run adds tool output to the same conversation, so each run costs more over weeks. Predates v1.21.0. Arming at `every` minus 5 minutes (minus 3 from a run's start since v1.23.0) keeps runs inside the prompt cache, but the context still grows.
 - **Also:** a claude.ai conversation has a hard length limit. Once a chain's conversation reaches it, follow-ups can't be delivered and the chain stops (a refresh the user asks for then finds it stopped).
-- **Also (seen live, Nov 14):** a chain conversation seems to keep the skill version it started with. The owner's account had 1.25.0 installed (Customize › Plugins), but the hourly runs of the old `"loop"` chain still left the page at 2.7 and wrote no digests. A refresh started in a new conversation gets the installed version. Not yet confirmed how claude.ai loads a skill into a conversation that's already running. If that's how it works, every release only reaches a chain once it moves to a new conversation, so moving the chain now and then also serves updates.
+- **Corrected (Nov 14):** a note here said a chain seems to keep the skill version it started with. The real cause was an older copy of the skill uploaded to the owner's account (Customize › Skills), which refreshes used instead of the 1.25.0 plugin; a refresh the owner started by hand ran it too. Nothing on the page could flag it, since that copy wrote a matching `versions.page`.
 - **Fix:** measure a chain's cost per run after a week or two; if it climbs, or the conversation nears its limit, have a run move the chain to a fresh conversation now and then (setup's Stop or change, then arm from the new one).
 
 ### R18 · P3 · A run older than the lock's 20 minutes when the next one fires
@@ -80,6 +81,16 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **How it differs:** a group is a feed of posts (text, photos, links), each with its own comment threads and reactions, at `facebook.com/groups/<id>`, not a single message log. The feed's default order isn't by time, posts and comments load lazily, and old posts get new comments, so "what's new since I last looked" means new posts **and** new comments on older ones. Claude in Chrome reads it from the owner's own logged-in Chrome, as for Messenger, read only.
 - **To design with the owner:** which groups; what counts as new; one page per group or groups on the chat's page (F1 is related); what the summary covers (posts, comment threads, deals in buy/sell groups, mentions); whether replying is in scope; how capture works (a helper mode for the group feed, sorted by new activity) and its markup risks (like R3).
 
+### F28 · P2 · Rethink Views (to define)
+- **The owner (Nov 14):** a great idea that works moderately well, but not great. Needs digging in to define before anything is built.
+- **What the owner raised:**
+  - **Collapsing:** views don't feel collapsible. Today a just-built view is drawn in full under the composer (`#view-out`), and saved views are `<details>` items further down the tab, newest first, mixed with method ideas and above "Notes from Claude". Find out what the owner sees as not collapsible.
+  - **Navigation:** collapsible views, sub-tabs, a dropdown, or something else.
+  - **Saving and deleting:** every built view is saved at once (`views/*`, `kind:"view"`), and there's no way to delete one or choose not to keep it. F26's Remove with Undo is a model.
+  - **By day (F24):** how views relate to the By day tab. A view could be scoped to a day or range, By day could be one built-in view, or the two could share navigation.
+- **Also to settle:** whether a view refreshes as new messages arrive or stays a snapshot, renaming, where method ideas and Notes from Claude belong, and what the Views tab is for next to Summary, Messages, By day and Ask.
+- **Next step:** a design conversation with the owner (questions first, then a short design), then a build plan.
+
 ### F27 · P3 · More views of the per-day digests
 - **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
 - **Cost:** page only; the data is there.
@@ -94,4 +105,4 @@ Gathered from finished items when they were removed (Nov 14). The item each came
 - **Ask over long histories (F6, the design's L2–L7):** "include older" answers carry a note like "Read #… word for word. Older than #…: summaries only." and no "(sent a smaller set…)"; answers about things 1 to 3 weeks old cite numbers and say when they rest on summaries or digests; Views on a 5-day window; a long span before `fromI` refused with a start time; what `sample.limits()` returns in the real runtime.
 - **Replies across conversations (F23):** on the owner's page, the 27 mid-conversation Messenger replies whose parent sits in another conversation each show "↩ replying to …" above the bubble, and a few of them open their parent, one on a day Show older hasn't loaded.
 - **Helper (B41, B49, F13):** whether Messenger puts a run's avatar on its last message or its first (either works if each run shows one); whether its loading indicator is a `[role="progressbar"]` at the top of the list; whether it accepts the helper's synthetic Enter and shift+Enter for `post`.
-- **Plugin updates (F7):** settled on Nov 14. The owner's account showed the custom-marketplace plugin at 1.25.0 within hours of the merge. A scheduled chain seems to keep its starting version, which is in R12.
+- **Plugin updates (F7):** settled on Nov 14. The owner's account showed the custom-marketplace plugin at 1.25.0 within hours of the merge. The skills stayed old because of an uploaded copy of the skill, not the chain (see R12).
