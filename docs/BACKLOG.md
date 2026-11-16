@@ -26,6 +26,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F27 | P3 | feature | More views of the per-day digests beyond the By day tab: in the Messages tab's day headers, or a week's digests as a catch-up after time away |
 | F28 | P2 | feature | Rethink Views: collapsing or sub-tabs, saving and deleting views, and how they fit with By day (to define with the owner; not ready to build) |
 | F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (to define with F28; notes in [design/day-summaries.md](design/day-summaries.md)) |
+| F30 | P2 | feature | Send queued replies without a full refresh, if possible (the owner's request, Nov 16; to define) |
 
 ---
 
@@ -104,6 +105,17 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - Sharing by "Copy for chat" and/or a shared link, the owner's call.
 - **Everything discussed:** options, the owner's decisions, Claude's proposed shape and the open questions are in [design/day-summaries.md](design/day-summaries.md).
 - **Designed together with F28.**
+
+### F30 · P2 · Send queued replies without a full refresh
+- **Ask (owner, Nov 16):** be able to send replies queued on the page without a full refresh, if possible.
+- **Today:** a reply queued on the page (`outbox/*`) goes out only at step 8 of a refresh (SKILL.md › Refresh steps; `references/outbox.md`), after the scan, import, build and write. With hourly refreshes, a queued reply can wait up to about an hour, and sending one costs a whole refresh.
+- **Limits:** only Claude can reach the Messenger tab (through Claude in Chrome). The page can't, and the helper in the Messenger tab can't read the page's database. So something still has to start Claude. The change is how little that run does.
+- **Options to weigh:**
+  - **A "send my replies" request:** reads the outbox, posts each approved reply (`outbox.md`), and confirms it with a short scan of the newest messages. No import, build or summary. Much cheaper and faster than a refresh.
+  - **Scheduled runs send first:** every scheduled run handles the outbox before (or instead of) the rest when the scan finds nothing new. Pairs with R12's cheap "nothing new" exit.
+  - **A sooner follow-up:** queuing a reply on the page arms a run a few minutes out instead of waiting for the hour. Needs a way for the page to wake Claude, which it may not have; check what the runtime allows.
+- **To settle:** how soon a reply should go out; whether a reply-only run confirms by its own short scan or leaves that to the next refresh (`sentAt` and `sentMid` today come from the confirm and the next capture, B46); and the approval rules, which stay as they are (`outboxAuto`, or a yes in chat to that exact text).
+- **Related:** R12 (cheap runs), B45 and F13 (how posting works).
 
 ### F27 · P3 · More views of the per-day digests
 - **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
