@@ -27,6 +27,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F28 | P2 | feature | Rethink Views: collapsing or sub-tabs, saving and deleting views, and how they fit with By day (to define with the owner; not ready to build) |
 | F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (to define with F28; notes in [design/day-summaries.md](design/day-summaries.md)) |
 | F30 | P2 | feature | Send queued replies without a full refresh, if possible (the owner's request, Nov 16; to define) |
+| F31 | P2 | feature | A metrics tab: message volume over a picked timeframe, the top 10 contributors in it, and more metrics to choose from (the owner's request, Nov 16; on the decision board) |
 
 ---
 
@@ -116,6 +117,23 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - **A sooner follow-up:** queuing a reply on the page arms a run a few minutes out instead of waiting for the hour. Needs a way for the page to wake Claude, which it may not have; check what the runtime allows.
 - **To settle:** how soon a reply should go out; whether a reply-only run confirms by its own short scan or leaves that to the next refresh (`sentAt` and `sentMid` today come from the confirm and the next capture, B46); and the approval rules, which stay as they are (`outboxAuto`, or a yes in chat to that exact text).
 - **Related:** R12 (cheap runs), B45 and F13 (how posting works).
+
+### F31 · P2 · A metrics tab
+- **Ask (owner, Nov 16):** a new tab with metrics, starting with volume: a chart with selectable timeframes, and clicking into it shows the top contributors (10 to start) by number of messages and percent of messages in that timeframe.
+- **Data:** the page already holds every stored message (`chunks/*`: `f`, `fn`, `d`, `t`, `p`, `x`, `r`/`pi`), so the counts can be worked out on the page with no Claude call and no tokens, and stay current after every import. On the owner's page (Nov 16): about 10,500 messages over 19 days, about 500 a day, 101 posters; the top 10 wrote 40%.
+- **Care points:**
+  - Merge names through `people/index`: `fn` exists only from helper 1.6, so counting by `fn` or `f` alone splits people.
+  - Messages vs. turns (one person's consecutive lines): about a quarter of messages continue a run.
+  - Say where the stored history starts.
+  - Group long timeframes by week or month so a year of messages draws smoothly on a phone.
+- **Options (on the decision board):**
+  - A: volume chart plus the top 10.
+  - B: A plus a weekday-by-hour activity heatmap.
+  - C: a full metrics tab in stages (engagement: reactions, who replies to whom, questions answered and how fast; deals: posted, claimed, sold, time to sold; people: new and gone quiet; word trends; your own numbers).
+  - D: charts on request through Ask.
+  - Claude's recommendation: B first, then C's sections one at a time as the owner picks them, as its own tab rather than under Views (F28).
+- **To settle:** timeframes, what a click does, messages or turns, whether the owner ranks among the members, what clicking a person opens, which extra metrics, and whether a ranking of members should ever travel with a shared page.
+- **Related:** F28 (Views), F29 (sharing day summaries).
 
 ### F27 · P3 · More views of the per-day digests
 - **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
