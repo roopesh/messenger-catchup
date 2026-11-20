@@ -1506,6 +1506,688 @@ sim('F: a URL hash never posts', { s: 13 }, async b => {
   await ctx.close();
 });
 
+/* ---------- S: send replies (the replies skill) and replies first in a refresh (F30) ----------
+   A scripted Claude runs plugin/skills/replies/SKILL.md › Send replies step by step, in the order the file lists them (a
+   step it has no code for fails the case), with the literals the file gives (the lock, its release, the 20 minutes), the
+   bridge from its › Helper, and the code blocks of its copy of references/outbox.md word for word. Its tools are a
+   stand-in for ArtifactData (get, query, batch: a write to an existing document must be pinned, a stale pin refuses the
+   whole batch) and Claude in Chrome on the mock with the helper. Every call goes to one log, so a case checks what was
+   read, what was written, in what order, and whether the Messenger tab was touched at all. */
+const RS = fs.readFileSync(D + 'plugin/skills/replies/SKILL.md', 'utf8');
+const RS_OUTBOX = fs.readFileSync(D + 'plugin/skills/replies/references/outbox.md', 'utf8');
+const RF = fs.readFileSync(D + 'plugin/skills/refresh/SKILL.md', 'utf8');
+const OB = [...RS_OUTBOX.matchAll(/```js\n([\s\S]*?)```/g)].map(m => m[1]);
+const obCode = (k, row, start = true) =>
+  OB[k]
+    .replace(/^await /, '')
+    .replace('ROW', JSON.stringify(row))
+    .replace('START = true', 'START = ' + start);
+const RS_STEPS = [
+  ...RS.split(/^## /m)
+    .find(x => x.startsWith('Send replies'))
+    .matchAll(/^\d+\. \*\*(.+?)\.?\*\*.*$/gm),
+].map(m => ({ label: m[1], text: m[0] }));
+const stepText = label => (RS_STEPS.find(s => s.label === label) || { text: '' }).text;
+/* a literal from the file, such as {state:"running",startedAt,step:"replies",by:"send replies"}: bare names filled in */
+const lit = (src, fill) =>
+  Object.fromEntries(
+    src
+      .slice(1, -1)
+      .split(',')
+      .map(kv => {
+        const [k, v] = kv.split(/:(.*)/s);
+        return [k.trim(), v === undefined ? fill[k.trim()] : JSON.parse(v)];
+      }),
+  );
+const litIn = (text, state) => (text.match(new RegExp('`(\\{state:"' + state + '"[^`]*\\})`')) || [])[1];
+const LOCK = litIn(stepText('Take the run lock'), 'running');
+const ERR = litIn(stepText('Take the run lock'), 'error');
+const DONE = litIn(stepText('Release and report'), 'done');
+const WINDOW = +(stepText('Take the run lock').match(/less than (\d+) minutes/) || [])[1];
+const BR = RS.split(/^## Helper/m)[1]
+  .match(/```js\n([\s\S]*?)```/)[1]
+  .split('\n')
+  .filter(l => l && !l.startsWith('//'));
+const vcmp = (a, b) => {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let k = 0; k < Math.max(pa.length, pb.length); k++)
+    if ((pa[k] || 0) !== (pb[k] || 0)) return (pa[k] || 0) - (pb[k] || 0);
+  return 0;
+};
+const sq = s => (s || '').replace(/\s+/g, ' ').trim();
+const clone = o => JSON.parse(JSON.stringify(o));
+/* ArtifactData, as far as these runs use it. ourSending: the most rows this run held in sending at once */
+function fakeDB(docs, log) {
+  const d = {};
+  for (const [k, v] of Object.entries(docs)) d[k] = { v: clone(v), ver: 1 };
+  const out = x => x && { data: clone(x.v), version: x.ver };
+  const before = new Set(Object.keys(d).filter(k => d[k].v.state === 'sending'));
+  const db = { d, ourSending: 0 };
+  db.get = path => (log.push('get ' + path), out(d[path]));
+  db.query = (coll, states) => (
+    log.push('query ' + coll),
+    Object.keys(d)
+      .filter(k => k.startsWith(coll + '/') && states.includes(d[k].v.state))
+      .map(k => Object.assign({ id: k }, out(d[k])))
+  );
+  db.batch = writes => {
+    log.push('batch ' + writes.map(w => w.op + ' ' + w.path + (w.v.state ? ' ' + w.v.state : '')).join(', '));
+    for (const w of writes) {
+      if (d[w.path] && w.if_version === undefined) throw new Error('unpinned write to ' + w.path);
+      if (d[w.path] && w.if_version !== d[w.path].ver) return { refused: w.path };
+    }
+    const versions = {};
+    for (const w of writes) {
+      const x = d[w.path];
+      d[w.path] = { v: w.op === 'update' && x ? Object.assign(x.v, w.v) : clone(w.v), ver: (x ? x.ver : 0) + 1 };
+      versions[w.path] = d[w.path].ver;
+    }
+    const ours = Object.keys(d).filter(k => k.startsWith('outbox/') && d[k].v.state === 'sending' && !before.has(k));
+    db.ourSending = Math.max(db.ourSending, ours.length);
+    return { ok: true, versions };
+  };
+  return db;
+}
+/* Claude in Chrome on the mock's tab */
+function fakeChrome(p, log) {
+  return {
+    tabs: async () => (log.push('tabs_context_mcp'), [{ url: p.url() }]),
+    navigate: async url => {
+      log.push('navigate');
+      await p.goto(url);
+      await p.waitForTimeout(700);
+    },
+    js: async code => (log.push('javascript_tool'), p.evaluate(code)),
+    key: async k => (log.push('key ' + k), p.keyboard.press(k)),
+  };
+}
+/* a helper command through the file's bridge: start, then poll in separate calls until it's no longer running */
+async function cmd(chrome, log, name, args) {
+  log.push('cmd ' + name);
+  const id = 's' + Math.random().toString(36).slice(2, 9);
+  await chrome.js(
+    BR[0]
+      .replace("'ID'", JSON.stringify(id))
+      .replace("'CMD'", JSON.stringify(name))
+      .replace('ARGS', JSON.stringify(args)),
+  );
+  const poll =
+    '(async () => {' +
+    BR[1]
+      .replace("'mc_res_ID'", JSON.stringify('mc_res_' + id))
+      .replace(/JSON\.stringify\(r\)$/, 'return JSON.stringify(r)') +
+    '})()';
+  for (let k = 0; k < 12; k++) {
+    const r = JSON.parse(await chrome.js(poll));
+    if (r && !r.running) return r;
+  }
+  return null;
+}
+/* outbox.md › Posting (posting-with-helper.md's post when helperPost is on and the helper is 2.0+): oldest first, one row
+   at a time, the pending outcomes carried in each batch, a {pending} stops posting */
+async function postRows(R, db, chrome, log, rows) {
+  const helperPost = R.meta.helperPost === true && vcmp(R.hv, '2.0') >= 0;
+  let pending = [];
+  for (const row of rows.slice().sort((a, b) => a.data.queuedAt.localeCompare(b.data.queuedAt))) {
+    const r = row.data;
+    const args = { mid: r.mid, to: r.to, snip: r.snip, text: r.text };
+    const upd = (v, ver) => ({ op: 'update', path: row.id, v, if_version: ver });
+    if (!r.mid) {
+      pending.push(upd({ state: 'failed', error: 'no Messenger id' }, row.version));
+      continue;
+    }
+    if (!helperPost) {
+      let c1 = await chrome.js(obCode(0, args));
+      for (let k = 0; c1 && c1.wait !== undefined && k < 5; k++) c1 = await chrome.js(obCode(0, args, false));
+      if (!c1 || !c1.typed) {
+        pending.push(upd({ state: 'failed', error: (c1 && c1.fail) || 'call 1 never finished' }, row.version));
+        continue;
+      }
+    }
+    const b = db.batch(pending.concat([upd({ state: 'sending' }, row.version)]));
+    if (b.refused) throw new Error('refused ' + b.refused + ' (a Cancel on the page: not modeled here)');
+    pending = [];
+    const ver = b.versions[row.id];
+    let res;
+    if (helperPost) {
+      const x = await cmd(chrome, log, 'post', Object.assign({}, args, { helperPost: true }));
+      res = x && x.sent ? x : !x || x.err === 'unconfirmed' ? { pending: true } : { fail: x.err };
+    } else {
+      for (const line of r.text.split('\n').slice(1)) {
+        await chrome.key('Shift+Enter');
+        if (line) await chrome.js("document.execCommand('insertText',false," + JSON.stringify(line) + ')');
+      }
+      let threw = false;
+      try {
+        await chrome.js(obCode(1, args));
+      } catch (e) {
+        threw = true; /* the browser_batch stops at the throw, so Return never reaches the box */
+      }
+      if (!threw) await chrome.key('Enter');
+      res = threw ? { abort: 'the reply box did not match the reply' } : await chrome.js(obCode(2, args));
+    }
+    if (res.sent) pending.push(upd({ state: 'sent', sentAt: res.at, sentMid: res.mid }, ver));
+    else if (res.pending) break;
+    else pending.push(upd({ state: 'failed', error: res.abort || res.fail || "Messenger didn't send it" }, ver));
+  }
+  if (pending.length) db.batch(pending);
+}
+const STOP = 'stop';
+/* the replies skill's run; yes: the texts the user said yes to in chat (the answer to step 2's listing) */
+async function sendReplies({ db, chrome, log, yes = [] }) {
+  const R = { said: [] };
+  const say = s => (R.said.push(s), log.push('say ' + s), STOP);
+  const fresh = s => s && s.data.state === 'running' && (Date.now() - Date.parse(s.data.startedAt)) / 60000 < WINDOW;
+  let held;
+  const fail = message => {
+    db.batch([{ op: 'update', path: 'refresh/status', v: lit(ERR, { message }), if_version: held }]);
+    return say(message);
+  };
+  const DO = {
+    'Read the outbox': async () => {
+      const rows = db.query('outbox', ['queued', 'sending']);
+      if (!rows.length) return say('no replies waiting');
+      R.queued = rows.filter(r => r.data.state === 'queued');
+      if (!R.queued.length) return say('being confirmed; the next refresh settles them');
+    },
+    'Check approval': async () => {
+      R.meta = db.get('meta/chat').data;
+      if (R.meta.outboxAuto === true) R.approved = R.queued;
+      else if (!yes.length)
+        return say('list ' + JSON.stringify(R.queued.map(r => [r.data.to, r.data.snip, r.data.text])));
+      else R.approved = R.queued.filter(r => yes.includes(r.data.text));
+      if (!R.approved.length) return say('none approved');
+    },
+    'Take the run lock': async () => {
+      const st = db.get('refresh/status');
+      if (fresh(st)) return say('a refresh is running and posts approved replies before it ends');
+      const w = db.batch([
+        {
+          op: 'set',
+          path: 'refresh/status',
+          v: lit(LOCK, { startedAt: new Date().toISOString() }),
+          if_version: st && st.version,
+        },
+      ]);
+      if (w.refused) return fresh(db.get('refresh/status')) ? say('another run took the lock') : say('lock refused');
+      held = w.versions['refresh/status'];
+    },
+    'Find the Messenger tab': async () => {
+      const [tab] = await chrome.tabs();
+      if (!tab || !tab.url.startsWith(R.meta.chatUrl)) return fail('Messenger tab is on another chat');
+      await chrome.navigate(R.meta.chatUrl);
+      if ((await chrome.js('document.visibilityState')) !== 'visible')
+        return fail('computer asleep or Messenger tab hidden');
+      R.hv = await chrome.js('document.documentElement.dataset.mcHelper');
+      const sck = await cmd(chrome, log, 'selfcheck', {});
+      if (!sck || !sck.ok) return fail('Messenger changed: ' + ((sck && sck.missing) || []).join(', '));
+    },
+    Post: async () => postRows(R, db, chrome, log, R.approved),
+    'Release and report': async () => {
+      held = db.batch([
+        {
+          op: 'update',
+          path: 'refresh/status',
+          v: lit(DONE, { finishedAt: new Date().toISOString() }),
+          if_version: held,
+        },
+      ]).versions['refresh/status'];
+      say('reported');
+    },
+  };
+  for (const s of RS_STEPS) {
+    if (!DO[s.label]) throw new Error('no code for the step "' + s.label + '"');
+    if ((await DO[s.label]()) === STOP) break;
+  }
+  return R;
+}
+/* outbox.md's settle check, on the saved messages (here: this run's capture, which its import would store) */
+const capTime = m => {
+  const [h, mi, ap] = m.t.match(/(\d+):(\d+) ([AP]M)$/).slice(1);
+  const [y, mo, da] = m.d.split('-').map(Number);
+  return new Date(y, mo - 1, da, (+h % 12) + (ap === 'PM' ? 12 : 0), +mi);
+};
+const settleFind = (r, msgs) =>
+  msgs.find(
+    m =>
+      m.f === 'You' &&
+      ((n, t) => !!n && (n === t || n.startsWith(t) || t.startsWith(n)))(m.r, r.to === 'You' ? 'yourself' : r.to) &&
+      sq(m.b) === sq(r.text) &&
+      capTime(m).getTime() >= Math.floor(Date.parse(r.queuedAt) / 60000) * 60000,
+  );
+/* the refresh steps that deal with replies, run in the order refresh/SKILL.md gives them (each found by its marker):
+   the lock, the tab, Replies first, the scan (scan + capture: the steps full runs; the capture stands in for what the
+   import stores) and step 8's settle check. order() may reorder them (a control case). */
+async function refreshRun({ db, chrome, log, order = x => x }) {
+  const R = { said: [] };
+  R.meta = db.get('meta/chat').data;
+  let held = db.get('refresh/status').version;
+  const parts = [
+    [
+      '1. Set `refresh/status`',
+      async () => {
+        const w = db.batch([
+          {
+            op: 'set',
+            path: 'refresh/status',
+            v: { state: 'running', startedAt: new Date().toISOString(), step: 'scan', by: 'refresh 1' },
+            if_version: held,
+          },
+        ]);
+        held = w.versions['refresh/status'];
+      },
+    ],
+    [
+      '2. `tabs_context_mcp`',
+      async () => {
+        await chrome.tabs();
+        await chrome.navigate(R.meta.chatUrl);
+        R.hv = await chrome.js('document.documentElement.dataset.mcHelper');
+        await cmd(chrome, log, 'selfcheck', {});
+      },
+    ],
+    [
+      '**Replies first**',
+      async () => {
+        const rows = db.query('outbox', ['queued', 'sending']);
+        const approved = R.meta.outboxAuto === true ? rows.filter(r => r.data.state === 'queued') : [];
+        if (approved.length) {
+          await postRows(R, db, chrome, log, approved);
+          await chrome.navigate(R.meta.chatUrl);
+        }
+      },
+    ],
+    [
+      '3. Scan with',
+      async () => {
+        const stops = R.meta.anchorMids.slice().reverse();
+        await cmd(chrome, log, 'scan', { stops, base: R.meta.lastI });
+        await cmd(chrome, log, 'capture', { base: R.meta.lastI });
+        R.cap = JSON.parse((await chrome.js('window.__capText')) || '{"msgs":[]}');
+      },
+    ],
+    [
+      '8. Handle the outbox',
+      async () => {
+        const w = [];
+        for (const row of db.query('outbox', ['sending'])) {
+          const m = settleFind(row.data, R.cap.msgs);
+          if (m)
+            w.push({
+              op: 'update',
+              path: row.id,
+              v: { state: 'sent', sentMid: m.m, sentAt: capTime(m).toISOString() },
+              if_version: row.version,
+            });
+        }
+        if (w.length) db.batch(w);
+        db.batch([
+          {
+            op: 'update',
+            path: 'refresh/status',
+            v: { state: 'done', finishedAt: new Date().toISOString() },
+            if_version: held,
+          },
+        ]);
+      },
+    ],
+  ].map(([m, fn]) => ({ m, at: RF.indexOf(m), fn }));
+  for (const x of parts)
+    if (x.at < 0 || RF.indexOf(x.m, x.at + 1) >= 0) throw new Error('refresh SKILL.md: no single "' + x.m + '"');
+  for (const x of order(parts.sort((a, b) => a.at - b.at))) await x.fn();
+  return R;
+}
+const iso = (base, minutes) => new Date(base.getTime() + minutes * 60000).toISOString();
+const row = (to, i, text, queuedAt, state = 'queued') => ({
+  i,
+  mid: 'mid.$mock' + i,
+  to,
+  snip: 'Message number ' + i + ' about trail shoes and packs',
+  text,
+  state,
+  queuedAt,
+});
+const SMETA = {
+  kind: 'messenger-catchup',
+  chatUrl: URL,
+  outboxAuto: true,
+  helperPost: false,
+  lastI: 99,
+  anchorMids: ['mid.$mock97', 'mid.$mock98', 'mid.$mock99'],
+  tz: 'UTC',
+};
+const MULTI = 'Yes, still here.\n\nPick it up Friday?';
+/* one case's database, Chrome and log, on a fresh mock */
+const freshS = async (b, docs, m = {}) => {
+  const { ctx, p } = await fresh(b);
+  await mode(p, m);
+  const log = [];
+  const db = fakeDB(docs, log);
+  const chrome = fakeChrome(p, log);
+  const sent = () => p.evaluate(() => window.mockSent.slice());
+  return { ctx, p, log, db, chrome, sent };
+};
+const browserCalls = log => log.filter(x => /^(tabs_context_mcp|navigate|javascript_tool|key |cmd )/.test(x));
+sim('S: send replies: the file gives what the sims run', async b => {
+  // the steps, literals and code the S cases take from the replies skill's files
+  ok(
+    JSON.stringify(RS_STEPS.map(s => s.label)) ===
+      JSON.stringify([
+        'Read the outbox',
+        'Check approval',
+        'Take the run lock',
+        'Find the Messenger tab',
+        'Post',
+        'Release and report',
+      ]),
+    'S: the replies skill lists its six steps (' + RS_STEPS.map(s => s.label).join(' | ') + ')',
+  );
+  ok(
+    !!LOCK && !!ERR && !!DONE && WINDOW === 20 && BR.length === 2 && OB.length === 3,
+    "S: the lock, its error and release, the 20 minutes, the two bridge lines and outbox.md's three code blocks are all found (" +
+      JSON.stringify([LOCK, ERR, DONE, WINDOW]) +
+      ')',
+  );
+  ok(
+    /only \*\*after this refresh's import\*\*/.test(RS_OUTBOX) &&
+      RS_OUTBOX.includes('`f:"You"`, `r` matching the row\'s `to`') &&
+      RS_OUTBOX.includes("`b` equal to the row's `text` (ignoring whitespace), dated after `queuedAt`"),
+    "S: outbox.md's settle check, as settleFind runs it: after the import, f You, r matching to, b equal to text, after queuedAt",
+  );
+});
+sim('S: send replies: nothing queued', async b => {
+  // nothing queued: one read, then a line; only rows in sending: the same, and they stay for the next refresh
+  let s = await freshS(b, {
+    'meta/chat': SMETA,
+    'refresh/status': { state: 'idle' },
+    'outbox/r1': row('Ana', 110, 'Sounds good', iso(NOW, -90), 'sent'),
+    'outbox/r2': row('Ben', 111, 'Maybe', iso(NOW, -80), 'cancelled'),
+  });
+  let R = await sendReplies(s);
+  ok(
+    JSON.stringify(s.log) === JSON.stringify(['query outbox', 'say no replies waiting']),
+    'S: nothing queued: one read (query outbox), one line, no other call (' + JSON.stringify(s.log) + ')',
+  );
+  await s.ctx.close();
+  s = await freshS(b, {
+    'meta/chat': SMETA,
+    'refresh/status': { state: 'idle' },
+    'outbox/r1': row('Ana', 110, 'Sounds good', iso(NOW, -30), 'sending'),
+  });
+  R = await sendReplies(s);
+  ok(
+    s.log.length === 2 &&
+      s.log[0] === 'query outbox' &&
+      /next refresh settles/.test(R.said[0]) &&
+      s.db.d['outbox/r1'].ver === 1,
+    'S: only a row in sending: one read, a line saying the next refresh settles it, the row untouched (' +
+      JSON.stringify(s.log) +
+      ')',
+  );
+  await s.ctx.close();
+});
+sim('S: send replies: a refresh holds the lock', async b => {
+  // a refresh's live lock: the Messenger tab is never touched and nothing is written
+  let s = await freshS(b, {
+    'meta/chat': SMETA,
+    'refresh/status': {
+      state: 'running',
+      startedAt: new Date(Date.now() - 5 * 60000).toISOString(),
+      step: 'scan',
+      by: 'refresh 7',
+    },
+    'outbox/r1': row('Ana', 110, 'Sounds good', iso(NOW, -3)),
+  });
+  let R = await sendReplies(s);
+  ok(
+    JSON.stringify(s.log.slice(0, 3)) === JSON.stringify(['query outbox', 'get meta/chat', 'get refresh/status']) &&
+      !browserCalls(s.log).length &&
+      !s.log.some(x => x.startsWith('batch')) &&
+      /refresh is running/.test(R.said[0]) &&
+      s.db.d['outbox/r1'].v.state === 'queued' &&
+      !(await s.sent()).length,
+    'S: a live refresh lock: no browser call, no write, the row still queued, and a line saying the refresh posts it (' +
+      JSON.stringify(s.log) +
+      ')',
+  );
+  await s.ctx.close();
+  // the Messenger tab open on another chat: not taken over; the lock taken is released as an error
+  s = await freshS(b, {
+    'meta/chat': Object.assign({}, SMETA, { chatUrl: URL + '?t=gear' }),
+    'refresh/status': { state: 'idle' },
+    'outbox/r1': row('Ana', 110, 'Sounds good', iso(NOW, -3)),
+  });
+  await s.p.goto(URL + '?t=other');
+  R = await sendReplies(s);
+  const st = s.db.d['refresh/status'].v;
+  ok(
+    JSON.stringify(browserCalls(s.log)) === JSON.stringify(['tabs_context_mcp']) &&
+      st.state === 'error' &&
+      st.message === 'Messenger tab is on another chat' &&
+      s.db.d['outbox/r1'].v.state === 'queued',
+    'S: a Messenger tab on another chat: only listed, never navigated or typed in; the lock ends as an error (' +
+      JSON.stringify([browserCalls(s.log), st]) +
+      ')',
+  );
+  await s.ctx.close();
+});
+sim('S: send replies: approved rows are posted', { s: 20 }, async b => {
+  // outboxAuto on: both queued rows go out by outbox.md's three calls, oldest first; a stale lock is taken over
+  const t0 = Date.now();
+  const s = await freshS(b, {
+    'meta/chat': SMETA,
+    'refresh/status': {
+      state: 'running',
+      startedAt: new Date(Date.now() - 30 * 60000).toISOString(),
+      step: 'scan',
+      by: 'refresh 6',
+    },
+    'outbox/r0': row('Dee', 114, 'On my way', iso(NOW, -200), 'sending'),
+    'outbox/r2': row('Ben', 111, 'Still have the stove?', iso(NOW, -2)),
+    'outbox/r1': row('Ana', 110, MULTI, iso(NOW, -5)),
+  });
+  const R = await sendReplies(s);
+  const sent = await s.sent();
+  const r1 = s.db.d['outbox/r1'].v;
+  const r2 = s.db.d['outbox/r2'].v;
+  const st = s.db.d['refresh/status'].v;
+  const writes = s.log.filter(x => x.startsWith('batch'));
+  ok(
+    sent.length === 2 &&
+      sent[0].to === 'mid.$mock110' &&
+      sent[0].text === MULTI &&
+      sent[1].to === 'mid.$mock111' &&
+      sent[1].text === 'Still have the stove?',
+    'S: both approved replies went out, oldest first, each as a reply to its message, line breaks kept (' +
+      JSON.stringify(sent) +
+      ')',
+  );
+  ok(
+    r1.state === 'sent' &&
+      r1.sentMid === 'mid.$sent1' &&
+      r2.state === 'sent' &&
+      r2.sentMid === 'mid.$sent2' &&
+      [r1, r2].every(
+        r =>
+          Date.parse(r.sentAt) >= NOW.getTime() - 1000 &&
+          Date.parse(r.sentAt) <= NOW.getTime() + Date.now() - t0 + 1000,
+      ),
+    'S: each row written sent with the new message id and the clock time of its confirm (' +
+      JSON.stringify([r1, r2]) +
+      ')',
+  );
+  ok(
+    JSON.stringify(writes) ===
+      JSON.stringify([
+        'batch set refresh/status running',
+        'batch update outbox/r1 sending',
+        'batch update outbox/r1 sent, update outbox/r2 sending',
+        'batch update outbox/r2 sent',
+        'batch update refresh/status done',
+      ]) && s.db.ourSending === 1,
+    "S: the lock, each row's sending before its Enter, a row's sent with the next row's sending, then the release; never two of this run's rows in sending (" +
+      JSON.stringify(writes) +
+      ')',
+  );
+  ok(
+    s.log.indexOf('batch set refresh/status running') < s.log.indexOf('tabs_context_mcp') &&
+      s.log.indexOf('batch update outbox/r1 sending') < s.log.indexOf('key Enter') &&
+      st.state === 'done' &&
+      !!st.finishedAt &&
+      st.step === 'replies' &&
+      st.by === 'send replies',
+    'S: the lock is taken before the tab is touched and released as done, keeping step and by (' +
+      JSON.stringify(st) +
+      ')',
+  );
+  ok(
+    s.db.d['outbox/r0'].ver === 1 && s.db.d['outbox/r0'].v.state === 'sending' && !s.log.includes('get chunks'),
+    "S: a row an earlier run left in sending is left for the next refresh's settle check, and no chunk is read",
+  );
+  ok(R.said.length === 1, 'S: one report line (' + JSON.stringify(R.said) + ')');
+  await s.ctx.close();
+});
+sim("S: send replies: with the helper's post", async b => {
+  // helperPost on (helper 2.0+): the row's sending lands before post starts, and post's result settles it
+  const s = await freshS(b, {
+    'meta/chat': Object.assign({}, SMETA, { helperPost: true }),
+    'refresh/status': { state: 'done' },
+    'outbox/r1': row('Ana', 110, MULTI, iso(NOW, -5)),
+  });
+  await sendReplies(s);
+  const r1 = s.db.d['outbox/r1'].v;
+  const sent = await s.sent();
+  ok(
+    s.log.indexOf('batch update outbox/r1 sending') < s.log.indexOf('cmd post') &&
+      !s.log.includes('key Enter') &&
+      r1.state === 'sent' &&
+      r1.sentMid === 'mid.$sent1' &&
+      sent.length === 1 &&
+      sent[0].text === MULTI,
+    'S: with helperPost, the sending write, then one post, then sent with its mid (' +
+      JSON.stringify([s.log.filter(x => /batch|cmd/.test(x)), r1]) +
+      ')',
+  );
+  await s.ctx.close();
+});
+sim('S: send replies: unapproved rows are never posted', { s: 15 }, async b => {
+  // outboxAuto off: "send replies" lists them and asks; nothing is locked, opened or sent until a yes to that exact text
+  const docs = {
+    'meta/chat': Object.assign({}, SMETA, { outboxAuto: false }),
+    'refresh/status': { state: 'idle' },
+    'outbox/r1': row('Ana', 110, 'Sounds good, Friday works', iso(NOW, -5)),
+  };
+  let s = await freshS(b, docs);
+  let R = await sendReplies(s);
+  ok(
+    JSON.stringify(s.log.slice(0, 2)) === JSON.stringify(['query outbox', 'get meta/chat']) &&
+      s.log.length === 3 &&
+      /Ana/.test(R.said[0]) &&
+      R.said[0].includes('Message number 110') &&
+      R.said[0].includes('Sounds good, Friday works') &&
+      s.db.d['refresh/status'].ver === 1 &&
+      s.db.d['outbox/r1'].v.state === 'queued',
+    'S: not approved: lists who it is to, their message and the exact reply, then stops: no lock, no browser call (' +
+      JSON.stringify(s.log) +
+      ')',
+  );
+  R = await sendReplies(Object.assign({}, s, { yes: ['Sounds good'] }));
+  ok(
+    !browserCalls(s.log).length && !(await s.sent()).length && s.db.d['outbox/r1'].v.state === 'queued',
+    'S: a yes to other text approves nothing: still no browser call, nothing sent',
+  );
+  await s.ctx.close();
+  s = await freshS(b, docs);
+  R = await sendReplies(Object.assign({}, s, { yes: ['Sounds good, Friday works'] }));
+  const sent = await s.sent();
+  ok(
+    sent.length === 1 && sent[0].text === 'Sounds good, Friday works' && s.db.d['outbox/r1'].v.state === 'sent',
+    'S: a yes to that exact text: it goes out and is written sent (' + JSON.stringify(sent) + ')',
+  );
+  await s.ctx.close();
+});
+/* replies first: a reply from an earlier run whose confirm was lost (r0, in sending) is already in Messenger, and r1 is
+   queued and approved */
+const freshFirst = async b => {
+  const s = await freshS(b, {
+    'meta/chat': SMETA,
+    'refresh/status': { state: 'done' },
+    'outbox/r0': row('Ben', 111, 'Still have the stove?', iso(NOW, -10), 'sending'),
+    'outbox/r1': row('Ana', 110, MULTI, iso(NOW, -5)),
+  });
+  await bridge(s.p, 'post', {
+    mid: 'mid.$mock111',
+    to: 'Ben',
+    snip: 'Message number 111',
+    text: 'Still have the stove?',
+    helperPost: true,
+  });
+  return s;
+};
+sim('S: replies first in a refresh', { s: 25 }, async b => {
+  // the refresh's own order: the reply goes out before the scan, so this run's capture holds it and step 8 settles
+  const s = await freshFirst(b);
+  const R = await refreshRun(s);
+  const r0 = s.db.d['outbox/r0'].v;
+  const r1 = s.db.d['outbox/r1'].v;
+  const mine = R.cap.msgs.filter(m => m.f === 'You' && /^mid\.\$sent/.test(m.m));
+  ok(
+    s.log.indexOf('key Enter') > s.log.indexOf('cmd selfcheck') &&
+      s.log.indexOf('key Enter') < s.log.indexOf('cmd scan'),
+    'S: replies first: the reply is sent after selfcheck and before the scan starts (' +
+      JSON.stringify(s.log.filter(x => /cmd|key Enter|navigate/.test(x))) +
+      ')',
+  );
+  ok(
+    r1.state === 'sent' &&
+      r1.sentMid === 'mid.$sent2' &&
+      mine.some(m => m.m === 'mid.$sent2' && sq(m.b) === sq(MULTI) && m.r === 'Ana'),
+    "S: this run's capture holds the reply it posted, under the id its confirm gave (" +
+      JSON.stringify(mine.map(m => [m.m, m.r, m.b])) +
+      ')',
+  );
+  const asIfPending = settleFind(Object.assign({}, r1, { state: 'sending' }), R.cap.msgs);
+  ok(
+    asIfPending && asIfPending.m === r1.sentMid,
+    "S: so a row the replies-first post left in sending is settled by the same run's step 8 (" +
+      JSON.stringify(asIfPending && asIfPending.m) +
+      ')',
+  );
+  ok(
+    r0.state === 'sent' &&
+      r0.sentMid === 'mid.$sent1' &&
+      !!r0.sentAt &&
+      s.log.indexOf('batch update outbox/r0 sent') > s.log.indexOf('cmd capture'),
+    "S: an earlier run's row in sending is settled from the saved messages after the capture, never before the scan (" +
+      JSON.stringify(r0) +
+      ')',
+  );
+  await s.ctx.close();
+});
+sim('S: replies after the scan (control)', { s: 25 }, async b => {
+  // the same run with Replies first moved after the scan: the capture misses the reply, so a pending row would wait
+  const s = await freshFirst(b);
+  const R = await refreshRun(
+    Object.assign({}, s, {
+      order: parts => {
+        const k = parts.findIndex(x => x.m === '**Replies first**');
+        const [rf] = parts.splice(k, 1);
+        /* after the capture the tab shows COPY CAPTURE: back to the chat first, as step 5 does */
+        const back = Object.assign({}, rf, { fn: async () => (await s.chrome.navigate(SMETA.chatUrl), rf.fn()) });
+        parts.splice(parts.findIndex(x => x.m === '3. Scan with') + 1, 0, back);
+        return parts;
+      },
+    }),
+  );
+  const r1 = s.db.d['outbox/r1'].v;
+  ok(
+    r1.state === 'sent' && !settleFind(Object.assign({}, r1, { state: 'sending' }), R.cap.msgs),
+    "S (control): posted after the scan, the reply isn't in this run's capture, so the order the S case checks matters",
+  );
+  await s.ctx.close();
+});
+
 /* ---------- the runner: the cases above, SIM_JOBS at a time, each case's lines printed together when it ends ---------- */
 const JOBS = Math.max(1, +process.env.SIM_JOBS || Math.max(4, 3 * os.cpus().length));
 function pick(only) {

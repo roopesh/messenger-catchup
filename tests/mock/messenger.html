@@ -89,7 +89,8 @@
    (Reply doesn't focus the composer), mock_photos=N (every Nth message carries 1-3 photos with its text), mock_lazy=
    "104-0,100-0" (those photos, message-photo, never load: their img has no src, as a lazy image off screen),
    mock_skeleton="104-0" (those photo links hold no img yet, only a placeholder box), mock_sharedaid (every photo of a
-   message links to the same attachment id). */
+   message links to the same attachment id). Messages sent from the composer stay after a reload, below the others, as
+   in Messenger (mock_sentlog, written by the page). */
       const MODE = k => localStorage.getItem("mock_" + k);
       const lazy = (i, j) => (MODE("lazy") || "").split(",").includes(i + "-" + j);
       const skel = (i, j) => (MODE("skeleton") || "").split(",").includes(i + "-" + j);
@@ -98,6 +99,7 @@
       /* full names, carried as the alt text of each sender's 28 px avatar, as in Messenger */
       const FULL = { Ana: "Ana Alvarez", Ben: "Ben Brooks", Cy: "Cy Chen", Dee: "Dee Diaz" };
       const total = () => +(localStorage.getItem("mock_total") || 120);
+      const sentLog = () => JSON.parse(localStorage.getItem("mock_sentlog") || "[]");
       const skip = () =>
         new Set(JSON.parse(localStorage.getItem("mock_skip") || "[]")); /* message numbers treated as deleted */
       function txt(i) {
@@ -292,10 +294,12 @@
           a.append(im);
           d.append(a);
         }
-        if (p && !o.to) {
+        if (p) {
+          /* your own sent replies have the link too, as in Messenger: an icon with no text (the mock's other replies keep
+             their "↩", which the captures the page suite reads carry) */
           const g = document.createElement("div");
           g.setAttribute("aria-label", "Go to replied message");
-          g.textContent = "↩";
+          g.textContent = o.to ? "" : "↩";
           g.onclick = () => {
             const find = () => document.querySelector('[data-message-id="' + CSS.escape(p.id) + '"]');
             if (find()) return find().focus();
@@ -347,6 +351,7 @@
           sk = skip();
         lo = Math.max(0, n - 25);
         for (let i = lo; i < n; i++) if (!sk.has(i)) sc.append(el(spec(i)));
+        for (const o of sentLog()) sc.append(el(Object.assign({}, o, { to: o.toI == null ? null : spec(o.toI) })));
         if (MODE("stall") !== "stuck") spinner();
         if (MODE("nested")) {
           /* the first loaded message in its own small scrolling box (2 px of overflow) */
@@ -403,7 +408,7 @@
         for (let i = a; i < a + n; i++) sc.append(el(spec(i)));
       };
       /* Posting: Enter in the composer sends the text (as a reply when the bar is open); it shows up 300 ms later. */
-      let sentN = 0;
+      let sentN = sentLog().length;
       window.mockSent = [];
       window.mockSend = text => {
         const to = replyTo;
@@ -413,6 +418,8 @@
         setTimeout(() => {
           const o = { i: -1, id: "mid.$sent" + ++sentN, f: "You", t: clock(new Date()), b: text, to };
           sc.append(el(o));
+          const log = sentLog().concat([Object.assign({}, o, { to: undefined, toI: to ? to.i : null })]);
+          localStorage.setItem("mock_sentlog", JSON.stringify(log));
           sc.scrollTop = sc.scrollHeight;
         }, 300);
       };

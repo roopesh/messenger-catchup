@@ -2,8 +2,8 @@
 """Generated copies, kept in sync (npm run sync; npm test runs --check):
 1. The page's bookmarklet, from the refresh skill's assets/helper.user.js. (The userscript itself is installed from the
    GitHub release and updates itself; the page only links to it.)
-2. The setup skill's copies of the refresh skill's shared files (SHARED). A skill can only count on its own folder, so
-   setup carries its own copy. Edit the refresh skill's file; never the copy.
+2. The setup and replies skills' copies of the refresh skill's shared files (SHARED, REPLIES_SHARED). A skill can only
+   count on its own folder, so each carries its own copy. Edit the refresh skill's file; never a copy.
   tools/sync.py          rewrite the #jump-bm bookmarklet textarea, then refresh the copies
   tools/sync.py --check  exit 1 if anything differs from what it would generate
 The bookmarklet is the helper's mcJump IIFE (at any indent), lines stripped and
@@ -14,6 +14,7 @@ import html, re, sys, os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(ROOT, "plugin", "skills", "refresh")
 SETUP = os.path.join(ROOT, "plugin", "skills", "setup")
+REPLIES = os.path.join(ROOT, "plugin", "skills", "replies")
 HELPER = os.path.join(SKILL, "assets", "helper.user.js")
 PAGE = os.path.join(SKILL, "assets", "page.html")
 SHARED = [
@@ -21,6 +22,15 @@ SHARED = [
     os.path.join("references", "database.md"),
     os.path.join("references", "scheduling.md"),
 ]
+# what a reply-only run (the replies skill) may need: posting, the helper to inject, and the files those name
+REPLIES_SHARED = [
+    os.path.join("assets", "helper.user.js"),
+    os.path.join("references", "database.md"),
+    os.path.join("references", "helper.md"),
+    os.path.join("references", "outbox.md"),
+    os.path.join("references", "posting-with-helper.md"),
+]
+COPIES = {SETUP: SHARED, REPLIES: REPLIES_SHARED}
 
 
 def bookmarklet(src):
@@ -49,8 +59,13 @@ def read(p):
 
 
 def stale_copies():
-    """The setup skill's copies that differ from (or are missing next to) the refresh skill's files."""
-    return [f for f in SHARED if read(os.path.join(SETUP, f)) != read(os.path.join(SKILL, f))]
+    """The copies (as "<skill>/<path>") that differ from, or are missing next to, the refresh skill's files."""
+    return [
+        os.path.join(os.path.basename(dst), f)
+        for dst, files in COPIES.items()
+        for f in files
+        if read(os.path.join(dst, f)) != read(os.path.join(SKILL, f))
+    ]
 
 
 if __name__ == "__main__":
@@ -63,15 +78,17 @@ if __name__ == "__main__":
         if new != page:
             sys.exit("page.html bookmarklet is out of date: run npm run sync")
         if stale_copies():
-            sys.exit("setup skill copies out of date (%s): run npm run sync" % ", ".join(stale_copies()))
-        print("bookmarklet and setup copies in sync")
+            sys.exit("skill copies out of date (%s): run npm run sync" % ", ".join(stale_copies()))
+        print("bookmarklet and skill copies in sync")
         sys.exit(0)
     if new != page:
         with open(PAGE, "w", encoding="utf-8") as f:
             f.write(new)
         print("page.html updated")
     for f in stale_copies():
-        os.makedirs(os.path.dirname(os.path.join(SETUP, f)), exist_ok=True)
-        with open(os.path.join(SETUP, f), "w", encoding="utf-8") as out:
-            out.write(read(os.path.join(SKILL, f)))
-        print("setup/" + f + " updated")
+        skill, rel = f.split(os.sep, 1)
+        dst = os.path.join(ROOT, "plugin", "skills", f)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, "w", encoding="utf-8") as out:
+            out.write(read(os.path.join(SKILL, rel)))
+        print(skill + "/" + rel + " updated")

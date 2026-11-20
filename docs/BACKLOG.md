@@ -25,6 +25,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F27 | P3 | feature | More views of the per-day digests beyond the By day tab: in the Messages tab's day headers, or a week's digests as a catch-up after time away |
 | F28 | P2 | feature | Rethink Views: collapsing or sub-tabs, saving and deleting views, and how they fit with By day (to define with the owner; not ready to build) |
+| F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (to define with F28; notes in [design/day-summaries.md](design/day-summaries.md)) |
+| F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; the schedule for frequent checks is left |
+| F31 | P2 | feature | A metrics tab: part 1 (Stats tab) in v1.27.0; part 2 adds conversations, deals, people, engagement and word trends |
 
 ---
 
@@ -44,6 +47,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Corrected (Nov 14, full count, read only):** of 855 files, 853 are in use, each by exactly one slot; the 549 above was an undercount. No unused copies: the only unused files are 2 unique ones (163 KB) from one Nov 3 upload, left by the record loss v1.22.0 fixed. 4 pairs of identical files are both in use (the same photo posted twice). 876 files on Nov 14, so at 55–80 a day the limit arrives between early and late January.
 - **Option for the design, reuse by fingerprint:** before uploading, reuse an existing asset with the same content (the asset listing gives each file's sha256 of its raw bytes; the page's `h` is a hash of the base64 text, so the two would need aligning). Today it would save 4 files, so it's only worth building if the design moves or re-uploads photos. The owner leans towards having it.
 - **To design:** for example keep older photos as links only (Messenger's own, which expire), move older photos to an archive page with its own quota, or store a smaller copy of old photos. Each has costs (lost photos, a second page to maintain, re-encoding the owner ruled out for now).
+- **Owner's answers (Nov 17, decision board):** keep every photo (no rolling window), findable by search such as "green ultra monolith"; it must work for other users at volumes we can't predict. Tested Nov 15: a page can't show another page's images (blocked for image tags and fetches), and claude.ai copies assets between pages server-side, byte for byte, 10 per call. 987 files and 56.6 MB on Nov 17.
+- **Recommended (option E on the board):** the page makes a small preview of each photo (about 240 px) and packs each day's previews into one file; originals stay on the main page for about two months, then move to archive pages (copied server-side, checked by fingerprint before the main page deletes its copy). Old photos still show inline as previews, full size one click away in the archive. Two releases, both before the 4,000-file warning in late December. Unknown: whether a link can open an archive page at a given photo.
+- **Add-on, photo search:** Claude captions each photo once from its preview, and search matches the caption together with the message and its conversation. About 30k tokens a day plus about 400k once (estimates); waiting on the owner.
 
 ### R17 · P3 · The helper notice runs ahead of the release
 - **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.
@@ -89,7 +95,54 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - **Saving and deleting:** every built view is saved at once (`views/*`, `kind:"view"`), and there's no way to delete one or choose not to keep it. F26's Remove with Undo is a model.
   - **By day (F24):** how views relate to the By day tab. A view could be scoped to a day or range, By day could be one built-in view, or the two could share navigation.
 - **Also to settle:** whether a view refreshes as new messages arrive or stays a snapshot, renaming, where method ideas and Notes from Claude belong, and what the Views tab is for next to Summary, Messages, By day and Ask.
-- **Next step:** a design conversation with the owner (questions first, then a short design), then a build plan.
+- **Next step:** a design conversation with the owner (questions first, then a short design), then a build plan. Design it together with F29 (fuller day summaries, [design/day-summaries.md](design/day-summaries.md)).
+
+### F29 · P2 · Fuller day summaries (to define)
+- **The owner (Nov 15):**
+  - The By day digests are weak.
+  - Ask Claude's "summary of yesterday" is far better and doesn't match them.
+  - Wants a fuller day summary, refreshed at every refresh, that they can choose to share.
+- **Why:** a digest is capped at 8 bullets of 15 words, as a compact index for Ask's long-history prompt; By day shows those index cards.
+- **Direction:** two levels.
+  - Keep the short digest for Ask.
+  - Add a fuller summary written by the refresh: incremental during the day, then one final rewrite after the day ends.
+  - Sharing by "Copy for chat" and/or a shared link, the owner's call.
+- **Everything discussed:** options, the owner's decisions, Claude's proposed shape and the open questions are in [design/day-summaries.md](design/day-summaries.md).
+- **Designed together with F28.**
+
+### F30 · P2 · Send queued replies without a full refresh
+- **Ask (owner, Nov 16):** be able to send replies queued on the page without a full refresh, if possible.
+- **Today:** a reply queued on the page (`outbox/*`) goes out only at step 8 of a refresh (SKILL.md › Refresh steps; `references/outbox.md`), after the scan, import, build and write. With hourly refreshes, a queued reply can wait up to about an hour, and sending one costs a whole refresh.
+- **Limits:** only Claude can reach the Messenger tab (through Claude in Chrome). The page can't, and the helper in the Messenger tab can't read the page's database. So something still has to start Claude. The change is how little that run does.
+- **Options to weigh:**
+  - **A "send my replies" request:** reads the outbox, posts each approved reply (`outbox.md`), and confirms it with a short scan of the newest messages. No import, build or summary. Much cheaper and faster than a refresh.
+  - **Scheduled runs send first:** every scheduled run handles the outbox before (or instead of) the rest when the scan finds nothing new. Pairs with R12's cheap "nothing new" exit.
+  - **A sooner follow-up:** queuing a reply on the page arms a run a few minutes out instead of waiting for the hour. Needs a way for the page to wake Claude, which it may not have; check what the runtime allows.
+- **To settle:** how soon a reply should go out; whether a reply-only run confirms by its own short scan or leaves that to the next refresh (`sentAt` and `sentMid` today come from the confirm and the next capture, B46); and the approval rules, which stay as they are (`outboxAuto`, or a yes in chat to that exact text).
+- **Related:** R12 (cheap runs), B45 and F13 (how posting works).
+- **Owner's answers (Nov 17):** decide in the moment, or else within a few minutes; at the Mac or on the phone; the phrase "send replies"; picked frequent checks and asked to keep tokens down.
+- **Revised recommendation:** frequent checks stay costly however small the skill (each is a whole session), so: a "Send now" button per queued reply that copies it and opens the message in Messenger with Reply open (the existing Reply link); the owner pastes and presses Enter, and the next refresh marks it sent. Plus scheduled runs posting queued replies first, and the "send replies" phrase for the phone. A later step: the helper types the reply in so only Enter is left. Option E, the page handing replies to the helper directly, would change the rule that only Claude's bridge command can make the helper post; it needs a probe.
+- **Part 1 in v1.27.0 (Nov 19):** the `replies` skill ("send replies" posts queued replies with no refresh) and replies first in every refresh. Left: measure what an empty reply run costs, then set C's interval with the owner (or not); option F (Send now opens the message in Messenger with the reply ready) if the owner wants it; a live check of the routing and a reply run end to end (L1). A reply run skips outbox.md's stored-message check (it would read a chunk); call 1 and `post` still check the live "Replying to" bar.
+
+### F31 · P2 · A metrics tab
+- **Ask (owner, Nov 16):** a new tab with metrics, starting with volume: a chart with selectable timeframes, and clicking into it shows the top contributors (10 to start) by number of messages and percent of messages in that timeframe.
+- **Data:** the page already holds every stored message (`chunks/*`: `f`, `fn`, `d`, `t`, `p`, `x`, `r`/`pi`), so the counts can be worked out on the page with no Claude call and no tokens, and stay current after every import. On the owner's page (Nov 16): about 10,500 messages over 19 days, about 500 a day, 101 posters; the top 10 wrote 40%.
+- **Care points:**
+  - Merge names through `people/index`: `fn` exists only from helper 1.6, so counting by `fn` or `f` alone splits people.
+  - Messages vs. turns (one person's consecutive lines): about a quarter of messages continue a run.
+  - Say where the stored history starts.
+  - Group long timeframes by week or month so a year of messages draws smoothly on a phone.
+- **Options (on the decision board):**
+  - A: volume chart plus the top 10.
+  - B: A plus a weekday-by-hour activity heatmap.
+  - C: a full metrics tab in stages (engagement: reactions, who replies to whom, questions answered and how fast; deals: posted, claimed, sold, time to sold; people: new and gone quiet; word trends; your own numbers).
+  - D: charts on request through Ask.
+  - Claude's recommendation: B first, then C's sections one at a time as the owner picks them, as its own tab rather than under Views (F28).
+- **To settle:** timeframes, what a click does, messages or turns, whether the owner ranks among the members, what clicking a person opens, which extra metrics, and whether a ranking of members should ever travel with a shared page.
+- **Related:** F28 (Views), F29 (sharing day summaries).
+- **Decided (Nov 17): option C**, all sections, each switchable. Timeframes: all, with Today, 30 and 90 days up front; drag to zoom; click a day for its detail with a volume-by-hour chart and the top contributors per hour. Every message counts (5 lines = 5). The owner is ranked with everyone (others will use the tool). Clicking a person shows their own chart. Sharing by screenshot or copy and paste only. **No reactions** (captured once, never updated, so they undercount).
+- **Plan:** two page-only releases. First: the Stats tab with summary tiles (messages, messages with text, people posting, photos and GIFs, links, busiest hour, top 5's share, your messages, conversations started, deals posted and sold), the volume chart, the top 10, a per-person chart, the weekday-by-hour heatmap and section switches. Second: conversations and topics, deals, people (new, gone quiet), who replies to whom and how fast questions get answered, word trends.
+- **Part 1 in v1.27.0 (Nov 19):** the Stats tab as planned. Left for part 2: conversations and topics, deals, people (new, gone quiet), who replies to whom and how fast questions get answered, word trends.
 
 ### F27 · P3 · More views of the per-day digests
 - **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
@@ -97,6 +150,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Trigger:** the owner asks.
 
 ## Live checks
+- **Owner's idea (Nov 17):** each refresh's chat report (messages, new conversations, deals, mentions, open questions) is a good summary of its span, but it isn't saved. Save it under its day, show a day's reports on By day, merge them into the day's fuller summary at the day's end (F29), and build the "While you were away" card from those. Recommended on the board; designed with F29.
 
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.

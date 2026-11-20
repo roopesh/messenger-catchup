@@ -11,6 +11,7 @@ _spec.loader.exec_module(sync)
 
 SKILL = os.path.join("plugin", "skills", "refresh")
 SETUP = os.path.join("plugin", "skills", "setup")
+REPLIES = os.path.join("plugin", "skills", "replies")
 
 
 def read(*p):
@@ -24,6 +25,10 @@ def in_skill(*p):
 
 def in_setup(*p):
     return read(SETUP, *p)
+
+
+def in_replies(*p):
+    return read(REPLIES, *p)
 
 
 REFERENCES = [
@@ -48,6 +53,14 @@ SHIPPED = ["SKILL.md", "assets/page.html", "assets/helper.user.js", "scripts/cat
 # keys of a JS object literal, shorthand ones included ({text, state: "x"})
 OBJ_KEYS = r"(?:^|[{,])\s*(\w+)\s*(?=[:,}])"
 SETUP_SHIPPED = ["SKILL.md", "assets/page.html", "references/database.md", "references/scheduling.md"]
+REPLIES_SHIPPED = [
+    "SKILL.md",
+    "assets/helper.user.js",
+    "references/database.md",
+    "references/helper.md",
+    "references/outbox.md",
+    "references/posting-with-helper.md",
+]
 
 
 class TestHelperCopies(unittest.TestCase):
@@ -185,7 +198,11 @@ class TestReleaseVersion(unittest.TestCase):
 
 class TestNoLeftoverNames(unittest.TestCase):
     def test_no_pa_names_in_shipped_files(self):
-        for f in [os.path.join(SKILL, f) for f in SHIPPED] + [os.path.join(SETUP, f) for f in SETUP_SHIPPED]:
+        for f in (
+            [os.path.join(SKILL, f) for f in SHIPPED]
+            + [os.path.join(SETUP, f) for f in SETUP_SHIPPED]
+            + [os.path.join(REPLIES, f) for f in REPLIES_SHIPPED]
+        ):
             self.assertNotRegex(read(f), r"\bcc(Scan|Verify|Capture)\b|cctool|cc-capture|cc-cmd|cc_result", f)
 
 
@@ -465,10 +482,15 @@ class TestSkillReferences(unittest.TestCase):
                 self.assertEqual(json.load(fh)["layout"], 2)
 
     def test_outbox_is_read_before_any_reply_is_posted(self):
+        """Every place that posts reads outbox.md in full first: a refresh's replies first (step 2) and step 8, and the
+        replies skill's step 5."""
         skill = in_skill("SKILL.md")
         step8 = re.search(r"^8\. Handle the outbox.*$", skill, re.M).group(0)
-        self.assertIn("read `references/outbox.md` in full first", step8)
+        self.assertIn("read `references/outbox.md` in full first (unless step 2 did)", step8)
+        self.assertIn("read `references/outbox.md` in full and post those now", bullet(skill, "Replies first"))
+        self.assertIn("Read `references/outbox.md` in full first", bullet(in_replies("SKILL.md"), "Post"))
         self.assertIn("Never send a message", skill, "the hard rule stays in SKILL.md")
+        self.assertIn("Never send a message", in_replies("SKILL.md"), "and is in the replies skill")
 
 
 class TestPhotos(unittest.TestCase):
@@ -1210,6 +1232,31 @@ class TestSetupSkill(unittest.TestCase):
         self.assertEqual(
             sorted(sync.SHARED), sorted(os.path.normpath(f) for f in SETUP_SHIPPED if f != "SKILL.md"), sync.SHARED
         )
+        self.assertEqual(
+            sorted(sync.REPLIES_SHARED),
+            sorted(os.path.normpath(f) for f in REPLIES_SHIPPED if f != "SKILL.md"),
+            sync.REPLIES_SHARED,
+        )
+        self.assertEqual(sorted(os.path.basename(d) for d in sync.COPIES), ["replies", "setup"])
+
+    def test_sync_rewrites_a_stale_copy(self):
+        """npm run sync puts back a copy that was edited by hand, in either skill."""
+        with tempfile.TemporaryDirectory() as t:
+            shutil.copytree(os.path.join(ROOT, "plugin"), os.path.join(t, "plugin"))
+            shutil.copytree(os.path.join(ROOT, "tools"), os.path.join(t, "tools"))
+            for skill in ("setup", "replies"):
+                with open(os.path.join(t, "plugin", "skills", skill, "references", "database.md"), "a") as fh:
+                    fh.write("stale")
+            os.remove(os.path.join(t, "plugin", "skills", "replies", "references", "outbox.md"))
+            run = lambda *a: subprocess.run(["python3", os.path.join(t, "tools", "sync.py"), *a], capture_output=True)
+            self.assertEqual(run("--check").returncode, 1)
+            self.assertEqual(run().returncode, 0)
+            self.assertEqual(run("--check").returncode, 0)
+            for skill in ("setup", "replies"):
+                with open(os.path.join(t, "plugin", "skills", skill, "references", "database.md")) as fh:
+                    self.assertEqual(fh.read(), in_skill("references", "database.md"))
+            with open(os.path.join(t, "plugin", "skills", "replies", "references", "outbox.md")) as fh:
+                self.assertEqual(fh.read(), in_skill("references", "outbox.md"))
 
     def test_every_file_setup_names_exists(self):
         text = in_setup("SKILL.md")
@@ -1223,10 +1270,17 @@ class TestSetupSkill(unittest.TestCase):
 
         plugin = json.loads(read("plugin", ".claude-plugin", "plugin.json"))["name"]
         skills = sorted(os.listdir(os.path.join(ROOT, "plugin", "skills")))
-        self.assertEqual(skills, ["refresh", "setup"])
+        self.assertEqual(skills, ["refresh", "replies", "setup"])
         self.assertIn("`%s:setup`" % plugin, in_skill("SKILL.md"))
+        self.assertIn("`%s:replies`" % plugin, in_skill("SKILL.md"))
         self.assertIn("`%s:refresh`" % plugin, in_setup("SKILL.md"))
-        named = set(re.findall(r"\b%s:([a-z-]+)" % plugin, in_skill("SKILL.md") + in_setup("SKILL.md")))
+        self.assertIn("`%s:replies`" % plugin, in_setup("SKILL.md"))
+        self.assertIn("`%s:refresh`" % plugin, in_replies("SKILL.md"))
+        self.assertIn("`%s:setup`" % plugin, in_replies("SKILL.md"))
+        text = (
+            in_skill("SKILL.md") + in_setup("SKILL.md") + in_replies("SKILL.md") + in_skill("references", "outbox.md")
+        )
+        named = set(re.findall(r"\b%s:([a-z-]+)" % plugin, text))
         self.assertLessEqual(named, set(skills), "a skill name that doesn't exist")
 
     def test_setup_hands_the_first_capture_to_refresh(self):
@@ -1992,6 +2046,187 @@ class TestOutboxPosting(unittest.TestCase):
         )
 
 
+class TestSendReplies(unittest.TestCase):
+    """F30 part 1: "send replies" posts the approved queued replies without a refresh (the replies skill), and every
+    refresh posts them before its scan. tests/sim.js (section S) runs these steps; these check the text they run."""
+
+    def setUp(self):
+        self.rs = in_replies("SKILL.md")
+        self.run = section(self.rs, "Send replies")
+        self.skill = in_skill("SKILL.md")
+        self.out = in_skill("references", "outbox.md")
+
+    def step(self, label):
+        return bullet(self.run, label)
+
+    def test_the_steps_in_order(self):
+        """Approval before the lock (nothing locked or opened while the user decides), the lock before the tab."""
+        steps = re.findall(r"^\d+\. \*\*(.+?)\.?\*\*", self.run, re.M)
+        self.assertEqual(
+            steps,
+            [
+                "Read the outbox",
+                "Check approval",
+                "Take the run lock",
+                "Find the Messenger tab",
+                "Post",
+                "Release and report",
+            ],
+        )
+
+    def test_a_reply_run_reads_little(self):
+        """A reply run reads this SKILL.md, not the refresh's (read on every refresh, capped at 20 KB), plus outbox.md
+        (and posting-with-helper.md when helperPost is on). It names no file only a refresh needs."""
+        size = len(self.rs.encode())
+        self.assertLess(size, 8000)
+        self.assertLess(size, len(self.skill.encode()) / 2)
+        for f in (
+            "catchup.py",
+            "page.html",
+            "photos.md",
+            "digests.md",
+            "scheduling.md",
+            "writing-the-build.md",
+            "first-run.md",
+        ):
+            self.assertNotIn(f, self.rs, f)
+        self.assertNotRegex(self.rs, r"`(chunks|threading|summary)/", "a reply run reads no stored messages")
+
+    def test_every_file_it_reads_is_in_its_folder(self):
+        """A skill can only count on its own folder: what SKILL.md names is its own copy, and so is every file named by
+        the two references a reply run reads."""
+        refs = set(re.findall(r"`((?:assets|scripts|references)/[\w.\-]+)`", self.rs))
+        self.assertEqual(refs, set(REPLIES_SHIPPED) - {"SKILL.md"})
+        for f in ("outbox.md", "posting-with-helper.md"):
+            for r in set(re.findall(r"`((?:assets|scripts|references)/[\w.\-]+)`", in_replies("references", f))):
+                self.assertTrue(os.path.exists(os.path.join(ROOT, REPLIES, r)), f + " names " + r)
+        self.assertIn("## Helper", self.rs, "outbox.md's SKILL.md › Helper")
+
+    def test_the_bridge_is_the_refresh_skills(self):
+        """The same start and poll code, word for word (the comments' example ids may differ)."""
+        code = lambda t: [
+            l
+            for l in re.search(r"```js\n(.*?)```", section(t, "Helper"), re.S).group(1).split("\n")
+            if l and not l.startswith("//")
+        ]
+        self.assertEqual(len(code(self.rs)), 2)
+        self.assertEqual(code(self.rs), code(self.skill))
+
+    def test_nothing_queued_is_one_read(self):
+        s1 = self.step("Read the outbox")
+        for must in (
+            "`ArtifactData query outbox` for rows whose `state` is `queued` or `sending`",
+            "that one read is the whole run",
+            "Only `sending` rows",
+            "the next refresh settles them",
+        ):
+            self.assertIn(must, s1)
+
+    def test_approval_is_unchanged(self):
+        rule = re.search(r"^- \*\*Never send a message\*\*.*?never approval\.", self.skill, re.M).group(0)
+        self.assertIn(rule, self.rs, "the refresh skill's hard rule, word for word")
+        self.assertIn('"Send replies" alone approves nothing while `outboxAuto` is off.', self.rs)
+        s2 = self.step("Check approval")
+        for must in (
+            "If `outboxAuto` is true, every `queued` row is approved",
+            "Otherwise list each one (who it's to, their message, the exact reply) and ask which to send, then stop",
+            "Nothing is locked or opened while you wait",
+            "with the ones they said yes to",
+        ):
+            self.assertIn(must, s2)
+        self.assertIn("(`outboxAuto`, or a yes in chat to that exact text)", bullet(self.skill, "Replies first"))
+
+    def test_the_run_lock(self):
+        s3, s6 = self.step("Take the run lock"), self.step("Release and report")
+        for must in (
+            'If its `state` is `"running"` and its `startedAt` is less than 20 minutes old',
+            "don't touch the tab, and don't wait for it",
+            "posts approved replies before it ends",
+            '`{state:"running",startedAt,step:"replies",by:"send replies"}`, pinned with the version you read',
+            "If that's refused, `get` it again; if another run took it, stop the same way",
+            '`refresh/status` `{state:"error",message}` before stopping',
+        ):
+            self.assertIn(must, s3)
+        self.assertIn('update `refresh/status` (pinned) to `{state:"done",finishedAt}`', s6)
+        self.assertIn("`startedAt` is less than 20 minutes old, another refresh is in progress", self.skill)
+        self.assertIn(
+            'A reply-only run\'s lock (`step:"replies"`) is short: read it again each minute, up to 5, before skipping.',
+            self.skill,
+            "a refresh waits out a reply run instead of skipping its hour",
+        )
+
+    def test_finds_the_tab_as_a_refresh_does(self):
+        s4 = self.step("Find the Messenger tab")
+        for must in (
+            "`tabs_context_mcp` (more than one Chrome connected: `references/helper.md` › Which Chrome)",
+            "If it's open on a different chat, the user is using it: don't take it over",
+            "Navigate it to `meta/chat.chatUrl`",
+            "`document.visibilityState`",
+            '"computer asleep or Messenger tab hidden"',
+            "missing: inject it (`references/helper.md` › Injecting)",
+            'Run `selfcheck`: if `ok` is false, stop with "Messenger changed: "',
+        ):
+            self.assertIn(must, s4)
+
+    def test_posts_by_outbox_md_and_leaves_sending_rows(self):
+        s5 = self.step("Post")
+        for must in (
+            "`references/posting-with-helper.md` too when `meta/chat.helperPost` is true and the helper is 2.0 or later",
+            "Post the approved rows by outbox.md › Posting",
+            "skip outbox.md's settle step and its stored-message check",
+            "`sending` rows from earlier runs stay as they are for the next refresh to settle",
+        ):
+            self.assertIn(must, s5)
+        self.assertIn(
+            'A reply-only run skips this read: call 1 and `post` check the "Replying to" bar against `to` and `snip`',
+            self.out,
+        )
+        settle = re.search(r'^- Settle any row left in `state:"sending"`.*$', self.out, re.M).group(0)
+        for must in (
+            "only **after this refresh's import** (its step 8)",
+            "they hold anything this run posted before its scan",
+            "Before the scan, and in a reply-only run, leave `sending` rows as they are",
+        ):
+            self.assertIn(must, settle)
+        self.assertNotIn("First, settle any row", self.out)
+
+    def test_routing(self):
+        desc = lambda t: json.loads(re.search(r"^description: (.*)$", t, re.M).group(1))
+        rd, fd = desc(self.rs), desc(self.skill)
+        for must in ('"send replies"', '"send my replies"', "without a refresh", "messenger-catchup:refresh"):
+            self.assertIn(must, rd)
+        self.assertIn('"Send replies" alone (no refresh) is messenger-catchup:replies', fd)
+        self.assertIn("posting replies they queued on it first", fd)
+        self.assertIn(
+            '- **"Send replies"** (post queued replies now, without a refresh): the `messenger-catchup:replies` skill.',
+            section(self.skill, "Which part to follow"),
+        )
+        self.assertIn('"send replies" sends them at once without a refresh', in_setup("SKILL.md"))
+
+    def test_replies_first_in_every_refresh(self):
+        """Approved replies go out before the scan; settling `sending` rows waits for step 8, after the import."""
+        first = bullet(self.skill, "Replies first")
+        self.assertLess(self.skill.index(step(self.skill, 2)), self.skill.index(first))
+        self.assertLess(self.skill.index(first), self.skill.index(step(self.skill, 3)))
+        for must in (
+            "`ArtifactData query outbox` for `queued` and `sending` rows",
+            "post those now by its Posting section, then navigate the tab to `chatUrl` again",
+            "`sending` rows and unapproved ones wait for step 8",
+        ):
+            self.assertIn(must, first)
+        self.assertIn(
+            'or to `{state:"running",step:"outbox",added}` if it found approved `queued` rows for step 8 to post',
+            step(self.skill, 7),
+        )
+        step8 = step(self.skill, 8)
+        for must in (
+            "settle `sending` rows from the saved messages, post approved `queued` ones, and list the rest for a yes",
+            "(a yes after this run: post with `messenger-catchup:replies`)",
+        ):
+            self.assertIn(must, step8)
+        self.assertIn("a refresh, before its scan (its step 2) and for rows queued while it ran (step 8)", self.out)
+
+
 class TestReleaseScript(unittest.TestCase):
     def test_release_script(self):
         f = os.path.join(ROOT, "tools", "release.sh")
@@ -2023,6 +2258,7 @@ class TestZip(unittest.TestCase):
                 [".claude-plugin/plugin.json"]
                 + ["skills/refresh/" + f for f in SHIPPED]
                 + ["skills/setup/" + f for f in SETUP_SHIPPED]
+                + ["skills/replies/" + f for f in REPLIES_SHIPPED]
             )
             for f in files:
                 os.makedirs(os.path.dirname(os.path.join(dst, "plugin", f)), exist_ok=True)
@@ -2055,6 +2291,7 @@ class TestZip(unittest.TestCase):
                 ["plugin/.claude-plugin/plugin.json"]
                 + [SKILL + "/" + f for f in SHIPPED]
                 + [SETUP + "/" + f for f in SETUP_SHIPPED]
+                + [REPLIES + "/" + f for f in REPLIES_SHIPPED]
             ),
         )
 

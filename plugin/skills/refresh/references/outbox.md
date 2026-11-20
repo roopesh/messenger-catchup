@@ -2,9 +2,11 @@
 
 Read this in full before handling any outbox row. The bridge is in SKILL.md › Helper, and its commands (`jump`) in `references/helper.md` › Commands. The row's fields are in `references/database.md` (the `outbox/r<ms>` line).
 
-- `ArtifactData query outbox` where `state=="queued"`. For each, check `to` and `snip` against the stored message (`i`, `mid`).
+Two kinds of run post replies: a refresh, before its scan (its step 2) and for rows queued while it ran (step 8), and a reply-only run (the `messenger-catchup:replies` skill: "send replies"), which reads no new messages.
+
+- `ArtifactData query outbox` where `state=="queued"`. For each, check `to` and `snip` against the stored message (`i`, `mid`). A reply-only run skips this read: call 1 and `post` check the "Replying to" bar against `to` and `snip` before typing.
 - If `meta/chat.outboxAuto` is true, post each one. Otherwise list them for the user (who it's to, their message, the exact reply) and post only the ones they say yes to in chat. During a scheduled run with no one there, list them in the report and leave them queued.
-- First, settle any row left in `state:"sending"` by an earlier run. Check the **saved messages**, not the screen: this run's import is done, so the chunks are current. Look for a message with `f:"You"`, `r` matching the row's `to` (the same name, or one is the start of the other: Messenger may show a first name where the chat shows the full name; "yourself" when `to` is "You"), and `b` equal to the row's `text` (ignoring whitespace), dated after `queuedAt`.
+- Settle any row left in `state:"sending"` (by an earlier run, or by this refresh's posting before its scan) only **after this refresh's import** (its step 8). Check the **saved messages**, not the screen: the chunks are current then, and they hold anything this run posted before its scan. Before the scan, and in a reply-only run, leave `sending` rows as they are: they don't hold up posting the `queued` ones. Look for a message with `f:"You"`, `r` matching the row's `to` (the same name, or one is the start of the other: Messenger may show a first name where the chat shows the full name; "yourself" when `to` is "You"), and `b` equal to the row's `text` (ignoring whitespace), dated after `queuedAt`.
   - Found: mark it `sent` with `sentMid` set to that message's `m` and `sentAt` set to that message's time (its `d` and `t`, in `meta/chat.tz`, as an ISO time).
   - Not found, but the newest saved message is older than `queuedAt`: the chat hasn't been read past the send yet, so leave the row as it is.
   - Not found, and saved messages run past `queuedAt`, or the row is more than a day old: mark it `unconfirmed` with `error:"Not found in the chat after sending; check Messenger before queueing it again"` and tell the user.
@@ -102,6 +104,6 @@ await (async () => {
   - `{sent}`: add `sent` with `sentAt` = its `at` and `sentMid` = its `mid` to the pending outcomes. Next row.
   - The check threw (the batch stopped there), or the confirm returned `{abort}`: nothing was sent. Clear the box, add `failed` ("the reply box did not match the reply"). Next row.
   - `{held}`: the box still holds the text, so it wasn't sent. Clear the box, add `failed` ("Messenger didn't send it"). Next row.
-  - `{pending}`: the box is empty but the message hasn't shown up, so it may have gone out. Leave the row in `sending` (the settle check above handles it on the next run) and **stop posting** for this run, so a second row is never left in `sending`. Never mark a reply that may have been sent as `failed`: the user would queue it again.
+  - `{pending}`: the box is empty but the message hasn't shown up, so it may have gone out. Leave the row in `sending` (the settle check above handles it after the next import: this refresh's step 8 when it posted before its scan) and **stop posting** for this run, so a second row is never left in `sending`. Never mark a reply that may have been sent as `failed`: the user would queue it again.
 - After the last row, or when you stop, write the pending outcomes in one batch, pinned. If the run stops between calls, at most one row is left in `sending`, and the settle check above finds it on the next run.
 - To clear a box: click it, cmd+a (ctrl+a), Delete.

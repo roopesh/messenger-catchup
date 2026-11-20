@@ -2,6 +2,23 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.27.0] - 2026-11-19
+**A Stats tab, replies sent without a refresh, and threads that open in place** (BACKLOG F31 part 1, F30 part 1). MINOR: a new page tab, a new skill and a refresh procedure change. Page **`PAGE_VERSION` 3.3** (from 3.2); helper unchanged (2.1).
+
+### Added
+- **Stats tab (F31, part 1).** Worked out on the page from the stored messages, with no Claude call. Timeframes Today, 30 days and 90 days up front, plus 7 days, All and a custom range, with a line saying where stored history starts. Eleven tiles: messages, messages with text, people posting, photos and GIFs, links, busiest hour, the top 5's share, your messages, conversations started, deals posted and deals sold (no reactions: they're captured once and never updated). A volume chart by hour, day, week or month: drag across it to zoom, Reset zoom to go back, click a day for its own view (its tiles, an hourly chart split by that day's top posters, its top 10). The top 10 by messages and share, with you ranked like everyone and nicknames merged with full names. Click a person for their own chart, busiest hours and whom they reply to most. A weekday-by-hour heatmap. Every chart has "Show as a table", works with mouse, touch and keyboard, and each section can be hidden (remembered per browser). Six tabs fit on a phone (smaller tabs under 420 px). Test: page section `stats` (44 checks), with a 180,000-message speed check.
+- **"send replies" (F30, part 1).** A new `replies` skill posts the replies queued on the page and stops: no scan, import or rebuild. It reads only its own short `SKILL.md` (about 6 KB) plus the outbox references it needs, keeps every approval rule, takes the run lock just for the posting, and never touches the Messenger tab while a refresh holds the lock. The page's queued-reply note names the phrase, and its status line says "Claude is posting your replies…" during one. Tests: sim section S (8 cases), `TestSendReplies` (11).
+- **Replies first in every refresh (F30).** A refresh, scheduled ones included, posts approved queued replies before its scan, so a reply never waits behind the build, and the same run's capture confirms it. Replies queued during the run still go out at step 8. A refresh waits up to 5 minutes for a reply run's lock instead of skipping its slot.
+
+### Changed
+- **Threads open in place.** "Show the thread" on a Summary card opened the thread in a box of its own that scrolled; it now opens at full length in the page, with "Close the thread" at its end as well as at its top (the owner's request). Tests: TH1, TH2.
+- **CLAUDE.md:** three skills; `replies` carries copies kept by `tools/sync.py`.
+- **Backlog:** F29 (fuller day summaries, with design notes), F30 and F31 filed; the owner's decision-board answers on R13, F27, F30 and F31 recorded.
+
+### Fixed
+- **A tab opened from far down a long tab showed only the page's foot** (found in the release check on claude.ai). The new tab's start now comes up under the tab bar; from the top nothing scrolls. Test: `byDay` BD12 (fails on 3.2).
+- **The marker radios ignored a click made right after typing a date.** With the From box focused, the 1.5 s save switched to the date range but the radios weren't redrawn, so "Since your last message" still looked picked and clicking it did nothing; and the box's blur rebuilt the controls between mouse down and up, so the click was lost. The radios now follow the mode while a date box has focus, a click on a marker radio from the date box cancels the pending date save, and the rebuild waits until the click has landed. Found because the page test read message dates from the day the simulator last ran; it now uses the captured day. Tests: three date-entry checks (all fail on 3.2).
+
 ## [1.26.1] - 2026-11-14
 **The tabs switch again in claude.ai's artifact viewer** (found live on the owner's page). PATCH: a page fix. Page **`PAGE_VERSION` 3.2** (from 3.1); helper unchanged (2.1).
 
