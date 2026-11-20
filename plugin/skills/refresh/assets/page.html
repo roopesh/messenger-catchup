@@ -5,7 +5,10 @@
   href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap"
 />
 <style>
-  /* Layout: one reading column with a tab bar (Summary / Ask / Messages / By day / Views). Data lives in the artifact db; Claude seeds and refreshes it. Palette: warm olive neutrals with a bright-blue accent. */
+  /* Layout: one reading column with a tab bar (Summary / Ask / Messages / By day / Views / Stats). Data lives in the artifact db; Claude seeds and refreshes it. Palette: warm olive neutrals with a bright-blue accent. */
+  /* Stats charts (F31): --c1 to --c4 mark people in a stacked bar, in this order (--c1 is the accent, and the only colour
+     of a one-series chart); each mode's four were checked as a set for colour-blind separation on its surface. --c0 is
+     "everyone else". */
   :root {
     --bg: #f5f4ef;
     --surface: #fbfaf6;
@@ -19,6 +22,11 @@
     --warn: #a4561b;
     --warn-soft: #f6e7d9;
     --hl: #fff3b8;
+    --c0: #b3b4a9;
+    --c1: #1f5fd6;
+    --c2: #eb6834;
+    --c3: #1baf7a;
+    --c4: #eda100;
     --display: "Barlow Condensed", "Arial Narrow", sans-serif;
     --body: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
     --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
@@ -37,6 +45,11 @@
       --warn: #e9a46a;
       --warn-soft: #3a2a1c;
       --hl: #4a4320;
+      --c0: #5e6157;
+      --c1: #3987e5;
+      --c2: #d95926;
+      --c3: #199e70;
+      --c4: #c98500;
       color-scheme: dark;
     }
   }
@@ -53,6 +66,11 @@
     --warn: #e9a46a;
     --warn-soft: #3a2a1c;
     --hl: #4a4320;
+    --c0: #5e6157;
+    --c1: #3987e5;
+    --c2: #d95926;
+    --c3: #199e70;
+    --c4: #c98500;
     color-scheme: dark;
   }
   body {
@@ -165,7 +183,7 @@
     border-bottom: 3px solid transparent;
     white-space: nowrap;
   }
-  /* on a phone the five tabs share the width (each stretches, so the spare room is tappable too): smaller, tighter,
+  /* on a phone the six tabs share the width (each stretches, so the spare room is tappable too): smaller, tighter,
      "Ask" for "Ask Claude"; still about 40 px tall */
   @media (max-width: 560px) {
     nav.tabs {
@@ -180,6 +198,13 @@
     }
     nav.tabs .wide {
       display: none;
+    }
+  }
+  /* at phone width six tabs fit even in a wide fallback font (no web font, no Arial Narrow) */
+  @media (max-width: 420px) {
+    nav.tabs a {
+      font-size: 0.8rem;
+      padding: 10px 1px;
     }
   }
   nav.tabs a[aria-current="page"] {
@@ -1494,6 +1519,254 @@
     user-select: all;
     overflow-wrap: anywhere;
   }
+  /* Stats (F31): the timeframe row (Today, 30 and 90 days up front; 7 days, All and Custom quieter), the span line,
+     the section switches, then tiles, charts and lists */
+  .st-pick .seg button {
+    padding: 6px 11px;
+  }
+  .st-pick .st-more button {
+    font-weight: 400;
+  }
+  .st-range {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    align-items: center;
+  }
+  .st-range[hidden] {
+    display: none;
+  }
+  .st-range label {
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .st-range input[type="date"] {
+    font: inherit;
+    font-size: 0.9rem;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 4px 6px;
+    color-scheme: light dark;
+  }
+  .st-spanrow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    align-items: baseline;
+  }
+  .st-show {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    align-items: center;
+    font-size: 0.9rem;
+  }
+  .st-body {
+    display: grid;
+    gap: 26px;
+    min-width: 0;
+  }
+  .st-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 8px;
+  }
+  .st-tile {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px 12px;
+    gap: 4px;
+    min-width: 0;
+  }
+  .st-tile .n {
+    font-size: 1.6rem;
+    font-variant-numeric: normal;
+    overflow-wrap: anywhere;
+  }
+  .st-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    align-items: center;
+  }
+  .st-head h3 {
+    font-size: 1.45rem;
+  }
+  .st-head,
+  .st-chart,
+  .st-top li {
+    scroll-margin-top: calc(var(--navh, 48px) + 12px);
+  }
+  .st-chart {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 0 2px;
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+    min-width: 0;
+  }
+  .st-chart svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .st-chart text {
+    font-family: var(--mono);
+    font-size: 10px;
+    fill: var(--muted);
+  }
+  .st-chart .grid {
+    stroke: var(--line);
+    stroke-width: 1;
+    shape-rendering: crispEdges;
+  }
+  .st-chart .hl {
+    fill: var(--fg);
+    opacity: 0.07;
+  }
+  .st-chart .sel {
+    fill: var(--accent);
+    opacity: 0.16;
+  }
+  .st-chart .ring {
+    fill: none;
+    stroke: var(--fg);
+    stroke-width: 1.5;
+  }
+  .st-tip {
+    position: absolute;
+    top: 4px;
+    left: 0;
+    z-index: 2;
+    pointer-events: none;
+    background: var(--fg);
+    color: var(--bg);
+    border-radius: 5px;
+    padding: 6px 9px;
+    font-size: 0.8rem;
+    line-height: 1.35;
+    max-width: 230px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  }
+  .st-tip[hidden] {
+    display: none;
+  }
+  .st-tip b {
+    font-weight: 600;
+  }
+  .st-tip .k {
+    display: inline-block;
+    width: 12px;
+    height: 2px;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .st-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.86rem;
+  }
+  .st-legend i,
+  .st-key i {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 5px;
+    vertical-align: -1px;
+  }
+  .st-key {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .st-key i {
+    width: 14px;
+    margin: 0;
+    background: var(--c1);
+  }
+  .st-key span {
+    margin: 0 6px;
+  }
+  .st-top {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    max-width: 640px;
+  }
+  .st-top li {
+    display: grid;
+    grid-template-columns: 1.6em minmax(0, 1fr) auto 3.9em;
+    gap: 3px 10px;
+    align-items: baseline;
+    padding: 7px 0 6px;
+    border-top: 1px dashed var(--line);
+    font-variant-numeric: tabular-nums;
+  }
+  .st-top li:first-child {
+    border-top: 0;
+  }
+  .st-top .rk {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--muted);
+  }
+  .st-top .who {
+    justify-self: start;
+    text-align: left;
+    overflow-wrap: anywhere;
+    font-size: 0.95rem;
+  }
+  .st-top .c,
+  .st-top .pc {
+    text-align: right;
+  }
+  .st-top .pc {
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .st-top .bar {
+    grid-column: 2 / -1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .st-top .bar i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--c1);
+  }
+  details.st-tbl > summary {
+    cursor: pointer;
+    font-size: 0.88rem;
+    color: var(--accent);
+  }
+  details.st-tbl > .tablewrap {
+    margin-top: 8px;
+  }
+  details.st-tbl table {
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  details.st-tbl.wide table {
+    min-width: 560px;
+  }
   @media (prefers-reduced-motion: reduce) {
     * {
       scroll-behavior: auto !important;
@@ -1522,6 +1795,7 @@
     <a href="#messages" data-tab="messages">Messages</a>
     <a href="#days" data-tab="days">By day</a>
     <a href="#views" data-tab="views">Views</a>
+    <a href="#stats" data-tab="stats">Stats</a>
   </nav>
 
   <section class="view" id="v-summary"></section>
@@ -1624,6 +1898,43 @@
       </div>
       <div class="list" id="views-list"></div>
     </div>
+  </section>
+
+  <section class="view" id="v-stats" hidden>
+    <div class="block">
+      <div class="sec-head">
+        <h2>Stats</h2>
+        <p>Counted on this page from the stored messages, so they cost nothing and stay current after every refresh.</p>
+      </div>
+      <div class="toolbar st-pick">
+        <div class="seg" role="group" aria-label="Timeframe">
+          <button type="button" data-tf="today" aria-pressed="false">Today</button>
+          <button type="button" data-tf="d30" aria-pressed="true">30 days</button>
+          <button type="button" data-tf="d90" aria-pressed="false">90 days</button>
+        </div>
+        <div class="seg st-more" role="group" aria-label="More timeframes">
+          <button type="button" data-tf="d7" aria-pressed="false">7 days</button>
+          <button type="button" data-tf="all" aria-pressed="false">All</button>
+          <button type="button" data-tf="custom" aria-pressed="false">Custom</button>
+        </div>
+        <span class="st-range" id="st-custom" hidden>
+          <label>From <input type="date" id="st-from" /></label>
+          <label>To <input type="date" id="st-to" /></label>
+        </span>
+      </div>
+      <div class="st-spanrow">
+        <p class="note" id="st-span" role="status"></p>
+        <button type="button" class="link" id="st-reset" hidden>Reset zoom</button>
+      </div>
+      <div class="st-show" role="group" aria-label="Sections to show">
+        <span class="note">Show:</span>
+        <label><input type="checkbox" data-sec="tiles" checked /> Numbers</label>
+        <label><input type="checkbox" data-sec="volume" checked /> Volume</label>
+        <label><input type="checkbox" data-sec="top" checked /> Top 10</label>
+        <label><input type="checkbox" data-sec="heat" checked /> Heatmap</label>
+      </div>
+    </div>
+    <div class="st-body" id="st-body"></div>
   </section>
 
   <section class="method block">
@@ -1849,7 +2160,7 @@
   };
 
   /* ---------- routing ---------- */
-  const TABS = ["summary", "ask", "messages", "days", "views"];
+  const TABS = ["summary", "ask", "messages", "days", "views", "stats"];
   function route() {
     const h = (location.hash || "").slice(1);
     const tab = TABS.includes(h) ? h : "summary";
@@ -1861,8 +2172,9 @@
     });
     /* Older messages switched on only to show one jumped-to message are switched off again when you leave Messages. */
     if (tab !== "messages" && S.autoOlder) backToWindow();
-    /* By day is drawn only while it's open (F24) */
+    /* By day and Stats are drawn only while they're open (F24, F31) */
     if (tab === "days") renderDays();
+    if (tab === "stats") renderStats();
   }
   function backToWindow() {
     S.autoOlder = null;
@@ -2252,6 +2564,7 @@
     renderHeader();
     renderSummary();
     renderMessages();
+    renderStats();
   }
   function inWindow(m) {
     return inWin(m.i);
@@ -7883,6 +8196,1257 @@
     }
   }
 
+  /* ---------- Stats (F31) ----------
+      Counts worked out on the page from the stored messages: no Claude call, no tokens, current after every import. A
+      timeframe (Today, 7, 30 or 90 days, All, or a From/To range of days) is a span of the chat's own local times;
+      dragging across the volume chart zooms into part of it, and a day or a person opens on its own. Stored times are
+      read as minutes on a plain clock (as if UTC), so every day is 1,440 minutes and daylight saving moves nothing. One
+      pass over the messages fills typed arrays per S.msgs (statsBase); each span is then one pass over those
+      (statsAgg), kept until the messages change. A person is counted by full name where the page knows it (fullOf), so
+      their nickname and full-name messages are one person; every message counts (five lines in a row are five), and
+      the owner ("You") is ranked with everyone. Reactions are left out: they're captured once and never updated. The
+      timeframe and the switched-off sections are remembered in this browser only, when it allows (localStorage). Drawn
+      only while the tab is open. */
+  const ST_KEY = "mcStats";
+  const ST_SECS = { tiles: "Numbers", volume: "Volume", top: "Top 10", heat: "Heatmap" };
+  const ST_DAYS = { today: 1, d7: 7, d30: 30, d90: 90 };
+  const ST_DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  /* how many bars apart the axis labels may be, per kind of bar */
+  const ST_STRIDES = {
+    hour: [1, 2, 3, 6, 12],
+    day: [1, 2, 7, 14, 28, 56],
+    week: [1, 2, 4, 8, 13, 26, 52],
+    month: [1, 2, 3, 6, 12, 24],
+  };
+  const DAY_MIN = 1440;
+  const stHas = (o, k) => typeof k === "string" && Object.prototype.hasOwnProperty.call(o, k);
+  const isDay = k => /^\d{4}-\d\d-\d\d$/.test(k || "");
+  const dayMin = k => Date.UTC(+k.slice(0, 4), +k.slice(5, 7) - 1, +k.slice(8, 10)) / 60000;
+  const minDay = v => new Date(v * 60000).toISOString().slice(0, 10);
+  const dayFloor = v => v - (((v % DAY_MIN) + DAY_MIN) % DAY_MIN);
+  const stHourOf = v => Math.floor(v / 60) % 24;
+  /* the chat's today ("YYYY-MM-DD") in its own time zone, as By day reads it */
+  const stToday = () => new Date().toLocaleDateString("en-CA", { timeZone: validTz(S.meta && S.meta.tz) });
+  const stHr12 = h => (h % 12 || 12) + " " + (h % 24 < 12 ? "AM" : "PM");
+  const stHourShort = h => (h % 12 || 12) + (h < 12 ? "a" : "p");
+  /* "10–11 AM", "11 AM–12 PM", "11 PM–12 AM" */
+  function stHourSpan(h) {
+    const a = h % 24,
+      b = (h + 1) % 24;
+    const ap = x => (x < 12 ? "AM" : "PM");
+    return ap(a) === ap(b) ? (a % 12 || 12) + "–" + (b % 12 || 12) + " " + ap(a) : stHr12(a) + "–" + stHr12(b);
+  }
+  /* "Nov 20", with the year when it isn't this year */
+  function stDayText(k) {
+    return dayOf(k) + (k.slice(0, 4) === stToday().slice(0, 4) ? "" : ", " + k.slice(0, 4));
+  }
+  /* "Oct 22 – Nov 20", "Fri, Nov 20", or with hours when the span doesn't start and end at midnight */
+  function stSpanText(lo, hi) {
+    const a = minDay(lo);
+    if (lo % DAY_MIN === 0 && hi % DAY_MIN === 0) {
+      const b = minDay(hi - DAY_MIN);
+      return a === b ? dayTitle(a) : stDayText(a) + " – " + stDayText(b);
+    }
+    const ha = stHr12(stHourOf(lo)),
+      hb = stHr12(stHourOf(hi));
+    return minDay(hi - 1) === a
+      ? dayTitle(a) + ", " + ha + " – " + hb
+      : stDayText(a) + ", " + ha + " – " + stDayText(minDay(hi)) + ", " + hb;
+  }
+  const stPct = (c, t) => (t ? ((100 * c) / t).toFixed(1) : "0.0") + "%";
+  const stNum = n => n.toLocaleString("en-US");
+  function stArgmax(a) {
+    let k = 0;
+    for (let j = 1; j < a.length; j++) if (a[j] > a[k]) k = j;
+    return k;
+  }
+
+  S.stats = { tf: "d30", from: "", to: "", zoom: null, day: null, person: null, rets: [], focus: null, v: 0 };
+  S.stats.hide = new Set();
+  try {
+    const o = JSON.parse(localStorage.getItem(ST_KEY) || "null");
+    if (o && typeof o === "object") {
+      if (stHas(ST_DAYS, o.tf) || o.tf === "all" || o.tf === "custom") S.stats.tf = o.tf;
+      if (isDay(o.from) && isDay(o.to)) Object.assign(S.stats, { from: o.from, to: o.to });
+      if (Array.isArray(o.hide)) o.hide.forEach(k => stHas(ST_SECS, k) && S.stats.hide.add(k));
+    }
+  } catch (e) {}
+  function stSave() {
+    const st = S.stats;
+    try {
+      localStorage.setItem(ST_KEY, JSON.stringify({ tf: st.tf, from: st.from, to: st.to, hide: [...st.hide] }));
+    } catch (e) {}
+  }
+
+  /* one key per person: "Y" for the owner, "F" + the full name where the page knows it, else "S" + the name shown */
+  function stKey(m) {
+    if (m.f === "You") return "Y";
+    const full = fullOf(m);
+    return full ? "F" + full : "S" + (m.f || "?");
+  }
+  /* S.msgs index of message number i (S.msgs is sorted by i), or -1 */
+  function stJ(i) {
+    const ms = S.msgs;
+    let a = 0,
+      b = ms.length;
+    while (a < b) {
+      const c = (a + b) >> 1;
+      if (ms[c].i < i) a = c + 1;
+      else b = c;
+    }
+    return a < ms.length && ms[a].i === i ? a : -1;
+  }
+  /* Per S.msgs (and the names and photos it reads): each message's minute (tm), person (who), whether it has text,
+     its photos and GIFs (stored photos, else 1 for a photo or GIF still to come) and its links. A message without a
+     readable time takes the one before it (the first ones, the first readable time). mono: the times never go back, so
+     a span's messages can be found by binary search. */
+  let STB = null;
+  function statsBase() {
+    const key = [S.msgs, PEOPLE, S.photos, S.gifs];
+    if (STB && key.every((x, j) => x === STB.key[j])) return STB;
+    const ms = S.msgs,
+      n = ms.length;
+    const tm = new Int32Array(n).fill(-1),
+      who = new Int32Array(n),
+      txt = new Uint8Array(n),
+      ph = new Uint8Array(n),
+      lk = new Uint16Array(n);
+    const idx = new Map(),
+      people = [],
+      days = new Map();
+    for (let j = 0; j < n; j++) {
+      const m = ms[j];
+      const ts = m.ts;
+      if (ts) {
+        const k = ts.slice(0, 10);
+        let d = days.get(k);
+        if (d === undefined) days.set(k, (d = isDay(k) ? dayMin(k) : NaN));
+        const v = d + +ts.slice(11, 13) * 60 + +ts.slice(14, 16);
+        if (v >= 0) tm[j] = v;
+      }
+      const pk = stKey(m);
+      let p = idx.get(pk);
+      if (p === undefined) {
+        idx.set(pk, (p = people.length));
+        people.push({ key: pk, last: j, name: null });
+      } else people[p].last = j;
+      who[j] = p;
+      if (m.b && /\S/.test(m.b)) txt[j] = 1;
+      const got = S.photos && S.photos[m.i];
+      const np = Array.isArray(got) && got.length ? got.length : m.p || (S.gifs && S.gifs.has(m.i)) ? 1 : 0;
+      ph[j] = Math.min(255, np);
+      if (Array.isArray(m.l)) lk[j] = Math.min(65535, m.l.length);
+    }
+    let j0 = 0;
+    while (j0 < n && tm[j0] < 0) j0++;
+    let mono = true,
+      lo = Infinity,
+      hi = -1;
+    for (let j = 0; j < n; j++) {
+      if (tm[j] < 0) tm[j] = j < j0 ? (j0 < n ? tm[j0] : -1) : tm[j - 1];
+      else if (j > j0 && tm[j] < tm[j - 1]) mono = false;
+      if (tm[j] >= 0) {
+        if (tm[j] < lo) lo = tm[j];
+        if (tm[j] > hi) hi = tm[j];
+      }
+    }
+    STB = { key, n, tm, who, txt, ph, lk, idx, people, mono, agg: new Map() };
+    STB.you = idx.has("Y") ? idx.get("Y") : -1;
+    STB.firstTm = hi < 0 ? -1 : lo;
+    STB.lastTm = hi;
+    return STB;
+  }
+  /* a person's name as the page shows it elsewhere, from their newest message (a nickname shows as "Nick (Ana)") */
+  function stName(B, p) {
+    const x = B.people[p];
+    if (!x) return "?";
+    if (x.name == null) x.name = x.key === "Y" ? "You" : nameOf(S.msgs[x.last]);
+    return x.name;
+  }
+  /* the name for any person key, also one who never posted (a reply's r) */
+  function stKeyName(B, k) {
+    if (B.idx.has(k)) return stName(B, B.idx.get(k));
+    if (k === "Y") return "You";
+    return k[0] === "F" ? nameOf({ f: k.slice(1), fn: k.slice(1) }) : nameOf({ f: k.slice(1) });
+  }
+  /* whom a message replies to, as a person key: its parent when stored (pi), else the name Messenger showed (r) */
+  function stReplyTo(B, m) {
+    if (Number.isInteger(m.pi)) {
+      const j = stJ(m.pi);
+      if (j >= 0) return B.people[B.who[j]].key;
+    }
+    const r = typeof m.r === "string" ? m.r.trim() : "";
+    if (!r) return null;
+    return /^you$/i.test(r) ? "Y" : stKey({ f: r });
+  }
+  /* the messages a span can hold, [a, b): by binary search when the times only go forward (they do, unless a capture
+     misread a date), else all of them; each is checked against the span anyway */
+  function stJs(B, lo, hi) {
+    if (!B.mono) return [0, B.n];
+    const lb = x => {
+      let a = 0,
+        b = B.n;
+      while (a < b) {
+        const c = (a + b) >> 1;
+        if (B.tm[c] < x) a = c + 1;
+        else b = c;
+      }
+      return a;
+    };
+    return [lb(lo), lb(hi)];
+  }
+  /* The bars for a span: hours up to 2 days, days up to 92 (a 90-day timeframe), weeks from Sunday up to about a
+     year, months beyond. Bar k runs from edges[k] to edges[k + 1]; at(v) is the bar holding minute v. */
+  function stBuckets(lo, hi) {
+    const span = hi - lo;
+    const edges = [];
+    let kind,
+      step = 0;
+    if (span <= 2 * DAY_MIN) {
+      kind = "hour";
+      step = 60;
+    } else if (span <= 92 * DAY_MIN) {
+      kind = "day";
+      step = DAY_MIN;
+    } else if (span <= 371 * DAY_MIN) {
+      kind = "week";
+      step = 7 * DAY_MIN;
+    } else kind = "month";
+    if (step) {
+      let e = lo - (((lo % step) + step) % step);
+      if (kind === "week") e = dayFloor(lo) - ((Math.floor(lo / DAY_MIN) + 4) % 7) * DAY_MIN;
+      for (; ; e += step) {
+        edges.push(e);
+        if (e >= hi) break;
+      }
+      const e0 = edges[0],
+        last = edges.length - 2;
+      return { kind, edges, at: v => Math.max(0, Math.min(last, Math.floor((v - e0) / step))) };
+    }
+    const d = new Date(lo * 60000);
+    for (let y = d.getUTCFullYear(), mo = d.getUTCMonth(); ; mo++) {
+      const e = Date.UTC(y, mo, 1) / 60000;
+      edges.push(e);
+      if (e >= hi) break;
+    }
+    const at = v => {
+      let a = 0,
+        b = edges.length - 2;
+      while (a < b) {
+        const c = (a + b + 1) >> 1;
+        if (edges[c] <= v) a = c;
+        else b = c - 1;
+      }
+      return a;
+    };
+    return { kind, edges, at };
+  }
+  /* Everything the tiles, the bars, the top 10 and the heatmap need for one span, in one pass; kept per span until
+     the messages change (statsBase starts a new cache) */
+  function statsAgg(B, lo, hi) {
+    const ck = lo + "_" + hi;
+    let A = B.agg.get(ck);
+    if (A) return A;
+    const bk = stBuckets(lo, hi);
+    A = { lo, hi, bk, total: 0, text: 0, photos: 0, links: 0, rank: null };
+    Object.assign(A, { byP: new Int32Array(B.people.length), hour: new Int32Array(24), wk: new Int32Array(168) });
+    A.bars = new Int32Array(bk.edges.length - 1);
+    const { tm, who, txt, ph, lk } = B;
+    const [a, b] = stJs(B, lo, hi);
+    for (let j = a; j < b; j++) {
+      const v = tm[j];
+      if (v < lo || v >= hi) continue;
+      A.total++;
+      A.text += txt[j];
+      A.photos += ph[j];
+      A.links += lk[j];
+      A.byP[who[j]]++;
+      const h = stHourOf(v);
+      A.hour[h]++;
+      A.wk[((Math.floor(v / DAY_MIN) + 4) % 7) * 24 + h]++;
+      A.bars[bk.at(v)]++;
+    }
+    if (B.agg.size > 40) B.agg.clear();
+    B.agg.set(ck, A);
+    return A;
+  }
+  /* the people who posted in a span, most messages first (a tie: who first posted in the chat first) */
+  function stRank(A) {
+    if (!A.rank) {
+      const r = [];
+      A.byP.forEach((c, p) => c && r.push(p));
+      A.rank = r.sort((x, y) => A.byP[y] - A.byP[x] || x - y);
+    }
+    return A.rank;
+  }
+  /* each threading conversation's first message, as a minute ("loose" isn't a conversation); per threading */
+  function stConvStarts(B) {
+    const T = S.threading;
+    if (B.cs && B.cs.T === T) return B.cs.v;
+    const v = [];
+    ((T && T.convs) || []).forEach(c => {
+      if (!c || c.id === "loose" || !Array.isArray(c.members)) return;
+      let lo = Infinity;
+      c.members.forEach(i => {
+        if (Number.isInteger(i) && i < lo) lo = i;
+      });
+      const j = lo === Infinity ? -1 : stJ(lo);
+      if (j >= 0) v.push(B.tm[j]);
+    });
+    B.cs = { T, v };
+    return v;
+  }
+  /* the summary's deals by their first message, and the sold ones by the message that says so (statusAt, else their
+     last message); per summary */
+  function stDeals(B) {
+    const sm = S.summary;
+    if (B.dl && B.dl.sm === sm) return B.dl;
+    const posted = [],
+      sold = [];
+    ((sm && sm.deals) || []).forEach(x => {
+      if (!x || typeof x !== "object") return;
+      const refs = (Array.isArray(x.refs) ? x.refs : [])
+        .map(r => (Array.isArray(r) ? r[0] : r))
+        .filter(i => Number.isInteger(i) && i >= 0);
+      if (!refs.length) return;
+      const j = stJ(Math.min(...refs));
+      if (j >= 0) posted.push(B.tm[j]);
+      const st = dealStatus(x);
+      if (st && x.status === "sold") {
+        const js = stJ(st.at != null ? st.at : Math.max(...refs));
+        if (js >= 0) sold.push(B.tm[js]);
+      }
+    });
+    B.dl = { sm, posted, sold };
+    return B.dl;
+  }
+  const stIn = (list, lo, hi) => list.reduce((n, v) => n + (v >= lo && v < hi ? 1 : 0), 0);
+
+  /* The timeframe as a span [lo, hi) of minutes: whole days through today. All runs from the first stored day; a
+     custom range is kept within a year of the stored history so its bars stay few. */
+  function stFrame() {
+    const st = S.stats,
+      B = statsBase();
+    const td = stToday();
+    const t0 = isDay(td) ? dayMin(td) : B.lastTm >= 0 ? dayFloor(B.lastTm) : 0;
+    const first = B.firstTm >= 0 ? dayFloor(B.firstTm) : t0,
+      end = Math.max(t0, B.lastTm >= 0 ? dayFloor(B.lastTm) : t0) + DAY_MIN;
+    if (st.tf === "all") return { lo: Math.min(first, end - DAY_MIN), hi: end };
+    if (st.tf === "custom") {
+      let a = isDay(st.from) ? st.from : minDay(t0 - 29 * DAY_MIN),
+        b = isDay(st.to) ? st.to : td;
+      if (a > b) [a, b] = [b, a];
+      const lo = Math.max(dayMin(a), first - 366 * DAY_MIN),
+        hi = Math.min(dayMin(b) + DAY_MIN, end + 366 * DAY_MIN);
+      return lo < hi ? { lo, hi } : { lo: hi - DAY_MIN, hi };
+    }
+    const nd = stHas(ST_DAYS, st.tf) ? ST_DAYS[st.tf] : 30;
+    return { lo: t0 - (nd - 1) * DAY_MIN, hi: t0 + DAY_MIN };
+  }
+  /* the span shown: the zoom, when it's inside the timeframe, else the timeframe */
+  function stSpan() {
+    const F = stFrame(),
+      z = S.stats.zoom;
+    if (z && z.lo >= F.lo && z.hi <= F.hi && z.lo < z.hi) return { F, lo: z.lo, hi: z.hi, zoomed: true };
+    return { F, lo: F.lo, hi: F.hi, zoomed: false };
+  }
+  function stBump() {
+    S.stats.v++;
+    renderStats();
+  }
+  function stSetTf(tf) {
+    const st = S.stats;
+    if (tf === "custom" && st.tf !== "custom") {
+      const F = stFrame();
+      st.from = minDay(F.lo);
+      st.to = minDay(F.hi - DAY_MIN);
+    }
+    Object.assign(st, { tf, zoom: null, day: null, person: null, rets: [] });
+    stSave();
+    stBump();
+  }
+  function stZoom(z) {
+    S.stats.zoom = z.hi > z.lo ? z : null;
+    stBump();
+  }
+  function stOpenDay(k, ret) {
+    const st = S.stats;
+    st.rets.push(ret);
+    Object.assign(st, { day: k, person: null, focus: ".st-head h3" });
+    stBump();
+  }
+  function stOpenPerson(key, ret) {
+    const st = S.stats;
+    st.rets.push(ret);
+    Object.assign(st, { person: key, focus: ".st-head h3" });
+    stBump();
+  }
+  function stBack() {
+    const st = S.stats;
+    if (st.person != null) st.person = null;
+    else st.day = null;
+    st.focus = st.rets.pop() || null;
+    stBump();
+  }
+
+  /* ----- charts: inline SVG drawn to their box's width, in the page's colours ----- */
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function stSvg(t, a) {
+    const e = document.createElementNS(SVG_NS, t);
+    Object.entries(a || {}).forEach(([k, v]) => e.setAttribute(k, v));
+    return e;
+  }
+  const r1 = v => Math.round(v * 10) / 10;
+  /* a round top for a count axis and its ticks: steps of 1, 2 or 5 times a power of ten, never below 1 */
+  function stTicks(max) {
+    const raw = Math.max(1, max) / 3;
+    const p = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = Math.max(
+      1,
+      [1, 2, 5, 10].map(x => x * p).find(s => s >= raw),
+    );
+    const top = Math.max(step, Math.ceil(max / step) * step);
+    const ticks = [];
+    for (let v = 0; v <= top; v += step) ticks.push(v);
+    return { top, ticks };
+  }
+  const stCompact = v => (v >= 1000 ? +(v / 1000).toFixed(v >= 10000 ? 0 : 1) + "K" : String(v));
+  /* a bar from the baseline up, its top corners rounded */
+  function stBarPath(x, yt, w, yb, r) {
+    r = Math.max(0, Math.min(r, w / 2, yb - yt));
+    return ["M", x, yb, "V", yt + r, "Q", x, yt, x + r, yt, "H", x + w - r, "Q", x + w, yt, x + w, yt + r, "V", yb, "Z"]
+      .map(v => (typeof v === "number" ? r1(v) : v))
+      .join(" ");
+  }
+  /* the tooltip's lines: a title, then text or [colour, text] (a short stroke of the colour keys the line) */
+  function stTipFill(tip, parts) {
+    tip.textContent = "";
+    parts.forEach((r, x) => {
+      if (!x) return tip.append(el("b", null, r));
+      const d = el("div");
+      if (Array.isArray(r)) {
+        const k = el("i", "k");
+        k.style.background = r[0];
+        d.append(k, r[1]);
+      } else d.textContent = r;
+      tip.append(d);
+    });
+  }
+  const stTipText = parts => parts.map(r => (Array.isArray(r) ? r[1] : r)).join(", ");
+  /* beside the mark (centre cx, half its width), not over it: to the right, else to the left */
+  function stTipAt(tip, box, cx, half) {
+    tip.hidden = false;
+    const w = tip.offsetWidth,
+      bw = box.clientWidth;
+    const x = cx + half + 6 + w <= bw - 4 ? cx + half + 6 : cx - half - 6 - w;
+    tip.style.left = Math.max(4, Math.min(bw - w - 4, x)) + "px";
+  }
+  /* The chart's box: focusable, with a tooltip and a polite live line for the keyboard. _draw (re)draws it to the
+     box's width once it's on the page, and again when the width changes. */
+  function stBox(name, label) {
+    const box = el("div", "st-chart");
+    box.dataset.chart = name;
+    box.tabIndex = 0;
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", label);
+    const tip = el("div", "st-tip");
+    tip.hidden = true;
+    tip.setAttribute("aria-hidden", "true");
+    const say = el("span", "sr");
+    say.setAttribute("aria-live", "polite");
+    box.append(tip, say);
+    return { box, tip, say };
+  }
+  /* A bar chart. o: {name, n, val(k), segs(k) [[colour, count], ...] bottom up for stacked bars, tip(k) its tooltip
+     lines, tick(k) its axis label or "", strides, label (what it shows, for screen readers), pick(k) for a click, a
+     tap or Enter on a bar, zoom(a, b) for a drag across bars a to b}. Hover, a tap or the arrow keys show a bar's
+     numbers. Pointer events, so a finger drags too; the box lets the page scroll up and down (touch-action: pan-y). */
+  function stBarChart(o) {
+    const keys = o.pick ? " Arrow keys step through the bars; Enter opens one." : " Arrow keys step through the bars.";
+    const { box, tip, say } = stBox(o.name, o.label + keys);
+    const H = o.h || 150,
+      PT = 10,
+      PB = 22,
+      PL = 38,
+      PR = 10;
+    let cur = -1,
+      G = null;
+    box._draw = () => {
+      const W = Math.max(200, Math.round(box.clientWidth));
+      box.querySelectorAll("svg").forEach(x => x.remove());
+      const n = o.n;
+      const vals = [];
+      for (let k = 0; k < n; k++) vals.push(o.val(k));
+      const { top, ticks } = stTicks(Math.max(0, ...vals));
+      const band = (W - PL - PR) / n;
+      const bw = Math.max(1, Math.min(24, band - (band >= 8 ? 2 : band >= 4 ? 1 : 0)));
+      const y = v => PT + H - (H * v) / top;
+      const svg = stSvg("svg", { viewBox: "0 0 " + W + " " + (PT + H + PB), "aria-hidden": "true" });
+      ticks.forEach(t => {
+        svg.append(stSvg("line", { class: "grid", x1: PL, x2: W - PR, y1: r1(y(t)), y2: r1(y(t)) }));
+        const tx = stSvg("text", { x: PL - 6, y: r1(y(t) + 3.5), "text-anchor": "end" });
+        tx.textContent = stCompact(t);
+        svg.append(tx);
+      });
+      const hl = stSvg("rect", { class: "hl", x: -999, y: PT, width: r1(band), height: H });
+      const sel = stSvg("rect", { class: "sel", x: 0, y: PT, width: 0, height: H });
+      svg.append(hl, sel);
+      for (let k = 0; k < n; k++) {
+        const g = stSvg("g", { "data-k": k, "data-v": vals[k] });
+        const x = PL + k * band + (band - bw) / 2;
+        const segs = (o.segs ? o.segs(k) : [["var(--c1)", vals[k]]]).filter(s => s[1] > 0);
+        let base = PT + H;
+        segs.forEach((s, j) => {
+          const h = (H * s[1]) / top;
+          const last = j === segs.length - 1;
+          /* the 2 px gap between stacked parts comes off the top of the lower one */
+          const yt = base - h + (last ? 0 : Math.min(2, h / 2));
+          g.append(
+            last
+              ? stSvg("path", { d: stBarPath(x, yt, bw, base, 4), fill: s[0] })
+              : stSvg("rect", { x: r1(x), y: r1(yt), width: r1(bw), height: r1(base - yt), fill: s[0] }),
+          );
+          base -= h;
+        });
+        g.append(stSvg("rect", { class: "hit", x: r1(PL + k * band), y: 0, width: r1(band), height: PT + H + PB }));
+        g.lastChild.setAttribute("fill", "transparent");
+        svg.append(g);
+      }
+      const labs = [];
+      let lw = 0;
+      for (let k = 0; k < n; k++) {
+        labs.push(o.tick(k) || "");
+        lw = Math.max(lw, labs[k].length);
+      }
+      lw = lw * 6.4 + 10;
+      const stride = (o.strides || [1, 2, 5, 10]).find(s => s * band >= lw) || Math.ceil(lw / band);
+      for (let k = 0; k < n; k += stride) {
+        if (!labs[k]) continue;
+        let cx = PL + (k + 0.5) * band,
+          anchor = "middle";
+        if (cx + lw / 2 > W) {
+          cx = PL + (k + 1) * band;
+          anchor = "end";
+        }
+        const tx = stSvg("text", { x: r1(cx), y: PT + H + 15, "text-anchor": anchor });
+        tx.textContent = labs[k];
+        svg.append(tx);
+      }
+      const kAt = e => {
+        const r = svg.getBoundingClientRect();
+        const x = ((e.clientX - r.left) * W) / r.width;
+        return Math.max(0, Math.min(n - 1, Math.floor((x - PL) / band)));
+      };
+      const show = k => {
+        cur = k;
+        hl.setAttribute("x", r1(PL + k * band));
+        stTipFill(tip, o.tip(k));
+        const r = svg.getBoundingClientRect();
+        stTipAt(tip, box, ((PL + (k + 0.5) * band) * r.width) / W, (bw * r.width) / W / 2);
+      };
+      const hide = () => {
+        tip.hidden = true;
+        hl.setAttribute("x", -999);
+      };
+      const unsel = () => sel.setAttribute("width", 0);
+      let drag = null;
+      svg.addEventListener("pointerdown", e => {
+        if (e.button) return;
+        const k = kAt(e);
+        show(k);
+        if (!o.pick && !o.zoom) return;
+        drag = { id: e.pointerId, x: e.clientX, k0: k, k1: k, moved: false };
+        try {
+          svg.setPointerCapture(e.pointerId);
+        } catch (err) {}
+      });
+      svg.addEventListener("pointermove", e => {
+        const k = kAt(e);
+        if (drag && drag.id === e.pointerId) {
+          drag.k1 = k;
+          if (o.zoom && Math.abs(e.clientX - drag.x) > (e.pointerType === "mouse" ? 6 : 10)) drag.moved = true;
+          if (drag.moved) {
+            const a = Math.min(drag.k0, k),
+              b = Math.max(drag.k0, k);
+            sel.setAttribute("x", r1(PL + a * band));
+            sel.setAttribute("width", r1((b - a + 1) * band));
+          }
+        }
+        show(k);
+      });
+      svg.addEventListener("pointerup", e => {
+        if (!drag || drag.id !== e.pointerId) return;
+        const d = drag;
+        drag = null;
+        unsel();
+        /* a drag that never left its bar is a tap (a finger wobbles) */
+        if (d.moved && d.k0 !== d.k1) o.zoom(Math.min(d.k0, d.k1), Math.max(d.k0, d.k1));
+        else if (o.pick) o.pick(d.k0);
+      });
+      svg.addEventListener("pointercancel", () => {
+        drag = null;
+        unsel();
+        hide();
+      });
+      /* a finger's tooltip stays until the next tap elsewhere (its pointer "leaves" as it lifts) */
+      svg.addEventListener("pointerleave", e => {
+        if (e.pointerType === "mouse" && !drag) hide();
+      });
+      box.append(svg);
+      G = { n, show, hide };
+      if (cur >= n) cur = -1;
+      if (cur >= 0 && document.activeElement === box) show(cur);
+    };
+    box.addEventListener("keydown", e => {
+      if (!G) return;
+      let k;
+      if (e.key === "ArrowRight") k = cur < 0 ? 0 : Math.min(G.n - 1, cur + 1);
+      else if (e.key === "ArrowLeft") k = cur < 0 ? G.n - 1 : Math.max(0, cur - 1);
+      else if (e.key === "Home") k = 0;
+      else if (e.key === "End") k = G.n - 1;
+      else if ((e.key === "Enter" || e.key === " ") && o.pick && cur >= 0) {
+        e.preventDefault();
+        o.pick(cur);
+        return;
+      } else return;
+      e.preventDefault();
+      G.show(k);
+      say.textContent = stTipText(o.tip(k));
+    });
+    box.addEventListener("focusout", () => G && G.hide());
+    return box;
+  }
+  /* The weekday-by-hour heatmap: one hue, stronger where more was posted (none: the faint line colour) */
+  function stHeatChart(A, label) {
+    const { box, tip, say } = stBox("heat", label + " Arrow keys step through the hours.");
+    const max = Math.max(1, ...A.wk);
+    const tipOf = (d, h) => [ST_DOW[d] + ", " + stHourSpan(h), plural(A.wk[d * 24 + h], "message")];
+    let cd = -1,
+      ch = -1,
+      G = null;
+    box._draw = () => {
+      const W = Math.max(200, Math.round(box.clientWidth));
+      box.querySelectorAll("svg").forEach(x => x.remove());
+      const PL = 36,
+        PR = 8,
+        PT = 4,
+        PB = 18;
+      const cw = (W - PL - PR) / 24,
+        rh = Math.min(26, Math.max(14, cw * 0.8));
+      const svg = stSvg("svg", { viewBox: "0 0 " + W + " " + (PT + 7 * rh + PB), "aria-hidden": "true" });
+      for (let d = 0; d < 7; d++) {
+        const t = stSvg("text", { x: PL - 6, y: r1(PT + d * rh + rh / 2 + 3.5), "text-anchor": "end" });
+        t.textContent = ST_DOW[d];
+        svg.append(t);
+        for (let h = 0; h < 24; h++) {
+          const v = A.wk[d * 24 + h];
+          svg.append(
+            stSvg("rect", {
+              x: r1(PL + h * cw + 1),
+              y: r1(PT + d * rh + 1),
+              width: r1(Math.max(1, cw - 2)),
+              height: r1(rh - 2),
+              rx: 2,
+              fill: v ? "var(--c1)" : "var(--line)",
+              "fill-opacity": v ? r1((0.12 + (0.88 * v) / max) * 10) / 10 : 0.45,
+              "data-d": d,
+              "data-h": h,
+            }),
+          );
+        }
+      }
+      const stride = cw * 3 >= 28 ? 3 : 6;
+      for (let h = 0; h < 24; h += stride) {
+        const t = stSvg("text", { x: r1(PL + (h + 0.5) * cw), y: r1(PT + 7 * rh + 13), "text-anchor": "middle" });
+        t.textContent = stHourShort(h);
+        svg.append(t);
+      }
+      const ring = stSvg("rect", { class: "ring", x: -999, y: 0, width: r1(cw), height: r1(rh), rx: 3 });
+      svg.append(ring);
+      const show = (d, h) => {
+        cd = d;
+        ch = h;
+        ring.setAttribute("x", r1(PL + h * cw));
+        ring.setAttribute("y", r1(PT + d * rh));
+        stTipFill(tip, tipOf(d, h));
+        const r = svg.getBoundingClientRect();
+        stTipAt(tip, box, ((PL + (h + 0.5) * cw) * r.width) / W, (cw * r.width) / W / 2);
+      };
+      const hide = () => {
+        tip.hidden = true;
+        ring.setAttribute("x", -999);
+      };
+      const at = e => {
+        const r = svg.getBoundingClientRect();
+        const x = ((e.clientX - r.left) * W) / r.width,
+          y = ((e.clientY - r.top) * W) / r.width;
+        const h = Math.floor((x - PL) / cw),
+          d = Math.floor((y - PT) / rh);
+        return h >= 0 && h < 24 && d >= 0 && d < 7 ? [d, h] : null;
+      };
+      const move = e => {
+        const c = at(e);
+        if (c) show(c[0], c[1]);
+        else if (e.pointerType === "mouse") hide();
+      };
+      svg.addEventListener("pointermove", move);
+      svg.addEventListener("pointerdown", move);
+      svg.addEventListener("pointerleave", e => {
+        if (e.pointerType === "mouse") hide();
+      });
+      box.append(svg);
+      G = { show, hide };
+      if (cd >= 0 && document.activeElement === box) show(cd, ch);
+    };
+    box.addEventListener("keydown", e => {
+      if (!G) return;
+      const mv = { ArrowRight: [0, 1], ArrowLeft: [0, -1], ArrowDown: [1, 0], ArrowUp: [-1, 0] }[e.key];
+      if (!mv) return;
+      e.preventDefault();
+      const d = cd < 0 ? 0 : Math.max(0, Math.min(6, cd + mv[0])),
+        h = ch < 0 ? 0 : Math.max(0, Math.min(23, ch + mv[1]));
+      G.show(d, h);
+      say.textContent = stTipText(tipOf(d, h));
+    });
+    box.addEventListener("focusout", () => G && G.hide());
+    return box;
+  }
+  /* every chart's numbers as a table too, built when it's first opened */
+  function stTable(cols, rows, wide) {
+    const d = el("details", "st-tbl" + (wide ? " wide" : ""));
+    d.append(el("summary", null, "Show as a table"));
+    d.addEventListener("toggle", () => {
+      if (!d.open || d.querySelector("table")) return;
+      const w = el("div", "tablewrap"),
+        t = el("table"),
+        th = el("thead"),
+        hr = el("tr"),
+        tb = el("tbody");
+      cols.forEach(c => hr.append(el("th", null, c)));
+      th.append(hr);
+      rows().forEach(r => {
+        const tr = el("tr");
+        r.forEach(c => tr.append(el("td", null, String(c))));
+        tb.append(tr);
+      });
+      t.append(th, tb);
+      w.append(t);
+      d.append(w);
+    });
+    return d;
+  }
+  function stBarText(bk, k) {
+    const v = bk.edges[k],
+      d = minDay(v);
+    if (bk.kind === "hour") return dayTitle(d) + ", " + stHourSpan(stHourOf(v));
+    if (bk.kind === "day") return dayTitle(d);
+    if (bk.kind === "week") return "Week of " + stDayText(d);
+    return new Date(v * 60000).toLocaleDateString("en-US", { timeZone: "UTC", month: "long", year: "numeric" });
+  }
+  function stTick(bk, k) {
+    const v = bk.edges[k],
+      d = minDay(v);
+    if (bk.kind === "hour") return stHourOf(v) || bk.edges.length <= 25 ? stHourShort(stHourOf(v)) : dayOf(d);
+    if (bk.kind === "month") return MON[+d.slice(5, 7) - 1] + " ’" + d.slice(2, 4);
+    return dayOf(d);
+  }
+
+  /* ----- sections ----- */
+  function stSec(k, title, note) {
+    const s = el("div", "block st-sec");
+    s.dataset.sec = k;
+    const h = el("div", "sec-head");
+    h.append(el("h3", null, title));
+    if (note) h.append(el("p", null, note));
+    s.append(h);
+    return s;
+  }
+  function stTiles(list) {
+    const g = el("div", "st-tiles");
+    list.forEach(([k, n, l]) => {
+      const s = el("div", "stat st-tile");
+      s.dataset.k = k;
+      s.append(el("span", "n", typeof n === "number" ? stNum(n) : n), el("span", "l", l));
+      g.append(s);
+    });
+    return g;
+  }
+  function stNumbers(B, A) {
+    const r = stRank(A);
+    const top5 = r.slice(0, 5).reduce((n, p) => n + A.byP[p], 0);
+    const D = S.summary ? stDeals(B) : null;
+    const s = stSec("tiles", "Numbers", null);
+    s.append(
+      stTiles([
+        ["messages", A.total, "messages"],
+        ["text", A.text, "with text"],
+        ["people", r.length, "people posting"],
+        ["photos", A.photos, "photos and GIFs"],
+        ["links", A.links, "links shared"],
+        ["hour", A.total ? stHourSpan(stArgmax(A.hour)) : "—", "busiest hour"],
+        ["top5", A.total ? Math.round((100 * top5) / A.total) + "%" : "—", "top 5's share"],
+        ["you", B.you >= 0 ? A.byP[B.you] : 0, "your messages"],
+        ["convs", S.threading ? stIn(stConvStarts(B), A.lo, A.hi) : "—", "conversations started"],
+        ["deals", D ? stIn(D.posted, A.lo, A.hi) : "—", "deals posted"],
+        ["sold", D ? stIn(D.sold, A.lo, A.hi) : "—", "deals sold"],
+      ]),
+    );
+    return s;
+  }
+  /* the top 10: rank, name (opening their chart), messages and share, with a bar against the first */
+  function stTop(B, A) {
+    const r = stRank(A).slice(0, 10);
+    if (!r.length) return el("p", "note", "Nobody posted in this span.");
+    const ol = el("ol", "st-top");
+    const max = A.byP[r[0]];
+    r.forEach((p, x) => {
+      const key = B.people[p].key,
+        c = A.byP[p];
+      const li = el("li");
+      li.dataset.pk = key;
+      const b = el("button", "link who", stName(B, p));
+      b.type = "button";
+      b.onclick = () => stOpenPerson(key, '.st-top li[data-pk="' + CSS.escape(key) + '"] button');
+      const bar = el("span", "bar");
+      bar.setAttribute("aria-hidden", "true");
+      const f = el("i");
+      f.style.width = ((100 * c) / max).toFixed(1) + "%";
+      bar.append(f);
+      li.append(
+        el("span", "rk", String(x + 1)),
+        b,
+        el("span", "c", stNum(c)),
+        el("span", "pc", stPct(c, A.total)),
+        bar,
+      );
+      ol.append(li);
+    });
+    return ol;
+  }
+  function stTopSec(B, A) {
+    const s = stSec("top", "Top 10", "Every message counts, yours too. Tap a name for that person's chart.");
+    s.append(stTop(B, A));
+    return s;
+  }
+  function stVolume(B, A, sp) {
+    const bk = A.bk,
+      n = bk.edges.length - 1;
+    const opens = bk.kind === "hour" || bk.kind === "day";
+    const what =
+      bk.kind === "day"
+        ? "Tap a day for its detail."
+        : bk.kind === "hour"
+          ? "Tap an hour for its day."
+          : "Tap a bar to zoom in.";
+    const s = stSec("volume", "Messages per " + bk.kind, "Drag across the bars to zoom in. " + what);
+    const clip = (a, b) => ({ lo: Math.max(bk.edges[a], sp.lo), hi: Math.min(bk.edges[b + 1], sp.hi) });
+    const best = stArgmax(A.bars);
+    const busiest = A.total ? " Busiest: " + stBarText(bk, best) + ", " + plural(A.bars[best], "message") + "." : "";
+    s.append(
+      stBarChart({
+        name: "volume",
+        n,
+        val: k => A.bars[k],
+        tip: k => [stBarText(bk, k), plural(A.bars[k], "message")],
+        tick: k => stTick(bk, k),
+        strides: ST_STRIDES[bk.kind],
+        label: "Messages per " + bk.kind + ", " + stSpanText(sp.lo, sp.hi) + "." + busiest,
+        pick: k =>
+          opens
+            ? stOpenDay(minDay(Math.max(bk.edges[k], sp.lo)), '.st-chart[data-chart="volume"]')
+            : stZoom(clip(k, k)),
+        zoom: (a, b) => stZoom(clip(a, b)),
+      }),
+      stTable([bk.kind[0].toUpperCase() + bk.kind.slice(1), "Messages"], () =>
+        Array.from({ length: n }, (_, k) => [stBarText(bk, k), stNum(A.bars[k])]),
+      ),
+    );
+    return s;
+  }
+  function stHeatSec(A) {
+    const s = stSec("heat", "Day and hour", "When people post, by weekday and hour, in the chat's local time.");
+    const top = stArgmax(A.wk);
+    const busiest = A.total
+      ? " Busiest: " +
+        ST_DOW[Math.floor(top / 24)] +
+        ", " +
+        stHourSpan(top % 24) +
+        ", " +
+        plural(A.wk[top], "message") +
+        "."
+      : " No messages.";
+    const key = el("div", "st-key");
+    key.setAttribute("aria-hidden", "true");
+    key.append(el("span", null, "Fewer"));
+    [0.12, 0.34, 0.56, 0.78, 1].forEach(a => {
+      const i = el("i");
+      i.style.opacity = a;
+      key.append(i);
+    });
+    key.append(el("span", null, "More"));
+    s.append(
+      stHeatChart(A, "Messages by weekday and hour." + busiest),
+      key,
+      stTable(
+        ["Day"].concat(Array.from({ length: 24 }, (_, h) => stHourShort(h))),
+        () => ST_DOW.map((d, x) => [d].concat(Array.from(A.wk.slice(x * 24, x * 24 + 24)))),
+        true,
+      ),
+    );
+    return s;
+  }
+  function stHead(title, back) {
+    const h = el("div", "st-head");
+    const b = el("button", "secondary st-back", "← " + back);
+    b.type = "button";
+    b.onclick = stBack;
+    const t = el("h3", null, title);
+    t.tabIndex = -1;
+    h.append(b, t);
+    return h;
+  }
+  /* the line under the timeframes: the span, its messages, the zoom and where the stored history starts */
+  function stSpanLine(text, zoomed) {
+    $("#st-span").textContent = text;
+    $("#st-reset").hidden = !zoomed;
+  }
+
+  function stMain(body, B, sp) {
+    const st = S.stats,
+      A = statsAgg(B, sp.lo, sp.hi);
+    let line = stSpanText(sp.lo, sp.hi);
+    if (sp.zoomed) line += " (zoomed in from " + stSpanText(sp.F.lo, sp.F.hi) + ")";
+    line += ": " + plural(A.total, "message") + ".";
+    if (B.firstTm >= 0 && sp.F.lo <= B.firstTm) line += " History starts " + stDayText(minDay(B.firstTm)) + ".";
+    stSpanLine(line, sp.zoomed);
+    if (!st.hide.has("tiles")) body.append(stNumbers(B, A));
+    if (!st.hide.has("volume")) body.append(stVolume(B, A, sp));
+    if (!st.hide.has("top")) body.append(stTopSec(B, A));
+    if (!st.hide.has("heat")) body.append(stHeatSec(A));
+    if (!body.children.length) body.append(el("p", "empty", "Every section is switched off. Tick one under Show."));
+  }
+  /* A day: its tiles, its hours (each bar split by the day's top four, everyone else together; each hour's own top
+     three in its tooltip and table) and its top 10 */
+  function stDayView(body, B, sp) {
+    const st = S.stats,
+      k = st.day,
+      lo = dayMin(k);
+    const A = statsAgg(B, lo, lo + DAY_MIN);
+    stSpanLine(dayTitle(k) + ": " + plural(A.total, "message") + ".", false);
+    body.append(stHead(dayTitle(k), "Back to " + stSpanText(sp.lo, sp.hi)));
+    if (!st.hide.has("tiles")) body.append(stNumbers(B, A));
+    if (!st.hide.has("volume")) body.append(stDayHours(B, A, k));
+    if (!st.hide.has("top")) body.append(stTopSec(B, A));
+  }
+  function stDayHours(B, A, k) {
+    const per = Array.from({ length: 24 }, () => new Map());
+    const [a, b] = stJs(B, A.lo, A.hi);
+    for (let j = a; j < b; j++) {
+      const v = B.tm[j];
+      if (v < A.lo || v >= A.hi) continue;
+      const m = per[stHourOf(v)];
+      m.set(B.who[j], (m.get(B.who[j]) || 0) + 1);
+    }
+    const lead = stRank(A).slice(0, 4);
+    const col = p => (lead.includes(p) ? "var(--c" + (lead.indexOf(p) + 1) + ")" : "var(--c0)");
+    const tops = h => [...per[h]].sort((p, q) => q[1] - p[1] || p[0] - q[0]);
+    const s = stSec(
+      "volume",
+      "Messages per hour",
+      "Each bar is split by the day's top posters. Hover or tap an hour for its own top three.",
+    );
+    const lg = el("ul", "st-legend");
+    lead.forEach(p => {
+      const li = el("li");
+      const i = el("i");
+      i.style.background = col(p);
+      li.append(i, stName(B, p));
+      lg.append(li);
+    });
+    if (stRank(A).length > lead.length) {
+      const li = el("li");
+      const i = el("i");
+      i.style.background = "var(--c0)";
+      li.append(i, "Everyone else");
+      lg.append(li);
+    }
+    const tip = h => {
+      const t = tops(h),
+        rows = [plural(A.hour[h], "message")];
+      t.slice(0, 3).forEach(([p, c]) => rows.push([col(p), stName(B, p) + " " + c]));
+      if (t.length > 3) rows.push(["var(--c0)", "Others " + t.slice(3).reduce((n, x) => n + x[1], 0)]);
+      return [stHourSpan(h), ...rows];
+    };
+    const best = stArgmax(A.hour);
+    s.append(
+      lg,
+      stBarChart({
+        name: "hours",
+        n: 24,
+        val: h => A.hour[h],
+        segs: h => {
+          let rest = A.hour[h];
+          const out = lead.map(p => {
+            const c = per[h].get(p) || 0;
+            rest -= c;
+            return [col(p), c];
+          });
+          return out.concat([["var(--c0)", rest]]);
+        },
+        tip,
+        tick: stHourShort,
+        strides: ST_STRIDES.hour,
+        label:
+          "Messages per hour on " +
+          dayTitle(k) +
+          "." +
+          (A.total ? " Busiest: " + stHourSpan(best) + ", " + plural(A.hour[best], "message") + "." : ""),
+      }),
+      stTable(["Hour", "Messages", "Top posters"], () =>
+        A.hour.reduce((rows, c, h) => {
+          if (c)
+            rows.push([
+              stHourSpan(h),
+              c,
+              tops(h)
+                .slice(0, 3)
+                .map(([p, n]) => stName(B, p) + " " + n)
+                .join(", "),
+            ]);
+          return rows;
+        }, []),
+      ),
+    );
+    return s;
+  }
+  /* A person over the span (or the day they were picked from): their numbers and share, their messages over time,
+     their busiest hours and whom they reply to most */
+  function stPersonView(body, B, sp) {
+    const st = S.stats,
+      p = B.idx.get(st.person);
+    const lo = st.day ? dayMin(st.day) : sp.lo,
+      hi = st.day ? lo + DAY_MIN : sp.hi;
+    const A = statsAgg(B, lo, hi),
+      bk = A.bk,
+      nb = bk.edges.length - 1;
+    const name = stName(B, p),
+      c = A.byP[p],
+      span = stSpanText(lo, hi);
+    const r = stRank(A),
+      rank = r.indexOf(p) + 1;
+    stSpanLine(name + ", " + span + ": " + plural(c, "message") + ".", false);
+    body.append(stHead(name, "Back to " + (st.day ? dayTitle(st.day) : "everyone")));
+    const bars = new Int32Array(nb),
+      hrs = new Int32Array(24),
+      to = new Map();
+    let text = 0,
+      photos = 0,
+      links = 0,
+      replies = 0;
+    const [a, b] = stJs(B, lo, hi);
+    for (let j = a; j < b; j++) {
+      const v = B.tm[j];
+      if (B.who[j] !== p || v < lo || v >= hi) continue;
+      bars[bk.at(v)]++;
+      hrs[stHourOf(v)]++;
+      text += B.txt[j];
+      photos += B.ph[j];
+      links += B.lk[j];
+      const q = stReplyTo(B, S.msgs[j]);
+      if (q && q !== st.person) {
+        replies++;
+        to.set(q, (to.get(q) || 0) + 1);
+      }
+    }
+    const s1 = stSec(
+      "p-tiles",
+      "Numbers",
+      c
+        ? stNum(c) +
+            " of the " +
+            stNum(A.total) +
+            " messages in " +
+            span +
+            "; #" +
+            rank +
+            " of " +
+            r.length +
+            " people posting."
+        : "No messages in " + span + ".",
+    );
+    s1.append(
+      stTiles([
+        ["messages", c, "messages"],
+        ["share", stPct(c, A.total), "of all messages"],
+        ["rank", c ? "#" + rank : "—", "of " + r.length + " posting"],
+        ["hour", c ? stHourSpan(stArgmax(hrs)) : "—", "busiest hour"],
+        ["text", text, "with text"],
+        ["photos", photos, "photos and GIFs"],
+        ["links", links, "links shared"],
+        ["replies", replies, "replies"],
+      ]),
+    );
+    const s2 = stSec("p-volume", name + "'s messages per " + bk.kind, null);
+    s2.append(
+      stBarChart({
+        name: "person",
+        n: nb,
+        val: k => bars[k],
+        tip: k => [stBarText(bk, k), plural(bars[k], "message")],
+        tick: k => stTick(bk, k),
+        strides: ST_STRIDES[bk.kind],
+        label: name + "'s messages per " + bk.kind + ", " + span + ".",
+      }),
+      stTable([bk.kind[0].toUpperCase() + bk.kind.slice(1), "Messages"], () =>
+        Array.from({ length: nb }, (_, k) => [stBarText(bk, k), bars[k]]),
+      ),
+    );
+    const s3 = stSec("p-hours", "Busiest hours", "In the chat's local time.");
+    s3.append(
+      stBarChart({
+        name: "person-hours",
+        n: 24,
+        val: h => hrs[h],
+        tip: h => [stHourSpan(h), plural(hrs[h], "message")],
+        tick: stHourShort,
+        strides: ST_STRIDES.hour,
+        label: name + "'s messages by hour of the day, " + span + ".",
+      }),
+      stTable(["Hour", "Messages"], () => Array.from(hrs, (n, h) => [stHourSpan(h), n])),
+    );
+    const s4 = stSec("p-replies", "Replies to", replies ? "Whom " + name + " replied to most." : null);
+    const order = [...to].sort(
+      (x, y) => y[1] - x[1] || (B.idx.get(x[0]) ?? Infinity) - (B.idx.get(y[0]) ?? Infinity) || (x[0] < y[0] ? -1 : 1),
+    );
+    if (!order.length) s4.append(el("p", "note", "No replies in this span."));
+    else {
+      const ol = el("ol", "st-top");
+      order.slice(0, 5).forEach(([q, n], x) => {
+        const li = el("li");
+        li.dataset.pk = q;
+        const bar = el("span", "bar");
+        bar.setAttribute("aria-hidden", "true");
+        const f = el("i");
+        f.style.width = ((100 * n) / order[0][1]).toFixed(1) + "%";
+        bar.append(f);
+        li.append(
+          el("span", "rk", String(x + 1)),
+          el("span", "who", stKeyName(B, q)),
+          el("span", "c", stNum(n)),
+          el("span", "pc", stPct(n, replies)),
+          bar,
+        );
+        ol.append(li);
+      });
+      s4.append(ol);
+    }
+    body.append(s1, s2, s3, s4);
+  }
+
+  /* the timeframe buttons, the From/To days and the switches, as the state says */
+  function stControls() {
+    const st = S.stats;
+    document
+      .querySelectorAll("#v-stats [data-tf]")
+      .forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tf === st.tf)));
+    $("#st-custom").hidden = st.tf !== "custom";
+    if (st.tf === "custom") {
+      const F = stFrame();
+      $("#st-from").value = minDay(F.lo);
+      $("#st-to").value = minDay(F.hi - DAY_MIN);
+      $("#st-from").max = $("#st-to").max = stToday();
+    }
+    document.querySelectorAll("#v-stats input[data-sec]").forEach(c => (c.checked = !st.hide.has(c.dataset.sec)));
+  }
+  let stW = 0;
+  function renderStats(force) {
+    const v = $("#v-stats"),
+      body = $("#st-body");
+    if (!v || v.hidden || !S.stats || !body) return;
+    const st = S.stats;
+    const key = [S.msgs, PEOPLE, S.photos, S.gifs, S.threading, S.summary, S.meta, S.digestsIn, st.v, stToday()];
+    if (!force && renderStats.k && key.every((x, j) => x === renderStats.k[j])) return;
+    renderStats.k = key;
+    stControls();
+    /* a redraw for new data (or a zoom) keeps the keyboard where it was: a chart, a name or Back, without scrolling */
+    const act = document.activeElement;
+    let keep = null;
+    if (!st.focus && act && body.contains(act)) {
+      const c = act.closest(".st-chart"),
+        li = act.closest(".st-top li[data-pk]");
+      if (c) keep = '.st-chart[data-chart="' + c.dataset.chart + '"]';
+      else if (li && act.matches("button")) keep = '.st-top li[data-pk="' + CSS.escape(li.dataset.pk) + '"] button';
+      else if (act.matches(".st-back")) keep = ".st-back";
+    }
+    body.textContent = "";
+    if (!S.msgs.length) {
+      stSpanLine("", false);
+      const why =
+        S.digestsIn === "nodb"
+          ? "The stats can't load in this view. Open the page on claude.ai while signed in."
+          : S.meta
+            ? "No messages stored yet. Ask Claude in chat to " + RP() + "."
+            : "Stats show here once the chat data loads.";
+      body.append(el("div", "empty", why));
+      return;
+    }
+    const B = statsBase(),
+      sp = stSpan();
+    if (st.person != null && !B.idx.has(st.person)) st.person = null;
+    if (st.day && !isDay(st.day)) st.day = null;
+    if (st.person != null) stPersonView(body, B, sp);
+    else if (st.day) stDayView(body, B, sp);
+    else stMain(body, B, sp);
+    body.querySelectorAll(".st-chart").forEach(c => c._draw());
+    stW = body.clientWidth;
+    const f = st.focus && body.querySelector(st.focus);
+    st.focus = null;
+    if (f) {
+      f.focus({ preventScroll: true });
+      const r = f.getBoundingClientRect(),
+        nav = document.querySelector("nav.tabs").getBoundingClientRect().bottom;
+      if (r.top < nav || r.bottom > innerHeight) f.scrollIntoView({ block: r.top < nav ? "start" : "center" });
+    } else if (keep && body.querySelector(keep)) body.querySelector(keep).focus({ preventScroll: true });
+  }
+  document
+    .querySelectorAll("#v-stats [data-tf]")
+    .forEach(b => b.addEventListener("click", () => stSetTf(b.dataset.tf)));
+  ["#st-from", "#st-to"].forEach(sel =>
+    $(sel).addEventListener("change", () => {
+      const f = $("#st-from").value,
+        t = $("#st-to").value;
+      if (!isDay(f) || !isDay(t)) return;
+      Object.assign(S.stats, { tf: "custom", from: f, to: t, zoom: null, day: null, person: null, rets: [] });
+      stSave();
+      stBump();
+    }),
+  );
+  document.querySelectorAll("#v-stats input[data-sec]").forEach(c =>
+    c.addEventListener("change", () => {
+      if (c.checked) S.stats.hide.delete(c.dataset.sec);
+      else S.stats.hide.add(c.dataset.sec);
+      stSave();
+      stBump();
+    }),
+  );
+  $("#st-reset").addEventListener("click", () => {
+    S.stats.zoom = null;
+    S.stats.focus = '.st-chart[data-chart="volume"]';
+    stBump();
+  });
+  /* a turned phone or a resized window redraws the charts to the new width (the numbers stay) */
+  let stRT = null;
+  addEventListener("resize", () => {
+    clearTimeout(stRT);
+    stRT = setTimeout(() => {
+      const b = $("#st-body");
+      if (!b || $("#v-stats").hidden || b.clientWidth === stW) return;
+      stW = b.clientWidth;
+      b.querySelectorAll(".st-chart").forEach(c => c._draw && c._draw());
+    }, 150);
+  });
+  renderStats();
+
   /* ---------- boot ---------- */
   function rebuild() {
     const all = [];
@@ -7899,6 +9463,7 @@
       renderMessages();
     });
     renderDays();
+    renderStats();
   }
   renderSummary();
   renderQA();
@@ -7934,6 +9499,7 @@
       $("#window").textContent = "The chat data can't load in this view. Open the page on claude.ai while signed in.";
       S.digestsIn = "nodb";
       renderDays();
+      renderStats();
       return;
     }
     db.doc("meta/chat").onSnapshot(
@@ -7956,6 +9522,7 @@
           renderHeader();
           renderSummary();
         });
+        renderStats();
       },
       () => {},
     );
@@ -8059,6 +9626,7 @@
           renderMessages();
           renderSummary();
         });
+        renderStats();
       },
       () => {},
     );
@@ -8075,6 +9643,7 @@
           renderMessages();
           renderSummary();
         });
+        renderStats();
       },
       () => {},
     );

@@ -4068,7 +4068,7 @@ async function byDay() {
       ),
     );
     const seen = [];
-    for (const t of ['messages', 'days', 'views', 'ask', 'summary']) {
+    for (const t of ['messages', 'days', 'views', 'stats', 'ask', 'summary']) {
       await p.click('nav a[data-tab="' + t + '"]');
       await p.waitForTimeout(100);
       seen.push(
@@ -4307,7 +4307,7 @@ async function byDay() {
     ok(p.errors.length === 0, 'F24 BD8: no page errors ' + JSON.stringify(p.errors));
   });
 
-  /* BD9: at 390 px all five tabs fit the bar (none hidden off its right edge, no sideways scroll in the bar or the
+  /* BD9: at 390 px all six tabs fit the bar (none hidden off its right edge, no sideways scroll in the bar or the
      page) and stay easy to tap; also with a wide stand-in for the display font, as a machine without the web font or
      Arial Narrow draws them */
   await hcase('BD9', async () => {
@@ -4331,7 +4331,7 @@ async function byDay() {
         };
       });
     const fits = m =>
-      m.tabs.length === 5 &&
+      m.tabs.length === 6 &&
       m.tabs.every(t => t.l >= m.navL && t.r <= m.navR && t.h >= 32) &&
       m.scroll <= 0 &&
       m.sw <= m.iw;
@@ -4342,7 +4342,7 @@ async function byDay() {
     const m2 = await measure();
     ok(
       fits(m1) && fits(m2),
-      'F24 BD9: at 390 px all five tabs fit the bar, at least 32 px tall, no sideways scroll, also in a wide font ' +
+      'F24 BD9: at 390 px all six tabs fit the bar, at least 32 px tall, no sideways scroll, also in a wide font ' +
         JSON.stringify({ m1, m2 }),
     );
   });
@@ -8678,6 +8678,863 @@ async function savedQuestions() {
   });
 }
 
+/* ---------- Stats (F31) ----------
+   The Stats tab counts everything on the page from the stored messages. 27 messages from the mock cast on four days
+   (Sun Nov 1, Thu Nov 12, Thu Nov 19 and today, Fri Nov 20), with the clock at noon on Nov 20 in Los Angeles. Dee posts
+   as "Dee", under the nickname "Deedee", and once as "Deedee" without a full name (the page ties it to her), so she
+   must count as one person; two Bens are told apart by their full names. Per person over all 27: Ana 9, Ben Brooks 6,
+   Dee 5, Cy 3, You 3, Ben Ortiz 1. #5 is a photo, #26 a GIF; #6 has one link and #23 two. Threading has four
+   conversations (Nov 1, 12, 19, 20) and the loose messages; the summary has a deal posted Nov 12 and sold Nov 19 (#20),
+   and one posted today. */
+const ST_NOW = Date.parse('2026-11-20T20:00:00Z');
+function stMsgs() {
+  const L = [];
+  const add = (d, hm, f, o = {}) => {
+    const [h, mi] = hm.split(':').map(Number);
+    const wd = DOW[new Date(d + 'T12:00:00Z').getUTCDay()];
+    const t = wd + ' ' + (h % 12 || 12) + ':' + String(mi).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+    L.push(Object.assign({ i: L.length, t, d, f, b: 'message ' + L.length, m: 'mid.' + L.length }, o));
+  };
+  const ANA = { fn: 'Ana Alvarez' },
+    BEN = { fn: 'Ben Brooks' },
+    DEE = { fn: 'Dee Dalton' };
+  add('2026-11-01', '9:05', 'Ana', ANA); /* 0 */
+  add('2026-11-01', '9:10', 'Ana', ANA);
+  add('2026-11-01', '9:20', 'Ben', BEN);
+  add('2026-11-01', '14:00', 'Cy');
+  add('2026-11-01', '14:05', 'Deedee'); /* 4: no full name */
+  add('2026-11-12', '19:30', 'Ana', Object.assign({ b: '', p: 'att5' }, ANA)); /* 5: a photo */
+  add('2026-11-12', '19:40', 'Ben', Object.assign({ l: ['https://example.com/tent'] }, BEN));
+  add('2026-11-12', '19:45', 'Deedee', DEE);
+  add('2026-11-12', '20:15', 'You');
+  ['10:00', '10:05', '10:10', '10:15'].forEach(t => add('2026-11-19', t, 'Ana', ANA)); /* 9-12 */
+  add('2026-11-19', '10:20', 'Ben', BEN);
+  add('2026-11-19', '10:25', 'Ben', BEN);
+  add('2026-11-19', '10:30', 'Dee', DEE); /* 15 */
+  add('2026-11-19', '11:00', 'Cy');
+  add('2026-11-19', '11:05', 'Cy');
+  add('2026-11-19', '11:10', 'You');
+  add('2026-11-19', '11:20', 'Ben', { fn: 'Ben Ortiz' });
+  add('2026-11-19', '15:00', 'Ben', Object.assign({ r: 'Ana' }, BEN)); /* 20: a reply known by name only */
+  add('2026-11-19', '15:10', 'Deedee', Object.assign({ r: 'Ana', pi: 12 }, DEE));
+  add('2026-11-20', '8:00', 'Ben', BEN); /* 22 */
+  add('2026-11-20', '8:30', 'Ana', Object.assign({ l: ['https://example.com/a', 'https://example.com/b'] }, ANA));
+  add('2026-11-20', '10:15', 'You');
+  add('2026-11-20', '10:20', 'Dee', Object.assign({ r: 'You', pi: 24 }, DEE));
+  add('2026-11-20', '11:00', 'Ana', Object.assign({ b: '' }, ANA)); /* 26: a GIF */
+  return L;
+}
+function stDocs() {
+  const ids = (a, b) => range(a, b, i => i);
+  const conv = (id, members) => ({ id, title: 'Topic ' + id, members });
+  return {
+    'threading/current': {
+      convs: [
+        conv('c1', [0, 1, 2]),
+        conv('c2', [5, 6, 7, 8]),
+        conv('c3', [21, 20].concat(ids(9, 19))),
+        conv('c4', ids(22, 26)),
+        conv('loose', [3, 4]),
+      ],
+      links: {},
+      to: 26,
+      note: '',
+    },
+    'summary/current': {
+      version: 2,
+      convs: [],
+      open: [],
+      answered: [],
+      deals: [
+        { conv: 'c2', refs: [5, 6], tag: 'For sale', status: 'sold', statusAt: 20 },
+        { conv: 'c4', refs: [23], tag: 'For sale' },
+      ],
+      mentions: [],
+      toI: 26,
+      generatedAt: 'now',
+    },
+    'photos/index': { byI: {}, gifs: [26] },
+  };
+}
+async function stOpen(o = {}) {
+  const msgs = stMsgs();
+  const seed = hseed(msgs, { docs: stDocs(), opts: o.opts });
+  const p = await open(seed, PAGE, Object.assign({ clockAt: ST_NOW }, o.ctx));
+  HP.push(p);
+  await until(p, n => S.msgs.length === n && S.threading && S.summary && S.gifs && S.gifs.size, msgs.length);
+  if (o.go !== false) await stGo(p);
+  return p;
+}
+/* open the tab from the nav, as a reader does (the stand-in swallows #hash links, as claude.ai's viewer does) */
+async function stGo(p) {
+  await p.click('nav a[data-tab="stats"]');
+  await until(p, () => document.querySelector('#st-body .st-sec, #st-body .empty'), null, 5000);
+}
+const stState = p =>
+  p.evaluate(() => {
+    const q = s => document.querySelector(s);
+    const tiles = {};
+    document
+      .querySelectorAll('#st-body .st-tile')
+      .forEach(t => (tiles[t.dataset.k] = t.querySelector('.n').textContent));
+    const list = sel =>
+      [...document.querySelectorAll(sel + ' .st-top li')].map(li =>
+        ['.who', '.c', '.pc'].map(c => li.querySelector(c).textContent).join(' '),
+      );
+    const bars = c =>
+      [...document.querySelectorAll('#st-body .st-chart[data-chart="' + c + '"] g[data-k]')].map(g => +g.dataset.v);
+    return {
+      tiles,
+      span: q('#st-span').textContent,
+      reset: !q('#st-reset').hidden,
+      secs: [...document.querySelectorAll('#st-body > .st-sec')].map(s => s.dataset.sec),
+      top: list('#st-body > [data-sec="top"]'),
+      replies: list('#st-body > [data-sec="p-replies"]'),
+      volume: bars('volume'),
+      hours: bars('hours'),
+      person: bars('person'),
+      personHours: bars('person-hours'),
+      head: (q('#st-body .st-head h3') || {}).textContent || null,
+      tf: (q('#v-stats [data-tf][aria-pressed="true"]') || { dataset: {} }).dataset.tf || null,
+      title: [...document.querySelectorAll('#st-body > .st-sec h3')].map(h => h.textContent),
+    };
+  });
+/* the middle of bar k of a chart, scrolled into view */
+const stBar = (p, chart, k) =>
+  p.evaluate(
+    ([c, k]) => {
+      const box = document.querySelector('#st-body .st-chart[data-chart="' + c + '"]');
+      box.scrollIntoView({ block: 'center' });
+      const r = box.querySelector('g[data-k="' + k + '"] rect.hit').getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height * 0.6 };
+    },
+    [chart, k],
+  );
+async function stDrag(p, k0, k1) {
+  const a = await stBar(p, 'volume', k0),
+    b = await stBar(p, 'volume', k1);
+  await p.mouse.move(a.x, a.y);
+  await p.mouse.down();
+  await p.mouse.move(b.x, b.y, { steps: 8 });
+  await p.mouse.up();
+  await p.waitForTimeout(150);
+}
+async function stTf(p, tf) {
+  await p.click('#v-stats [data-tf="' + tf + '"]');
+  await p.waitForTimeout(100);
+  return stState(p);
+}
+const ST_ALL = {
+  messages: '27',
+  text: '25',
+  people: '6',
+  photos: '2',
+  links: '3',
+  hour: '10–11 AM',
+  top5: '96%',
+  you: '3',
+  convs: '4',
+  deals: '2',
+  sold: '1',
+};
+const ST_TOP = ['Ana 9 33.3%', 'Ben Brooks 6 22.2%', 'Dee 5 18.5%', 'Cy 3 11.1%', 'You 3 11.1%', 'Ben Ortiz 1 3.7%'];
+const stSame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+async function stats() {
+  /* ST1: the Stats tab opens from the nav (the host swallows #hash links), alone and marked current; it opens on 30
+     days with every tile right; nothing about reactions anywhere */
+  await hcase('ST1', async () => {
+    const p = await stOpen({ go: false });
+    await p.click('nav a[data-tab="stats"]');
+    await p.waitForTimeout(200);
+    const nav = await p.evaluate(() => ({
+      shown: !document.getElementById('v-stats').hidden,
+      alone: [...document.querySelectorAll('section.view')].filter(v => !v.hidden).length === 1,
+      cur: document.querySelector('nav a[data-tab="stats"]').getAttribute('aria-current'),
+      text: document.getElementById('v-stats').textContent,
+    }));
+    const s = await stState(p);
+    ok(
+      nav.shown && nav.alone && nav.cur === 'page',
+      'F31 ST1: the Stats tab opens from the nav alone and marked current ' + JSON.stringify(nav).slice(0, 120),
+    );
+    ok(
+      s.tf === 'd30' && stSame(s.tiles, ST_ALL) && stSame(s.secs, ['tiles', 'volume', 'top', 'heat']),
+      'F31 ST1: on 30 days the tiles count all 27 messages: text, people, photos and GIFs, links, busiest hour, top 5, yours, conversations, deals ' +
+        JSON.stringify(s.tiles),
+    );
+    ok(
+      s.span === 'Oct 22 – Nov 20: 27 messages. History starts Nov 1.',
+      'F31 ST1: the span line says the span, the count and where the stored history starts: "' + s.span + '"',
+    );
+    ok(!/reaction/i.test(nav.text), 'F31 ST1: no reactions anywhere on the tab');
+    ok(p.errors.length === 0, 'F31 ST1: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST2: each timeframe counts its own span, with its own bars; the history line only when the span reaches past the
+     first stored message; Custom takes From and To days */
+  await hcase('ST2', async () => {
+    const p = await stOpen();
+    const today = await stTf(p, 'today');
+    ok(
+      stSame(today.tiles, {
+        messages: '5',
+        text: '4',
+        people: '4',
+        photos: '1',
+        links: '2',
+        hour: '8–9 AM',
+        top5: '100%',
+        you: '1',
+        convs: '1',
+        deals: '1',
+        sold: '0',
+      }) &&
+        today.volume.length === 24 &&
+        today.volume[8] === 2 &&
+        today.volume[10] === 2 &&
+        today.span === 'Fri, Nov 20: 5 messages.' &&
+        today.title.includes('Messages per hour'),
+      'F31 ST2: Today counts Nov 20 by the hour (a tie for the busiest hour goes to the earlier) ' +
+        JSON.stringify(today),
+    );
+    const d7 = await stTf(p, 'd7');
+    ok(
+      stSame(d7.tiles, {
+        messages: '18',
+        text: '17',
+        people: '6',
+        photos: '1',
+        links: '2',
+        hour: '10–11 AM',
+        top5: '94%',
+        you: '2',
+        convs: '2',
+        deals: '1',
+        sold: '1',
+      }) &&
+        d7.volume.length === 7 &&
+        d7.volume.join() === '0,0,0,0,0,13,5' &&
+        d7.span === 'Nov 14 – Nov 20: 18 messages.',
+      'F31 ST2: 7 days counts Nov 14-20 by the day, with no history line ' + JSON.stringify(d7),
+    );
+    const d90 = await stTf(p, 'd90');
+    ok(
+      stSame(d90.tiles, ST_ALL) &&
+        d90.volume.length === 90 &&
+        d90.volume.reduce((a, b) => a + b, 0) === 27 &&
+        d90.span === 'Aug 23 – Nov 20: 27 messages. History starts Nov 1.',
+      'F31 ST2: 90 days: 90 day bars holding all 27, and the history line ' +
+        JSON.stringify([d90.span, d90.volume.length]),
+    );
+    const all = await stTf(p, 'all');
+    ok(
+      stSame(all.tiles, ST_ALL) &&
+        all.volume.length === 20 &&
+        all.volume[0] === 5 &&
+        all.volume[11] === 4 &&
+        all.span === 'Nov 1 – Nov 20: 27 messages. History starts Nov 1.',
+      'F31 ST2: All runs from the first stored day through today ' + JSON.stringify([all.span, all.volume]),
+    );
+    await p.click('#v-stats [data-tf="custom"]');
+    await p.waitForTimeout(100);
+    const prefill = await p.evaluate(() => [
+      document.getElementById('st-custom').hidden,
+      document.getElementById('st-from').value,
+      document.getElementById('st-to').value,
+    ]);
+    await p.fill('#st-from', '2026-11-12');
+    await p.fill('#st-to', '2026-11-19');
+    await p.waitForTimeout(150);
+    const cu = await stState(p);
+    ok(
+      prefill.join() === 'false,2026-11-01,2026-11-20' &&
+        cu.tf === 'custom' &&
+        cu.tiles.messages === '17' &&
+        cu.volume.length === 8 &&
+        cu.span === 'Nov 12 – Nov 19: 17 messages.',
+      'F31 ST2: Custom starts from the span shown and counts From-To days (' + JSON.stringify([prefill, cu.span]) + ')',
+    );
+    const d30 = await stTf(p, 'd30');
+    ok(
+      stSame(d30.tiles, ST_ALL) && d30.volume.length === 30 && d30.volume[28] === 13,
+      'F31 ST2: back on 30 days: 30 day bars, Nov 19 holding 13',
+    );
+    ok(p.errors.length === 0, 'F31 ST2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST3: the top 10: every message counts, the owner is ranked with everyone, Dee's nickname and full-name messages are
+     one person, the two Bens two; a tie goes to who posted first in the chat */
+  await hcase('ST3', async () => {
+    const p = await stOpen();
+    const s = await stState(p);
+    ok(
+      stSame(s.top, ST_TOP),
+      'F31 ST3: the top 10 with counts and shares, Dee merged across "Dee", "Deedee" and a message without a full name: ' +
+        JSON.stringify(s.top),
+    );
+  });
+
+  /* ST4: a click on a day bar opens that day: its tiles, its hours split by the day's top four (each hour's own top
+     three in the tooltip) and its top 10; Back returns to the timeframe with the chart focused */
+  await hcase('ST4', async () => {
+    const p = await stOpen();
+    const b = await stBar(p, 'volume', 28);
+    await p.mouse.click(b.x, b.y);
+    await p.waitForTimeout(150);
+    const s = await stState(p);
+    const day = await p.evaluate(() => {
+      const box = document.querySelector('#st-body .st-chart[data-chart="hours"]');
+      const segs = k => box.querySelectorAll('g[data-k="' + k + '"] path, g[data-k="' + k + '"] rect:not(.hit)').length;
+      return {
+        focus: document.activeElement && document.activeElement.textContent,
+        legend: [...document.querySelectorAll('#st-body .st-legend li')].map(li => li.textContent),
+        seg10: segs(10),
+        seg11: segs(11),
+        seg9: segs(9),
+      };
+    });
+    ok(
+      s.head === 'Thu, Nov 19' &&
+        day.focus === 'Thu, Nov 19' &&
+        s.span === 'Thu, Nov 19: 13 messages.' &&
+        stSame(s.tiles, {
+          messages: '13',
+          text: '13',
+          people: '6',
+          photos: '0',
+          links: '0',
+          hour: '10–11 AM',
+          top5: '92%',
+          you: '1',
+          convs: '1',
+          deals: '0',
+          sold: '1',
+        }),
+      'F31 ST4: a click on Nov 19 opens that day, focused, with its own tiles ' + JSON.stringify([s.head, s.tiles]),
+    );
+    ok(
+      s.hours.length === 24 &&
+        s.hours[10] === 7 &&
+        s.hours[11] === 4 &&
+        s.hours[15] === 2 &&
+        day.seg10 === 3 &&
+        day.seg11 === 2 &&
+        day.seg9 === 0 &&
+        stSame(day.legend, ['Ana', 'Ben Brooks', 'Cy', 'Dee', 'Everyone else']),
+      "F31 ST4: the day by the hour, each bar split by the day's top four and everyone else " +
+        JSON.stringify([s.hours, day]),
+    );
+    const t = await stBar(p, 'hours', 10);
+    await p.mouse.move(t.x, t.y);
+    await p.waitForTimeout(80);
+    const tip = await p.evaluate(() =>
+      [...document.querySelectorAll('#st-body .st-chart[data-chart="hours"] .st-tip > *')].map(x => x.textContent),
+    );
+    const t11 = await stBar(p, 'hours', 11);
+    await p.mouse.move(t11.x, t11.y);
+    await p.waitForTimeout(80);
+    const tip11 = await p.evaluate(() =>
+      [...document.querySelectorAll('#st-body .st-chart[data-chart="hours"] .st-tip > *')].map(x => x.textContent),
+    );
+    ok(
+      stSame(tip, ['10–11 AM', '7 messages', 'Ana 4', 'Ben Brooks 2', 'Dee 1']) &&
+        stSame(tip11, ['11 AM–12 PM', '4 messages', 'Cy 2', 'You 1', 'Ben Ortiz 1']),
+      "F31 ST4: an hour's tooltip names its own top three " + JSON.stringify([tip, tip11]),
+    );
+    ok(
+      stSame(s.top, [
+        'Ana 4 30.8%',
+        'Ben Brooks 3 23.1%',
+        'Cy 2 15.4%',
+        'Dee 2 15.4%',
+        'You 1 7.7%',
+        'Ben Ortiz 1 7.7%',
+      ]),
+      "F31 ST4: the day's top 10 " + JSON.stringify(s.top),
+    );
+    await p.click('#st-body .st-back');
+    await p.waitForTimeout(150);
+    const back = await stState(p);
+    const f = await p.evaluate(() => document.activeElement && document.activeElement.dataset.chart);
+    ok(
+      back.head === null && stSame(back.tiles, ST_ALL) && back.volume.length === 30 && f === 'volume',
+      'F31 ST4: Back returns to 30 days with the volume chart focused (' + f + ')',
+    );
+    ok(p.errors.length === 0, 'F31 ST4: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST5: from the keyboard: the arrow keys step through the bars (a live line reads each), Enter opens the day */
+  await hcase('ST5', async () => {
+    const p = await stOpen();
+    await p.focus('#st-body .st-chart[data-chart="volume"]');
+    await p.keyboard.press('End');
+    await p.keyboard.press('ArrowLeft');
+    const said = await p.evaluate(
+      () => document.querySelector('#st-body .st-chart[data-chart="volume"] .sr').textContent,
+    );
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(150);
+    const s = await stState(p);
+    ok(
+      said === 'Thu, Nov 19, 13 messages' && s.head === 'Thu, Nov 19',
+      'F31 ST5: End, Left reads "' + said + '", and Enter opens that day (' + s.head + ')',
+    );
+  });
+
+  /* ST6: a click on a person opens their chart: their numbers and share, their days, their busiest hours and whom they
+     reply to (by the stored parent, or by name when the parent isn't linked) */
+  await hcase('ST6', async () => {
+    const p = await stOpen();
+    await p.click('#st-body .st-top li:nth-child(3) button');
+    await p.waitForTimeout(150);
+    const s = await stState(p);
+    ok(
+      s.head === 'Dee' &&
+        stSame(s.tiles, {
+          messages: '5',
+          share: '18.5%',
+          rank: '#3',
+          hour: '10–11 AM',
+          text: '5',
+          photos: '0',
+          links: '0',
+          replies: '2',
+        }) &&
+        s.span === 'Dee, Oct 22 – Nov 20: 5 messages.',
+      "F31 ST6: Dee's chart: 5 messages, 18.5%, #3, busiest 10-11 AM, 2 replies " + JSON.stringify([s.head, s.tiles]),
+    );
+    ok(
+      s.person.length === 30 &&
+        s.person[10] === 1 &&
+        s.person[21] === 1 &&
+        s.person[28] === 2 &&
+        s.person[29] === 1 &&
+        s.personHours[10] === 2 &&
+        s.personHours[14] === 1 &&
+        stSame(s.replies, ['Ana 1 50.0%', 'You 1 50.0%']),
+      'F31 ST6: her messages by day and by hour, and whom she replied to ' + JSON.stringify([s.person, s.replies]),
+    );
+    await p.click('#st-body .st-back');
+    await p.waitForTimeout(150);
+    const f = await p.evaluate(() => document.activeElement && document.activeElement.closest('li').dataset.pk);
+    await p.click('#st-body .st-top li:nth-child(2) button');
+    await p.waitForTimeout(150);
+    const ben = await stState(p);
+    ok(
+      f === 'FDee Dalton' && ben.head === 'Ben Brooks' && stSame(ben.replies, ['Ana 1 100.0%']),
+      'F31 ST6: Back focuses her name again; Ben Brooks replied to Ana by name only ' +
+        JSON.stringify([f, ben.replies]),
+    );
+    /* from a day, a person's chart covers that day */
+    await p.click('#st-body .st-back');
+    await p.waitForTimeout(100);
+    const b = await stBar(p, 'volume', 28);
+    await p.mouse.click(b.x, b.y);
+    await p.waitForTimeout(150);
+    await p.click('#st-body .st-top li:nth-child(1) button');
+    await p.waitForTimeout(150);
+    const ana = await stState(p);
+    await p.click('#st-body .st-back');
+    await p.waitForTimeout(150);
+    const up = await stState(p);
+    ok(
+      ana.head === 'Ana' &&
+        ana.tiles.messages === '4' &&
+        ana.personHours[10] === 4 &&
+        ana.person.length === 24 &&
+        up.head === 'Thu, Nov 19',
+      "F31 ST6: from Nov 19, Ana's chart covers that day by the hour, and Back returns to the day " +
+        JSON.stringify([ana.tiles, up.head]),
+    );
+    ok(p.errors.length === 0, 'F31 ST6: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST7: dragging across the bars zooms in: the tiles, the top 10 and the heatmap follow; a span of two days shows
+     hours; a finger drags too; Reset zoom restores the timeframe */
+  await hcase('ST7', async () => {
+    const p = await stOpen();
+    await stDrag(p, 21, 29);
+    const z = await stState(p);
+    const heat = await p.evaluate(() => {
+      const r = document.querySelector('#st-body .st-chart[data-chart="heat"] rect[data-d="5"][data-h="11"]');
+      return r && r.getAttribute('fill');
+    });
+    ok(
+      z.reset &&
+        z.volume.length === 9 &&
+        z.tiles.messages === '22' &&
+        z.span === 'Nov 12 – Nov 20 (zoomed in from Oct 22 – Nov 20): 22 messages. History starts Nov 1.' &&
+        stSame(z.top, [
+          'Ana 7 31.8%',
+          'Ben Brooks 5 22.7%',
+          'Dee 4 18.2%',
+          'You 3 13.6%',
+          'Cy 2 9.1%',
+          'Ben Ortiz 1 4.5%',
+        ]) &&
+        heat === 'var(--c1)',
+      'F31 ST7: a drag from Nov 12 to Nov 20 zooms to those 9 days and every number follows ' + JSON.stringify(z),
+    );
+    await stDrag(p, 7, 8);
+    const h = await stState(p);
+    ok(
+      h.volume.length === 48 &&
+        h.tiles.messages === '18' &&
+        h.title.includes('Messages per hour') &&
+        h.span.startsWith('Nov 19 – Nov 20 (zoomed in from Oct 22 – Nov 20): 18 messages.'),
+      'F31 ST7: zooming again to Nov 19-20 shows 48 hours ' + JSON.stringify([h.span, h.volume.length]),
+    );
+    await p.click('#st-reset');
+    await p.waitForTimeout(150);
+    const r = await stState(p);
+    ok(
+      !r.reset && r.volume.length === 30 && stSame(r.tiles, ST_ALL) && stSame(r.top, ST_TOP),
+      'F31 ST7: Reset zoom brings back 30 days and every number ' + JSON.stringify([r.span, r.tiles.messages]),
+    );
+    /* a finger: touch pointer events across Nov 19 and Nov 20 */
+    const t = await p.evaluate(() => {
+      const box = document.querySelector('#st-body .st-chart[data-chart="volume"]');
+      box.scrollIntoView({ block: 'center' });
+      const svg = box.querySelector('svg');
+      const at = k => {
+        const r = box.querySelector('g[data-k="' + k + '"] rect.hit').getBoundingClientRect();
+        return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+      };
+      const ev = (type, k) =>
+        svg.dispatchEvent(
+          new PointerEvent(
+            type,
+            Object.assign({ bubbles: true, pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0 }, at(k)),
+          ),
+        );
+      ev('pointerdown', 28);
+      ev('pointermove', 28);
+      ev('pointermove', 29);
+      ev('pointerup', 29);
+      return document.querySelectorAll('#st-body .st-chart[data-chart="volume"] g[data-k]').length;
+    });
+    const tz = await stState(p);
+    ok(
+      t === 48 && tz.tiles.messages === '18' && tz.reset,
+      'F31 ST7: a finger dragging across two day bars zooms in too (' + t + ' bars)',
+    );
+    ok(p.errors.length === 0, 'F31 ST7: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST8: the heatmap: Thursday 10-11 AM (Nov 19) is the strongest cell; hovering a cell names it */
+  await hcase('ST8', async () => {
+    const p = await stOpen();
+    const h = await p.evaluate(() => {
+      const box = document.querySelector('#st-body .st-chart[data-chart="heat"]');
+      box.scrollIntoView({ block: 'center' });
+      const cells = [...box.querySelectorAll('rect[data-d]')];
+      const op = r => +r.getAttribute('fill-opacity');
+      const top = cells.filter(r => r.getAttribute('fill') === 'var(--c1)').sort((a, b) => op(b) - op(a))[0];
+      const c = box.querySelector('rect[data-d="4"][data-h="19"]').getBoundingClientRect();
+      return {
+        n: cells.length,
+        lit: cells.filter(r => r.getAttribute('fill') === 'var(--c1)').length,
+        top: [top.dataset.d, top.dataset.h, op(top)],
+        at: { x: c.left + c.width / 2, y: c.top + c.height / 2 },
+        label: box.getAttribute('aria-label'),
+      };
+    });
+    await p.mouse.move(h.at.x, h.at.y);
+    await p.waitForTimeout(80);
+    const tip = await p.evaluate(() =>
+      [...document.querySelectorAll('#st-body .st-chart[data-chart="heat"] .st-tip > *')].map(x => x.textContent),
+    );
+    ok(
+      h.n === 168 &&
+        h.lit === 10 &&
+        h.top.join() === '4,10,1' &&
+        /Busiest: Thu, 10–11 AM, 7 messages\./.test(h.label) &&
+        stSame(tip, ['Thu, 7–8 PM', '3 messages']),
+      'F31 ST8: a 7 x 24 heatmap, Thursday 10-11 AM the strongest, a hover names the cell ' + JSON.stringify([h, tip]),
+    );
+  });
+
+  /* ST9: a switched-off section stays off after a reload (this browser only); the rest still draw */
+  await hcase('ST9', async () => {
+    const p = await stOpen();
+    await p.click('#v-stats input[data-sec="heat"]');
+    await p.click('#v-stats input[data-sec="tiles"]');
+    await p.waitForTimeout(100);
+    const s1 = await stState(p);
+    await p.reload();
+    await p.waitForFunction(() => window.__rt && document.getElementById('window').textContent !== 'Loading the chat…');
+    await until(p, () => S.msgs.length === 27 && S.threading, null);
+    await stGo(p);
+    const s2 = await stState(p);
+    const boxes = await p.evaluate(() =>
+      ['tiles', 'volume', 'top', 'heat'].map(
+        k => document.querySelector('#v-stats input[data-sec="' + k + '"]').checked,
+      ),
+    );
+    ok(
+      stSame(s1.secs, ['volume', 'top']) &&
+        stSame(s2.secs, ['volume', 'top']) &&
+        boxes.join() === 'false,true,true,false',
+      'F31 ST9: Numbers and Heatmap switched off stay off after a reload ' + JSON.stringify([s1.secs, s2.secs, boxes]),
+    );
+    await p.click('#v-stats input[data-sec="volume"]');
+    await p.click('#v-stats input[data-sec="top"]');
+    await p.waitForTimeout(100);
+    const none = await p.evaluate(() => (document.querySelector('#st-body .empty') || {}).textContent || '');
+    ok(/Every section is switched off/.test(none), 'F31 ST9: with every section off, one line says so: "' + none + '"');
+    ok(p.errors.length === 0, 'F31 ST9: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST10: with storage blocked (a private window), the tab draws and switches the same, with no errors */
+  await hcase('ST10', async () => {
+    const p = await stOpen({ go: false });
+    await p.context().addInitScript(() => {
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get() {
+          throw new DOMException('blocked', 'SecurityError');
+        },
+      });
+    });
+    await p.reload();
+    await until(p, () => S.msgs.length === 27 && S.threading, null);
+    await stGo(p);
+    const a = await stState(p);
+    await p.click('#v-stats input[data-sec="heat"]');
+    const b = await stTf(p, 'today');
+    ok(
+      stSame(a.tiles, ST_ALL) && b.tiles.messages === '5' && !b.secs.includes('heat') && p.errors.length === 0,
+      'F31 ST10: with the localStorage getter throwing, the tab draws, switches sections and timeframes, no errors ' +
+        JSON.stringify(p.errors),
+    );
+  });
+
+  /* ST11: at 390 px nothing scrolls sideways: the timeframes, From/To, tiles, charts and lists, a day and a person;
+     all six tabs fit the bar */
+  await hcase('ST11', async () => {
+    const p = await stOpen({ ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
+    const wide = () =>
+      p.evaluate(() => ({
+        sw: document.documentElement.scrollWidth,
+        w: innerWidth,
+        over: [...document.querySelectorAll('#v-stats *')]
+          .filter(e => e.getClientRects().length && e.getBoundingClientRect().right > innerWidth + 0.5)
+          .map(e => e.tagName + '.' + (e.getAttribute('class') || ''))
+          .slice(0, 5),
+      }));
+    const m = await wide();
+    await p.tap('#v-stats [data-tf="custom"]');
+    await p.waitForTimeout(100);
+    const c = await wide();
+    await p.tap('#v-stats [data-tf="d30"]');
+    await p.waitForTimeout(100);
+    const b = await stBar(p, 'volume', 28);
+    await p.touchscreen.tap(b.x, b.y);
+    await p.waitForTimeout(150);
+    const day = await wide();
+    const head = (await stState(p)).head;
+    await p.tap('#st-body .st-top li:nth-child(1) button');
+    await p.waitForTimeout(150);
+    const per = await wide();
+    const nav = await p.evaluate(() => {
+      const n = document.querySelector('nav.tabs');
+      const r = n.getBoundingClientRect();
+      return {
+        tabs: n.querySelectorAll('a').length,
+        fit: [...n.querySelectorAll('a')].every(a => {
+          const x = a.getBoundingClientRect();
+          return x.left >= r.left && x.right <= r.left + n.clientWidth && x.height >= 32;
+        }),
+        scroll: n.scrollWidth - n.clientWidth,
+      };
+    });
+    const fit = x => x.sw <= x.w && !x.over.length;
+    ok(
+      fit(m) && fit(c) && fit(day) && fit(per) && head === 'Thu, Nov 19',
+      'F31 ST11: at 390 px nothing runs past the right edge (main, Custom, a tapped day, a person) ' +
+        JSON.stringify({ m, c, day, per }),
+    );
+    ok(
+      nav.tabs === 6 && nav.fit && nav.scroll <= 0,
+      'F31 ST11: all six tabs fit the bar at 390 px ' + JSON.stringify(nav),
+    );
+    ok(p.errors.length === 0, 'F31 ST11: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST12: dark mode: the bars, the heatmap and the tooltip use the dark theme's colours */
+  await hcase('ST12', async () => {
+    const p = await stOpen({ ctx: { colorScheme: 'dark' } });
+    const c = await p.evaluate(() => {
+      const cs = s => getComputedStyle(document.querySelector(s));
+      return {
+        bar: cs('#st-body .st-chart[data-chart="volume"] g[data-k="28"] path').fill,
+        box: cs('#st-body .st-chart[data-chart="volume"]').backgroundColor,
+        tile: cs('#st-body .st-tile').backgroundColor,
+        tip: cs('#st-body .st-tip').backgroundColor,
+      };
+    });
+    ok(
+      c.bar === 'rgb(57, 135, 229)' &&
+        c.box === 'rgb(33, 35, 31)' &&
+        c.tile === 'rgb(33, 35, 31)' &&
+        c.tip === 'rgb(233, 232, 224)',
+      'F31 ST12: in dark mode the charts use the dark tokens ' + JSON.stringify(c),
+    );
+  });
+
+  /* ST13: before any data, and with no database: one line each, no errors */
+  await hcase('ST13', async () => {
+    const p = await open(Object.assign(SEED(), { __opts: { noDb: true } }));
+    HP.push(p);
+    await stGo(p);
+    const e = await p.evaluate(() => (document.querySelector('#st-body .empty') || {}).textContent || '');
+    const q = await open(SEED());
+    HP.push(q);
+    await stGo(q);
+    const e2 = await q.evaluate(() => (document.querySelector('#st-body .empty') || {}).textContent || '');
+    ok(
+      e === "The stats can't load in this view. Open the page on claude.ai while signed in." &&
+        /^No messages stored yet\./.test(e2) &&
+        !p.errors.length &&
+        !q.errors.length,
+      'F31 ST13: no database and no messages each get one line ' + JSON.stringify([e, e2, p.errors, q.errors]),
+    );
+  });
+
+  /* ST14: new messages arriving while the tab is open are counted at once; the keyboard stays on the chart it was on */
+  await hcase('ST14', async () => {
+    const p = await stOpen();
+    await p.focus('#st-body .st-chart[data-chart="volume"]');
+    await p.evaluate(() => {
+      const c = __rt.get('chunks/c0000');
+      c.msgs.push({ i: 27, t: 'Fri 11:30 AM', d: '2026-11-20', f: 'Cy', b: 'On my way', m: 'mid.27' });
+      __rt.write('chunks/c0000', c);
+    });
+    await until(p, () => S.msgs.length === 28, null);
+    await p.waitForTimeout(100);
+    const s = await stState(p);
+    const f = await p.evaluate(() => document.activeElement && document.activeElement.dataset.chart);
+    ok(
+      s.tiles.messages === '28' && s.volume[29] === 6 && s.top[3] === 'Cy 4 14.3%' && f === 'volume',
+      'F31 ST14: a new message shows at once in the tiles, the bars and the top 10, focus kept (' +
+        JSON.stringify([s.tiles.messages, s.top[3], f]) +
+        ')',
+    );
+  });
+
+  /* ST16: a finger that wobbles a little, or slides without leaving its bar, taps: Nov 19 opens, nothing zooms */
+  await hcase('ST16', async () => {
+    const p = await stOpen({ ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
+    const r = await p.evaluate(() => {
+      const box = document.querySelector('#st-body .st-chart[data-chart="volume"]');
+      box.scrollIntoView({ block: 'center' });
+      const svg = box.querySelector('svg');
+      const b = box.querySelector('g[data-k="28"] rect.hit').getBoundingClientRect();
+      const ev = (type, dx) =>
+        svg.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            pointerId: 9,
+            pointerType: 'touch',
+            isPrimary: true,
+            button: 0,
+            clientX: b.left + 1 + dx,
+            clientY: b.top + b.height / 2,
+          }),
+        );
+      ev('pointerdown', 0);
+      ev('pointermove', Math.min(8, b.width - 2));
+      ev('pointerup', Math.min(8, b.width - 2));
+      return { w: b.width, head: (document.querySelector('#st-body .st-head h3') || {}).textContent || null };
+    });
+    const s = await stState(p);
+    ok(
+      r.head === 'Thu, Nov 19' && !s.reset,
+      'F31 ST16: a slide inside one day bar is a tap: that day opens, no zoom ' + JSON.stringify(r),
+    );
+  });
+
+  /* ST15: speed: 180,000 messages (a year at about 500 a day) are indexed once and each span is one quick pass */
+  await hcase('ST15', async () => {
+    const p = await stOpen();
+    const r = await p.evaluate(() => {
+      const W = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const cast = ['Ana', 'Ben', 'Cy', 'Dee', 'You'];
+      const L = [];
+      const t0 = Date.UTC(2025, 10, 21);
+      for (let i = 0; i < 180000; i++) {
+        const d = new Date(t0 + Math.floor(i / 493) * 864e5 + (7 * 60 + ((i % 493) * 960) / 493) * 60000);
+        const h = d.getUTCHours(),
+          mi = d.getUTCMinutes();
+        const f = cast[i % 5] + (i % 97 ? '' : String(i % 7));
+        L.push({
+          i,
+          t: W[d.getUTCDay()] + ' ' + (h % 12 || 12) + ':' + String(mi).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM'),
+          d: d.toISOString().slice(0, 10),
+          f,
+          fn: f === 'You' ? undefined : f + ' Test',
+          b: i % 9 ? 'message ' + i : '',
+          m: 'mid.' + i,
+        });
+      }
+      L.forEach(m => (m.ts = tsOf(m)));
+      const t1 = performance.now();
+      S.msgs = L;
+      indexPeople();
+      const t2 = performance.now();
+      const B = statsBase();
+      const t3 = performance.now();
+      const F = stFrame();
+      const A = statsAgg(B, F.lo, F.hi);
+      const t4 = performance.now();
+      S.stats.tf = 'all';
+      S.stats.v++;
+      renderStats(true);
+      const t5 = performance.now();
+      return {
+        people: t2 - t1,
+        base: t3 - t2,
+        span: t4 - t3,
+        render: t5 - t4,
+        total: A.total,
+        bars: document.querySelectorAll('#st-body .st-chart[data-chart="volume"] g[data-k]').length,
+        n: B.n,
+        kind: (document.querySelector('#st-body [data-sec="volume"] h3') || {}).textContent,
+      };
+    });
+    console.log(
+      '  stats at 180,000 messages: base ' +
+        r.base.toFixed(0) +
+        ' ms, a 30-day span ' +
+        r.span.toFixed(1) +
+        ' ms, a full render of All ' +
+        r.render.toFixed(0) +
+        ' ms',
+    );
+    ok(
+      r.n === 180000 &&
+        r.total > 14000 &&
+        r.bars <= 60 &&
+        r.kind === 'Messages per week' &&
+        r.base < 2000 &&
+        r.span < 200 &&
+        r.render < 1500,
+      'F31 ST15: at 180,000 messages the index takes ' +
+        r.base.toFixed(0) +
+        ' ms, a 30-day span ' +
+        r.span.toFixed(1) +
+        ' ms, and All draws ' +
+        r.bars +
+        ' weekly bars in ' +
+        r.render.toFixed(0) +
+        ' ms ' +
+        JSON.stringify(r),
+    );
+    ok(p.errors.length === 0, 'F31 ST15: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
 const SECTIONS = {
   importer,
   robustness,
@@ -8693,6 +9550,7 @@ const SECTIONS = {
   photoKeys,
   bigPaste,
   standIn,
+  stats,
   history,
   history2,
   digests,
