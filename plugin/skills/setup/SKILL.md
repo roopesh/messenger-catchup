@@ -5,7 +5,7 @@ description: "Set up a private catch-up page for a Facebook Messenger group chat
 
 # Messenger Catch-up: setup
 
-Creates the user's private **catch-up page** (a claude.ai artifact) for one Facebook Messenger group chat, loads a first stretch of history and sets up the refresh schedule. Each user gets their own page in their own claude.ai account; nothing is shared between users. Refreshes, queued replies and everything after setup belong to the `messenger-catchup:refresh` skill.
+Creates the user's private **catch-up page** (a claude.ai artifact) for one Facebook Messenger group chat, loads a first stretch of history and sets up the refresh schedule. Each user gets their own page in their own claude.ai account; nothing is shared between users. Refreshes and everything after setup belong to the `messenger-catchup:refresh` skill; sending queued replies without a refresh ("send replies") to `messenger-catchup:replies`.
 
 Use this skill when the user has no catch-up page for the chat yet, asks to change the schedule, or asks what a refresh needs. Setup writes most `meta/chat` fields, so also read `references/database.md`.
 
@@ -43,7 +43,7 @@ Tell the user in one line what's about to happen, then:
    - The chat: read the thread id and full URL from the tab and the chat name from the page; confirm with the user, and ask what it's about in a few words (such as "pack buy/sell/trade"): store that, with the name, as `topic`.
    - The user's names in the chat (first name, nicknames) for mentions.
    - How far back the first catch-up goes: last 100, 300 (recommended) or 1,000 messages. (If the whole chat is shorter, everything is captured.)
-   - Queued replies: post automatically on the next run, or confirm each one in chat first (default: confirm first).
+   - Queued replies: post automatically, or confirm each one in chat first (default: confirm first). Approved replies go out at the start of every refresh, and "send replies" sends them at once without a refresh.
    - The helper: install now (recommended) or skip (see Installing the helper).
    - Refresh schedule (see Scheduling).
 4. **Seed the database** (one batch): `meta/chat` with the config above (field names: `references/database.md` › `meta/chat`; read it before this step) plus `kind:"messenger-catchup"`, `pageVersion` (the template's `PAGE_VERSION`), `tz` (the user's time zone), `firstCount` (the history size they chose), `lastI:-1`, `anchorMids:[]`, `markerMode:null`, `chunkSize:82`, `schedule:{mode:"manual"}` (step 6 sets the real one, so the first refresh doesn't check a schedule that isn't set up yet); `threading/current` `{convs:[],links:{},to:-1,note:""}`; `summary/current` `{version:2,convs:[],open:[],answered:[],deals:[],mentions:[],toI:-1}`; `refresh/status` `{state:"idle"}`.
