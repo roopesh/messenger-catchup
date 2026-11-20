@@ -2055,7 +2055,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.2";
+  const PAGE_VERSION = "3.3";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -3084,8 +3084,8 @@
         S.composing.delete(m.i);
         delete S.drafts[m.i];
         st.textContent = CFG().outboxAuto
-          ? "Queued. Claude posts it on its next run (or ask Claude to “" + RP() + "” to post it now)."
-          : "Queued. Tell Claude “send” in chat (or wait for the next refresh) and confirm.";
+          ? "Queued. Claude posts it on its next run, or now if you tell Claude “send replies” in a chat."
+          : "Queued. Tell Claude “send replies” in a chat (or wait for the next refresh) and confirm it.";
         ta.disabled = true;
         c.textContent = "Close";
         q.hidden = true;
@@ -7685,7 +7685,12 @@
     renderStorage();
     const rr = S.refresh;
     if (rr && rr.state === "running" && (Date.now() - Date.parse(rr.startedAt || 0)) / 60000 < 25) {
-      setRS("Claude is refreshing: " + (rr.step || "working") + "…", { busy: true });
+      setRS(
+        rr.step === "replies"
+          ? "Claude is posting your replies…"
+          : "Claude is refreshing: " + (rr.step || "working") + "…",
+        { busy: true },
+      );
       return;
     }
     setRS(

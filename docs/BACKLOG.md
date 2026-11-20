@@ -26,8 +26,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F27 | P3 | feature | More views of the per-day digests beyond the By day tab: in the Messages tab's day headers, or a week's digests as a catch-up after time away |
 | F28 | P2 | feature | Rethink Views: collapsing or sub-tabs, saving and deleting views, and how they fit with By day (to define with the owner; not ready to build) |
 | F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (to define with F28; notes in [design/day-summaries.md](design/day-summaries.md)) |
-| F30 | P2 | feature | Send queued replies without a full refresh, if possible (the owner's request, Nov 16; to define) |
-| F31 | P2 | feature | A metrics tab: message volume over a picked timeframe, the top 10 contributors in it, and more metrics to choose from (the owner's request, Nov 16; on the decision board) |
+| F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; the schedule for frequent checks is left |
+| F31 | P2 | feature | A metrics tab: part 1 (Stats tab) in v1.27.0; part 2 adds conversations, deals, people, engagement and word trends |
 
 ---
 
@@ -122,6 +122,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Related:** R12 (cheap runs), B45 and F13 (how posting works).
 - **Owner's answers (Nov 17):** decide in the moment, or else within a few minutes; at the Mac or on the phone; the phrase "send replies"; picked frequent checks and asked to keep tokens down.
 - **Revised recommendation:** frequent checks stay costly however small the skill (each is a whole session), so: a "Send now" button per queued reply that copies it and opens the message in Messenger with Reply open (the existing Reply link); the owner pastes and presses Enter, and the next refresh marks it sent. Plus scheduled runs posting queued replies first, and the "send replies" phrase for the phone. A later step: the helper types the reply in so only Enter is left. Option E, the page handing replies to the helper directly, would change the rule that only Claude's bridge command can make the helper post; it needs a probe.
+- **Part 1 in v1.27.0 (Nov 19):** the `replies` skill ("send replies" posts queued replies with no refresh) and replies first in every refresh. Left: measure what an empty reply run costs, then set C's interval with the owner (or not); option F (Send now opens the message in Messenger with the reply ready) if the owner wants it; a live check of the routing and a reply run end to end (L1). A reply run skips outbox.md's stored-message check (it would read a chunk); call 1 and `post` still check the live "Replying to" bar.
 
 ### F31 · P2 · A metrics tab
 - **Ask (owner, Nov 16):** a new tab with metrics, starting with volume: a chart with selectable timeframes, and clicking into it shows the top contributors (10 to start) by number of messages and percent of messages in that timeframe.
@@ -141,6 +142,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Related:** F28 (Views), F29 (sharing day summaries).
 - **Decided (Nov 17): option C**, all sections, each switchable. Timeframes: all, with Today, 30 and 90 days up front; drag to zoom; click a day for its detail with a volume-by-hour chart and the top contributors per hour. Every message counts (5 lines = 5). The owner is ranked with everyone (others will use the tool). Clicking a person shows their own chart. Sharing by screenshot or copy and paste only. **No reactions** (captured once, never updated, so they undercount).
 - **Plan:** two page-only releases. First: the Stats tab with summary tiles (messages, messages with text, people posting, photos and GIFs, links, busiest hour, top 5's share, your messages, conversations started, deals posted and sold), the volume chart, the top 10, a per-person chart, the weekday-by-hour heatmap and section switches. Second: conversations and topics, deals, people (new, gone quiet), who replies to whom and how fast questions get answered, word trends.
+- **Part 1 in v1.27.0 (Nov 19):** the Stats tab as planned. Left for part 2: conversations and topics, deals, people (new, gone quiet), who replies to whom and how fast questions get answered, word trends.
 
 ### F27 · P3 · More views of the per-day digests
 - **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
