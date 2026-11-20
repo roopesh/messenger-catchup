@@ -1366,12 +1366,24 @@
   }
   details.thr > .msgs {
     margin-top: 8px;
-    max-height: 70vh;
-    overflow: auto;
     border: 1px solid var(--line);
     border-radius: 5px;
     background: var(--bg);
     padding: 4px 0;
+  }
+  button.thr-close {
+    margin-top: 8px;
+    border: 0;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--accent);
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.92rem;
+  }
+  button.thr-close::before {
+    content: "▴ ";
   }
   details.thr .kids {
     margin-left: 1.4em;
@@ -3362,7 +3374,7 @@
     d.append(h);
     const cx = ctxLine(mem, c.id);
     if (cx) d.append(cx);
-    /* thread (built lazily) */
+    /* thread (built lazily): it opens in place at full length, with a second close control at its end */
     const thr = el("details", "thr");
     const ts = el("summary", null, "Show the thread (" + mem.length + ")");
     thr.append(ts);
@@ -3370,7 +3382,13 @@
     const build = () => {
       if (!built) {
         built = threadTree(mem);
-        thr.append(built);
+        const close = el("button", "thr-close", "Close the thread");
+        close.type = "button";
+        close.addEventListener("click", () => {
+          thr.open = false;
+          if (ts.getBoundingClientRect().top < 0) ts.scrollIntoView({ block: "start" });
+        });
+        thr.append(built, close);
       }
       return built;
     };

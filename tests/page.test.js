@@ -1627,7 +1627,7 @@ async function texts(p) {
   await p.waitForTimeout(300);
   t.summary = await p.$eval('#v-summary', e => e.innerText);
   sig.summaryCards = await p.$eval('#v-summary', e => {
-    const hid = [...e.querySelectorAll('.msgs, .ctx')];
+    const hid = [...e.querySelectorAll('.msgs, .ctx, .thr-close')]; /* .thr-close: new in v1.27.0 */
     hid.forEach(x => (x.style.display = 'none'));
     const s = e.innerText;
     hid.forEach(x => (x.style.display = ''));
@@ -2348,6 +2348,28 @@ async function messagesView() {
     );
   });
   ok(thr, 'B42: the summary\'s "Show the thread" shows the same block');
+  const thrBox = await p.evaluate(() => {
+    const t = document.querySelector('#v-summary article.cv[data-conv="packs"] details.thr');
+    const m = t.querySelector('.msgs');
+    const c = t.lastElementChild;
+    return {
+      full: m.scrollHeight <= m.clientHeight + 1 && getComputedStyle(m).overflowY === 'visible',
+      close: c.matches('button.thr-close') && c.textContent === 'Close the thread',
+    };
+  });
+  ok(
+    thrBox.full && thrBox.close,
+    'TH1: an open thread shows at full length, ending in "Close the thread" ' + JSON.stringify(thrBox),
+  );
+  await p.click('#v-summary article.cv[data-conv="packs"] details.thr button.thr-close');
+  await p.waitForTimeout(100);
+  ok(
+    await p.$eval(
+      '#v-summary article.cv[data-conv="packs"] details.thr',
+      d => !d.open && d.querySelector('summary').textContent.startsWith('Show the thread'),
+    ),
+    'TH2: "Close the thread" closes it, and the top control reads "Show the thread" again',
+  );
   ok(p.errors.length === 0, 'messages view: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 
