@@ -16,6 +16,7 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 - **Backlog:** F29 (fuller day summaries, with design notes), F30 and F31 filed; the owner's decision-board answers on R13, F27, F30 and F31 recorded.
 
 ### Fixed
+- **A tab opened from far down a long tab showed only the page's foot** (found in the release check on claude.ai). The new tab's start now comes up under the tab bar; from the top nothing scrolls. Test: `byDay` BD12 (fails on 3.2).
 - **The marker radios ignored a click made right after typing a date.** With the From box focused, the 1.5 s save switched to the date range but the radios weren't redrawn, so "Since your last message" still looked picked and clicking it did nothing; and the box's blur rebuilt the controls between mouse down and up, so the click was lost. The radios now follow the mode while a date box has focus, a click on a marker radio from the date box cancels the pending date save, and the rebuild waits until the click has landed. Found because the page test read message dates from the day the simulator last ran; it now uses the captured day. Tests: three date-entry checks (all fail on 3.2).
 
 ## [1.26.1] - 2026-11-14

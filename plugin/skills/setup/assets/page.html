@@ -2192,6 +2192,10 @@
       e.preventDefault();
       if (location.hash !== "#" + a.dataset.tab) history.pushState(null, "", "#" + a.dataset.tab);
       route();
+      /* scrolled down a long tab, the new one would open at the page's foot: bring its start up under the nav */
+      const nav = a.closest("nav");
+      const top = $("#v-" + a.dataset.tab).getBoundingClientRect().top - nav.getBoundingClientRect().bottom;
+      if (top < 0) scrollBy(0, top - 8);
     }),
   );
   route();

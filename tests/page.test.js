@@ -4131,6 +4131,36 @@ async function byDay() {
     );
     await p.close();
   });
+  /* BD12: switching tabs from far down a long tab brings the new tab's start up under the nav, instead of leaving the
+     page at its foot; a tab switched from the top doesn't scroll */
+  await hcase('BD12', async () => {
+    const { p } = await bdOpen();
+    await p.evaluate(() => {
+      document
+        .getElementById('v-summary')
+        .append(Object.assign(document.createElement('div'), { style: 'height:4000px' }));
+      scrollTo(0, document.body.scrollHeight);
+    });
+    await p.waitForTimeout(100);
+    await p.click('nav a[data-tab="days"]');
+    await p.waitForTimeout(150);
+    const r = await p.evaluate(() => {
+      const nav = document.querySelector('nav').getBoundingClientRect().bottom;
+      const top = document.getElementById('v-days').getBoundingClientRect().top;
+      return { gap: Math.round(top - nav), y: Math.round(scrollY) };
+    });
+    await p.evaluate(() => scrollTo(0, 0));
+    await p.click('nav a[data-tab="summary"]');
+    await p.waitForTimeout(100);
+    const y0 = await p.evaluate(() => scrollY);
+    ok(
+      r.gap >= 0 && r.gap <= 40 && y0 === 0,
+      'BD12: a tab opened from far down a long tab starts just under the nav; from the top, nothing scrolls (' +
+        JSON.stringify([r, y0]) +
+        ')',
+    );
+    await p.close();
+  });
   /* BD1: the tab opens from the keyboard and lists the digested days newest first, with their bullets and counts; the
      day still waiting is absent and the quiet line names it; a page opened at #days draws them too */
   await hcase('BD1', async () => {
