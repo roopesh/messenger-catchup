@@ -2445,11 +2445,40 @@
       setRS("Couldn't save your marker choice.", { err: true });
     }
   }
+  /* Focus leaves on mousedown, but the click lands on mouseup: rebuilding the marker box in between (a date box's blur
+     did) removed the radio being clicked, so the click was lost and the mode stayed "time". afterPress(fn) runs
+     fn(element pressed) once the button is up and the click has landed; fn(null) straight away when no button is down. */
+  let pressed = null,
+    onRelease = [];
+  addEventListener("pointerdown", e => (pressed = e.target), true);
+  ["pointerup", "pointercancel"].forEach(k =>
+    addEventListener(
+      k,
+      () => {
+        const at = pressed,
+          l = onRelease;
+        pressed = null;
+        onRelease = [];
+        setTimeout(() => l.forEach(fn => fn(at)), 0);
+      },
+      true,
+    ),
+  );
+  function afterPress(fn) {
+    if (pressed) onRelease.push(fn);
+    else setTimeout(() => fn(null), 0);
+  }
   function renderMarker() {
     const box = $("#marker");
     const ae = document.activeElement;
-    if (ae && box.contains(ae) && ae.type === "datetime-local") return;
-    /* don't rebuild while typing */ box.textContent = "";
+    /* don't rebuild while typing, but show the mode a date save just set: a radio left showing "own" took no click */
+    if (ae && box.contains(ae) && ae.type === "datetime-local") {
+      box
+        .querySelectorAll('input[name="marker"]')
+        .forEach(r => (r.checked = r.value === ((S.meta || {}).markerMode || null)));
+      return;
+    }
+    box.textContent = "";
     if (!S.meta) return;
     const mode = S.meta.markerMode || null;
     const inf = markerInfo();
@@ -2522,12 +2551,15 @@
       x.addEventListener("input", later);
       x.addEventListener("change", later);
       x.addEventListener("blur", () =>
-        setTimeout(() => {
-          if (!rg.contains(document.activeElement)) {
-            save();
-            renderMarker();
-          }
-        }, 0),
+        afterPress(at => {
+          if (rg.contains(document.activeElement)) return;
+          /* the click that took the focus picked "caught" or "own": that wins over the typed date and its pending save */
+          const lab = at && at.closest ? at.closest("label") : null;
+          const pick = lab && lab.querySelector('input[name="marker"]');
+          if (pick && !pick.disabled && pick.value !== "time") clearTimeout(dT);
+          else save();
+          renderMarker();
+        }),
       );
       x.addEventListener("keydown", e => {
         if (e.key === "Enter") {

@@ -1293,8 +1293,10 @@ async function pipeline() {
   await p.keyboard.press('ArrowLeft');
   await p.keyboard.press('ArrowLeft');
   await p.keyboard.press('ArrowLeft');
-  const want = ymd(TODAY) + 'T09:15';
-  const [Y, M, D] = ymd(TODAY).split('-');
+  /* the captured messages' day (sim.js dates them the day it ran), not today: a time window from 09:15 holds them all */
+  const day = caps[caps.length - 1].msgs.at(-1).d;
+  const want = day + 'T09:15';
+  const [Y, M, D] = day.split('-');
   await p.keyboard.type(M + D + Y + '0915A', { delay: 60 });
   ok(
     await handle.evaluate(e => e.isConnected && document.activeElement === e),
@@ -1311,8 +1313,43 @@ async function pipeline() {
   await p.keyboard.press('Tab');
   await p.waitForTimeout(300);
   ok(/Catch-up window: /.test(await p.textContent('#window')), 'date entry: header shows the date window');
-  // outbox
+  /* the save above set mode "time" while the From box kept the focus (Tab stays inside it): the radios show it, and a
+     click on one from there lands. Both used to fail: "own" still looked picked so clicking it changed nothing, and the
+     blur rebuilt the box between mousedown and mouseup, taking the radio from under the pointer */
+  ok(
+    (await p.$eval(from, e => e === document.activeElement)) &&
+      (await p.$eval('#marker input[value="time"]', r => r.checked)) &&
+      !(await p.$eval('#marker input[value="own"]', r => r.checked)),
+    'date entry: the radios show "Date range" while the From box has the focus',
+  );
   await p.click('#marker input[value="own"]');
+  await p.waitForTimeout(300);
+  ok(
+    (await get(p, 'meta/chat')).markerMode === 'own' && (await p.$eval('#marker input[value="own"]', r => r.checked)),
+    'date entry: "Since your last message" clicked from the From box takes',
+  );
+  // a date typed and not yet saved (the 1.5 s pause) doesn't override a radio clicked straight after it
+  await p.click('#marker input[value="caught"]');
+  await p.waitForTimeout(300);
+  await p.click(from);
+  await p.keyboard.press('ArrowLeft');
+  await p.keyboard.press('ArrowLeft');
+  await p.keyboard.press('ArrowLeft');
+  await p.keyboard.press('ArrowLeft');
+  await p.keyboard.press('ArrowLeft');
+  await p.keyboard.type(M + D + Y + '1030A', { delay: 20 });
+  await p.click('#marker input[value="own"]');
+  await p.waitForTimeout(1900);
+  const mc = await get(p, 'meta/chat');
+  ok(
+    mc.markerMode === 'own' && mc.markerFrom === want,
+    'date entry: a radio clicked before the pause wins, the unsaved date is dropped (' +
+      mc.markerMode +
+      ', ' +
+      mc.markerFrom +
+      ')',
+  );
+  // outbox
   await p.evaluate(() => {
     location.hash = '#messages';
   });
