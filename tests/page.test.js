@@ -9105,6 +9105,20 @@ async function stats() {
       'F31 ST2b: typing a From date keeps the box and its focus, and applies after the pause ' +
         JSON.stringify([mid, typed.span]),
     );
+    /* a From after the To moves the To to match: the boxes show the range used */
+    await p.fill('#st-from', '2026-11-19');
+    await p.fill('#st-to', '2026-11-12');
+    await p.press('#st-to', 'Enter');
+    await p.waitForTimeout(150);
+    const back = await p.evaluate(() => [
+      document.getElementById('st-from').value,
+      document.getElementById('st-to').value,
+    ]);
+    const backSpan = (await stState(p)).span;
+    ok(
+      back.join() === '2026-11-12,2026-11-12' && /^Thu, Nov 12: /.test(backSpan),
+      'F31 ST2b: a To before the From moves the From to it, and the span says so ' + JSON.stringify([back, backSpan]),
+    );
     /* this week runs from Sunday through today (Fri Nov 20); last week is the whole Sunday-to-Saturday week before */
     const wk = await stTf(p, 'wk');
     const lw = await stTf(p, 'lastwk');

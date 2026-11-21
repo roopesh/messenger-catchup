@@ -14,7 +14,7 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 - **The Stats switch "Heatmap" is now "Day and hour"**, the name of the section it shows or hides.
 
 ### Fixed
-- **Typing a custom date on the Stats tab.** Each typed segment applied the range and redrew the boxes, so a date couldn't be typed (a year passes through 0002, 0020 and 0202 on its way to 2026). The range now applies after a pause, on Enter, or when the box loses focus, and only for dates from 2000 on. A box that has the focus is never rewritten. Test: ST2b (fails on 3.3).
+- **Typing a custom date on the Stats tab.** Each typed segment applied the range and redrew the boxes, so a date couldn't be typed (a year passes through 0002, 0020 and 0202 on its way to 2026). The range now applies after a pause, on Enter, or when the box loses focus, and only for dates from 2000 on. A box that has the focus is never rewritten. A From after the To moves the To to match (and a To before the From moves the From), so the boxes always show the range in use; found in the claude.ai check. Test: ST2b (fails on 3.3).
 - **"Close the thread" at the end of a long thread left the page wherever the next cards slid to.** It now brings the card back: its top under the tabs, or for a card taller than the screen, its "Show the thread" line part way down. Test: TH5 (fails on 3.3).
 
 ## [1.27.0] - 2026-11-19

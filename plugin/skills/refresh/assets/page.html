@@ -9487,11 +9487,16 @@
   /* Typing a date fires a change at each segment (a year passes through 0002, 0020, 0202 on its way to 2026), so a range
      applies after a pause, on Enter, or when the box loses focus, and only a date from 2000 on */
   let stDT = null;
-  const stDates = () => {
+  /* a From after the To (or a To before the From) moves the other box to match, so the boxes show the range used */
+  const stDates = src => {
     clearTimeout(stDT);
-    const f = $("#st-from").value,
+    let f = $("#st-from").value,
       t = $("#st-to").value;
     if (!isDay(f) || !isDay(t) || f < "2000" || t < "2000") return;
+    if (f > t) {
+      if (src === "#st-to") $("#st-from").value = f = t;
+      else $("#st-to").value = t = f;
+    }
     const st = S.stats;
     if (st.tf === "custom" && st.from === f && st.to === t) return;
     Object.assign(st, { tf: "custom", from: f, to: t, zoom: null, day: null, person: null, rets: [] });
@@ -9502,13 +9507,13 @@
     const x = $(sel);
     const later = () => {
       clearTimeout(stDT);
-      stDT = setTimeout(stDates, 1200);
+      stDT = setTimeout(() => stDates(sel), 1200);
     };
     x.addEventListener("input", later);
     x.addEventListener("change", later);
-    x.addEventListener("blur", stDates);
+    x.addEventListener("blur", () => stDates(sel));
     x.addEventListener("keydown", e => {
-      if (e.key === "Enter") stDates();
+      if (e.key === "Enter") stDates(sel);
     });
   });
   document.querySelectorAll("#v-stats input[data-sec]").forEach(c =>
