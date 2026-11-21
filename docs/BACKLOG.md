@@ -23,11 +23,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
-| F27 | P3 | feature | More views of the per-day digests beyond the By day tab: in the Messages tab's day headers, or a week's digests as a catch-up after time away |
-| F28 | P2 | feature | Rethink Views: collapsing or sub-tabs, saving and deleting views, and how they fit with By day (to define with the owner; not ready to build) |
-| F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (to define with F28; notes in [design/day-summaries.md](design/day-summaries.md)) |
+| F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (builds on the refresh reports from F27, v1.29.0; notes in [design/day-summaries.md](design/day-summaries.md)) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; the schedule for frequent checks is left |
-| F31 | P2 | feature | A metrics tab: part 1 (Stats tab) in v1.27.0; part 2 adds conversations, deals, people, engagement and word trends |
 
 ---
 
@@ -87,16 +84,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **How it differs:** a group is a feed of posts (text, photos, links), each with its own comment threads and reactions, at `facebook.com/groups/<id>`, not a single message log. The feed's default order isn't by time, posts and comments load lazily, and old posts get new comments, so "what's new since I last looked" means new posts **and** new comments on older ones. Claude in Chrome reads it from the owner's own logged-in Chrome, as for Messenger, read only.
 - **To design with the owner:** which groups; what counts as new; one page per group or groups on the chat's page (F1 is related); what the summary covers (posts, comment threads, deals in buy/sell groups, mentions); whether replying is in scope; how capture works (a helper mode for the group feed, sorted by new activity) and its markup risks (like R3).
 
-### F28 · P2 · Rethink Views (to define)
-- **The owner (Nov 14):** a great idea that works moderately well, but not great. Needs digging in to define before anything is built.
-- **What the owner raised:**
-  - **Collapsing:** views don't feel collapsible. Today a just-built view is drawn in full under the composer (`#view-out`), and saved views are `<details>` items further down the tab, newest first, mixed with method ideas and above "Notes from Claude". Find out what the owner sees as not collapsible.
-  - **Navigation:** collapsible views, sub-tabs, a dropdown, or something else.
-  - **Saving and deleting:** every built view is saved at once (`views/*`, `kind:"view"`), and there's no way to delete one or choose not to keep it. F26's Remove with Undo is a model.
-  - **By day (F24):** how views relate to the By day tab. A view could be scoped to a day or range, By day could be one built-in view, or the two could share navigation.
-- **Also to settle:** whether a view refreshes as new messages arrive or stays a snapshot, renaming, where method ideas and Notes from Claude belong, and what the Views tab is for next to Summary, Messages, By day and Ask.
-- **Next step:** a design conversation with the owner (questions first, then a short design), then a build plan. Design it together with F29 (fuller day summaries, [design/day-summaries.md](design/day-summaries.md)).
-
 ### F29 · P2 · Fuller day summaries (to define)
 - **The owner (Nov 15):**
   - The By day digests are weak.
@@ -108,7 +95,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - Add a fuller summary written by the refresh: incremental during the day, then one final rewrite after the day ends.
   - Sharing by "Copy for chat" and/or a shared link, the owner's call.
 - **Everything discussed:** options, the owner's decisions, Claude's proposed shape and the open questions are in [design/day-summaries.md](design/day-summaries.md).
-- **Designed together with F28.**
+- **Builds on F27 (v1.29.0):** merge each day's saved refresh reports into its fuller summary at the day's end.
 
 ### F30 · P2 · Send queued replies without a full refresh
 - **Ask (owner, Nov 16):** be able to send replies queued on the page without a full refresh, if possible.
@@ -123,34 +110,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Owner's answers (Nov 17):** decide in the moment, or else within a few minutes; at the Mac or on the phone; the phrase "send replies"; picked frequent checks and asked to keep tokens down.
 - **Revised recommendation:** frequent checks stay costly however small the skill (each is a whole session), so: a "Send now" button per queued reply that copies it and opens the message in Messenger with Reply open (the existing Reply link); the owner pastes and presses Enter, and the next refresh marks it sent. Plus scheduled runs posting queued replies first, and the "send replies" phrase for the phone. A later step: the helper types the reply in so only Enter is left. Option E, the page handing replies to the helper directly, would change the rule that only Claude's bridge command can make the helper post; it needs a probe.
 - **Part 1 in v1.27.0 (Nov 19):** the `replies` skill ("send replies" posts queued replies with no refresh) and replies first in every refresh. Left: measure what an empty reply run costs, then set C's interval with the owner (or not); option F (Send now opens the message in Messenger with the reply ready) if the owner wants it; a live check of the routing and a reply run end to end (L1). A reply run skips outbox.md's stored-message check (it would read a chunk); call 1 and `post` still check the live "Replying to" bar.
-
-### F31 · P2 · A metrics tab
-- **Ask (owner, Nov 16):** a new tab with metrics, starting with volume: a chart with selectable timeframes, and clicking into it shows the top contributors (10 to start) by number of messages and percent of messages in that timeframe.
-- **Data:** the page already holds every stored message (`chunks/*`: `f`, `fn`, `d`, `t`, `p`, `x`, `r`/`pi`), so the counts can be worked out on the page with no Claude call and no tokens, and stay current after every import. On the owner's page (Nov 16): about 10,500 messages over 19 days, about 500 a day, 101 posters; the top 10 wrote 40%.
-- **Care points:**
-  - Merge names through `people/index`: `fn` exists only from helper 1.6, so counting by `fn` or `f` alone splits people.
-  - Messages vs. turns (one person's consecutive lines): about a quarter of messages continue a run.
-  - Say where the stored history starts.
-  - Group long timeframes by week or month so a year of messages draws smoothly on a phone.
-- **Options (on the decision board):**
-  - A: volume chart plus the top 10.
-  - B: A plus a weekday-by-hour activity heatmap.
-  - C: a full metrics tab in stages (engagement: reactions, who replies to whom, questions answered and how fast; deals: posted, claimed, sold, time to sold; people: new and gone quiet; word trends; your own numbers).
-  - D: charts on request through Ask.
-  - Claude's recommendation: B first, then C's sections one at a time as the owner picks them, as its own tab rather than under Views (F28).
-- **To settle:** timeframes, what a click does, messages or turns, whether the owner ranks among the members, what clicking a person opens, which extra metrics, and whether a ranking of members should ever travel with a shared page.
-- **Related:** F28 (Views), F29 (sharing day summaries).
-- **Decided (Nov 17): option C**, all sections, each switchable. Timeframes: all, with Today, 30 and 90 days up front; drag to zoom; click a day for its detail with a volume-by-hour chart and the top contributors per hour. Every message counts (5 lines = 5). The owner is ranked with everyone (others will use the tool). Clicking a person shows their own chart. Sharing by screenshot or copy and paste only. **No reactions** (captured once, never updated, so they undercount).
-- **Plan:** two page-only releases. First: the Stats tab with summary tiles (messages, messages with text, people posting, photos and GIFs, links, busiest hour, top 5's share, your messages, conversations started, deals posted and sold), the volume chart, the top 10, a per-person chart, the weekday-by-hour heatmap and section switches. Second: conversations and topics, deals, people (new, gone quiet), who replies to whom and how fast questions get answered, word trends.
-- **Part 1 in v1.27.0 (Nov 19):** the Stats tab as planned. Left for part 2: conversations and topics, deals, people (new, gone quiet), who replies to whom and how fast questions get answered, word trends.
-
-### F27 · P3 · More views of the per-day digests
-- **What:** since v1.26.0 (F24) the By day tab shows each finished day's digest. Other ideas the owner had for them, not built: digests in the Messages tab's day headers, or a week's digests as a quick catch-up after time away.
-- **Cost:** page only; the data is there.
-- **Trigger:** the owner asks.
-
-## Live checks
-- **Owner's idea (Nov 17):** each refresh's chat report (messages, new conversations, deals, mentions, open questions) is a good summary of its span, but it isn't saved. Save it under its day, show a day's reports on By day, merge them into the day's fuller summary at the day's end (F29), and build the "While you were away" card from those. Recommended on the board; designed with F29.
 
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.
