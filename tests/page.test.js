@@ -2407,6 +2407,71 @@ async function messagesView() {
     ),
     'TH2: "Close the thread" closes it, and the top control reads "Show the thread" again',
   );
+  /* TH3: what the conversation replies to sits above the summary while the thread is closed, and the open thread starts
+     with it (one copy, moved) */
+  const LEND = '#v-summary article.cv[data-conv="lend"]';
+  const where = () =>
+    p.$eval(LEND, a => {
+      const cx = a.querySelectorAll('.ctx');
+      const t = a.querySelector('details.thr');
+      return {
+        n: cx.length,
+        inThread: !!cx[0] && t.contains(cx[0]) && cx[0].nextElementSibling === t.querySelector(':scope > .msgs'),
+        aboveThread:
+          !!cx[0] && !t.contains(cx[0]) && !!(cx[0].compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING),
+      };
+    });
+  const closed0 = await where();
+  await p.click(LEND + ' details.thr > summary');
+  await p.waitForTimeout(150);
+  const opened = await where();
+  await p.click(LEND + ' details.thr > summary');
+  await p.waitForTimeout(150);
+  const closed1 = await where();
+  ok(
+    closed0.n === 1 && closed0.aboveThread && opened.n === 1 && opened.inThread && closed1.aboveThread,
+    'TH3: the earlier message shows above the summary, and the open thread starts with it ' +
+      JSON.stringify([closed0, opened, closed1]),
+  );
+  /* TH4: when that earlier message is itself a Messenger reply, the message it answers shows first, photo included */
+  await p.evaluate(() => {
+    S.byI.get(30).pi = 31 - 5; /* #26, in "Car pool" */
+    S.byI.get(26).p = 'att26';
+    renderSummary();
+  });
+  await p.waitForTimeout(150);
+  const up = await p.$eval(LEND + ' .ctx', c =>
+    [...c.querySelectorAll(':scope > .msgs')].map(m => +(m.textContent.match(/#(\d+)/) || [0, 0])[1]),
+  );
+  ok(up.join() === '26,30', 'TH4: the context shows #26 (what #30 answers) before #30 ' + JSON.stringify(up));
+  /* TH5: closing a thread taller than the screen from its end brings the card back, not wherever the next cards slid to */
+  await p.setViewportSize({ width: 900, height: 420 });
+  const PK = '#v-summary article.cv[data-conv="packs"]';
+  await p.click(PK + ' details.thr > summary');
+  await p.waitForTimeout(150);
+  await p.$eval(PK + ' button.thr-close', b => b.scrollIntoView({ block: 'end' }));
+  await p.waitForTimeout(100);
+  await p.click(PK + ' button.thr-close');
+  await p.waitForTimeout(200);
+  const back = await p.evaluate(sel => {
+    const nav = document.querySelector('nav.tabs').getBoundingClientRect().bottom;
+    const a = document.querySelector(sel).getBoundingClientRect();
+    const s = document.querySelector(sel + ' details.thr > summary').getBoundingClientRect();
+    return {
+      nav: Math.round(nav),
+      top: Math.round(a.top),
+      h: Math.round(a.height),
+      sTop: Math.round(s.top),
+      vh: innerHeight,
+    };
+  }, PK);
+  const fits = back.h + 16 <= back.vh - back.nav;
+  ok(
+    fits ? back.top >= back.nav && back.top <= back.nav + 20 : back.sTop > back.nav && back.sTop < back.vh - 20,
+    'TH5: after Close the thread at its end, the card is back in view (its top under the tabs, or its Show line on screen) ' +
+      JSON.stringify(back),
+  );
+  await p.setViewportSize({ width: 1280, height: 720 });
   ok(p.errors.length === 0, 'messages view: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 
@@ -9012,6 +9077,7 @@ async function stats() {
     ]);
     await p.fill('#st-from', '2026-11-12');
     await p.fill('#st-to', '2026-11-19');
+    await p.press('#st-to', 'Enter');
     await p.waitForTimeout(150);
     const cu = await stState(p);
     ok(
@@ -9021,6 +9087,47 @@ async function stats() {
         cu.volume.length === 8 &&
         cu.span === 'Nov 12 – Nov 19: 17 messages.',
       'F31 ST2: Custom starts from the span shown and counts From-To days (' + JSON.stringify([prefill, cu.span]) + ')',
+    );
+    /* typing a date segment by segment: the box keeps the focus and what's typed, and the range applies after a pause */
+    await p.click('#st-from');
+    await p.keyboard.press('ArrowLeft');
+    await p.keyboard.press('ArrowLeft');
+    const box = await p.evaluateHandle(() => document.activeElement);
+    await p.keyboard.type('11152026', { delay: 80 });
+    const mid = await p.evaluate(
+      b => [b.isConnected && document.activeElement === b, b.value, document.getElementById('st-span').textContent],
+      box,
+    );
+    await p.waitForTimeout(1400);
+    const typed = await stState(p);
+    ok(
+      mid[0] && mid[1] === '2026-11-15' && /^Nov 12 – Nov 19/.test(mid[2]) && /^Nov 15 – Nov 19/.test(typed.span),
+      'F31 ST2b: typing a From date keeps the box and its focus, and applies after the pause ' +
+        JSON.stringify([mid, typed.span]),
+    );
+    /* a From after the To moves the To to match: the boxes show the range used */
+    await p.fill('#st-from', '2026-11-19');
+    await p.fill('#st-to', '2026-11-12');
+    await p.press('#st-to', 'Enter');
+    await p.waitForTimeout(150);
+    const back = await p.evaluate(() => [
+      document.getElementById('st-from').value,
+      document.getElementById('st-to').value,
+    ]);
+    const backSpan = (await stState(p)).span;
+    ok(
+      back.join() === '2026-11-12,2026-11-12' && /^Thu, Nov 12: /.test(backSpan),
+      'F31 ST2b: a To before the From moves the From to it, and the span says so ' + JSON.stringify([back, backSpan]),
+    );
+    /* this week runs from Sunday through today (Fri Nov 20); last week is the whole Sunday-to-Saturday week before */
+    const wk = await stTf(p, 'wk');
+    const lw = await stTf(p, 'lastwk');
+    ok(
+      wk.volume.length === 6 &&
+        /^Nov 15 – Nov 20: /.test(wk.span) &&
+        lw.volume.length === 7 &&
+        /^Nov 8 – Nov 14: /.test(lw.span),
+      'F31 ST2c: This week is Sun Nov 15 – Fri Nov 20, Last week Nov 8 – Nov 14 ' + JSON.stringify([wk.span, lw.span]),
     );
     const d30 = await stTf(p, 'd30');
     ok(

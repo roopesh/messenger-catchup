@@ -2,6 +2,21 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.28.0] - 2026-11-21
+**Stats gets This week and Last week, typing a custom date works, and Summary threads read in order** (the owner's review of v1.27.0). MINOR: two new timeframes and changed card behavior. Page **`PAGE_VERSION` 3.4** (from 3.3); helper unchanged (2.1).
+
+### Added
+- **This week and Last week** on the Stats tab, next to Today. Weeks run Sunday to Saturday, as the week bars do; This week runs through today. Test: `stats` ST2c.
+
+### Changed
+- **A Summary card's open thread starts with the message it replies to.** That earlier message showed above the card's summary, and the opened thread began with the reply, without it. It still shows above the summary while the thread is closed, and moves to the top of the thread while it's open. Test: TH3.
+- **The earlier message comes with what it answers.** When the message a conversation replies to is itself a Messenger reply (such as "What is it?" asked about a photo), the message it answers shows first, photos included. Before, the card spoke of a photo it didn't show. Test: TH4.
+- **The Stats switch "Heatmap" is now "Day and hour"**, the name of the section it shows or hides.
+
+### Fixed
+- **Typing a custom date on the Stats tab.** Each typed segment applied the range and redrew the boxes, so a date couldn't be typed (a year passes through 0002, 0020 and 0202 on its way to 2026). The range now applies after a pause, on Enter, or when the box loses focus, and only for dates from 2000 on. A box that has the focus is never rewritten. A From after the To moves the To to match (and a To before the From moves the From), so the boxes always show the range in use; found in the claude.ai check. Test: ST2b (fails on 3.3).
+- **"Close the thread" at the end of a long thread left the page wherever the next cards slid to.** It now brings the card back: its top under the tabs, or for a card taller than the screen, its "Show the thread" line part way down. Test: TH5 (fails on 3.3).
+
 ## [1.27.0] - 2026-11-19
 **A Stats tab, replies sent without a refresh, and threads that open in place** (BACKLOG F31 part 1, F30 part 1). MINOR: a new page tab, a new skill and a refresh procedure change. Page **`PAGE_VERSION` 3.3** (from 3.2); helper unchanged (2.1).
 
