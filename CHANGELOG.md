@@ -2,6 +2,31 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.30.0] - 2026-11-21
+**Day packs end the 5,000-file photo limit, and photos are found by what's in them** (BACKLOG R13, decided on the owner's decision board as "E + S"). MINOR: a new page feature behind a switch, and refresh procedure changes. Page **`PAGE_VERSION` 3.6** (from 3.5); helper unchanged (2.1).
+
+### Added
+- **Day packs (R13).** A claude.ai page holds at most 5,000 files and 1 GiB, and every stored photo was one file (the owner's page: 1,131 files but only 66 MB on Nov 21, adding about 70 a day). With the new **Photo storage** switch on (`meta/chat.photoPack`, off until the owner turns it on), the page packs each finished day (the day before yesterday and older, in the chat's time zone, with no photo still owed) into one full pack, the original bytes as they were, and one pack of 320 px previews:
+  - It checks every photo in the pack against the original's SHA-256 before anything changes. On a mismatch, it deletes the new packs and keeps the originals.
+  - It repoints the slots (`/_blob/<pack>#<n>`, and `pv` for the preview), reads them back, then deletes the originals. About 70 files a day become 2.
+  - It packs one day at a time under the import lease, never while a refresh holds the run lock or photos are uploading.
+  - The chat shows packed photos from the preview pack, and the photo viewer shows the original from the full pack. A pack that can't load shows a "Photo couldn't load" tile.
+  - The Photo storage box (under How it works) shows usage, the switch, the last packed day, days left and any error.
+  - `photos/packs` lists every pack for the archive pages still to come. `references/photos.md` covers packs (and how to open one photo from a pack). Cleanup counts pack files and preview packs as in use.
+  - Tests: page sections `packs` and `packs2` (K1–K15).
+- **Photo captions and photo search (R13 "S").** Each refresh already opens every new photo. It now also writes a one-line caption from the photo and the messages around it ("green Ultra Monolith pack, side view, coyote straps"):
+  - Captions go in the build spec (`captions`), which `catchup.py` checks and merges into `captions/b<start>`.
+  - The Messages filter matches a message by its text or its photos' captions, and shows "📷 caption: …" when a caption helped.
+  - Photos carry their caption as alt text and tooltip, and under the photo in the viewer.
+  - Ask, Views and range summaries see captions in each message line.
+  - **Captions for older photos:** "caption my old photos" runs `catchup.py captions` in batches of 50 (only when the user asks), reading previews from day packs where they exist.
+  - Tests: 11 in `test_catchup.py`, page section `captions`.
+
+### Changed
+- **A multi-word Messages filter matches every word, not only the exact phrase.** "green ultra monolith" finds a message whose text names the Monolith and whose photo caption says "green Ultra pack". A message containing the whole phrase still matches as before.
+- **The busy-import toast** now also says the page may be packing photos; `references/troubleshooting.md` says how long to wait.
+- **Backlog:** R10 and R11 removed (the owner: the Desktop app and Claude in Chrome are both needed, which is known). R13 now covers the archive pages for the 1 GiB, which are still to build.
+
 ## [1.29.0] - 2026-11-21
 **Stats part 2, a Views list that keeps itself up to date, and each refresh's report on By day** (BACKLOG F31, F28, F27, all decided on the owner's decision board). MINOR: new page features and a refresh procedure change. Page **`PAGE_VERSION` 3.5** (from 3.4); helper unchanged (2.1).
 

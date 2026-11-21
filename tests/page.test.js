@@ -12099,6 +12099,263 @@ async function packs2() {
   await p.close();
 }
 
+/* R13: photo captions (captions/b<start>, written by Claude's refresh). The Messages view's seed, with #40 a photo-only
+   message whose slot 0 is owed and slots 1 and 2 stored, so a caption has to find its photo by slot, not position. */
+const CAP31 = 'green Ultra Monolith pack, side view, coyote straps, price tag $180';
+const CAP40 = 'red two-person tent, pitched, rain fly off';
+const CAP41 = 'green Ultra pack, front view, red zip';
+const CAPS_DOC = () => ({ start: 0, byK: { 31: { 0: CAP31 }, 40: { 1: CAP40 }, 41: { 0: CAP41 } } });
+async function capPage(o = {}) {
+  const V = viewSeed();
+  V.msgs[40] = mk(40, { f: 'Cy', b: '', p: 'att40' });
+  /* #41 names the pack in its text; only its caption says it's green (all-words matching) */
+  V.msgs[41] = mk(41, { f: 'Ben', b: 'My Monolith is up for grabs', p: 'att41' });
+  const p = await open(SEED(), PAGE, o.ctx);
+  await paste(p, JSON.stringify(cap(V.msgs)));
+  await p.evaluate(
+    ([th, sm, u, caps]) => {
+      __rt.write('threading/current', th);
+      __rt.write('summary/current', sm);
+      __rt.write('photos/b0', { start: 0, byK: { 31: { 0: u }, 40: { 0: null, 1: u, 2: u }, 41: { 0: u } } });
+      if (caps) __rt.write('captions/b0', caps);
+      location.hash = '#messages';
+    },
+    [V.th, V.sm, SWATCH, o.caps === undefined ? CAPS_DOC() : o.caps],
+  );
+  await until(p, () => document.querySelector('#m31 .pics img') && document.querySelector('#m40 .pics img'));
+  await p.waitForTimeout(200);
+  return p;
+}
+async function capFilter(p, q) {
+  await p.fill('#msg-q', q);
+  await p.waitForTimeout(350);
+}
+const capRows = p =>
+  p.evaluate(() => ({
+    ids: [...document.querySelectorAll('#msgs .msg[id]')].map(r => +r.id.slice(1)),
+    hits: [...document.querySelectorAll('#msgs .caphit')].map(d => [+d.closest('.msg').id.slice(1), d.textContent]),
+  }));
+const capImgs = p =>
+  p.evaluate(() =>
+    [...document.querySelectorAll('#m31 .pics img, #m40 .pics img')].map(i => [
+      i.closest('.msg').id,
+      i.alt,
+      i.getAttribute('title'),
+    ]),
+  );
+async function capLightbox(p, sel) {
+  await p.evaluate(s => document.querySelector(s).click(), sel);
+  await p.waitForTimeout(100);
+  return p.evaluate(() => {
+    const c = document.querySelector('#lb .lbcap');
+    return {
+      open: !!document.querySelector('#lb'),
+      cap: c ? c.textContent : null,
+      shown: !!c && !c.hidden && c.getBoundingClientRect().height > 0,
+      alt: (document.querySelector('#lb .stage img') || {}).alt,
+    };
+  });
+}
+async function captions() {
+  const p = await capPage();
+  const p0 = await capPage({ caps: null });
+
+  // search finds a photo-only message by its caption, and says the match came from the caption
+  await capFilter(p, 'side view, coyote');
+  let r = await capRows(p);
+  ok(
+    r.ids.includes(31) &&
+      !r.ids.some(i => i < 30 || i > 35) &&
+      JSON.stringify(r.hits) === JSON.stringify([[31, '📷 caption: ' + CAP31]]),
+    'R13: the filter finds a photo-only message by its caption, with a "📷 caption" line under it ' + JSON.stringify(r),
+  );
+
+  // all words: every word of a query of 2 or more somewhere in the text and the captions together
+  await capFilter(p, 'green ultra monolith');
+  r = await capRows(p);
+  ok(
+    r.ids.includes(31) &&
+      r.ids.includes(41) &&
+      JSON.stringify(r.hits) ===
+        JSON.stringify([
+          [31, '📷 caption: ' + CAP31],
+          [41, '📷 caption: ' + CAP41],
+        ]),
+    'R13: "green ultra monolith" finds #41, whose text says Monolith and caption "green Ultra pack", with its caption line ' +
+      JSON.stringify(r),
+  );
+  await capFilter(p, 'monolith red');
+  r = await capRows(p);
+  ok(
+    r.ids.includes(41) &&
+      r.ids.includes(40) &&
+      JSON.stringify(r.hits) === JSON.stringify([[41, '📷 caption: ' + CAP41]]),
+    "R13: the caption line only on rows the filter found: #40's caption says red, but #40 doesn't match " +
+      JSON.stringify(r),
+  );
+  for (const pg of [p, p0]) {
+    await capFilter(pg, 'hip buckles  pockets');
+    r = await capRows(pg);
+    ok(
+      JSON.stringify(r) === JSON.stringify({ ids: [30, 31, 32, 33, 34, 35], hits: [] }),
+      "R13: words far apart in a message's text match too (" +
+        (pg === p ? 'with' : 'without') +
+        ' captions) ' +
+        JSON.stringify(r),
+    );
+  }
+  await capFilter(p, 'green ultra monolith tent');
+  r = await capRows(p);
+  ok(
+    !r.ids.length && !r.hits.length,
+    'R13: a message missing one of the words is not found ("tent" is only in #40\'s caption) ' + JSON.stringify(r),
+  );
+  await capFilter(p, 'COYOTE');
+  r = await capRows(p);
+  ok(r.ids.includes(31) && r.hits.length === 1, 'R13: any case, any part of the caption ' + JSON.stringify(r));
+  await capFilter(p, 'tent, pitched');
+  r = await capRows(p);
+  ok(
+    r.ids.includes(40) && JSON.stringify(r.hits) === JSON.stringify([[40, '📷 caption: ' + CAP40]]),
+    "R13: a caption on a message's second slot is found too " + JSON.stringify(r),
+  );
+  await p.click('#lay-flat');
+  await capFilter(p, 'monolith');
+  r = await capRows(p);
+  ok(
+    JSON.stringify(r) === JSON.stringify({ ids: [31, 41], hits: [[31, '📷 caption: ' + CAP31]] }),
+    'R13: the timeline layout finds it the same way (#41 by its text, so no caption line) ' + JSON.stringify(r),
+  );
+  await capFilter(p, '#31');
+  r = await capRows(p);
+  ok(r.ids.join() === '31' && !r.hits.length, 'R13: "#31" finds the message by number, with no caption line');
+  await p.click('#lay-thread');
+  await p0.click('#lay-thread');
+
+  // a message matched by its text alone is drawn exactly as without captions
+  for (const q of ['pack', 'still available']) {
+    await capFilter(p, q);
+    await capFilter(p0, q);
+    const [a, b] = [await capRows(p), await capRows(p0)];
+    const html = pg =>
+      pg.evaluate(
+        ids => ids.map(i => document.querySelector('#m' + i).outerHTML),
+        b.ids.filter(i => i !== 31 && i !== 41),
+      );
+    const same = JSON.stringify(await html(p)) === JSON.stringify(await html(p0));
+    ok(
+      same && b.ids.every(i => a.ids.includes(i)) && a.hits.every(h => h[0] === 31 || h[0] === 41) && !b.hits.length,
+      'R13: "' +
+        q +
+        '": messages matched by text are unchanged, the caption line only on #31 and #41 ' +
+        JSON.stringify(a.hits),
+    );
+  }
+  await capFilter(p, 'pack');
+  r = await capRows(p);
+  ok(
+    JSON.stringify(r.hits.map(h => h[0])) === '[31,41]' && r.ids.includes(30) && r.ids.includes(35),
+    'R13: "pack" matches #30 and #35 by text and #31 and #41 by their captions ' + JSON.stringify(r.hits),
+  );
+  await capFilter(p, '');
+  await capFilter(p0, '');
+  ok(!(await capRows(p)).hits.length, 'R13: no filter, no caption lines');
+
+  // alt and title
+  ok(
+    JSON.stringify(await capImgs(p)) ===
+      JSON.stringify([
+        ['m31', CAP31, CAP31],
+        ['m40', CAP40, CAP40],
+        ['m40', 'Photo 2 from Cy', null],
+      ]),
+    "R13: each photo's caption is its alt and title, by slot (#40's slot 0 is owed); one without keeps its alt " +
+      JSON.stringify(await capImgs(p)),
+  );
+
+  // the viewer shows the caption under the photo
+  let lb = await capLightbox(p, '#m31 .pics a');
+  ok(
+    lb.open && lb.cap === CAP31 && lb.shown && lb.alt === CAP31,
+    'R13: the photo viewer shows the caption on a line under the photo ' + JSON.stringify(lb),
+  );
+  await p.keyboard.press('Escape');
+  lb = await capLightbox(p, '#m40 .pics a');
+  ok(lb.cap === CAP40 && lb.shown, "R13: #40's first stored photo shows slot 1's caption " + JSON.stringify(lb));
+  await p.keyboard.press('ArrowRight');
+  lb = await p.evaluate(() => {
+    const c = document.querySelector('#lb .lbcap');
+    return { cap: c.textContent, hidden: c.hidden, alt: document.querySelector('#lb .stage img').alt };
+  });
+  ok(
+    lb.hidden && lb.cap === '' && lb.alt === 'Photo 2 of 2',
+    'R13: the next photo, with no caption, shows no caption line ' + JSON.stringify(lb),
+  );
+  await p.keyboard.press('Escape');
+
+  // Ask and Views read them in the message lines
+  const lines = await p.evaluate(() => [31, 40, 32].map(i => lineFor(S.byI.get(i))));
+  ok(
+    lines[0].endsWith('Ana:  [photo: ' + CAP31 + ']') &&
+      lines[1].endsWith('Cy:  [photo: ' + CAP40 + ']') &&
+      !/\[photo/.test(lines[2]),
+    'R13: the message lines Ask and Views send carry each photo caption ' + JSON.stringify(lines.slice(0, 2)),
+  );
+
+  // a caption written while the page is open shows at once
+  await p.evaluate(() => __rt.write('captions/b0', { start: 0, byK: { 31: { 0: 'blue Ultra Monolith pack' } } }));
+  await p.waitForTimeout(300);
+  await capFilter(p, 'green');
+  r = await capRows(p);
+  await capFilter(p, '');
+  const imgs = await capImgs(p);
+  ok(
+    !r.ids.includes(31) && imgs[0][1] === 'blue Ultra Monolith pack' && imgs[1][1] === 'Photo 1 from Cy',
+    'R13: a new captions document replaces the old at once ' + JSON.stringify(imgs),
+  );
+  ok(p.errors.length === 0, 'R13: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // no captions collection: everything as before, no errors
+  ok(
+    JSON.stringify(await capImgs(p0)) ===
+      JSON.stringify([
+        ['m31', 'Photo 1 from Ana', null],
+        ['m40', 'Photo 1 from Cy', null],
+        ['m40', 'Photo 2 from Cy', null],
+      ]),
+    'R13: no captions: the usual alt text, no title',
+  );
+  await capFilter(p0, 'green');
+  r = await capRows(p0);
+  ok(!r.ids.includes(31) && !r.hits.length, 'R13: no captions: the filter finds only text ' + JSON.stringify(r));
+  await capFilter(p0, '');
+  lb = await capLightbox(p0, '#m31 .pics a');
+  ok(lb.open && !lb.shown && lb.alt === 'Photo 1 of 1', 'R13: no captions: the viewer has no caption line');
+  await p0.keyboard.press('Escape');
+  ok(
+    (await p0.evaluate(() => lineFor(S.byI.get(31)))).endsWith('Ana:  [photo]'),
+    'R13: no captions: the line says [photo]',
+  );
+  // documents it can't use are skipped
+  await p0.evaluate(() => {
+    __rt.write('captions/index', { byK: { 31: { 0: 'not a block' } } });
+    __rt.write('captions/b500', { start: 500, byK: 'nonsense' });
+    __rt.write('captions/b0', { start: 0, byK: { abc: { 0: 'x' }, 31: { 0: 5, k: 'y', 1: '  ' }, 40: null } });
+  });
+  await p0.waitForTimeout(300);
+  ok(
+    JSON.stringify(await capImgs(p0)) ===
+      JSON.stringify([
+        ['m31', 'Photo 1 from Ana', null],
+        ['m40', 'Photo 1 from Cy', null],
+        ['m40', 'Photo 2 from Cy', null],
+      ]) && (await p0.evaluate(() => Object.keys(S.caps).length)) === 0,
+    'R13: malformed captions documents and entries are ignored',
+  );
+  ok(p0.errors.length === 0, 'R13: no captions: no page errors ' + JSON.stringify(p0.errors));
+  await p0.context().close();
+}
 const SECTIONS = {
   importer,
   robustness,
@@ -12134,6 +12391,7 @@ const SECTIONS = {
   viewsTab,
   packs,
   packs2,
+  captions,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1

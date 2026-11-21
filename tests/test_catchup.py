@@ -4270,6 +4270,251 @@ def read_page():
         return fh.read()
 
 
+class TestCaptions(unittest.TestCase):
+    """R13: photo captions, written by Claude with the build (`captions`) or by `catchup.py captions` for older photos,
+    stored one document per 500 messages and merged slot by slot so nothing else in a block is lost."""
+
+    CAP = "green Ultra Monolith pack, side view, coyote straps, price tag $180"
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def seeded(self, old, new, listed=None):
+        """old built in one conversation; a RUN importing new into it, with step 5's `list captions` (listed:
+        {doc id: document}; {} = an empty collection; None = no folder)"""
+        th = {
+            "convs": [{"id": "a", "title": "Packs", "members": [m["i"] for m in old]}],
+            "links": {},
+            "to": old[-1]["i"],
+        }
+        self.e.seed(old, threading=th)
+        run = self.e.run(new)
+        if listed is not None:
+            os.makedirs(os.path.join(run, "captions"), exist_ok=True)
+            for k, v in listed.items():
+                w(os.path.join(run, "captions", k + ".json"), v)
+        return run, {"join": {"a": [m["i"] for m in new]}}
+
+    def history(self, n=6):
+        return [msg(i, ["Ana", "Ben"][i % 2], "text %d" % i, p="att%d" % i if i % 3 == 0 else None) for i in range(n)]
+
+    def written(self, run):
+        """{doc id: (pinned, document)} of the captions in the manifest (all in its first batch)"""
+        man = r(os.path.join(run, "out", "manifest.json"))
+        later = [x for bt in man["batches"][1:] for x in bt if x["collection"] == "captions"]
+        self.assertEqual(later, [], "captions go in the first batch")
+        return {
+            x["doc_id"]: (x.get("pin", False), r(x["file_path"]))
+            for x in man["batches"][0]
+            if x["collection"] == "captions"
+        }
+
+    def test_a_build_writes_new_captions_to_their_block(self):
+        old = self.history()
+        new = [msg(6, "Ana", "My Ultra Monolith is up"), msg(7, "Ana", "", p="att7"), msg(8, "Ben", "", p="att8")]
+        run, spec = self.seeded(old, new, listed={})
+        spec["captions"] = {"7": {"0": "  " + self.CAP + "  ", "1": "back panel, frame sheet"}, "3": {"0": "a stove"}}
+        out = self.e.build(run, spec)
+        self.assertIn("3 captions (3 new, 0 replaced)", out)
+        got = self.written(run)
+        self.assertEqual(list(got), ["b0"])
+        pinned, doc = got["b0"]
+        self.assertFalse(pinned, "a new block is created, not pinned")
+        self.assertEqual(
+            doc, {"start": 0, "byK": {"3": {"0": "a stove"}, "7": {"0": self.CAP, "1": "back panel, frame sheet"}}}
+        )
+        self.assertNotIn(spec["captions"]["7"]["0"], json.dumps(doc), "stored trimmed")
+
+    def test_merges_into_the_listed_block_and_keeps_the_rest(self):
+        old = self.history()
+        listed = {
+            "b0": {"start": 0, "byK": {"0": {"0": "a tent"}, "3": {"0": "a stove", "1": "its case"}}},
+            "b500": {"start": 500, "byK": {"512": {"0": "far away"}}},
+        }
+        run, spec = self.seeded(old, [msg(6, "Ana", "", p="att6")], listed=listed)
+        spec["captions"] = {"6": {"0": self.CAP}, "3": {"1": "its blue case"}}
+        out = self.e.build(run, spec)
+        self.assertIn("2 captions (1 new, 1 replaced)", out)
+        got = self.written(run)
+        self.assertEqual(list(got), ["b0"], "a block nothing changed isn't written")
+        pinned, doc = got["b0"]
+        self.assertTrue(pinned, "the listed block is pinned with step 5's version")
+        self.assertEqual(
+            doc["byK"],
+            {"0": {"0": "a tent"}, "3": {"0": "a stove", "1": "its blue case"}, "6": {"0": self.CAP}},
+            "every other caption, and the other slot of #3, stay",
+        )
+
+    def test_blocks_of_500_messages(self):
+        sl = catchup._caption_docs({3: {0: "x"}, 499: {0: "y"}, 500: {2: "z"}, 1234: {0: "w"}}, {})[0]
+        self.assertEqual(sorted(sl), ["captions/b0", "captions/b1000", "captions/b500"])
+        self.assertEqual(sl["captions/b500"], {"start": 500, "byK": {"500": {"2": "z"}}})
+        self.assertEqual(sorted(sl["captions/b0"]["byK"]), ["3", "499"])
+
+    def test_bad_captions_are_refused_before_anything_is_written(self):
+        old = self.history()
+        cases = [
+            ({"6": "just a string"}, "one entry per photo slot"),
+            ({"6": {}}, "one entry per photo slot"),
+            ({"x6": {"0": "a"}}, "not a message number"),
+            ({"06": {"0": "a"}}, "not a message number"),
+            ({"6": {"a": "b"}}, "not a photo slot"),
+            ({"6": {"100": "b"}}, "not a photo slot"),
+            ({"6": {"0": ""}}, "non-empty string"),
+            ({"6": {"0": "   "}}, "non-empty string"),
+            ({"6": {"0": 5}}, "non-empty string"),
+            ({"6": {"0": "two\nlines"}}, "one line"),
+            ({"6": {"0": "x" * 201}}, "over 200"),
+            ({"99": {"0": "a"}}, "no stored message"),
+            ({"1": {"0": "a"}}, "has no photo"),
+            ([["6", "a"]], "message number, photo slot"),
+        ]
+        for c, pat in cases:
+            with self.subTest(c=c):
+                t = tempfile.TemporaryDirectory()
+                e = Env(t.name)
+                th = {"convs": [{"id": "a", "title": "P", "members": list(range(6))}], "links": {}, "to": 5}
+                e.seed(old, threading=th)
+                run = e.run([msg(6, "Ana", "", p="att6")])
+                os.makedirs(os.path.join(run, "captions"))
+                with self.assertRaisesRegex(AssertionError, re.escape(pat)):
+                    e.build(run, {"join": {"a": [6]}, "captions": c})
+                self.assertEqual(e.state()["base"], 5, "WORK didn't move")
+                self.assertFalse(os.path.exists(os.path.join(run, "out", "manifest.json")))
+                t.cleanup()
+        self.assertTrue(catchup._caption_entries({"6": {"0": "x" * 200}}, lambda i, k: None), "200 is fine")
+
+    def test_a_caption_needs_the_listing(self):
+        old = self.history()
+        run, spec = self.seeded(old, [msg(6, "Ana", "", p="att6")], listed=None)
+        spec["captions"] = {"6": {"0": self.CAP}}
+        with self.assertRaisesRegex(AssertionError, "no captions/ folder: list the captions collection"):
+            self.e.build(run, spec)
+        # without captions the folder isn't needed, and nothing is written for them
+        out = self.e.build(run, {"join": {"a": [6]}})
+        self.assertIn("0 captions", out)
+        self.assertEqual(self.written(run), {})
+
+    def test_a_caption_on_an_older_stored_message(self):
+        old = self.history()
+        run, spec = self.seeded(old, [msg(6, "Ben", "ok")], listed={})
+        spec["captions"] = {"0": {"0": "an older photo, stored by this run's backfill"}}
+        self.e.build(run, spec)
+        self.assertIn("0", self.written(run)["b0"][1]["byK"])
+
+    # catchup.py captions: the backfill for photos stored before captions
+
+    def backfill_run(self, photos, captions=None):
+        old = self.history(12)
+        th = {
+            "convs": [{"id": "a", "title": "Packs", "members": list(range(12))}],
+            "links": {"4": [3, "r"]},
+            "to": 11,
+        }
+        self.e.seed(old, threading=th)
+        run = os.path.join(self.t.name, "bf")
+        shutil.rmtree(run, ignore_errors=True)
+        for k, v in photos.items():
+            w(os.path.join(run, "photos", k + ".json"), v)
+        os.makedirs(os.path.join(run, "captions"), exist_ok=True)
+        for k, v in (captions or {}).items():
+            w(os.path.join(run, "captions", k + ".json"), v)
+        return run
+
+    def cmd(self, run, spec=None, most=catchup.CAPTION_BATCH):
+        p = None
+        if spec is not None:
+            p = os.path.join(self.t.name, "capspec.json")
+            w(p, spec)
+        return quiet(catchup.captions_cmd, self.e.work, run, p, most)
+
+    PHOTOS = {
+        "b0": {
+            "start": 0,
+            "byK": {
+                "0": {"0": "/_blob/a0"},
+                "3": {"0": None, "1": "/_blob/a3"},
+                "6": {"0": "/_blob/pk1#4"},
+                "9": {"0": {"e": "too_large"}, "1": "/_blob/pk1#5"},
+            },
+            "pv": {"6": {"0": "/_blob/pv1#4"}},
+        },
+        "index": {"byI": {"1": ["/_blob/old1"]}, "byK": {}},
+    }
+
+    def test_lists_photos_without_a_caption_oldest_first(self):
+        run = self.backfill_run(self.PHOTOS, {"b0": {"start": 0, "byK": {"0": {"0": "a tent"}}}})
+        out = self.cmd(run)
+        self.assertIn("captions todo: 4 of 4 stored photos without a caption, oldest first (#1 to #9)", out)
+        rows = r(os.path.join(run, "out", "captions-todo.json"))
+        self.assertEqual(
+            rows,
+            [
+                {"i": 1, "k": 0, "asset": "old1"},
+                {"i": 3, "k": 1, "asset": "a3"},
+                {"i": 6, "k": 0, "pack": "pk1", "n": 4, "preview": "pv1", "pn": 4},
+                {"i": 9, "k": 1, "pack": "pk1", "n": 5},
+            ],
+            "owed and given-up slots, and #0's captioned photo, are left out",
+        )
+        with open(os.path.join(run, "out", "captions-todo.txt"), encoding="utf-8") as fh:
+            txt = fh.read()
+        self.assertIn("#6/0: preview pv1 item 4\n", txt)
+        self.assertIn("#9/1: pack pk1 item 5 (no preview)\n", txt)
+        self.assertIn('  in "Packs"', txt)
+        self.assertIn("  * #3 ", txt, "the photo's own message is marked")
+        self.assertIn("    #4 ", txt, "with the messages around it")
+        # --max: a smaller batch
+        self.assertIn("2 of 4", self.cmd(run, most=2))
+        self.assertEqual(len(r(os.path.join(run, "out", "captions-todo.json"))), 2)
+
+    def test_writes_a_batch_and_resumes_where_it_stopped(self):
+        run = self.backfill_run(self.PHOTOS, {"b0": {"start": 0, "byK": {"0": {"0": "a tent"}}}})
+        out = self.cmd(run, {"captions": {"1": {"0": "a red stove"}, "3": {"1": self.CAP}}})
+        self.assertIn("captions ok: 2 captions (2 new, 0 replaced); 2 stored photos still without one", out)
+        man = r(os.path.join(run, "out", "manifest.json"))
+        self.assertEqual(len(man["batches"]), 1)
+        (e,) = man["batches"][0]
+        self.assertEqual((e["collection"], e["doc_id"], e["op"], e.get("pin")), ("captions", "b0", "set", True))
+        self.assertEqual(
+            r(e["file_path"])["byK"], {"0": {"0": "a tent"}, "1": {"0": "a red stove"}, "3": {"1": self.CAP}}
+        )
+        self.assertEqual(self.e.state()["base"], 11, "WORK doesn't move")
+        # once it lands, the next listing starts after them
+        shutil.copy(e["file_path"], os.path.join(run, "captions", "b0.json"))
+        self.assertIn("captions todo: 2 of 2 stored photos without a caption, oldest first (#6 to #9)", self.cmd(run))
+
+    def test_backfill_refuses_slots_that_hold_no_stored_photo(self):
+        run = self.backfill_run(self.PHOTOS)
+        for c in ({"3": {"0": "owed"}}, {"9": {"0": "given up"}}, {"2": {"0": "no photo"}}, {"3": {"2": "no slot"}}):
+            with self.subTest(c=c):
+                with self.assertRaisesRegex(AssertionError, "no stored photo in that slot"):
+                    self.cmd(run, {"captions": c})
+        with self.assertRaisesRegex(AssertionError, 'takes only "captions"'):
+            self.cmd(run, {"captions": {"1": {"0": "x"}}, "join": {}})
+
+    def test_nothing_left(self):
+        run = self.backfill_run({"b0": {"start": 0, "byK": {"0": {"0": "/_blob/a0"}}}})
+        self.cmd(run, {"captions": {"0": {"0": "a tent"}}})
+        shutil.copy(os.path.join(run, "out", "captions", "b0.json"), os.path.join(run, "captions", "b0.json"))
+        self.assertIn("every stored photo has a caption: done", self.cmd(run))
+
+    def test_cli(self):
+        import subprocess
+
+        run = self.backfill_run(self.PHOTOS)
+        py = os.path.join(ROOT, "plugin", "skills", "refresh", "scripts", "catchup.py")
+        p = subprocess.run(
+            [sys.executable, py, "captions", self.e.work, run, "--max=1"], capture_output=True, text=True
+        )
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("captions todo: 1 of 5 stored photos without a caption, oldest first (#0 to #0)", p.stdout)
+
+
 class TestCli(unittest.TestCase):
     def test_usage_on_unknown_command(self):
         import subprocess
