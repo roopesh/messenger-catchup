@@ -9779,8 +9779,12 @@ async function viewsTab() {
    as "Dee", under the nickname "Deedee", and once as "Deedee" without a full name (the page ties it to her), so she
    must count as one person; two Bens are told apart by their full names. Per person over all 27: Ana 9, Ben Brooks 6,
    Dee 5, Cy 3, You 3, Ben Ortiz 1. #5 is a photo, #26 a GIF; #6 has one link and #23 two. Threading has four
-   conversations (Nov 1, 12, 19, 20) and the loose messages; the summary has a deal posted Nov 12 and sold Nov 19 (#20),
-   and one posted today. */
+   conversations (Nov 1, 12, 19, 20; Ben's #22 today closes the Nov 12 one) and the loose messages; the summary has a
+   deal posted Nov 12 and sold Nov 19 (#20), and one posted today and pending (#24).
+   Part 2 adds: the summary's tags (Trip, For sale, Gear talk, For sale); claims (Dee #7, You #8 for 2, Dee #25);
+   threading links (#6 answers #5, #14 quotes #12, #19 replies to #18, #17 continues #16); questions #5 (first
+   answered by #6, 10 min), #9 (by #13, 20 min) and #24 (by #25, 5 min) answered, #1 and #26 open; and "tent" whole
+   in #0, #6 (as TENT), #13, #16 (tent-pole), #22 and #24, but not "Tents" (#2) or "contents" (#17). */
 const ST_NOW = Date.parse('2026-11-20T20:00:00Z');
 function stMsgs() {
   const L = [];
@@ -9793,28 +9797,33 @@ function stMsgs() {
   const ANA = { fn: 'Ana Alvarez' },
     BEN = { fn: 'Ben Brooks' },
     DEE = { fn: 'Dee Dalton' };
-  add('2026-11-01', '9:05', 'Ana', ANA); /* 0 */
+  add('2026-11-01', '9:05', 'Ana', Object.assign({ b: 'Who is up for a tent trip?' }, ANA)); /* 0 */
   add('2026-11-01', '9:10', 'Ana', ANA);
-  add('2026-11-01', '9:20', 'Ben', BEN);
+  add('2026-11-01', '9:20', 'Ben', Object.assign({ b: 'Tents are cheap now' }, BEN));
   add('2026-11-01', '14:00', 'Cy');
   add('2026-11-01', '14:05', 'Deedee'); /* 4: no full name */
   add('2026-11-12', '19:30', 'Ana', Object.assign({ b: '', p: 'att5' }, ANA)); /* 5: a photo */
-  add('2026-11-12', '19:40', 'Ben', Object.assign({ l: ['https://example.com/tent'] }, BEN));
+  add(
+    '2026-11-12',
+    '19:40',
+    'Ben',
+    Object.assign({ b: 'How much for the TENT?', l: ['https://example.com/tent'] }, BEN),
+  );
   add('2026-11-12', '19:45', 'Deedee', DEE);
   add('2026-11-12', '20:15', 'You');
   ['10:00', '10:05', '10:10', '10:15'].forEach(t => add('2026-11-19', t, 'Ana', ANA)); /* 9-12 */
-  add('2026-11-19', '10:20', 'Ben', BEN);
+  add('2026-11-19', '10:20', 'Ben', Object.assign({ b: 'Is the tent still around?' }, BEN));
   add('2026-11-19', '10:25', 'Ben', BEN);
   add('2026-11-19', '10:30', 'Dee', DEE); /* 15 */
-  add('2026-11-19', '11:00', 'Cy');
-  add('2026-11-19', '11:05', 'Cy');
+  add('2026-11-19', '11:00', 'Cy', { b: 'tent-pole question' });
+  add('2026-11-19', '11:05', 'Cy', { b: 'The contents arrived' });
   add('2026-11-19', '11:10', 'You');
   add('2026-11-19', '11:20', 'Ben', { fn: 'Ben Ortiz' });
   add('2026-11-19', '15:00', 'Ben', Object.assign({ r: 'Ana' }, BEN)); /* 20: a reply known by name only */
   add('2026-11-19', '15:10', 'Deedee', Object.assign({ r: 'Ana', pi: 12 }, DEE));
-  add('2026-11-20', '8:00', 'Ben', BEN); /* 22 */
+  add('2026-11-20', '8:00', 'Ben', Object.assign({ b: 'Tent sold?' }, BEN)); /* 22 */
   add('2026-11-20', '8:30', 'Ana', Object.assign({ l: ['https://example.com/a', 'https://example.com/b'] }, ANA));
-  add('2026-11-20', '10:15', 'You');
+  add('2026-11-20', '10:15', 'You', { b: 'My tent is pending' });
   add('2026-11-20', '10:20', 'Dee', Object.assign({ r: 'You', pi: 24 }, DEE));
   add('2026-11-20', '11:00', 'Ana', Object.assign({ b: '' }, ANA)); /* 26: a GIF */
   return L;
@@ -9826,23 +9835,54 @@ function stDocs() {
     'threading/current': {
       convs: [
         conv('c1', [0, 1, 2]),
-        conv('c2', [5, 6, 7, 8]),
+        conv('c2', [5, 6, 7, 8, 22]),
         conv('c3', [21, 20].concat(ids(9, 19))),
-        conv('c4', ids(22, 26)),
+        conv('c4', ids(23, 26)),
         conv('loose', [3, 4]),
       ],
-      links: {},
+      links: { 6: [5, 'i'], 14: [12, 'rq'], 17: [16, 'c'], 19: [18, 'r'] },
       to: 26,
       note: '',
     },
     'summary/current': {
       version: 2,
-      convs: [],
-      open: [],
-      answered: [],
+      convs: [
+        { id: 'c4', tag: 'For sale' },
+        { id: 'c3', tag: 'Gear talk' },
+        { id: 'c2', tag: 'For sale' },
+        { id: 'c1', tag: 'Trip' },
+      ],
+      open: [
+        { conv: 'c4', ask: 26, to: 'anyone', note: '' },
+        { conv: 'c1', ask: 1, to: 'anyone', note: '' },
+      ],
+      answered: [
+        { conv: 'c4', ask: 24, answer: 'yes', refs: [25] },
+        { conv: 'c3', ask: 9, answer: 'yes', refs: [13] },
+        { conv: 'c2', ask: 5, answer: 'yes', refs: [7] },
+      ],
       deals: [
-        { conv: 'c2', refs: [5, 6], tag: 'For sale', status: 'sold', statusAt: 20 },
-        { conv: 'c4', refs: [23], tag: 'For sale' },
+        {
+          conv: 'c2',
+          refs: [5, 6],
+          tag: 'For sale',
+          text: 'Tent, $80',
+          status: 'sold',
+          statusAt: 20,
+          claims: [
+            { i: 7, who: 'Deedee' },
+            { i: 8, who: 'You', n: 2 },
+          ],
+        },
+        {
+          conv: 'c4',
+          refs: [23],
+          tag: 'For sale',
+          text: 'Stove, $40',
+          status: 'pending',
+          statusAt: 24,
+          claims: [{ i: 25, who: 'Dee' }],
+        },
       ],
       mentions: [],
       toI: 26,
@@ -9870,7 +9910,7 @@ const stState = p =>
     const q = s => document.querySelector(s);
     const tiles = {};
     document
-      .querySelectorAll('#st-body .st-tile')
+      .querySelectorAll('#st-body > [data-sec="tiles"] .st-tile, #st-body > [data-sec="p-tiles"] .st-tile')
       .forEach(t => (tiles[t.dataset.k] = t.querySelector('.n').textContent));
     const list = sel =>
       [...document.querySelectorAll(sel + ' .st-top li')].map(li =>
@@ -9882,7 +9922,7 @@ const stState = p =>
       tiles,
       span: q('#st-span').textContent,
       reset: !q('#st-reset').hidden,
-      secs: [...document.querySelectorAll('#st-body > .st-sec')].map(s => s.dataset.sec),
+      secs: [...document.querySelectorAll('#st-body > .st-sec')].filter(s => !s.hidden).map(s => s.dataset.sec),
       top: list('#st-body > [data-sec="top"]'),
       replies: list('#st-body > [data-sec="p-replies"]'),
       volume: bars('volume'),
@@ -9891,7 +9931,7 @@ const stState = p =>
       personHours: bars('person-hours'),
       head: (q('#st-body .st-head h3') || {}).textContent || null,
       tf: (q('#v-stats [data-tf][aria-pressed="true"]') || { dataset: {} }).dataset.tf || null,
-      title: [...document.querySelectorAll('#st-body > .st-sec h3')].map(h => h.textContent),
+      title: [...document.querySelectorAll('#st-body > .st-sec:not([hidden]) h3')].map(h => h.textContent),
     };
   });
 /* the middle of bar k of a chart, scrolled into view */
@@ -9932,6 +9972,7 @@ const ST_ALL = {
   deals: '2',
   sold: '1',
 };
+const ST_SECS = ['tiles', 'volume', 'top', 'heat', 'convs', 'deals', 'people', 'engage', 'words'];
 const ST_TOP = ['Ana 9 33.3%', 'Ben Brooks 6 22.2%', 'Dee 5 18.5%', 'Cy 3 11.1%', 'You 3 11.1%', 'Ben Ortiz 1 3.7%'];
 const stSame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -9954,7 +9995,7 @@ async function stats() {
       'F31 ST1: the Stats tab opens from the nav alone and marked current ' + JSON.stringify(nav).slice(0, 120),
     );
     ok(
-      s.tf === 'd30' && stSame(s.tiles, ST_ALL) && stSame(s.secs, ['tiles', 'volume', 'top', 'heat']),
+      s.tf === 'd30' && stSame(s.tiles, ST_ALL) && stSame(s.secs, ST_SECS),
       'F31 ST1: on 30 days the tiles count all 27 messages: text, people, photos and GIFs, links, busiest hour, top 5, yours, conversations, deals ' +
         JSON.stringify(s.tiles),
     );
@@ -10259,8 +10300,11 @@ async function stats() {
     await p.waitForTimeout(150);
     const ben = await stState(p);
     ok(
-      f === 'FDee Dalton' && ben.head === 'Ben Brooks' && stSame(ben.replies, ['Ana 1 100.0%']),
-      'F31 ST6: Back focuses her name again; Ben Brooks replied to Ana by name only ' +
+      f === 'FDee Dalton' &&
+        ben.head === 'Ben Brooks' &&
+        stSame(ben.replies, ['Ana 3 100.0%']) &&
+        ben.tiles.replies === '3',
+      'F31 ST6: Back focuses her name again; Ben Brooks replied to Ana three times: by name only (#20), and by the links threading found (#6 answers her, #14 quotes her) ' +
         JSON.stringify([f, ben.replies]),
     );
     /* from a day, a person's chart covers that day */
@@ -10409,14 +10453,12 @@ async function stats() {
         k => document.querySelector('#v-stats input[data-sec="' + k + '"]').checked,
       ),
     );
+    const rest = ST_SECS.filter(k => k !== 'tiles' && k !== 'heat');
     ok(
-      stSame(s1.secs, ['volume', 'top']) &&
-        stSame(s2.secs, ['volume', 'top']) &&
-        boxes.join() === 'false,true,true,false',
+      stSame(s1.secs, rest) && stSame(s2.secs, rest) && boxes.join() === 'false,true,true,false',
       'F31 ST9: Numbers and Heatmap switched off stay off after a reload ' + JSON.stringify([s1.secs, s2.secs, boxes]),
     );
-    await p.click('#v-stats input[data-sec="volume"]');
-    await p.click('#v-stats input[data-sec="top"]');
+    for (const k of rest) await p.click('#v-stats input[data-sec="' + k + '"]');
     await p.waitForTimeout(100);
     const none = await p.evaluate(() => (document.querySelector('#st-body .empty') || {}).textContent || '');
     ok(/Every section is switched off/.test(none), 'F31 ST9: with every section off, one line says so: "' + none + '"');
@@ -10629,6 +10671,49 @@ async function stats() {
       S.stats.v++;
       renderStats(true);
       const t5 = performance.now();
+      /* part 2: threading with a conversation per 30 messages and every third message a reply to the one before; a
+         summary with a tag per conversation, a deal per 120 messages (each claimed, every other one sold) and a
+         question per 60 (every other one answered) */
+      const T = { convs: [], links: {} };
+      for (let c = 0; c < 6000; c++)
+        T.convs.push({ id: 'c' + c, title: 'Topic ' + c, members: Array.from({ length: 30 }, (_, k) => c * 30 + k) });
+      for (let i = 3; i < 180000; i += 3) T.links[i] = [i - 1, 'r'];
+      const SM = { convs: [], open: [], answered: [], deals: [] };
+      T.convs.forEach((c, k) => SM.convs.push({ id: c.id, tag: ['For sale', 'Trip', 'Gear talk'][k % 3] }));
+      for (let i = 0; i + 40 < 180000; i += 120) {
+        const x = { conv: 'c' + Math.floor(i / 30), refs: [i], tag: 'For sale', text: 'Item ' + i };
+        x.claims = [{ i: i + 5, who: cast[(i + 5) % 5] }];
+        if (i % 240 === 0) Object.assign(x, { status: 'sold', statusAt: i + 40 });
+        SM.deals.push(x);
+      }
+      for (let i = 1; i + 10 < 180000; i += 60) {
+        if (i % 120 === 1) SM.answered.push({ conv: 'c' + Math.floor(i / 30), ask: i, answer: 'yes', refs: [i + 10] });
+        else SM.open.push({ conv: 'c' + Math.floor(i / 30), ask: i, to: 'anyone', note: '' });
+      }
+      const t6 = performance.now();
+      S.threading = T;
+      S.summary = SM;
+      stLinks(statsBase());
+      const t7 = performance.now();
+      S.stats.tf = 'd30';
+      S.stats.v++;
+      renderStats(true);
+      const t8 = performance.now();
+      const busiest = document.querySelectorAll('#st-body [data-list="busiest"] > li').length;
+      const pairs = document.querySelectorAll('#st-body [data-list="pairs"] > li').length;
+      const deals = document.querySelectorAll('#st-body [data-list="deals"] > li').length;
+      const more = (document.querySelector('#st-body > [data-sec="deals"] > button.link') || {}).textContent;
+      const moreC = [...document.querySelectorAll('#st-body > [data-sec="convs"] > p.note')]
+        .map(x => x.textContent)
+        .find(t => /^And /.test(t));
+      S.stats.tf = 'all';
+      S.stats.v++;
+      renderStats(true);
+      const t9 = performance.now();
+      S.stats.word = 'message';
+      stWordsFill(true);
+      const t10 = performance.now();
+      const say = document.querySelector('#st-words .note[role="status"]').textContent;
       return {
         people: t2 - t1,
         base: t3 - t2,
@@ -10638,6 +10723,16 @@ async function stats() {
         bars: document.querySelectorAll('#st-body .st-chart[data-chart="volume"] g[data-k]').length,
         n: B.n,
         kind: (document.querySelector('#st-body [data-sec="volume"] h3') || {}).textContent,
+        links: t7 - t6,
+        render30: t8 - t7,
+        renderAll: t9 - t8,
+        word: t10 - t9,
+        busiest,
+        pairs,
+        deals,
+        more,
+        moreC,
+        say,
       };
     });
     console.log(
@@ -10668,7 +10763,589 @@ async function stats() {
         ' ms ' +
         JSON.stringify(r),
     );
+    console.log(
+      '  part 2 at 180,000 messages: threading read in ' +
+        r.links.toFixed(0) +
+        ' ms, 30 days with every section ' +
+        r.render30.toFixed(0) +
+        ' ms, All ' +
+        r.renderAll.toFixed(0) +
+        ' ms, a word over All ' +
+        r.word.toFixed(0) +
+        ' ms',
+    );
+    ok(
+      r.links < 1500 &&
+        r.render30 < 1000 &&
+        r.renderAll < 2000 &&
+        r.word < 1000 &&
+        r.busiest === 10 &&
+        r.pairs === 10 &&
+        r.deals === 10 &&
+        /^Show 1\d\d more$/.test(r.more) &&
+        /^And \d\d\d more conversations\.$/.test(r.moreC) &&
+        /^160,000 messages mention “message”/.test(r.say),
+      'F31 ST15: with 6,000 conversations, 60,000 links, 1,500 deals and 3,000 questions, threading is read in ' +
+        r.links.toFixed(0) +
+        ' ms, 30 days draw every section in ' +
+        r.render30.toFixed(0) +
+        ' ms, All in ' +
+        r.renderAll.toFixed(0) +
+        ' ms, and a word over All counts in ' +
+        r.word.toFixed(0) +
+        ' ms ' +
+        JSON.stringify(r),
+    );
     ok(p.errors.length === 0, 'F31 ST15: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
+/* ---------- Stats part 2 (F31) ----------
+   The same seed as stats (see there): conversations and topics, deals, people, engagement and word trends, each over
+   the timeframe, a day and a person, opening what they name. Split from stats so the two run side by side. */
+/* one section of the Stats tab, or null when it's switched off: its tiles (and their labels), its lists (rows as
+   "name count share", or a deal's text) with the line under each row, its text, and for word trends the status line
+   and the bars */
+const stPart = (p, sec) =>
+  p.evaluate(sec => {
+    const s = document.querySelector('#st-body > [data-sec="' + sec + '"]');
+    if (!s || s.hidden) return null;
+    const tiles = {},
+      labels = {},
+      lists = {},
+      subs = {};
+    s.querySelectorAll('.st-tile').forEach(t => {
+      tiles[t.dataset.k] = t.querySelector('.n').textContent;
+      labels[t.dataset.k] = t.querySelector('.l').textContent;
+    });
+    s.querySelectorAll('[data-list]').forEach(ol => {
+      const li = [...ol.children];
+      lists[ol.dataset.list] = li.map(x =>
+        ol.matches('.st-deals')
+          ? x.querySelector('.who').textContent
+          : ['.who', '.c', '.pc']
+              .map(c => x.querySelector(c).textContent)
+              .join(' ')
+              .trim(),
+      );
+      subs[ol.dataset.list] = li.map(x => (x.querySelector('.sub') || {}).textContent || '');
+    });
+    const say = s.querySelector('.note[role="status"]');
+    return {
+      tiles,
+      labels,
+      lists,
+      subs,
+      text: s.textContent,
+      say: say ? say.textContent : null,
+      bars: [...s.querySelectorAll('.st-chart g[data-k]')].map(g => +g.dataset.v),
+    };
+  }, sec);
+/* click row k (from 0) of a list in a section */
+const stRow = (p, sec, list, k) =>
+  p.click('#st-body > [data-sec="' + sec + '"] [data-list="' + list + '"] > li:nth-child(' + (k + 1) + ') button');
+/* open a person's chart from the top 10, by the name shown; returns the chart's heading */
+async function stPerson(p, name) {
+  await p.evaluate(n => {
+    const b = [...document.querySelectorAll('#st-body > [data-sec="top"] li button')].find(x => x.textContent === n);
+    b.click();
+  }, name);
+  await p.waitForTimeout(150);
+  return (await stState(p)).head;
+}
+async function stBack(p) {
+  await p.click('#st-body .st-back');
+  await p.waitForTimeout(150);
+}
+async function stDay(p, k) {
+  const b = await stBar(p, 'volume', k);
+  await p.mouse.click(b.x, b.y);
+  await p.waitForTimeout(150);
+}
+/* after a click that should open message i in Messages: the tab, the row flashing (null if it never does), and
+   whether the conversation it's in is open */
+const stAtMsg = (p, i) =>
+  until(
+    p,
+    i => {
+      const n = document.getElementById('m' + i);
+      const d = n && n.closest('details');
+      const shown = location.hash === '#messages' && !document.getElementById('v-messages').hidden;
+      return shown && n && n.classList.contains('flash') && { flash: true, inConv: !!d && d.open };
+    },
+    i,
+    3000,
+  );
+/* type into the word box key by key, as a reader does */
+async function stType(p, text) {
+  await p.click('#st-word', { clickCount: 3 });
+  await p.keyboard.press('Backspace');
+  await p.keyboard.type(text, { delay: 80 });
+}
+/* the word box: still the box first seen (window.__box) and focused, what it holds, and the status line under it */
+const stBox = p =>
+  p.evaluate(() => {
+    const b = document.getElementById('st-word');
+    const say = document.querySelector('#st-words .note[role="status"]').textContent;
+    return [b === window.__box && document.activeElement === b, b.value, say];
+  });
+
+async function stats2() {
+  /* ST17: conversations and topics: started, active, the busiest (messages, share, who posted) and the summary's
+     tags, over 30 days, today, a day and a person; a click opens the conversation in Messages */
+  await hcase('ST17', async () => {
+    const p = await stOpen();
+    const m = await stPart(p, 'convs');
+    ok(
+      stSame(m.tiles, { started: '4', active: '4' }) &&
+        stSame(m.lists.busiest, ['Topic c3 13 48.1%', 'Topic c2 5 18.5%', 'Topic c4 4 14.8%', 'Topic c1 3 11.1%']) &&
+        stSame(m.subs.busiest, [
+          '6 people: Ana, Ben Brooks, Cy, Dee +2 more',
+          '4 people: Ben Brooks, Ana, Dee, You',
+          '3 people: Ana, Dee, You',
+          '2 people: Ana, Ben Brooks',
+        ]) &&
+        stSame(m.lists.tags, ['For sale 2 50.0%', 'Gear talk 1 25.0%', 'Trip 1 25.0%']),
+      'F31 ST17: on 30 days 4 conversations started and were active; the busiest with their messages, share and people; the summary tags by conversations ' +
+        JSON.stringify(m),
+    );
+    await stTf(p, 'today');
+    const t = await stPart(p, 'convs');
+    ok(
+      stSame(t.tiles, { started: '1', active: '2' }) &&
+        stSame(t.lists.busiest, ['Topic c4 4 80.0%', 'Topic c2 1 20.0%']) &&
+        stSame(t.lists.tags, ['For sale 2 100.0%']),
+      'F31 ST17: today one conversation started and two were active (Ben came back to the Nov 12 one) ' +
+        JSON.stringify(t),
+    );
+    await stTf(p, 'd30');
+    await stDay(p, 28);
+    const d = await stPart(p, 'convs');
+    await stPerson(p, 'Ana');
+    const ana = await stPart(p, 'convs');
+    await stBack(p);
+    await stBack(p);
+    const head = await stPerson(p, 'Ana');
+    const anaAll = await stPart(p, 'convs');
+    ok(
+      stSame(d.tiles, { started: '1', active: '1' }) &&
+        stSame(d.lists.busiest, ['Topic c3 13 100.0%']) &&
+        stSame(d.lists.tags, ['Gear talk 1 100.0%']) &&
+        stSame(ana.lists.busiest, ['Topic c3 4 100.0%']) &&
+        head === 'Ana' &&
+        stSame(anaAll.tiles, { started: '4', active: '4' }) &&
+        stSame(anaAll.lists.busiest, [
+          'Topic c3 4 44.4%',
+          'Topic c1 2 22.2%',
+          'Topic c4 2 22.2%',
+          'Topic c2 1 11.1%',
+        ]) &&
+        /Where Ana posted most/.test(anaAll.text),
+      "F31 ST17: Nov 19 has its one conversation; Ana's chart, that day and over 30 days, counts her own messages " +
+        JSON.stringify([d.lists, ana.lists, anaAll.tiles, anaAll.lists]),
+    );
+    await stBack(p);
+    await stRow(p, 'convs', 'busiest', 0);
+    const at = await stAtMsg(p, 9);
+    ok(
+      at && at.flash && at.inConv,
+      'F31 ST17: a click on the busiest conversation opens Messages at its first message in the span (#9), its thread open ' +
+        JSON.stringify(at),
+    );
+    ok(p.errors.length === 0, 'F31 ST17: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST18: deals: posted, claims, sold, pending and the median time from posted to sold (with how many it's based on),
+     top sellers and claimers, and the deals posted, each opening its first message; over a day and a person too */
+  await hcase('ST18', async () => {
+    const p = await stOpen();
+    const m = await stPart(p, 'deals');
+    ok(
+      stSame(m.tiles, { posted: '2', claims: '3', sold: '1', pending: '1', tosold: '6 days 20 h' }) &&
+        m.labels.tosold === 'posted to sold, median of 1' &&
+        stSame(m.lists.sellers, ['Ana 2 100.0%']) &&
+        stSame(m.lists.claimers, ['Dee 2 66.7%', 'You 1 33.3%']) &&
+        stSame(m.lists.deals, ['For sale: Stove, $40', 'For sale: Tent, $80']) &&
+        stSame(m.subs.deals, ['Ana · Nov 20 · Pending · 1 claim', 'Ana · Nov 12 · Sold · 2 claims']),
+      'F31 ST18: on 30 days 2 posted, 3 claims, 1 sold after 6 days 20 h (Nov 12 7:30 PM to Nov 19 3 PM), 1 pending; Ana posted both, Dee claimed twice ("Deedee" is Dee) ' +
+        JSON.stringify(m),
+    );
+    await stTf(p, 'today');
+    const t = await stPart(p, 'deals');
+    await stTf(p, 'lastwk');
+    const lw = await stPart(p, 'deals');
+    ok(
+      stSame(t.tiles, { posted: '1', claims: '1', sold: '0', pending: '1', tosold: '—' }) &&
+        t.labels.tosold === 'posted to sold, median' &&
+        stSame(lw.tiles, { posted: '1', claims: '2', sold: '0', pending: '0', tosold: '—' }),
+      'F31 ST18: today one deal was posted, claimed and put on pending; last week the tent was posted and claimed twice ' +
+        JSON.stringify([t.tiles, lw.tiles]),
+    );
+    await stTf(p, 'd30');
+    await stDay(p, 28);
+    const d = await stPart(p, 'deals');
+    await stBack(p);
+    await stPerson(p, 'Dee');
+    const dee = await stPart(p, 'deals');
+    await stBack(p);
+    ok(
+      stSame(d.tiles, { posted: '0', claims: '0', sold: '1', pending: '0', tosold: '6 days 20 h' }) &&
+        !d.lists.deals &&
+        stSame(dee.tiles, { posted: '0', claims: '2', sold: '0', pending: '0', tosold: '—' }) &&
+        dee.labels.claims === 'claims made' &&
+        !dee.lists.sellers,
+      'F31 ST18: Nov 19 is the day the tent sold; Dee made two claims and posted no deal ' +
+        JSON.stringify([d.tiles, dee.tiles]),
+    );
+    /* a seller's name opens their chart, and Back comes back to it */
+    await stRow(p, 'deals', 'sellers', 0);
+    await p.waitForTimeout(150);
+    const head = (await stState(p)).head;
+    await stBack(p);
+    const f = await p.evaluate(() => {
+      const a = document.activeElement;
+      return a && a.closest('[data-list]') && [a.closest('[data-list]').dataset.list, a.closest('li').dataset.pk];
+    });
+    ok(
+      head === 'Ana' && stSame(f, ['sellers', 'FAna Alvarez']),
+      "F31 ST18: a seller's name opens their chart; Back focuses it again " + JSON.stringify([head, f]),
+    );
+    await p.click('#st-body > [data-sec="deals"] [data-list="deals"] > li:nth-child(2) button');
+    const at = await stAtMsg(p, 5);
+    ok(at && at.flash, 'F31 ST18: a click on a deal opens its first message (#5) in Messages ' + JSON.stringify(at));
+    ok(p.errors.length === 0, 'F31 ST18: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST19: people: new voices (first stored message in the span) and gone quiet (posted in the 30 days before, not in
+     it), over 30 days, today, last week and 7 days; first and last seen on a person's chart, each opening its message */
+  await hcase('ST19', async () => {
+    const p = await stOpen();
+    const m = await stPart(p, 'people');
+    ok(
+      stSame(m.tiles, { new: '6', quiet: '0' }) &&
+        stSame(m.lists.new, [
+          'Ana 9 33.3%',
+          'Ben Brooks 6 22.2%',
+          'Cy 3 11.1%',
+          'Dee 5 18.5%',
+          'You 3 11.1%',
+          'Ben Ortiz 1 3.7%',
+        ]) &&
+        m.subs.new[5] === 'first message Nov 19' &&
+        /Stored history starts Nov 1: everyone posting from then counts as new\./.test(m.text),
+      'F31 ST19: on 30 days, which reach the start of the history, all six are new, in the order they first posted; a note says why ' +
+        JSON.stringify(m),
+    );
+    await stTf(p, 'today');
+    const t = await stPart(p, 'people');
+    await stTf(p, 'lastwk');
+    const lw = await stPart(p, 'people');
+    await stTf(p, 'd7');
+    const d7 = await stPart(p, 'people');
+    ok(
+      stSame(t.tiles, { new: '0', quiet: '2' }) &&
+        stSame(t.lists.quiet, ['Cy 3', 'Ben Ortiz 1']) &&
+        stSame(t.subs.quiet, ['last message Nov 19', 'last message Nov 19']) &&
+        stSame(lw.lists.new, ['You 1 25.0%']) &&
+        stSame(lw.lists.quiet, ['Cy 1']) &&
+        stSame(d7.lists.new, ['Ben Ortiz 1 5.6%']) &&
+        d7.tiles.quiet === '0' &&
+        !/Stored history starts/.test(t.text),
+      'F31 ST19: today Cy and Ben Ortiz went quiet; last week You were new and Cy quiet; the last 7 days brought Ben Ortiz ' +
+        JSON.stringify([t.lists, lw.lists, d7.lists]),
+    );
+    await stTf(p, 'd30');
+    await stPerson(p, 'Dee');
+    const dee = await stPart(p, 'people');
+    const secs = (await stState(p)).secs;
+    ok(
+      stSame(dee.tiles, { first: 'Nov 1', last: 'Nov 20' }) &&
+        dee.text.endsWith(
+          'First message #4 (Sun, Nov 1, 2:05 PM); last #25 (Fri, Nov 20, 10:20 AM). Stored history starts Nov 1, so they may have posted before.',
+        ) &&
+        secs[1] === 'people',
+      "F31 ST19: Dee's chart says when she was first and last seen, under her numbers " + JSON.stringify([dee, secs]),
+    );
+    await stBack(p);
+    await stPerson(p, 'Ben Ortiz');
+    const bo = await stPart(p, 'people');
+    ok(
+      stSame(bo.tiles, { first: 'Nov 19', last: 'Nov 19' }) && / New in this span\.$/.test(bo.text),
+      "F31 ST19: Ben Ortiz's chart: first seen inside the span, so he's new in it " + JSON.stringify(bo),
+    );
+    await stBack(p);
+    await stPerson(p, 'Dee');
+    await p.click('#st-body > [data-sec="people"] p.note a:nth-of-type(2)');
+    const at = await stAtMsg(p, 25);
+    ok(at && at.flash, 'F31 ST19: "#25" opens her last message in Messages ' + JSON.stringify(at));
+    ok(p.errors.length === 0, 'F31 ST19: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST20: engagement: replies and who replies to whom (Messenger's pi and r, then threading's r, rq, rg and i links;
+     never c), the summary's questions, how many were answered and the median wait for the first answer */
+  await hcase('ST20', async () => {
+    const p = await stOpen();
+    const m = await stPart(p, 'engage');
+    ok(
+      stSame(m.tiles, { replies: '6', share: '22.2%', asked: '5', answered: '3', wait: '10 min' }) &&
+        m.labels.wait === 'to the first answer, median of 3' &&
+        stSame(m.lists.pairs, [
+          'Ben Brooks → Ana 3 50.0%',
+          'Dee → Ana 1 16.7%',
+          'Dee → You 1 16.7%',
+          'Ben Ortiz → You 1 16.7%',
+        ]),
+      'F31 ST20: on 30 days 6 replies, Ben Brooks to Ana most (by name, an answer link and a quote link; Cy going on is no reply); 5 questions, 3 answered after 10, 20 and 5 minutes ' +
+        JSON.stringify(m),
+    );
+    await stTf(p, 'today');
+    const t = await stPart(p, 'engage');
+    await stTf(p, 'd30');
+    await stDay(p, 28);
+    const d = await stPart(p, 'engage');
+    ok(
+      stSame(t.tiles, { replies: '1', share: '20.0%', asked: '2', answered: '1', wait: '5 min' }) &&
+        stSame(d.tiles, { replies: '4', share: '30.8%', asked: '1', answered: '1', wait: '20 min' }) &&
+        stSame(d.lists.pairs, ['Ben Brooks → Ana 2 50.0%', 'Dee → Ana 1 25.0%', 'Ben Ortiz → You 1 25.0%']),
+      'F31 ST20: today and Nov 19 count their own replies and questions ' + JSON.stringify([t.tiles, d.tiles, d.lists]),
+    );
+    await stBack(p);
+    await stPerson(p, 'Ana');
+    const ana = await stPart(p, 'engage');
+    ok(
+      stSame(ana.tiles, { got: '4', asked: '4', answered: '2', wait: '15 min' }) &&
+        stSame(ana.lists.repliedBy, ['Ben Brooks 3 75.0%', 'Dee 1 25.0%']) &&
+        ana.labels.got === 'replies to Ana',
+      "F31 ST20: Ana's chart: 4 replies to her; her 4 questions, 2 answered after a median 15 minutes " +
+        JSON.stringify(ana),
+    );
+    const text = await p.evaluate(() => document.getElementById('v-stats').textContent);
+    ok(!/reaction/i.test(text), 'F31 ST20: still no reactions anywhere on the tab');
+    ok(p.errors.length === 0, 'F31 ST20: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST21: word trends: the box keeps its focus and what's typed while typing (nothing applies until the pause), and
+     while the tab redraws for new data; whole words in any case, per bar of the span, who mentions it most; as a
+     table; a click on a day opens it, and on an hour opens its first mention */
+  await hcase('ST21', async () => {
+    const p = await stOpen();
+    await p.evaluate(() => (window.__box = document.getElementById('st-word')));
+    const before = (await stPart(p, 'words')).say;
+    await stType(p, 'tent');
+    const mid = await stBox(p);
+    await p.waitForTimeout(700);
+    const w = await stPart(p, 'words');
+    ok(
+      mid[0] && mid[1] === 'tent' && mid[2] === before && /^Type a word or phrase/.test(before),
+      'F31 ST21: while typing, the box keeps its focus and text, and nothing applies yet ' +
+        JSON.stringify([mid, before]),
+    );
+    ok(
+      w.say === '6 messages mention “tent”: 22.2% of the messages in Oct 22 – Nov 20.' &&
+        w.bars.length === 30 &&
+        w.bars[10] === 1 &&
+        w.bars[21] === 1 &&
+        w.bars[28] === 2 &&
+        w.bars[29] === 2 &&
+        w.bars.reduce((a, b) => a + b, 0) === 6 &&
+        stSame(w.lists.mentions, ['Ben Brooks 3 50.0%', 'Ana 1 16.7%', 'Cy 1 16.7%', 'You 1 16.7%']),
+      'F31 ST21: after the pause, "tent" in 6 messages by day (TENT and tent-pole count, Tents and contents don\'t), Ben Brooks most ' +
+        JSON.stringify(w),
+    );
+    /* new data redraws the tab while the box has the focus: the same box, focused, with its text */
+    await p.focus('#st-word');
+    await p.evaluate(() => {
+      const c = __rt.get('chunks/c0000');
+      c.msgs.push({ i: 27, t: 'Fri 11:30 AM', d: '2026-11-20', f: 'Cy', b: 'Tent pegs too', m: 'mid.27' });
+      __rt.write('chunks/c0000', c);
+    });
+    await until(p, () => S.msgs.length === 28, null);
+    await p.waitForTimeout(150);
+    const kept = await stBox(p);
+    ok(
+      kept[0] && kept[1] === 'tent' && /^7 messages mention/.test(kept[2]),
+      'F31 ST21: a redraw for a new message keeps the box, its focus and text, and counts the new mention ' +
+        JSON.stringify(kept),
+    );
+    await stType(p, 'Tent  trip');
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(50);
+    const ph = (await stPart(p, 'words')).say;
+    await stType(p, 'ten');
+    await p.waitForTimeout(600);
+    const none = await stPart(p, 'words');
+    ok(
+      /^1 message mentions “Tent trip”/.test(ph) &&
+        none.say === 'No message mentions “ten” in Oct 22 – Nov 20.' &&
+        !none.bars.length,
+      'F31 ST21: a phrase applies at once on Enter (spacing and case don\'t matter); "ten" is no whole word here ' +
+        JSON.stringify([ph, none.say]),
+    );
+    await stType(p, 'tent');
+    await p.waitForTimeout(600);
+    /* the table, then a click on Nov 19: its day, the word by the hour; a click on 10 AM opens its first mention */
+    await p.click('#st-words details.st-tbl > summary');
+    await p.waitForTimeout(100);
+    const rows = await p.evaluate(() =>
+      [...document.querySelectorAll('#st-words details.st-tbl tbody tr')].map(r => r.textContent),
+    );
+    const b = await stBar(p, 'words', 28);
+    await p.mouse.click(b.x, b.y);
+    await p.waitForTimeout(150);
+    const day = await stPart(p, 'words');
+    const head = (await stState(p)).head;
+    ok(
+      rows.length === 30 &&
+        rows[28] === 'Thu, Nov 192' &&
+        head === 'Thu, Nov 19' &&
+        day.bars.length === 24 &&
+        day.bars[10] === 1 &&
+        day.bars[11] === 1 &&
+        /^2 messages mention “tent”: 15\.4% of the messages in Thu, Nov 19\./.test(day.say),
+      'F31 ST21: as a table, then a click on Nov 19 opens its day, where the word shows by the hour ' +
+        JSON.stringify([rows[28], head, day.bars, day.say]),
+    );
+    const h = await stBar(p, 'words', 10);
+    await p.mouse.click(h.x, h.y);
+    const at = await stAtMsg(p, 13);
+    ok(at && at.flash, 'F31 ST21: a click on 10 AM opens its first mention (#13) in Messages ' + JSON.stringify(at));
+    ok(p.errors.length === 0, 'F31 ST21: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST22: a person's word trend; the keyboard on the word chart; over a long span the word goes by week and a week bar
+     zooms in */
+  await hcase('ST22', async () => {
+    const p = await stOpen();
+    await stType(p, 'tent');
+    await p.waitForTimeout(600);
+    await stPerson(p, 'Ben Brooks');
+    const ben = await stPart(p, 'words');
+    ok(
+      ben.say === '3 messages from Ben Brooks mention “tent”: 50.0% of theirs in Oct 22 – Nov 20.' &&
+        ben.bars[21] === 1 &&
+        ben.bars[28] === 1 &&
+        ben.bars[29] === 1 &&
+        !ben.lists.mentions,
+      "F31 ST22: on Ben Brooks' chart the word counts his messages only " + JSON.stringify(ben),
+    );
+    await stBack(p);
+    await stTf(p, 'd90');
+    await p.focus('#st-body .st-chart[data-chart="words"]');
+    await p.keyboard.press('End');
+    await p.keyboard.press('ArrowLeft');
+    const said = await p.evaluate(() => document.querySelector('#st-words .st-chart .sr').textContent);
+    await p.keyboard.press('ArrowRight');
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(150);
+    const s = await stState(p);
+    ok(
+      said === 'Thu, Nov 19, 2 messages' && s.head === 'Fri, Nov 20',
+      "F31 ST22: the arrow keys read the word chart's bars and Enter opens a day " + JSON.stringify([said, s.head]),
+    );
+    await stBack(p);
+    await p.click('#v-stats [data-tf="custom"]');
+    await p.fill('#st-from', '2026-07-01');
+    await p.fill('#st-to', '2026-11-20');
+    await p.press('#st-to', 'Enter');
+    await p.waitForTimeout(150);
+    const wk = await stPart(p, 'words');
+    const label = await p.evaluate(() => document.querySelector('#st-words .st-chart').getAttribute('aria-label'));
+    const bb = await stBar(p, 'words', wk.bars.length - 1);
+    await p.mouse.click(bb.x, bb.y);
+    await p.waitForTimeout(150);
+    const z = await stState(p);
+    const zw = await stPart(p, 'words');
+    ok(
+      /per week/.test(label) &&
+        wk.bars[wk.bars.length - 1] === 4 &&
+        z.reset &&
+        /^Nov 15 – Nov 20 \(zoomed in/.test(z.span) &&
+        zw.bars.length === 6 &&
+        zw.bars.join() === '0,0,0,0,2,2',
+      'F31 ST22: from Jul 1 the word goes by week, and the last week bar zooms into its days ' +
+        JSON.stringify([label, wk.bars.slice(-3), z.span, zw.bars]),
+    );
+    ok(p.errors.length === 0, 'F31 ST22: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST23: each new section's switch stays off after a reload (this browser only), word trends included, on a
+     person's chart too */
+  await hcase('ST23', async () => {
+    const p = await stOpen();
+    const NEW = ['convs', 'deals', 'people', 'engage', 'words'];
+    for (const k of NEW) await p.click('#v-stats input[data-sec="' + k + '"]');
+    await p.waitForTimeout(100);
+    const s1 = await stState(p);
+    await p.reload();
+    await until(p, () => S.msgs.length === 27 && S.threading && S.summary, null);
+    await stGo(p);
+    const s2 = await stState(p);
+    const boxes = await p.evaluate(
+      ks => ks.map(k => document.querySelector('#v-stats input[data-sec="' + k + '"]').checked),
+      NEW,
+    );
+    const words = await p.evaluate(() => document.getElementById('st-words').hidden);
+    await stPerson(p, 'Ana');
+    const per = (await stState(p)).secs;
+    ok(
+      stSame(s1.secs, ['tiles', 'volume', 'top', 'heat']) &&
+        stSame(s2.secs, ['tiles', 'volume', 'top', 'heat']) &&
+        boxes.join() === 'false,false,false,false,false' &&
+        words &&
+        stSame(per, ['p-tiles', 'p-volume', 'p-hours', 'p-replies']),
+      "F31 ST23: the five new sections switched off stay off after a reload, on a person's chart too " +
+        JSON.stringify([s1.secs, s2.secs, boxes, per]),
+    );
+    await stBack(p);
+    await p.click('#v-stats input[data-sec="words"]');
+    await p.waitForTimeout(100);
+    const on = await stState(p);
+    ok(
+      stSame(on.secs, ['tiles', 'volume', 'top', 'heat', 'words']) && p.errors.length === 0,
+      'F31 ST23: switched back on, word trends shows again; no page errors ' + JSON.stringify([on.secs, p.errors]),
+    );
+  });
+
+  /* ST24: at 390 px nothing scrolls sideways with every new section showing, a word typed and very long words in a
+     title and a deal, on 30 days, a tapped day and a person */
+  await hcase('ST24', async () => {
+    const p = await stOpen({ ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
+    await p.evaluate(() => {
+      const t = __rt.get('threading/current');
+      t.convs[2].title = 'Supercalifragilisticexpialidocious-tent-and-stove-swap-meet-planning-thread';
+      __rt.write('threading/current', t);
+      const s = __rt.get('summary/current');
+      s.deals[0].text = 'Tent-with-footprint-and-stakes-and-guylines-and-the-original-stuff-sack-barely-used';
+      __rt.write('summary/current', s);
+    });
+    await until(p, () => /Supercali/.test(document.getElementById('st-body').textContent), null, 3000);
+    await stType(p, 'tent');
+    await p.waitForTimeout(600);
+    const wide = () =>
+      p.evaluate(() => ({
+        sw: document.documentElement.scrollWidth,
+        w: innerWidth,
+        over: [...document.querySelectorAll('#v-stats *')]
+          .filter(e => e.getClientRects().length && e.getBoundingClientRect().right > innerWidth + 0.5)
+          .map(e => e.tagName + '.' + (e.getAttribute('class') || ''))
+          .slice(0, 5),
+      }));
+    const m = await wide();
+    const b = await stBar(p, 'volume', 28);
+    await p.touchscreen.tap(b.x, b.y);
+    await p.waitForTimeout(150);
+    const day = await wide();
+    await p.tap('#st-body > [data-sec="top"] li:nth-child(1) button');
+    await p.waitForTimeout(150);
+    const per = await wide();
+    const head = (await stState(p)).head;
+    const fit = x => x.sw <= x.w && !x.over.length;
+    ok(
+      fit(m) && fit(day) && fit(per) && head === 'Ana',
+      'F31 ST24: at 390 px nothing runs past the right edge with the new sections (main, a day, a person) ' +
+        JSON.stringify({ m, day, per }),
+    );
+    ok(p.errors.length === 0, 'F31 ST24: no page errors ' + JSON.stringify(p.errors));
   });
 }
 
@@ -10688,6 +11365,7 @@ const SECTIONS = {
   bigPaste,
   standIn,
   stats,
+  stats2,
   history,
   history2,
   digests,
