@@ -4130,7 +4130,7 @@ async function digests() {
 const bdSeed = (o = {}) => {
   const msgs = hmsgs(o.n || 500, { perDay: o.perDay || 100 });
   const days = new Set(msgs.map(m => m.d)).size;
-  const docs = o.noDigests ? {} : hdigests(msgs, k => k < days - 1, o.make);
+  const docs = Object.assign(o.noDigests ? {} : hdigests(msgs, k => k < days - 1, o.make), o.docs || {});
   return { msgs, seed: hseed(msgs, { threads: true, meta: { caughtUpI: msgs.length - 21 }, docs, opts: o.opts }) };
 };
 const bdOpen = async (o = {}, ctx) => {
@@ -4476,6 +4476,277 @@ async function byDay() {
       fits(m1) && fits(m2),
       'F24 BD9: at 390 px all six tabs fit the bar, at least 32 px tall, no sideways scroll, also in a wide font ' +
         JSON.stringify({ m1, m2 }),
+    );
+  });
+}
+
+/* ---------- F27: each refresh's report on the By day tab ---------- */
+async function byDayReports() {
+  /* F27: each refresh's report (reports/d<YYYY-MM-DD>, written by catchup.py with each build), on By day. Oct 5 is the
+     day in progress (no digest yet): two runs, stored out of order; Oct 4 has its digest, two runs (the second written
+     after midnight) and two older runs that left the document. The chat's zone is Los Angeles. */
+  const RP = () => ({
+    'reports/d2026-10-05': {
+      day: '2026-10-05',
+      runs: [
+        { at: '2026-10-05T17:04:00Z', fromI: 450, toI: 499, n: 50, bullets: [] },
+        {
+          at: '2026-10-05T16:04:00Z',
+          fromI: 400,
+          toI: 449,
+          n: 50,
+          bullets: [
+            { t: 'Ana offered a stove; <b>Ben</b> claimed it', refs: [401, 405] },
+            { t: 'Cy asked about permits', refs: [440] },
+          ],
+        },
+      ],
+    },
+    'reports/d2026-10-04': {
+      day: '2026-10-04',
+      dropped: 2,
+      runs: [
+        { at: '2026-10-04T23:04:00Z', fromI: 300, toI: 389, n: 90, bullets: [{ t: 'Dee sold the tarp', refs: [310] }] },
+        {
+          at: '2026-10-05T07:30:00Z',
+          fromI: 390,
+          toI: 399,
+          n: 10,
+          bullets: [{ t: 'Ben said goodnight', refs: [399] }],
+        },
+      ],
+    },
+  });
+  const rpRuns = (p, day) =>
+    p.evaluate(
+      day =>
+        [...document.querySelectorAll('#days-list article[data-day="' + day + '"] .rp-run')].map(li => ({
+          head: li.querySelector('.rp-head').textContent,
+          bullets: [...li.querySelectorAll('li')].map(x => x.textContent),
+          quiet: (li.querySelector(':scope > p.note') || {}).textContent || '',
+          /* a closed <details> keeps its content's boxes (content-visibility: hidden), so ask whether it's drawn */
+          seen: li.checkVisibility() && li.getBoundingClientRect().height > 0,
+        })),
+      day,
+    );
+  const rpOpens = async (p, sel, i) => {
+    await p.click(sel);
+    await until(p, i => document.querySelector('#m' + i + '.flash'), i, 5000);
+    return p.evaluate(i => {
+      const n = document.getElementById('m' + i);
+      const b = n && n.getBoundingClientRect();
+      return location.hash === '#messages' && !!b && b.height > 0 && b.top >= 0 && b.bottom <= innerHeight;
+    }, i);
+  };
+
+  /* BD13: the day in progress shows each refresh's run in order (time, count, bullets with their numbers; a run with
+     no bullets says so), with the day's count so far; markup stays text; a number opens its message */
+  await hcase('BD13', async () => {
+    const { p } = await bdOpen({ docs: RP() });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.rp-day'), null, 5000);
+    const card = await p.evaluate(() => {
+      const a = document.querySelector('#days-list article[data-day="2026-10-05"]');
+      return {
+        first: document.querySelector('#days-list article').dataset.day,
+        title: a.querySelector('h3').textContent,
+        count: a.querySelector('.row .note').textContent,
+        lead: (a.querySelector('.rp-lead') || {}).textContent,
+        details: a.querySelectorAll('details').length,
+        tags: a.querySelectorAll('li b, li img').length,
+      };
+    });
+    const runs = await rpRuns(p, '2026-10-05');
+    ok(
+      card.first === '2026-10-05' &&
+        card.title === 'Mon, Oct 5' &&
+        card.count === '100 messages so far' &&
+        card.lead === 'No digest yet. What each refresh found:' &&
+        card.details === 0 &&
+        card.tags === 0,
+      'F27 BD13: the day in progress comes first, titled, with its count so far, its runs in full ' +
+        JSON.stringify(card),
+    );
+    ok(
+      runs.length === 2 &&
+        runs[0].head === '9:04 AM 50 messages' &&
+        runs[0].bullets.join(' / ') ===
+          'Ana offered a stove; <b>Ben</b> claimed it #401 #405 / Cy asked about permits #440' &&
+        runs[1].head === '10:04 AM 50 messages' &&
+        runs[1].bullets.length === 0 &&
+        runs[1].quiet === 'Nothing stood out.' &&
+        runs.every(x => x.seen),
+      'F27 BD13: the runs in order, each with its time, count and bullets (markup as text); an empty run says so ' +
+        JSON.stringify(runs),
+    );
+    const opened = await rpOpens(p, '#days-list article[data-day="2026-10-05"] .rp-run a.cite:has-text("#440")', 440);
+    ok(opened, "F27 BD13: a run's number (#440, before the window) opens that message in Messages, on screen");
+    ok(p.errors.length === 0, 'F27 BD13: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* BD14: a finished day keeps its digest and adds a collapsed "What each refresh found (2)"; opened, its runs show
+     (one after midnight, with the weekday) and the note on the runs not kept; their numbers open messages; days with
+     no runs have no list */
+  await hcase('BD14', async () => {
+    const { p } = await bdOpen({ docs: RP() });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list details.rp-more'), null, 5000);
+    const sel = '#days-list article[data-day="2026-10-04"]';
+    const before = await p.evaluate(sel => {
+      const a = document.querySelector(sel);
+      const d = a.querySelector('details.rp-more');
+      return {
+        digest: [...a.querySelectorAll(':scope > ul > li')].map(x => x.textContent),
+        count: a.querySelector('.row .note').textContent,
+        summary: d.querySelector('summary').textContent,
+        open: d.open,
+        others: document.querySelectorAll('#days-list details.rp-more').length,
+        lastChild: a.lastElementChild === d,
+      };
+    }, sel);
+    const hidden = await rpRuns(p, '2026-10-04');
+    await p.focus(sel + ' details.rp-more > summary');
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(100);
+    const runs = await rpRuns(p, '2026-10-04');
+    const note = await p.evaluate(
+      sel => (document.querySelector(sel + ' .rp-box > p.note') || {}).textContent || '',
+      sel,
+    );
+    ok(
+      before.digest.join(' / ') === 'Ana sold a stove on day 3 #301 #302 / Ben asked about permits on day 3 #305' &&
+        before.count === '100 messages' &&
+        before.summary === 'What each refresh found (2)' &&
+        !before.open &&
+        before.lastChild &&
+        before.others === 1 &&
+        hidden.length === 2 &&
+        hidden.every(x => !x.seen),
+      'F27 BD14: the finished day keeps its digest, with the runs collapsed under it; other days have none ' +
+        JSON.stringify([before, hidden]),
+    );
+    ok(
+      runs.length === 2 &&
+        runs[0].head === '4:04 PM 90 messages' &&
+        runs[0].bullets[0] === 'Dee sold the tarp #310' &&
+        runs[1].head === 'Mon 12:30 AM 10 messages' &&
+        runs[1].bullets[0] === 'Ben said goodnight #399' &&
+        runs.every(x => x.seen) &&
+        note === "2 earlier refreshes this day aren't kept.",
+      'F27 BD14: opened from the keyboard, the runs show in order, the one after midnight with its weekday, and the note ' +
+        JSON.stringify([runs, note]),
+    );
+    /* a refresh writes the day again while the list is open: it redraws, still open, with the new run */
+    await p.evaluate(() => {
+      const d = __rt.get('reports/d2026-10-04');
+      d.runs.push({ at: '2026-10-05T07:40:00Z', fromI: 400, toI: 400, n: 1, bullets: [] });
+      __rt.write('reports/d2026-10-04', d);
+    });
+    await until(
+      p,
+      sel => /\(3\)$/.test(document.querySelector(sel + ' details.rp-more > summary').textContent),
+      sel,
+      5000,
+    );
+    const redrawn = await p.evaluate(sel => document.querySelector(sel + ' details.rp-more').open, sel);
+    ok(redrawn, 'F27 BD14: the opened list stays open when the tab redraws with a new run');
+    ok(await rpOpens(p, sel + ' .rp-run a.cite:has-text("#310")', 310), 'F27 BD14: #310 opens in Messages');
+    ok(p.errors.length === 0, 'F27 BD14: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* BD15: nothing saved, nothing shown: no reports, or a day's document with no run worth showing, adds nothing; a
+     refresh's write reaches the open tab without a reload */
+  await hcase('BD15', async () => {
+    const junk = {
+      'reports/d2026-10-05': { day: '2026-10-05', runs: [] },
+      'reports/d2026-10-03': { day: '2026-10-03', runs: [null, 5, 'x', []] },
+      'reports/today': { day: '2026-10-05', runs: [{ at: '2026-10-05T16:04:00Z', n: 3, bullets: [] }] },
+      'reports/d2026-10-02': { day: '2026-10-02', runs: 'no' },
+    };
+    for (const docs of [{}, junk]) {
+      const { p } = await bdOpen({ docs });
+      await bdShow(p);
+      await p.waitForTimeout(200);
+      const r = await p.evaluate(() => ({
+        days: [...document.querySelectorAll('#days-list article')].map(a => a.dataset.day).join(),
+        rp: document.querySelectorAll('#days-list .rp-more, #days-list .rp-day, #days-list .rp-run').length,
+      }));
+      ok(
+        r.days === '2026-10-04,2026-10-03,2026-10-02,2026-10-01' && r.rp === 0 && p.errors.length === 0,
+        'F27 BD15: ' +
+          (docs === junk ? 'documents with no run to show' : 'no reports') +
+          ' add nothing; the day in progress is left out as before ' +
+          JSON.stringify([r, p.errors]),
+      );
+      if (docs !== junk) continue;
+      await p.evaluate(d => __rt.write('reports/d2026-10-05', d), RP()['reports/d2026-10-05']);
+      await until(p, () => document.querySelectorAll('#days-list article.rp-day .rp-run').length === 2, null, 5000);
+      ok(
+        (await rpRuns(p, '2026-10-05')).length === 2 && p.errors.length === 0,
+        'F27 BD15: a refresh writing the day in progress shows its runs in the open tab ' + JSON.stringify(p.errors),
+      );
+    }
+  });
+
+  /* BD16: no digests yet, only runs: the quiet line says no digests, each day with runs gets its card (a finished one
+     without "so far") */
+  await hcase('BD16', async () => {
+    const { p } = await bdOpen({ noDigests: true, docs: RP() });
+    await bdShow(p);
+    await until(p, () => document.querySelectorAll('#days-list article.rp-day').length === 2, null, 5000);
+    const r = await p.evaluate(() => ({
+      note: (document.querySelector('#days-list > p.note') || {}).textContent || '',
+      days: [...document.querySelectorAll('#days-list article')].map(a => [
+        a.dataset.day,
+        a.querySelector('.row .note').textContent,
+        a.querySelectorAll('.rp-run').length,
+      ]),
+      empty: document.querySelectorAll('#days-list .empty').length,
+    }));
+    ok(
+      /^No day digests yet\./.test(r.note) &&
+        JSON.stringify(r.days) ===
+          JSON.stringify([
+            ['2026-10-05', '100 messages so far', 2],
+            ['2026-10-04', '100 messages', 2],
+          ]) &&
+        r.empty === 0 &&
+        p.errors.length === 0,
+      'F27 BD16: with runs and no digests, the days with runs show them in full ' + JSON.stringify([r, p.errors]),
+    );
+  });
+
+  /* BD17: at 390 px a run's long bullet with ten numbers wraps, in the day in progress and in an opened list: nothing
+     scrolls sideways */
+  await hcase('BD17', async () => {
+    const long = 'Ana listed ' + 'tentpolesandstakes'.repeat(8) + ' with a long note about the ridge trail and spares';
+    const docs = RP();
+    docs['reports/d2026-10-05'].runs[1].bullets.push({
+      t: long,
+      refs: [430, 431, 432, 433, 434, 435, 436, 437, 438, 439],
+    });
+    docs['reports/d2026-10-04'].runs[0].bullets.push({
+      t: long,
+      refs: [320, 321, 322, 323, 324, 325, 326, 327, 328, 329],
+    });
+    const { p } = await bdOpen({ docs }, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list details.rp-more'), null, 5000);
+    await p.evaluate(() => document.querySelectorAll('#days-list details.rp-more').forEach(d => (d.open = true)));
+    await p.waitForTimeout(150);
+    const r = await p.evaluate(() => ({
+      sw: document.documentElement.scrollWidth,
+      w: innerWidth,
+      right: Math.max(
+        ...[...document.querySelectorAll('#days-list article, #days-list .rp-run, #days-list .rp-run li')].map(x =>
+          Math.round(x.getBoundingClientRect().right),
+        ),
+      ),
+      runs: document.querySelectorAll('#days-list .rp-run').length,
+    }));
+    ok(
+      r.runs === 4 && r.sw <= r.w && r.right <= r.w && p.errors.length === 0,
+      'F27 BD17: at 390 px the runs fit the width, no sideways scroll ' + JSON.stringify(r),
     );
   });
 }
@@ -10421,6 +10692,7 @@ const SECTIONS = {
   history2,
   digests,
   byDay,
+  byDayReports,
   notices,
   schedule,
   claims,

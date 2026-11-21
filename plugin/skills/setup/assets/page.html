@@ -1354,6 +1354,59 @@
   .dg-more {
     justify-self: start;
   }
+  /* F27: what each refresh found, a run per refresh: in full on the day in progress, collapsed under a digest */
+  .dg-day .rp-box {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+  .dg-day .rp-box p,
+  .dg-day p.rp-lead {
+    margin: 0;
+  }
+  .dg-day .rp-runs {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 10px;
+  }
+  .dg-day .rp-run {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding-left: 10px;
+    border-left: 2px solid var(--line);
+  }
+  .dg-day .rp-time {
+    font-weight: 600;
+  }
+  .dg-day details.rp-more {
+    border-top: 1px dashed var(--line);
+    padding-top: 8px;
+    min-width: 0;
+  }
+  .dg-day details.rp-more > summary {
+    cursor: pointer;
+    list-style: none;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.92rem;
+    width: fit-content;
+    max-width: 100%;
+  }
+  .dg-day details.rp-more > summary::-webkit-details-marker {
+    display: none;
+  }
+  .dg-day details.rp-more > summary::before {
+    content: "▸ ";
+  }
+  .dg-day details.rp-more[open] > summary::before {
+    content: "▾ ";
+  }
+  .dg-day details.rp-more > .rp-box {
+    margin-top: 8px;
+  }
   .method ul {
     margin: 0;
     padding-left: 1.1em;
@@ -1963,7 +2016,10 @@
     <div class="block">
       <div class="sec-head">
         <h2>By day</h2>
-        <p>A few lines on each finished day, newest first. A number opens that message.</p>
+        <p>
+          A few lines on each finished day, and what each refresh found on the day in progress, newest first. A number
+          opens that message.
+        </p>
       </div>
       <div class="list" id="days-list"></div>
     </div>
@@ -8727,16 +8783,10 @@
     };
     return a;
   }
-  function dayCard(k, g) {
-    const art = el("article", "item dg-day");
-    art.dataset.day = k;
-    art.tabIndex = -1;
-    const head = el("div", "row");
-    head.append(el("h3", null, dayTitle(k)));
-    if (Number.isInteger(g.n) && g.n > 0) head.append(el("span", "note", plural(g.n, "message")));
-    art.append(head);
+  /* a list of bullets ({t, refs}), each followed by its message numbers; null when none has text */
+  function dayBullets(bullets) {
     const ul = el("ul");
-    g.bullets.forEach(b => {
+    (Array.isArray(bullets) ? bullets : []).forEach(b => {
       if (!b || typeof b.t !== "string") return;
       const t = b.t
         .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
@@ -8750,8 +8800,106 @@
         .forEach(i => li.append(" ", dayCite(i)));
       ul.append(li);
     });
-    if (ul.children.length) art.append(ul);
+    return ul.children.length ? ul : null;
+  }
+  /* A day's card: its digest (g) when it has one, and what each refresh found that day (r, F27): under a digest as a
+     collapsed list, on a day without one (the day in progress) in full. cnt: stored messages per day, for the latter. */
+  function dayCard(k, g, r, cnt) {
+    const art = el("article", "item dg-day");
+    art.dataset.day = k;
+    art.tabIndex = -1;
+    const head = el("div", "row");
+    head.append(el("h3", null, dayTitle(k)));
+    const runs = r ? reportRuns(r) : [];
+    if (g) {
+      if (Number.isInteger(g.n) && g.n > 0) head.append(el("span", "note", plural(g.n, "message")));
+      art.append(head);
+      const ul = dayBullets(g.bullets);
+      if (ul) art.append(ul);
+      if (runs.length) {
+        const more = el("details", "rp-more");
+        more.append(el("summary", null, "What each refresh found (" + runs.length + ")"), runList(k, r, runs));
+        art.append(more);
+      }
+      return art;
+    }
+    art.classList.add("rp-day");
+    const n = cnt && cnt.get(k);
+    if (n) head.append(el("span", "note", plural(n, "message") + (cnt.last === k ? " so far" : "")));
+    art.append(head, el("p", "note rp-lead", "No digest yet. What each refresh found:"), runList(k, r, runs));
     return art;
+  }
+  /* ---------- Each refresh's report (F27) ----------
+      reports/d<YYYY-MM-DD> {day, runs:[{at, fromI, toI, n, bullets:[{t, refs}]}], dropped?}, written by catchup.py
+      with each build that adds messages: the bullets of the report that refresh gave in chat, under the day of the
+      messages they cite (a refresh over midnight has a run on each day). Read only, into S.reports; the By day tab
+      shows them. A listener that fails leaves the digests as they are. */
+  function watchReports(db) {
+    db.collection("reports").onSnapshot(
+      q => {
+        const m = new Map();
+        q.docs.forEach(d => {
+          const k = /^d(\d{4}-\d\d-\d\d)$/.exec(d.id);
+          const v = d.data();
+          if (k && v && typeof v === "object" && Array.isArray(v.runs)) m.set(k[1], v);
+        });
+        S.reports = m;
+        renderDays();
+      },
+      () => {},
+    );
+  }
+  /* a day's runs worth showing, in message order */
+  function reportRuns(r) {
+    const at = x => (Number.isInteger(x.fromI) ? x.fromI : Infinity);
+    return (Array.isArray(r.runs) ? r.runs : [])
+      .filter(x => x && typeof x === "object" && !Array.isArray(x))
+      .sort((a, b) => at(a) - at(b));
+  }
+  /* "9:04 AM" in the chat's time zone, with the weekday when the refresh ran on another day than k (after midnight) */
+  function runTime(at, k) {
+    const t = typeof at === "string" ? Date.parse(at) : NaN;
+    if (!Number.isFinite(t)) return "";
+    const tz = validTz(S.meta && S.meta.tz);
+    const d = new Date(t);
+    const s = d.toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
+    if (d.toLocaleDateString("en-CA", { timeZone: tz }) === k) return s;
+    return d.toLocaleDateString("en-US", { timeZone: tz, weekday: "short" }) + " " + s;
+  }
+  function runList(k, r, runs) {
+    const ol = el("ol", "rp-runs");
+    runs.forEach(x => {
+      const li = el("li", "rp-run");
+      const head = el("p", "rp-head");
+      head.append(el("span", "rp-time", runTime(x.at, k) || "A refresh"));
+      if (Number.isInteger(x.n) && x.n > 0) head.append(" ", el("span", "note", plural(x.n, "message")));
+      li.append(head, dayBullets(x.bullets) || el("p", "note", "Nothing stood out."));
+      ol.append(li);
+    });
+    const box = el("div", "rp-box");
+    const gone = Number.isInteger(r.dropped) && r.dropped > 0 ? r.dropped : 0;
+    if (gone)
+      box.append(
+        el(
+          "p",
+          "note",
+          gone === 1 ? "1 earlier refresh this day isn't kept." : gone + " earlier refreshes this day aren't kept.",
+        ),
+      );
+    box.append(ol);
+    return box;
+  }
+  /* stored messages per day, a day never going back (as dayScan counts them); .last: the newest day */
+  function dayCounts() {
+    const m = new Map();
+    let prev = "";
+    S.msgs.forEach(x => {
+      const d = x.d && x.d > prev ? x.d : prev || x.d || "";
+      prev = d;
+      if (d) m.set(d, (m.get(d) || 0) + 1);
+    });
+    m.last = prev;
+    return m;
   }
   /* the quiet line: which stored days have no digest yet, and why */
   function daysWhy(days) {
@@ -8778,9 +8926,11 @@
     const box = $("#days-list"),
       v = $("#v-days");
     if (!box || !v || v.hidden) return;
-    const key = [S.digests, S.msgs, S.daysN, S.meta, S.digestsIn];
+    const key = [S.digests, S.reports, S.msgs, S.daysN, S.meta, S.digestsIn];
     if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
     renderDays.k = key;
+    /* a run list the reader opened stays open when the tab redraws (after an import or a refresh's write) */
+    const opened = [...box.querySelectorAll("details.rp-more[open]")].map(d => d.closest("article").dataset.day);
     box.textContent = "";
     if (S.digestsIn !== true) {
       const why = {
@@ -8793,25 +8943,25 @@
     const days = [...S.digests]
       .filter(([k, g]) => /^\d{4}-\d\d-\d\d$/.test(k) && g && Array.isArray(g.bullets) && g.bullets.length)
       .sort((p, q) => (p[0] < q[0] ? 1 : -1));
-    if (!days.length) {
-      box.append(
-        el(
-          "div",
-          "empty",
-          "No day digests yet. A refresh writes a few lines on each day after it ends; to fill in earlier days, ask Claude to write digests for past days.",
-        ),
-      );
+    /* the days with what each refresh found (F27), and every day to draw: those and the digested ones, newest first */
+    const R = new Map([...(S.reports || [])].filter(([k, r]) => /^\d{4}-\d\d-\d\d$/.test(k) && reportRuns(r).length));
+    const G = new Map(days);
+    const all = [...new Set([...G.keys(), ...R.keys()])].sort().reverse();
+    const none =
+      "No day digests yet. A refresh writes a few lines on each day after it ends; to fill in earlier days, ask Claude to write digests for past days.";
+    if (!all.length) {
+      box.append(el("div", "empty", none));
       return;
     }
-    box.append(el("p", "note", daysWhy(days)));
+    box.append(el("p", "note", days.length ? daysWhy(days) : none));
+    const cnt = all.some(k => !G.has(k)) ? dayCounts() : null;
     const n = S.daysN || DAYS_STEP;
-    days.slice(0, n).forEach(([k, g]) => box.append(dayCard(k, g)));
-    if (days.length > n) {
-      const more = el(
-        "button",
-        "secondary dg-more",
-        "Show " + plural(Math.min(DAYS_STEP, days.length - n), "more day"),
-      );
+    all.slice(0, n).forEach(k => box.append(dayCard(k, G.get(k) || null, R.get(k) || null, cnt)));
+    box.querySelectorAll("article.dg-day > details.rp-more").forEach(d => {
+      if (opened.includes(d.parentNode.dataset.day)) d.open = true;
+    });
+    if (all.length > n) {
+      const more = el("button", "secondary dg-more", "Show " + plural(Math.min(DAYS_STEP, all.length - n), "more day"));
       more.onclick = () => {
         S.daysN = n + DAYS_STEP;
         renderDays();
@@ -10263,6 +10413,7 @@
         renderDays();
       },
     );
+    watchReports(db);
     db.doc("people/index").onSnapshot(
       s => {
         S.people = s.exists ? s.data() : null;

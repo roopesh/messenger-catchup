@@ -41,6 +41,7 @@ REFERENCES = [
     "people.md",
     "photos.md",
     "posting-with-helper.md",
+    "reports.md",
     "restoring-a-summary.md",
     "scheduling.md",
     "troubleshooting.md",
