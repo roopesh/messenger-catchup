@@ -11353,17 +11353,20 @@ async function stats2() {
    message whose slot 0 is owed and slots 1 and 2 stored, so a caption has to find its photo by slot, not position. */
 const CAP31 = 'green Ultra Monolith pack, side view, coyote straps, price tag $180';
 const CAP40 = 'red two-person tent, pitched, rain fly off';
-const CAPS_DOC = () => ({ start: 0, byK: { 31: { 0: CAP31 }, 40: { 1: CAP40 } } });
+const CAP41 = 'green Ultra pack, front view, red zip';
+const CAPS_DOC = () => ({ start: 0, byK: { 31: { 0: CAP31 }, 40: { 1: CAP40 }, 41: { 0: CAP41 } } });
 async function capPage(o = {}) {
   const V = viewSeed();
   V.msgs[40] = mk(40, { f: 'Cy', b: '', p: 'att40' });
+  /* #41 names the pack in its text; only its caption says it's green (all-words matching) */
+  V.msgs[41] = mk(41, { f: 'Ben', b: 'My Monolith is up for grabs', p: 'att41' });
   const p = await open(SEED(), PAGE, o.ctx);
   await paste(p, JSON.stringify(cap(V.msgs)));
   await p.evaluate(
     ([th, sm, u, caps]) => {
       __rt.write('threading/current', th);
       __rt.write('summary/current', sm);
-      __rt.write('photos/b0', { start: 0, byK: { 31: { 0: u }, 40: { 0: null, 1: u, 2: u } } });
+      __rt.write('photos/b0', { start: 0, byK: { 31: { 0: u }, 40: { 0: null, 1: u, 2: u }, 41: { 0: u } } });
       if (caps) __rt.write('captions/b0', caps);
       location.hash = '#messages';
     },
@@ -11408,13 +11411,54 @@ async function captions() {
   const p0 = await capPage({ caps: null });
 
   // search finds a photo-only message by its caption, and says the match came from the caption
-  await capFilter(p, 'green ultra monolith');
+  await capFilter(p, 'side view, coyote');
   let r = await capRows(p);
   ok(
     r.ids.includes(31) &&
       !r.ids.some(i => i < 30 || i > 35) &&
       JSON.stringify(r.hits) === JSON.stringify([[31, '📷 caption: ' + CAP31]]),
     'R13: the filter finds a photo-only message by its caption, with a "📷 caption" line under it ' + JSON.stringify(r),
+  );
+
+  // all words: every word of a query of 2 or more somewhere in the text and the captions together
+  await capFilter(p, 'green ultra monolith');
+  r = await capRows(p);
+  ok(
+    r.ids.includes(31) &&
+      r.ids.includes(41) &&
+      JSON.stringify(r.hits) ===
+        JSON.stringify([
+          [31, '📷 caption: ' + CAP31],
+          [41, '📷 caption: ' + CAP41],
+        ]),
+    'R13: "green ultra monolith" finds #41, whose text says Monolith and caption "green Ultra pack", with its caption line ' +
+      JSON.stringify(r),
+  );
+  await capFilter(p, 'monolith red');
+  r = await capRows(p);
+  ok(
+    r.ids.includes(41) &&
+      r.ids.includes(40) &&
+      JSON.stringify(r.hits) === JSON.stringify([[41, '📷 caption: ' + CAP41]]),
+    "R13: the caption line only on rows the filter found: #40's caption says red, but #40 doesn't match " +
+      JSON.stringify(r),
+  );
+  for (const pg of [p, p0]) {
+    await capFilter(pg, 'hip buckles  pockets');
+    r = await capRows(pg);
+    ok(
+      JSON.stringify(r) === JSON.stringify({ ids: [30, 31, 32, 33, 34, 35], hits: [] }),
+      "R13: words far apart in a message's text match too (" +
+        (pg === p ? 'with' : 'without') +
+        ' captions) ' +
+        JSON.stringify(r),
+    );
+  }
+  await capFilter(p, 'green ultra monolith tent');
+  r = await capRows(p);
+  ok(
+    !r.ids.length && !r.hits.length,
+    'R13: a message missing one of the words is not found ("tent" is only in #40\'s caption) ' + JSON.stringify(r),
   );
   await capFilter(p, 'COYOTE');
   r = await capRows(p);
@@ -11429,8 +11473,8 @@ async function captions() {
   await capFilter(p, 'monolith');
   r = await capRows(p);
   ok(
-    JSON.stringify(r) === JSON.stringify({ ids: [31], hits: [[31, '📷 caption: ' + CAP31]] }),
-    'R13: the timeline layout finds it the same way ' + JSON.stringify(r),
+    JSON.stringify(r) === JSON.stringify({ ids: [31, 41], hits: [[31, '📷 caption: ' + CAP31]] }),
+    'R13: the timeline layout finds it the same way (#41 by its text, so no caption line) ' + JSON.stringify(r),
   );
   await capFilter(p, '#31');
   r = await capRows(p);
@@ -11446,22 +11490,22 @@ async function captions() {
     const html = pg =>
       pg.evaluate(
         ids => ids.map(i => document.querySelector('#m' + i).outerHTML),
-        a.ids.filter(i => i !== 31),
+        b.ids.filter(i => i !== 31 && i !== 41),
       );
     const same = JSON.stringify(await html(p)) === JSON.stringify(await html(p0));
     ok(
-      same && a.hits.every(h => h[0] === 31) && !b.hits.length,
+      same && b.ids.every(i => a.ids.includes(i)) && a.hits.every(h => h[0] === 31 || h[0] === 41) && !b.hits.length,
       'R13: "' +
         q +
-        '": messages matched by text are unchanged, the caption line only on #31 ' +
+        '": messages matched by text are unchanged, the caption line only on #31 and #41 ' +
         JSON.stringify(a.hits),
     );
   }
   await capFilter(p, 'pack');
   r = await capRows(p);
   ok(
-    r.hits.length === 1 && r.hits[0][0] === 31,
-    'R13: "pack" matches #30 and #35 by text and #31 by its caption ' + JSON.stringify(r.hits),
+    JSON.stringify(r.hits.map(h => h[0])) === '[31,41]' && r.ids.includes(30) && r.ids.includes(35),
+    'R13: "pack" matches #30 and #35 by text and #31 and #41 by their captions ' + JSON.stringify(r.hits),
   );
   await capFilter(p, '');
   await capFilter(p0, '');

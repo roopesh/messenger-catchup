@@ -5196,15 +5196,33 @@
       .filter(k => isStored(m[k]))
       .map(k => c[k] || "");
   }
-  /* the captions of message i that hold q (lower case) */
-  function capHits(i, q) {
-    return q ? capsOf(i).filter(t => t.toLowerCase().includes(q)) : [];
+  /* the captions of message i that hold q (lower case), or (words: 2 or more) any one of the words */
+  function capHits(i, q, words) {
+    if (!q) return [];
+    const w = words && words.length > 1 ? words : null;
+    return capsOf(i).filter(t => {
+      const l = t.toLowerCase();
+      return l.includes(q) || (!!w && w.some(x => l.includes(x)));
+    });
   }
-  /* under each row the filter found by a caption, the caption it matched */
-  function markCapHits(box, q) {
+  /* Does the filter (q, its words) find message i, whose text in lower case is text? null if not, else the captions
+     to show under it. It matches when q is in its text or in one caption, or (2 or more words) every word is in its
+     text and captions together. Shown: the captions holding q, and, when the text alone doesn't match, those holding
+     any of the words. */
+  function filterHit(text, i, q, words) {
+    const phrase = capHits(i, q);
+    const multi = words.length > 1;
+    if (text.includes(q) || (multi && words.every(w => text.includes(w)))) return phrase;
+    if (!multi) return phrase.length ? phrase : null;
+    const all = text + " " + capsOf(i).join(" ").toLowerCase();
+    return phrase.length || words.every(w => all.includes(w)) ? capHits(i, q, words) : null;
+  }
+  /* under each row the filter found, the captions that matched */
+  function markCapHits(box, q, words, textOf) {
     if (!q || !S.caps) return;
     box.querySelectorAll(".msg[id^='m']").forEach(r => {
-      const hits = capHits(+r.id.slice(1), q);
+      const m = S.byI.get(+r.id.slice(1));
+      const hits = (m && filterHit(textOf(m), m.i, q, words)) || [];
       const c = r.querySelector(":scope > .c");
       if (!hits.length || !c) return;
       const d = el("div", "caphit", "📷 caption: " + hits.join(" · "));
@@ -5514,15 +5532,13 @@
     let list = span ? S.msgs.slice(span.a, span.b + 1) : S.msgs.filter(m => all || inWindow(m));
     /* "#123" finds message 123 */
     const qn = /^#\d+$/.test(q) ? +q.slice(1) : null;
-    /* R13: or what one of its photos shows (its caption) */
-    const match = m =>
-      !q ||
-      (qn != null
-        ? m.i === qn
-        : (m.f + " " + (fullOf(m) || "") + " " + (m.b || "") + " " + (m.a || "") + " " + (m.r || ""))
-            .toLowerCase()
-            .includes(q) || capHits(m.i, q).length > 0);
+    /* R13: or what one of its photos shows (its captions); a query of 2 or more words also matches when every word is
+       somewhere in the text and the captions together */
     const capQ = qn == null ? q : "";
+    const words = capQ.split(/\s+/).filter(Boolean);
+    const textOf = m =>
+      (m.f + " " + (fullOf(m) || "") + " " + (m.b || "") + " " + (m.a || "") + " " + (m.r || "")).toLowerCase();
+    const match = m => !q || (qn != null ? m.i === qn : !!filterHit(textOf(m), m.i, capQ, words));
     if (!S.msgs.length) {
       box.append(el("div", "empty", "No messages stored yet."));
       return;
@@ -5533,13 +5549,13 @@
       flatRows(shown, box, m => (m.i === ws + 1 && all ? el("div", "divider", "Catch-up window starts") : null));
       $("#msg-note").textContent = shown.length + " messages" + (q ? " matching" : "") + ".";
       box.dataset.mode = "flat";
-      markCapHits(box, capQ);
+      markCapHits(box, capQ, words, textOf);
       if (span) olderEdges(span);
       return;
     }
     if (S.threading && renderConversations(list, match, !!span)) {
       box.dataset.mode = "conv";
-      markCapHits(box, capQ);
+      markCapHits(box, capQ, words, textOf);
       if (span) olderEdges(span);
       return;
     }
@@ -5587,7 +5603,7 @@
       " reply threads (" +
       linked +
       " replies matched to the message they answer). Replies whose original isn't stored show on their own.";
-    markCapHits(box, capQ);
+    markCapHits(box, capQ, words, textOf);
     if (span) olderEdges(span);
   }
 
