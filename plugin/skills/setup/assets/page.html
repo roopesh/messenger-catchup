@@ -1909,6 +1909,8 @@
       <div class="toolbar st-pick">
         <div class="seg" role="group" aria-label="Timeframe">
           <button type="button" data-tf="today" aria-pressed="false">Today</button>
+          <button type="button" data-tf="wk" aria-pressed="false">This week</button>
+          <button type="button" data-tf="lastwk" aria-pressed="false">Last week</button>
           <button type="button" data-tf="d30" aria-pressed="true">30 days</button>
           <button type="button" data-tf="d90" aria-pressed="false">90 days</button>
         </div>
@@ -1931,7 +1933,7 @@
         <label><input type="checkbox" data-sec="tiles" checked /> Numbers</label>
         <label><input type="checkbox" data-sec="volume" checked /> Volume</label>
         <label><input type="checkbox" data-sec="top" checked /> Top 10</label>
-        <label><input type="checkbox" data-sec="heat" checked /> Heatmap</label>
+        <label><input type="checkbox" data-sec="heat" checked /> Day and hour</label>
       </div>
     </div>
     <div class="st-body" id="st-body"></div>
@@ -2055,7 +2057,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.3";
+  const PAGE_VERSION = "3.4";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -3532,6 +3534,14 @@
       /* the message itself: full text and photos, with the rest of its run as one block */
       const run = runAround(p.i, new Set(mem));
       const row = (i, pos) => msgRow(S.byI.get(i), null, true, pos, { ctx: true });
+      /* when it is itself a Messenger reply, the message it answers comes first, photos included: "What is it?" is
+         read with the photo it asks about */
+      const gi = p.pi;
+      if (gi != null && S.byI.has(gi) && !run.includes(gi) && !mem.includes(gi)) {
+        const up = el("div", "msgs");
+        up.append(row(gi));
+        box.append(up);
+      }
       const ms = el("div", "msgs");
       ms.append(run.length > 1 ? blockOf(run, row) : row(run[0]));
       box.append(ms);
@@ -3721,35 +3731,51 @@
     h.append(act);
     if (!zOpen && composingAt(z.i, "card:" + c.id)) h.append(composer(z, "card:" + c.id));
     d.append(h);
+    /* what the conversation replies to: above the summary while the thread is closed; the open thread starts with it */
     const cx = ctxLine(mem, c.id);
-    if (cx) d.append(cx);
+    const cxHome = document.createComment("ctx");
+    if (cx) d.append(cx, cxHome);
     /* thread (built lazily): it opens in place at full length, with a second close control at its end */
     const thr = el("details", "thr");
     const ts = el("summary", null, "Show the thread (" + mem.length + ")");
     thr.append(ts);
     let built = null;
+    let closing = false;
     const build = () => {
       if (!built) {
         built = threadTree(mem);
         const close = el("button", "thr-close", "Close the thread");
         close.type = "button";
         close.addEventListener("click", () => {
+          closing = true;
           thr.open = false;
-          if (ts.getBoundingClientRect().top < 0) ts.scrollIntoView({ block: "start" });
         });
         thr.append(built, close);
       }
       return built;
     };
+    /* closed from its end, a long thread would leave the page wherever the next cards slid to: bring the card back,
+       its top under the tabs, or for a card taller than the screen its "Show the thread" line part way down */
+    const backToCard = () => {
+      const nav = document.querySelector("nav.tabs").getBoundingClientRect().bottom;
+      const r = d.getBoundingClientRect();
+      const room = innerHeight - nav;
+      const y = r.height + 16 <= room ? r.top - nav - 8 : ts.getBoundingClientRect().top - nav - room * 0.6;
+      if (Math.abs(y) > 1) scrollBy(0, y);
+    };
     thr.addEventListener("toggle", () => {
       if (thr.open) {
         build();
+        if (cx) built.before(cx);
         S.openThr.add(c.id);
         ts.textContent = "Hide the thread";
       } else {
+        if (cx) cxHome.before(cx);
         S.openThr.delete(c.id);
         ts.textContent = "Show the thread (" + mem.length + ")";
+        if (closing) backToCard();
       }
+      closing = false;
     });
     const show = ids => {
       thr.open = true;
@@ -8249,8 +8275,9 @@
       timeframe and the switched-off sections are remembered in this browser only, when it allows (localStorage). Drawn
       only while the tab is open. */
   const ST_KEY = "mcStats";
-  const ST_SECS = { tiles: "Numbers", volume: "Volume", top: "Top 10", heat: "Heatmap" };
+  const ST_SECS = { tiles: "Numbers", volume: "Volume", top: "Top 10", heat: "Day and hour" };
   const ST_DAYS = { today: 1, d7: 7, d30: 30, d90: 90 };
+  const ST_WEEKS = { wk: 0, lastwk: 1 }; /* weeks start on Sunday, as the week bars do */
   const ST_DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   /* how many bars apart the axis labels may be, per kind of bar */
   const ST_STRIDES = {
@@ -8307,7 +8334,7 @@
   try {
     const o = JSON.parse(localStorage.getItem(ST_KEY) || "null");
     if (o && typeof o === "object") {
-      if (stHas(ST_DAYS, o.tf) || o.tf === "all" || o.tf === "custom") S.stats.tf = o.tf;
+      if (stHas(ST_DAYS, o.tf) || stHas(ST_WEEKS, o.tf) || o.tf === "all" || o.tf === "custom") S.stats.tf = o.tf;
       if (isDay(o.from) && isDay(o.to)) Object.assign(S.stats, { from: o.from, to: o.to });
       if (Array.isArray(o.hide)) o.hide.forEach(k => stHas(ST_SECS, k) && S.stats.hide.add(k));
     }
@@ -8573,6 +8600,10 @@
     const first = B.firstTm >= 0 ? dayFloor(B.firstTm) : t0,
       end = Math.max(t0, B.lastTm >= 0 ? dayFloor(B.lastTm) : t0) + DAY_MIN;
     if (st.tf === "all") return { lo: Math.min(first, end - DAY_MIN), hi: end };
+    if (stHas(ST_WEEKS, st.tf)) {
+      const w0 = t0 - new Date(t0 * 60000).getUTCDay() * DAY_MIN;
+      return st.tf === "wk" ? { lo: w0, hi: t0 + DAY_MIN } : { lo: w0 - 7 * DAY_MIN, hi: w0 };
+    }
     if (st.tf === "custom") {
       let a = isDay(st.from) ? st.from : minDay(t0 - 29 * DAY_MIN),
         b = isDay(st.to) ? st.to : td;
@@ -9393,8 +9424,9 @@
     $("#st-custom").hidden = st.tf !== "custom";
     if (st.tf === "custom") {
       const F = stFrame();
-      $("#st-from").value = minDay(F.lo);
-      $("#st-to").value = minDay(F.hi - DAY_MIN);
+      /* never rewrite a date box while it has the focus: someone is typing in it */
+      if (document.activeElement !== $("#st-from")) $("#st-from").value = minDay(F.lo);
+      if (document.activeElement !== $("#st-to")) $("#st-to").value = minDay(F.hi - DAY_MIN);
       $("#st-from").max = $("#st-to").max = stToday();
     }
     document.querySelectorAll("#v-stats input[data-sec]").forEach(c => (c.checked = !st.hide.has(c.dataset.sec)));
@@ -9452,16 +9484,33 @@
   document
     .querySelectorAll("#v-stats [data-tf]")
     .forEach(b => b.addEventListener("click", () => stSetTf(b.dataset.tf)));
-  ["#st-from", "#st-to"].forEach(sel =>
-    $(sel).addEventListener("change", () => {
-      const f = $("#st-from").value,
-        t = $("#st-to").value;
-      if (!isDay(f) || !isDay(t)) return;
-      Object.assign(S.stats, { tf: "custom", from: f, to: t, zoom: null, day: null, person: null, rets: [] });
-      stSave();
-      stBump();
-    }),
-  );
+  /* Typing a date fires a change at each segment (a year passes through 0002, 0020, 0202 on its way to 2026), so a range
+     applies after a pause, on Enter, or when the box loses focus, and only a date from 2000 on */
+  let stDT = null;
+  const stDates = () => {
+    clearTimeout(stDT);
+    const f = $("#st-from").value,
+      t = $("#st-to").value;
+    if (!isDay(f) || !isDay(t) || f < "2000" || t < "2000") return;
+    const st = S.stats;
+    if (st.tf === "custom" && st.from === f && st.to === t) return;
+    Object.assign(st, { tf: "custom", from: f, to: t, zoom: null, day: null, person: null, rets: [] });
+    stSave();
+    stBump();
+  };
+  ["#st-from", "#st-to"].forEach(sel => {
+    const x = $(sel);
+    const later = () => {
+      clearTimeout(stDT);
+      stDT = setTimeout(stDates, 1200);
+    };
+    x.addEventListener("input", later);
+    x.addEventListener("change", later);
+    x.addEventListener("blur", stDates);
+    x.addEventListener("keydown", e => {
+      if (e.key === "Enter") stDates();
+    });
+  });
   document.querySelectorAll("#v-stats input[data-sec]").forEach(c =>
     c.addEventListener("change", () => {
       if (c.checked) S.stats.hide.delete(c.dataset.sec);
