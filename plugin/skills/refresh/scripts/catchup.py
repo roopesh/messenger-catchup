@@ -81,6 +81,12 @@ SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or 
   bytes, one line of plain text each, citing 1-10 stored messages of that day by their date label d (the browser's
   zone; a day never goes back); a day that has one is refused unless that one isn't final (written before a later day
   was stored) and the day gained messages; written to digests/m<YYYY-MM>, pinned when that month exists),
+  "report":[["text",[refs]],...] (this run's report, saved for the page's By day tab: up to 8 bullets of at most 25
+  words and 300 bytes, each citing 1-10 of the messages this build adds; [] when nothing stands out. Required when RUN
+  holds a reports/ folder (step 5's query of the newest reports), except on the first build. Saved under the day of
+  the messages: reports/d<YYYY-MM-DD> {day, runs:[{at, fromI, toI, n, bullets:[{t, refs}]}], dropped?}, one run per
+  day the build's messages cover (a run over midnight is split, each bullet going to the days it cites, with those
+  refs); a run of the same messages already there is replaced; pinned when RUN holds that day),
   "relink":{"i":[parent,type] or null} (relink: messages an earlier build threaded; null removes the link),
   "move":{"i":"convid" or "new"} (a built message and its Messenger replies (r, rq, rg) into another conversation: an
   existing one, one in newconvs, or "new"; its own link must end up in that conversation or null. Messages linked to
@@ -200,6 +206,7 @@ BATCH_DOCS = 48  # documents per batch: the tool takes 50 writes, and the last b
 BATCH_BYTES = 900 * 1024  # the tool takes 1 MiB per batch
 LAYOUT_KEYS = ("layout", "block", "blocks", "activeFrom")
 BLOCK_ID = re.compile(r"^b\d{6,}-[0-9a-f]{8}$")
+FIXED_IDS = ("digests", "reports")  # collections whose documents keep their ids (a month, a day), written first
 NEWEST_FIRST = ("convs", "open", "answered", "mentions")  # summary lists kept newest first; deals are oldest first
 SUMMARY_LISTS = NEWEST_FIRST + ("deals",)
 
@@ -445,10 +452,10 @@ def _plan(docs, listing):
         raise AssertionError(_too_big(big, docs))
     coll = lambda p: p.split("/")[0]
     did = lambda p: p.split("/")[1]
-    # digests/m<month> keep their ids: always written, first (pinned when the listing holds them: _pins)
-    creates = [p for p in sorted(docs) if coll(p) == "digests"]
+    # digests/m<month> and reports/d<day> keep their ids: always written, first (pinned when the listing holds them)
+    creates = [p for p in sorted(docs) if coll(p) in FIXED_IDS]
     creates += [
-        p for p in sorted(docs) if coll(p) != "digests" and did(p) != "current" and did(p) not in listing[coll(p)]
+        p for p in sorted(docs) if coll(p) not in FIXED_IDS and did(p) != "current" and did(p) not in listing[coll(p)]
     ]
     currents = [p for p in ("threading/current", "summary/current") if p in docs]
     batches, b, n = [], [], 0
@@ -470,11 +477,13 @@ def _plan(docs, listing):
     return batches, [gone[k : k + 50] for k in range(0, len(gone), 50)]
 
 
-def _pins(docs, listing):  # the documents written over an existing one: `current`, and digest months already there
+def _pins(docs, listing):  # written over an existing one: `current`, and digest months or report days already there
     return {
         p
         for p in docs
-        if p.endswith("/current") or p.startswith("digests/") and p.split("/")[1] in listing.get("digests", {})
+        if p.endswith("/current")
+        or p.split("/")[0] in FIXED_IDS
+        and p.split("/")[1] in listing.get(p.split("/")[0], {})
     }
 
 
@@ -483,7 +492,7 @@ def _write_out(out, docs, batches, cleanup, merged, pins=None):
     Clears what an earlier build or an older catchup.py left there, its single threading.json and summary.json too.
     pins: the documents written with if_version (default: the `current` documents)."""
     pins = pins if pins is not None else {p for p in docs if p.endswith("/current")}
-    for x in ("threading", "summary", "merged", "digests"):
+    for x in ("threading", "summary", "merged") + FIXED_IDS:
         shutil.rmtree(os.path.join(out, x), ignore_errors=True)
     for x in ("threading.json", "summary.json", "manifest.json"):
         if os.path.exists(os.path.join(out, x)):
@@ -1733,6 +1742,7 @@ def build(work, run, specp):
     docs = layout_docs(t, s, scur.get("activeFrom", 0) if scur.get("layout") == 2 else 0)
     _roundtrip(docs, t, s)
     digested = _digest_spec(sp, pool, run, docs, listing)  # digests/m<month> documents join docs (first batch)
+    reported = _report_spec(sp, pool, ids, base, run, docs, listing)  # and reports/d<day> (F27)
     # _plan fails here, before anything is written, if a document is too big
     batches, cleanup = _plan(docs, listing)
     told = _write_out(run + "/out", docs, batches, cleanup, {"threading": t, "summary": s}, _pins(docs, listing))
@@ -1747,8 +1757,8 @@ def build(work, run, specp):
         st["chunks"] = sorted(set(chunks) | starts)
     _dump(st, work + "/state.json")
     print(
-        "build ok: #%d-#%d | %s | %s | next STOPS=%s"
-        % (ids[0], ids[-1], dict(collections.Counter(joined.values())), digested, json.dumps(st["stops"]))
+        "build ok: #%d-#%d | %s | %s | %s | next STOPS=%s"
+        % (ids[0], ids[-1], dict(collections.Counter(joined.values())), digested, reported, json.dumps(st["stops"]))
     )
     print("write: " + told)
 
@@ -2056,6 +2066,151 @@ def check_digests(work, run, after):
             "" if len(todo) + more == 1 else "s",
             "" if todo else ": the backfill is complete",
         )
+    )
+
+
+# Each refresh's report (F27): the bullets of the report a refresh gives in chat, saved on the page under the day of
+# the messages they cite, for the By day tab (and for F29, which can fold a finished day's runs into a fuller summary).
+# One document per day, reports/d<YYYY-MM-DD> {day, runs:[{at, fromI, toI, n, bullets:[{t, refs}]}], dropped?}, runs
+# in message order. A build that spans midnight adds a run to each day its messages cover: that day's messages, and
+# the bullets citing them with only those refs. Claude writes the bullets once, in the build spec; the counts, the
+# split and the merge are done here, checked before anything is written. A run's messages are never in two runs of a
+# day: a rebuild of the same messages (after a refused or partly applied write) replaces its run. With the caps below
+# a run is at most about 3.5 KB; a day keeps its newest REPORT_RUNS runs within REPORT_DOC bytes, and counts the ones
+# that left in `dropped`.
+
+REPORT_BULLETS = 8  # bullets per run: a handful, as in the chat report
+REPORT_WORDS = 25
+REPORT_BYTES = 300  # UTF-8 bytes of one bullet's text
+REPORT_REFS = 10  # messages one bullet cites
+REPORT_RUNS = 40  # runs a day keeps (hourly refreshes make about 17) ...
+REPORT_DOC = 128 * 1024  # ... within this many bytes, well inside a document's 256 KiB
+REPORT_QUERY = 5  # step 5 queries the newest 5 reports by day
+REPORT_ID = re.compile(r"^d(\d{4}-\d\d-\d\d)$")
+
+
+def _now_iso():  # the run's time, as the page reads it ("2026-11-21T17:04:00Z")
+    now = NOW or datetime.datetime.now(datetime.timezone.utc)
+    return now.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _report_listing(run):  # step 5's query of the newest reports: {day: document}
+    assert os.path.isdir(run + "/reports"), (
+        "%s has no reports/ folder: query the reports collection into it (newest %d by day; references/reports.md). If "
+        "the collection is empty and the query leaves no folder, create an empty %s/reports folder"
+        % (run, REPORT_QUERY, run)
+    )
+    out = {}
+    for k, v in _docs(run + "/reports").items():
+        m = REPORT_ID.match(k)
+        if m and isinstance(v, dict):
+            out[m.group(1)] = v
+    return out
+
+
+def _report_entries(sd, pool, ids):
+    """The spec's `report` ([[text, [refs]], ...], or [] when nothing stands out), checked: {day: this run's entry},
+    one per day of the run's messages (ids), each with that day's messages and the bullets citing them."""
+    assert isinstance(sd, list) and len(sd) <= REPORT_BULLETS, (
+        'report: a list of at most %d bullets, [["text", [refs]], ...] ([] when nothing stands out)' % REPORT_BULLETS
+    )
+    mine = set(ids)
+    items = []
+    for b in sd:
+        t, refs = _bullet(b)
+        assert isinstance(t, str) and t.strip(), "report: each bullet is [text, [refs]]: %r" % (b,)
+        assert not CONTROL_RE.search(t), (
+            "report: a bullet is one line of plain text (no line breaks or control characters): %r" % t
+        )
+        assert len(t.split()) <= REPORT_WORDS, ("report bullet over %d words" % REPORT_WORDS, t)
+        assert len(t.encode("utf-8")) <= REPORT_BYTES, ("report bullet over %d bytes" % REPORT_BYTES, t)
+        assert (
+            isinstance(refs, list)
+            and 1 <= len(refs) <= REPORT_REFS
+            and all(isinstance(r, int) and not isinstance(r, bool) for r in refs)
+        ), ("report: each bullet cites 1 to %d message numbers" % REPORT_REFS, t, refs)
+        bad = [r for r in refs if r not in mine]
+        assert not bad, (
+            "report: %s %s not among the messages this build adds (#%d-#%d): cite this run's messages (an older one "
+            "can be named in the text): %r"
+            % (", ".join("#%d" % r for r in bad), "is" if len(bad) == 1 else "are", ids[0], ids[-1], t)
+        )
+        items.append((t.strip(), list(dict.fromkeys(refs))))
+    at = _now_iso()
+    out, placed = {}, set()
+    for day, ds in _days(pool.values()).items():
+        here = [i for i in ds if i in mine]
+        if not here:
+            continue
+        on = set(here)
+        bs = []
+        for k, (t, refs) in enumerate(items):
+            rs = [r for r in refs if r in on]
+            if rs:
+                bs.append({"t": t, "refs": rs})
+                placed.add(k)
+        out[day] = {"at": at, "fromI": here[0], "toI": here[-1], "n": len(here), "bullets": bs}
+    lost = [items[k][0] for k in range(len(items)) if k not in placed]
+    assert not lost, "report: %r cites only messages with no date (d): cite a dated message" % lost[0]
+    return out
+
+
+def _overlaps(x, e):  # an earlier run of the same messages (a rebuild after a refused or partly applied write)
+    a, b = x.get("fromI"), x.get("toI")
+    return isinstance(a, int) and isinstance(b, int) and a <= e["toI"] and e["fromI"] <= b
+
+
+def _report_docs(entries, listed):
+    """The day documents to write: each as the listing holds it (other fields kept), with this run's entry in place of
+    any run of the same messages, in message order, within REPORT_RUNS and REPORT_DOC (the oldest runs leave first)."""
+    docs = {}
+    for day in sorted(entries):
+        old = listed.get(day) if isinstance(listed.get(day), dict) else {}
+        runs = [x for x in old.get("runs") or [] if isinstance(x, dict) and not _overlaps(x, entries[day])]
+        runs.append(entries[day])
+        runs.sort(key=lambda x: x.get("fromI") if isinstance(x.get("fromI"), int) else -1)
+        dropped = old.get("dropped") if isinstance(old.get("dropped"), int) else 0
+        doc = dict(copy.deepcopy(old), day=day, runs=runs)
+        while len(doc["runs"]) > 1 and (len(doc["runs"]) > REPORT_RUNS or _size(doc) > REPORT_DOC):
+            doc["runs"].pop(0)
+            dropped += 1
+            doc["dropped"] = dropped
+        docs["reports/d" + day] = doc
+    return docs
+
+
+def _report_spec(sp, pool, ids, base, run, docs, listing):
+    """A build's `report`: checked, split by day, its day documents added to docs and listing. -> a line on what it
+    saved. Required when step 5 queried the reports (RUN/reports), except on the first build (setup reports it)."""
+    if "report" not in sp:
+        assert base < 0 or not os.path.isdir(run + "/reports"), (
+            'report: add this run\'s report to the spec, [["text", [refs]], ...] citing the messages this build adds, '
+            "or [] when nothing stands out (references/reports.md)"
+        )
+        return "no report saved" + ("" if base < 0 else " (RUN has no reports/ folder: step 5 queries reports)")
+    listed = _report_listing(run)
+    entries = _report_entries(sp["report"], pool, ids)
+    days = sorted(entries)
+    assert not (len(listed) >= REPORT_QUERY and days and min(listed) > days[0]), (
+        "RUN/reports holds %d reports, all after %s, the first day this build covers: query the reports collection "
+        "again with a larger limit (references/reports.md)" % (len(listed), days[0])
+    )
+    docs.update(_report_docs(entries, listed))
+    listing["reports"] = {"d" + k: v for k, v in listed.items()}
+    return "report: " + (
+        ", ".join(
+            "%s %s#%d-#%d, %d bullet%s"
+            % (
+                d,
+                "(new) " if d not in listed else "",
+                entries[d]["fromI"],
+                entries[d]["toI"],
+                len(entries[d]["bullets"]),
+                "" if len(entries[d]["bullets"]) == 1 else "s",
+            )
+            for d in days
+        )
+        or "no dated messages, nothing saved"
     )
 
 

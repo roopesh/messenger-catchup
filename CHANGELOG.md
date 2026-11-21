@@ -2,6 +2,23 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.29.0] - 2026-11-21
+**Stats part 2, a Views list that keeps itself up to date, and each refresh's report on By day** (BACKLOG F31, F28, F27, all decided on the owner's decision board). MINOR: new page features and a refresh procedure change. Page **`PAGE_VERSION` 3.5** (from 3.4); helper unchanged (2.1).
+
+### Added
+- **Stats part 2 (F31).** Five more sections, each with its own Show switch, following the timeframe, zoom, day and person views, with no Claude call:
+  - **Conversations and topics:** started and active, the busiest 10 (opening the thread), and the summary's tags by count.
+  - **Deals:** posted, claims, sold and pending; median time from posted to sold; top sellers and claimers; the deals list.
+  - **People:** new voices and who's gone quiet (posted in the 30 days before the span, not in it); first and last seen on a person's chart.
+  - **Engagement:** who replies to whom (Messenger replies and threading links), questions asked and answered, and the median wait for a first answer.
+  - **Word trends:** a search box charting how often a word or phrase is mentioned (whole words, any case), with who mentions it most; the box keeps its focus while the page redraws.
+  - Still no reactions. Tests: page section `stats2` (ST17–ST24) and a 180,000-message speed check (ST15).
+- **Views as a list (F28).** One view open at a time (remembered per browser), each with Rename, Rebuild and Remove (with Undo, as saved questions have), and a New view button for the build box. Method ideas and Claude's notes move into collapsed sections at the end. **Keep up to date:** a per-view switch rebuilds the view by itself after a refresh brings new messages, while the page is open, once per import and one view at a time, never during a refresh, another build or a rename; a failed update keeps the earlier version and says so. Rebuilds use the viewer's claude.ai usage, as building does. `references/database.md` documents the new `views/*` fields. Test: page section `viewsTab` (V1–V14).
+- **Each refresh's report on By day (F27).** A refresh that stores new messages also saves its report, a few bullets citing message numbers, under its day (`reports/d<YYYY-MM-DD>`), written by `catchup.py` through the build's manifest, which checks every bullet's numbers and splits a run over midnight by message day. By day shows today's runs in a card for the day in progress, and a collapsed "What each refresh found (N)" under each finished day's digest. SKILL.md steps 5, 6 and 8 and the new `references/reports.md` describe it. Tests: 11 in `test_catchup.py`, page section `byDayReports` (BD13–BD17).
+
+### Changed
+- **Backlog:** F27, F28 and F31 removed (done). F25 and R13 notes are on the decision board.
+
 ## [1.28.0] - 2026-11-21
 **Stats gets This week and Last week, typing a custom date works, and Summary threads read in order** (the owner's review of v1.27.0). MINOR: two new timeframes and changed card behavior. Page **`PAGE_VERSION` 3.4** (from 3.3); helper unchanged (2.1).
 

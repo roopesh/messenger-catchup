@@ -404,6 +404,111 @@
   .qa-undo p.err {
     color: var(--warn);
   }
+  /* Views (F28): a compact list of saved views, one open at a time with its actions; ideas and notes collapsed below.
+     A details element isn't a dependable grid container in every browser, so the open view's body keeps its own gap. */
+  details.item.vw {
+    display: block;
+  }
+  .vw > summary h3,
+  .vw > summary .note {
+    overflow-wrap: anywhere;
+  }
+  .vw > summary .vw-err {
+    color: var(--warn);
+  }
+  .vw-body {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+    min-width: 0;
+  }
+  .vw-acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    align-items: center;
+  }
+  .vw-auto {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 0.92rem;
+  }
+  .vw-body .vw-help,
+  .vw-body .vw-st {
+    font-size: 0.84rem;
+    overflow-wrap: anywhere;
+  }
+  .vw-body .vw-st:empty {
+    display: none;
+  }
+  .vw-body .vw-st.err {
+    color: var(--warn);
+  }
+  .vw-ren {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .vw-ren input {
+    flex: 1 1 200px;
+    font: inherit;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 7px 10px;
+    min-width: 0;
+  }
+  #view-out:empty {
+    display: none;
+  }
+  .vw #view-out .item {
+    padding: 10px 12px;
+  }
+  .vw-idea {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .vw-undo {
+    display: grid;
+    gap: 6px;
+  }
+  .vw-undo:empty {
+    display: none;
+  }
+  .vw-undo p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .vw-undo p.err {
+    color: var(--warn);
+  }
+  details.vw-more > summary {
+    cursor: pointer;
+    list-style: none;
+  }
+  details.vw-more > summary::-webkit-details-marker {
+    display: none;
+  }
+  details.vw-more > summary h2::after {
+    content: " +";
+    color: var(--muted);
+    font-weight: 500;
+  }
+  details.vw-more[open] > summary h2::after {
+    content: " –";
+  }
+  details.vw-more > .block {
+    margin-top: 12px;
+  }
+  .vw-n {
+    color: var(--muted);
+    font-weight: 500;
+  }
   .tablewrap {
     overflow-x: auto;
     border: 1px solid var(--line);
@@ -1249,6 +1354,59 @@
   .dg-more {
     justify-self: start;
   }
+  /* F27: what each refresh found, a run per refresh: in full on the day in progress, collapsed under a digest */
+  .dg-day .rp-box {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+  .dg-day .rp-box p,
+  .dg-day p.rp-lead {
+    margin: 0;
+  }
+  .dg-day .rp-runs {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 10px;
+  }
+  .dg-day .rp-run {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding-left: 10px;
+    border-left: 2px solid var(--line);
+  }
+  .dg-day .rp-time {
+    font-weight: 600;
+  }
+  .dg-day details.rp-more {
+    border-top: 1px dashed var(--line);
+    padding-top: 8px;
+    min-width: 0;
+  }
+  .dg-day details.rp-more > summary {
+    cursor: pointer;
+    list-style: none;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.92rem;
+    width: fit-content;
+    max-width: 100%;
+  }
+  .dg-day details.rp-more > summary::-webkit-details-marker {
+    display: none;
+  }
+  .dg-day details.rp-more > summary::before {
+    content: "▸ ";
+  }
+  .dg-day details.rp-more[open] > summary::before {
+    content: "▾ ";
+  }
+  .dg-day details.rp-more > .rp-box {
+    margin-top: 8px;
+  }
   .method ul {
     margin: 0;
     padding-left: 1.1em;
@@ -1767,6 +1925,61 @@
   details.st-tbl.wide table {
     min-width: 560px;
   }
+  /* Stats part 2: lists side by side where there's room, a line under a list row, the deals list, the word box */
+  .st-sec[hidden],
+  .st-deals li[hidden] {
+    display: none;
+  }
+  .st-h {
+    margin: 4px 0 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .st-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 12px 28px;
+  }
+  .st-col {
+    display: grid;
+    gap: 8px;
+    align-content: start;
+    min-width: 0;
+  }
+  .st-top .sub,
+  .st-deals .sub {
+    font-size: 0.84rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .st-top .sub {
+    grid-column: 2 / -1;
+  }
+  .st-deals {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    max-width: 640px;
+  }
+  .st-deals li {
+    display: grid;
+    gap: 2px;
+    padding: 7px 0 6px;
+    border-top: 1px dashed var(--line);
+  }
+  .st-deals li:first-child {
+    border-top: 0;
+  }
+  .st-deals .who {
+    justify-self: start;
+    text-align: left;
+    overflow-wrap: anywhere;
+    font-size: 0.95rem;
+  }
+  .st-wq input[type="search"] {
+    max-width: 420px;
+  }
   @media (prefers-reduced-motion: reduce) {
     * {
       scroll-behavior: auto !important;
@@ -1858,7 +2071,10 @@
     <div class="block">
       <div class="sec-head">
         <h2>By day</h2>
-        <p>A few lines on each finished day, newest first. A number opens that message.</p>
+        <p>
+          A few lines on each finished day, and what each refresh found on the day in progress, newest first. A number
+          opens that message.
+        </p>
       </div>
       <div class="list" id="days-list"></div>
     </div>
@@ -1867,10 +2083,11 @@
   <section class="view" id="v-views" hidden>
     <div class="block">
       <div class="sec-head">
-        <h2>Reorganize the catch-up</h2>
-        <p>Describe a different way to group the chat. Claude builds it from the messages and saves it.</p>
+        <h2>Views</h2>
+        <button type="button" class="secondary" id="view-new" aria-controls="view-box" hidden>New view</button>
       </div>
-      <div class="composer">
+      <p class="note">Other ways to group the chat, built by Claude from the messages. Open one to read it.</p>
+      <div class="composer" id="view-box">
         <label for="view-in" class="note">How should it be organized?</label>
         <textarea
           id="view-in"
@@ -1879,25 +2096,32 @@
         <div class="btns">
           <button class="primary" id="view-go">Build view</button>
           <button class="secondary" id="view-keep">Keep as a method idea</button>
+          <button type="button" class="link" id="view-cancel" hidden>Cancel</button>
           <span class="note" id="view-note"></span>
         </div>
       </div>
-      <div id="view-out"></div>
-    </div>
-    <div class="block">
-      <div class="sec-head">
-        <h2>Notes from Claude</h2>
-        <p>Analyses and answers about how this page and its refreshes work.</p>
-      </div>
-      <div class="list" id="notes-list"><p class="note">No notes yet.</p></div>
-    </div>
-    <div class="block">
-      <div class="sec-head">
-        <h2>Saved views &amp; method ideas</h2>
-        <p>Claude reads these when improving how catch-ups are built.</p>
-      </div>
+      <div id="view-home"><div id="view-out"></div></div>
+      <div class="vw-undo" id="vw-undo" role="status" aria-live="polite"></div>
       <div class="list" id="views-list"></div>
     </div>
+    <details class="vw-more" id="vw-ideas">
+      <summary>
+        <h2>Method ideas<span class="vw-n" id="ideas-n"></span></h2>
+      </summary>
+      <div class="block">
+        <p class="note">Ideas you left for Claude. It reads them after each refresh and offers to apply them.</p>
+        <div class="list" id="ideas-list"></div>
+      </div>
+    </details>
+    <details class="vw-more" id="vw-notes">
+      <summary>
+        <h2>Notes from Claude<span class="vw-n" id="notes-n"></span></h2>
+      </summary>
+      <div class="block">
+        <p class="note">Analyses and answers about how this page and its refreshes work.</p>
+        <div class="list" id="notes-list"><p class="note">No notes yet.</p></div>
+      </div>
+    </details>
   </section>
 
   <section class="view" id="v-stats" hidden>
@@ -1934,6 +2158,11 @@
         <label><input type="checkbox" data-sec="volume" checked /> Volume</label>
         <label><input type="checkbox" data-sec="top" checked /> Top 10</label>
         <label><input type="checkbox" data-sec="heat" checked /> Day and hour</label>
+        <label><input type="checkbox" data-sec="convs" checked /> Conversations</label>
+        <label><input type="checkbox" data-sec="deals" checked /> Deals</label>
+        <label><input type="checkbox" data-sec="people" checked /> People</label>
+        <label><input type="checkbox" data-sec="engage" checked /> Engagement</label>
+        <label><input type="checkbox" data-sec="words" checked /> Word trends</label>
       </div>
     </div>
     <div class="st-body" id="st-body"></div>
@@ -2057,7 +2286,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.4";
+  const PAGE_VERSION = "3.5";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -2099,6 +2328,7 @@
     const box = document.getElementById("notes-list");
     if (!box) return;
     box.innerHTML = "";
+    document.getElementById("notes-n").textContent = list.length ? " (" + list.length + ")" : "";
     if (!list.length) {
       box.append(el("p", "note", "No notes yet."));
       return;
@@ -6604,16 +6834,81 @@
       });
   }
 
-  /* ---------- views ---------- */
-  function renderViewDoc(v, into, note) {
+  /* ---------- views (F28) ----------
+     A compact list of the views the user built (views/*, kind "view"), newest first, one open at a time (remembered in
+     this browser). The open view has Rename, Rebuild, Remove and a "Keep up to date" switch. Remove hides it with
+     "Removed … · Undo" for QA_UNDO_MS, then deletes views/<id>, as saved questions do (F26). One build at a time: Build
+     view, Rebuild and the automatic updates share vwBusy. A view kept up to date (auto) rebuilds itself once an import
+     has stored messages newer than its toI: once per import, after the refresh that stored them has finished, never
+     while the user is typing on this tab. Before it starts it reads the view fresh and marks it (autoBusy), so a second
+     open copy of the page leaves it alone. A failed update keeps the old content and records autoErr, so that import
+     isn't tried again. Method ideas and Claude's notes are in collapsed sections at the foot of the tab. Tests shorten
+     the automatic update's waits with window.__mcViewAutoMs; nothing in production sets it. */
+  const VW_KEY = "mcViewOpen";
+  let vwOpen = null; /* the open view's id */
+  try {
+    vwOpen = localStorage.getItem(VW_KEY) || null;
+  } catch (e) {}
+  function vwKeepOpen(id) {
+    vwOpen = id;
+    try {
+      if (id) localStorage.setItem(VW_KEY, id);
+      else localStorage.removeItem(VW_KEY);
+    } catch (e) {}
+  }
+  let vwNew = false; /* the build box, opened with New view */
+  let vwBusy = null; /* {id, how} while a build runs: id null for a new view; how "new", "user" (Rebuild) or "auto" */
+  let vwRen = null; /* {id, value} while a view is renamed; the list isn't redrawn meanwhile */
+  const vwNotes = new Map(); /* id -> the full "Built from …" line of a build in this page load */
+  const vwSt = new Map(); /* id -> {t, err}: the line under a view's actions */
+  const vwGone = new Set(); /* ids hidden: waiting to be deleted, or deleted */
+  const vwPending = new Set(); /* {id, row, what, wasOpen, timer} */
+  const vwTried = new Set(); /* "id:newest": automatic updates started in this page load */
+  const vwName = v => (v && v.title) || "View";
+  const vwNewest = () => (S.msgs.length ? S.msgs[S.msgs.length - 1].i : -1);
+  /* the newest stored message when it was built (sent.to for views saved before toI) */
+  const vwTo = v => (typeof v.toI === "number" ? v.toI : v.sent && typeof v.sent.to === "number" ? v.sent.to : -1);
+  const vwViews = () =>
+    S.views
+      .filter(v => v.kind !== "idea" && v._id && !vwGone.has(v._id))
+      .sort((a, b) => (b.made || b.at || "").localeCompare(a.made || a.at || ""));
+  /* "5:03 PM" today, else "Nov 19, 5:03 PM" */
+  function vwWhen(iso) {
+    const d = new Date(iso);
+    if (!iso || isNaN(d)) return "";
+    const now = new Date();
+    const o = { hour: "numeric", minute: "2-digit" };
+    if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString("en-US", o);
+    const y = d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {};
+    return d.toLocaleString("en-US", Object.assign({ month: "short", day: "numeric" }, y, o));
+  }
+  const vwAt = iso => (w => (/^\d/.test(w) ? "at " + w : w))(vwWhen(iso));
+  /* the messages it was built from, word for word: numbers and days */
+  function vwSpan(v) {
+    const s = v.sent;
+    if (!s || s.from == null) return typeof v.toI === "number" ? "to #" + v.toI : "";
+    const days = daySpan((S.byI.get(s.from) || {}).d, (S.byI.get(s.to) || {}).d);
+    return "#" + s.from + "–#" + s.to + (days ? " (" + days + ")" : "");
+  }
+  function vwMeta(v) {
+    const busy = vwBusy && vwBusy.id === v._id ? (vwBusy.how === "auto" ? "updating…" : "rebuilding…") : "";
+    const when = v.autoAt
+      ? "Updated " +
+        (v.autoAfter ? "after the " + vwWhen(v.autoAfter) + " refresh" : vwAt(v.autoAt) + " with newer messages")
+      : v.at
+        ? "Built " + vwAt(v.at)
+        : "";
+    return [when, vwSpan(v), v.auto ? "kept up to date" : "", busy].filter(Boolean).join(" · ");
+  }
+  function renderViewDoc(v, into, note, head) {
     into.textContent = "";
     const d = el("div", "block");
     const h = el("div", "sec-head");
-    h.append(el("h2", null, v.title || "View"));
+    if (head) h.append(el("h2", null, vwName(v)));
     if (v.prompt) h.append(el("p", null, "Asked for: " + v.prompt));
     const read = note || (sentShort(v) ? "Built from " + sentShort(v) + "." : "");
     if (read) h.append(el("p", "note sent", read));
-    d.append(h);
+    if (h.childNodes.length) d.append(h);
     if (v.intro) d.append(el("p", null, v.intro));
     const l = el("div", "list");
     (v.sections || []).forEach(s => {
@@ -6633,14 +6928,25 @@
     d.append(l);
     into.append(d);
   }
+  /* only the parts of Claude's reply a view shows, so a reply can't set any other field (B51: kind is set after it) */
+  function vwContent(r) {
+    if (!r || typeof r !== "object" || Array.isArray(r))
+      throw Object.assign(new Error("not a view"), { code: "invalid_json" });
+    return {
+      title: typeof r.title === "string" ? r.title : "",
+      intro: typeof r.intro === "string" ? r.intro : "",
+      sections: Array.isArray(r.sections) ? r.sections : [],
+    };
+  }
   $("#view-go").onclick = async () => {
     const p = $("#view-in").value.trim();
-    if (!p) return;
+    if (!p || vwBusy) return;
     if (!S.sample) {
       $("#view-note").textContent = "Asking Claude isn't available in this view.";
       return;
     }
-    $("#view-go").disabled = true;
+    vwBusy = { id: null, how: "new" };
+    renderViews();
     $("#view-note").textContent = "Building… this can take a minute.";
     try {
       await capWait();
@@ -6648,33 +6954,43 @@
         $("#view-note").textContent = "That request is too long to send. Shorten it.";
         return;
       }
-      const {
-        res: v,
-        P,
-        retried,
-      } = await sendFitted(
+      const n0 = vwNewest();
+      const { res, P, retried } = await sendFitted(
         cap => viewPrompt(p, cap),
         m => S.sample.json(m.text),
       );
-      v.prompt = p;
-      v.at = new Date().toISOString();
-      v.toI = S.msgs[S.msgs.length - 1]?.i ?? null;
+      const at = new Date().toISOString();
+      const v = Object.assign(vwContent(res), { prompt: p, at, made: at, toI: n0 >= 0 ? n0 : null, auto: false });
       const sent = sentOf(P);
       if (sent) v.sent = sent;
-      renderViewDoc(v, $("#view-out"), sentNote(P, true, retried));
+      const note = sentNote(P, true, retried);
       $("#view-note").textContent = "";
+      let id = null;
       if (S.db) {
         try {
           /* B51: kind last, so a reply that says kind "idea" can't pose as a method idea */
-          await S.db.collection("views").add({ ...v, kind: "view" });
-        } catch (e) {
-          $("#view-note").textContent = "Built, but not saved.";
-        }
+          id = (await S.db.collection("views").add({ ...v, kind: "view" })).id;
+        } catch (e) {}
+      }
+      if (id) {
+        vwNotes.set(id, note);
+        vwKeepOpen(id);
+        vwNew = false;
+        $("#view-in").value = "";
+        if (!S.views.some(x => x._id === id)) S.views = S.views.concat([{ ...v, kind: "view", _id: id }]);
+      } else {
+        /* shown on its own under the build box until a saved view is opened (the remembered one stays remembered) */
+        vwOpen = null;
+        $("#view-home").append($("#view-out"));
+        renderViewDoc(v, $("#view-out"), note, true);
+        $("#view-out").dataset.k = "u";
+        $("#view-note").textContent = "Built, but not saved.";
       }
     } catch (e) {
-      $("#view-note").textContent = errCopy(e.code);
+      $("#view-note").textContent = errCopy(e && e.code);
     } finally {
-      $("#view-go").disabled = false;
+      vwBusy = null;
+      renderViews();
     }
   };
   $("#view-keep").onclick = async () => {
@@ -6688,37 +7004,396 @@
       $("#view-note").textContent = "Couldn't save.";
     }
   };
-  function renderViews() {
-    const l = $("#views-list");
+  $("#view-new").onclick = () => {
+    vwRen = null;
+    vwNew = true;
+    renderViews();
+    $("#view-in").focus();
+  };
+  $("#view-cancel").onclick = () => {
+    vwNew = false;
+    $("#view-note").textContent = "";
+    renderViews();
+    $("#view-new").focus();
+  };
+  /* typing in the box keeps it open when the list fills in */
+  $("#view-in").addEventListener("input", () => (vwNew = true));
+  function renderIdeas() {
+    const l = $("#ideas-list");
+    const ideas = S.views.filter(v => v.kind === "idea").sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+    $("#ideas-n").textContent = ideas.length ? " (" + ideas.length + ")" : "";
     l.textContent = "";
-    if (!S.views.length) {
-      l.append(el("p", "note", "Nothing saved yet."));
-      return;
+    if (!ideas.length)
+      l.append(el("p", "note", "No method ideas yet. “Keep as a method idea” in the build box adds one."));
+    ideas.forEach(v => {
+      const it = el("div", "item");
+      it.append(el("p", "vw-idea", v.prompt || ""));
+      if (v.at) it.append(el("div", "note", "Left " + vwAt(v.at)));
+      l.append(it);
+    });
+  }
+  /* The list, drawn whole from S.views each time; the open view's content (#view-out) is moved into its card and
+     drawn again only when it changes. force: redraw while a rename is open (the rename's own steps). */
+  function renderViews(force) {
+    renderIdeas();
+    if (vwBusy) $("#view-go").disabled = true;
+    else if (S.sample) $("#view-go").disabled = false;
+    if (vwRen && !force) return;
+    const l = $("#views-list");
+    const out = $("#view-out");
+    const ae = document.activeElement;
+    const fk = ae && l.contains(ae) ? ae.dataset.f : null;
+    $("#view-home").append(out);
+    l.textContent = "";
+    const list = vwViews();
+    if (vwOpen && S.viewsIn && !list.some(v => v._id === vwOpen)) vwKeepOpen(null);
+    const empty = !!S.viewsIn && !list.length;
+    const box = $("#view-box");
+    box.hidden = !(vwNew || empty);
+    $("#view-new").hidden = !box.hidden;
+    $("#view-cancel").hidden = empty;
+    if (empty) l.append(el("p", "note", "No views yet."));
+    list.forEach(v => l.append(vwRow(v)));
+    const v = list.find(x => x._id === vwOpen);
+    const row = v && [...l.children].find(r => r.dataset.id === v._id);
+    if (row) {
+      row.querySelector(".vw-body").append(out);
+      const k = "v:" + v._id + "|" + (v.at || "") + "|" + (vwNotes.get(v._id) || "") + "|" + S.msgs.length;
+      if (out.dataset.k !== k) {
+        renderViewDoc(v, out, vwNotes.get(v._id), false);
+        out.dataset.k = k;
+      }
+    } else if ((out.dataset.k || "").startsWith("v:")) {
+      out.textContent = "";
+      out.dataset.k = "";
     }
-    S.views
-      .slice()
-      .sort((a, b) => (b.at || "").localeCompare(a.at || ""))
-      .forEach(v => {
-        const d = el("details", "item");
-        const s = el("summary");
-        s.append(
-          el("h3", null, v.kind === "idea" ? "Idea: " + v.prompt : v.title || "View"),
-          el(
-            "div",
-            "note",
-            (v.at || "").replace("T", " ").slice(0, 16) + (v.kind === "idea" ? " · method idea" : " · built view"),
-          ),
-        );
-        d.append(s);
-        if (v.kind !== "idea") {
-          const box = el("div");
-          d.addEventListener("toggle", () => {
-            if (d.open && !box.childNodes.length) renderViewDoc(v, box);
-          });
-          d.append(box);
-        }
-        l.append(d);
+    $("#view-home").hidden = !$("#view-home").contains(out) || !out.childNodes.length;
+    if (fk) {
+      const f = [...l.querySelectorAll("[data-f]")].find(x => x.dataset.f === fk);
+      if (f) f.focus({ preventScroll: true });
+    }
+    vwAutoSoon();
+  }
+  function vwRow(v) {
+    const id = v._id;
+    const d = el("details", "item vw");
+    d.dataset.id = id;
+    d.open = id === vwOpen;
+    const s = el("summary");
+    s.dataset.f = "open:" + id;
+    s.append(el("h3", null, vwName(v)), el("div", "note vw-meta", vwMeta(v)));
+    if (v.autoErr)
+      s.append(el("div", "note vw-err", "Couldn't update " + vwAt(v.autoErr.at) + ": this is the earlier version."));
+    d.append(s);
+    if (d.open) d.append(vwBody(v));
+    d.addEventListener("toggle", () => vwToggle(id, d.open));
+    return d;
+  }
+  /* opening one closes the other */
+  function vwToggle(id, open) {
+    if (open ? vwOpen === id : vwOpen !== id) return;
+    vwRen = null;
+    vwKeepOpen(open ? id : null);
+    renderViews();
+    const row = open && [...$("#views-list").children].find(r => r.dataset.id === id);
+    if (row) {
+      const top = row.getBoundingClientRect().top - $("nav.tabs").getBoundingClientRect().bottom;
+      if (top < 0) scrollBy(0, top - 8);
+    }
+  }
+  function vwBody(v) {
+    const id = v._id;
+    const b = el("div", "vw-body");
+    const busy = !!vwBusy && vwBusy.id === id;
+    const what = "“" + qaShort(vwName(v)) + "”";
+    if (vwRen && vwRen.id === id) b.append(vwRenForm(v, what));
+    else {
+      const a = el("div", "vw-acts");
+      const act = (t, f, label, fn) => {
+        const x = el("button", "link", t);
+        x.type = "button";
+        x.dataset.f = f + ":" + id;
+        x.setAttribute("aria-label", label + " " + what);
+        x.onclick = fn;
+        return x;
+      };
+      const ren = act("Rename", "ren", "Rename the view", () => vwRenStart(v));
+      const reb = act("Rebuild", "reb", "Rebuild from the current messages the view", () => vwBuild(v, "user"));
+      const rm = act("Remove", "rm", "Remove the view", () => vwRemove(id));
+      ren.disabled = rm.disabled = busy;
+      reb.disabled = !!vwBusy || !S.sample || !v.prompt;
+      const sw = el("label", "vw-auto");
+      const cb = el("input");
+      cb.type = "checkbox";
+      cb.setAttribute("role", "switch");
+      cb.checked = !!v.auto;
+      cb.disabled = !v.prompt;
+      cb.dataset.f = "auto:" + id;
+      cb.setAttribute("aria-describedby", "vw-help");
+      cb.onchange = () => vwSetAuto(id, cb.checked);
+      sw.append(cb, "Keep up to date");
+      a.append(ren, reb, rm, sw);
+      const help = el(
+        "p",
+        "note vw-help",
+        "Rebuilds it after each refresh with new messages while this page is open; each rebuild uses your claude.ai usage.",
+      );
+      help.id = "vw-help";
+      b.append(a, help);
+    }
+    const st = el("p", "note vw-st");
+    st.setAttribute("role", "status");
+    if (busy)
+      st.append(
+        el("span", "spin"),
+        " ",
+        vwBusy.how === "auto" ? "Updating with the newest messages…" : "Rebuilding… this can take a minute.",
+      );
+    else {
+      /* a failed automatic update says why; Rebuild tries now, and the next import tries again by itself */
+      const x = vwSt.get(id) || (v.autoErr ? { t: errCopy(v.autoErr.code), err: true } : null);
+      if (x) st.textContent = x.t;
+      if (x && x.err) st.classList.add("err");
+    }
+    b.append(st);
+    return b;
+  }
+  /* Rename: inline, saved to views/<id>.title; a rebuild keeps it. Enter saves, Escape cancels. No form element: a
+     sandboxed frame may block form submission, and with it the submit event. */
+  function vwRenStart(v) {
+    vwRen = { id: v._id, value: vwName(v) };
+    vwSt.delete(v._id);
+    renderViews(true);
+    const i = $("#views-list .vw-ren input");
+    if (i) {
+      i.focus();
+      i.select();
+    }
+  }
+  function vwRenForm(v, what) {
+    const f = el("div", "vw-ren");
+    const i = el("input");
+    i.type = "text";
+    i.maxLength = 80;
+    i.value = vwRen.value;
+    i.dataset.f = "name:" + v._id;
+    i.setAttribute("aria-label", "New name for the view " + what);
+    i.oninput = () => (vwRen.value = i.value);
+    i.onkeydown = e => {
+      if (e.isComposing) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        vwRenSave(v._id);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        vwRenEnd(v._id);
+      }
+    };
+    const save = el("button", "secondary", "Save");
+    save.type = "button";
+    save.onclick = () => vwRenSave(v._id);
+    const no = el("button", "link", "Cancel");
+    no.type = "button";
+    no.onclick = () => vwRenEnd(v._id);
+    f.append(i, save, no);
+    return f;
+  }
+  function vwRenEnd(id) {
+    vwRen = null;
+    renderViews();
+    const b = [...$("#views-list").querySelectorAll("[data-f]")].find(x => x.dataset.f === "ren:" + id);
+    if (b) b.focus();
+  }
+  async function vwRenSave(id) {
+    if (!vwRen || vwRen.id !== id) return;
+    const v = S.views.find(x => x._id === id);
+    const t = vwRen.value.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!v || !t || t === vwName(v) || !S.db) return vwRenEnd(id);
+    const old = v.title;
+    v.title = t;
+    vwRenEnd(id);
+    try {
+      await S.db.doc("views/" + id).update({ title: t });
+    } catch (e) {
+      const cur = S.views.find(x => x._id === id);
+      if (cur && cur.title === t) cur.title = old;
+      vwSt.set(id, { t: "Couldn't rename it. Try again.", err: true });
+      renderViews();
+    }
+  }
+  async function vwSetAuto(id, on) {
+    const v = S.views.find(x => x._id === id);
+    if (!v || !S.db) return;
+    const was = !!v.auto;
+    v.auto = on;
+    v.autoErr = null;
+    vwSt.delete(id);
+    renderViews();
+    try {
+      await S.db.doc("views/" + id).update({ auto: on, autoErr: null });
+    } catch (e) {
+      const cur = S.views.find(x => x._id === id);
+      if (cur) cur.auto = was;
+      vwSt.set(id, { t: "Couldn't save that. Try again.", err: true });
+      renderViews();
+    }
+  }
+  /* Remove, as saved questions (F26): hidden at once with "Removed … · Undo" in #vw-undo, deleted after QA_UNDO_MS; a
+     failed delete brings it back with a short line. Closing the page or its going hidden deletes at once. */
+  function vwLine(text, err) {
+    const row = el("p", err ? "err" : null, text);
+    $("#vw-undo").append(row);
+    if (err) setTimeout(() => row.remove(), 8000);
+    return row;
+  }
+  function vwRemove(id) {
+    if (vwGone.has(id) || !S.db) return;
+    const what = "“" + qaShort(vwName(S.views.find(x => x._id === id))) + "”";
+    vwGone.add(id);
+    const wasOpen = vwOpen === id;
+    if (wasOpen) vwKeepOpen(null);
+    if (vwRen && vwRen.id === id) vwRen = null;
+    const row = vwLine("Removed " + what + " · ");
+    const u = el("button", "link", "Undo");
+    u.type = "button";
+    u.setAttribute("aria-label", "Undo: keep " + what);
+    row.append(u);
+    const P = { id, row, what, wasOpen };
+    P.timer = setTimeout(() => vwCommit(P), QA_UNDO_MS);
+    vwPending.add(P);
+    u.onclick = () => {
+      if (!vwPending.delete(P)) return;
+      clearTimeout(P.timer);
+      vwGone.delete(id);
+      row.remove();
+      if (P.wasOpen) vwKeepOpen(id);
+      renderViews();
+      const s = [...$("#views-list").querySelectorAll("[data-f]")].find(x => x.dataset.f === "open:" + id);
+      if (s) s.focus();
+    };
+    renderViews();
+    u.focus();
+  }
+  async function vwCommit(P) {
+    if (!vwPending.delete(P)) return;
+    clearTimeout(P.timer);
+    P.row.remove();
+    /* the delete starts before the first await: on pagehide only the code up to it runs */
+    try {
+      await S.db.doc("views/" + P.id).delete();
+      return;
+    } catch (e) {}
+    vwGone.delete(P.id);
+    renderViews();
+    vwLine("Couldn't remove " + P.what + ". It's back in the list.", true);
+  }
+  const vwFlush = () => [...vwPending].forEach(vwCommit);
+  addEventListener("pagehide", vwFlush);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") vwFlush();
+  });
+  /* Rebuild (how "user") and the automatic update ("auto"): the same request as Build view, over the current window,
+     replacing the content; the name, made, auto and the id stay. A failure keeps the old content. */
+  async function vwBuild(v, how) {
+    const id = v._id;
+    if (vwBusy || !S.sample || !S.db || !v.prompt) return;
+    const auto = how === "auto";
+    vwBusy = { id, how };
+    vwSt.delete(id);
+    renderViews();
+    const n0 = vwNewest();
+    const ref = S.db.doc("views/" + id);
+    try {
+      if (auto) {
+        const f = await ref.get();
+        const x = f.exists ? f.data() : null;
+        const other = x && x.autoBusy && x.autoBusy.tab !== TAB && Date.now() - Date.parse(x.autoBusy.at || 0) < 180000;
+        if (!x || !x.auto || vwTo(x) >= n0 || other || vwGone.has(id)) return;
+        await ref.update({ autoBusy: { tab: TAB, at: new Date().toISOString() } });
+      }
+      await capWait();
+      const { res, P, retried } = await sendFitted(
+        cap => viewPrompt(v.prompt, cap),
+        m => S.sample.json(m.text),
+      );
+      const c = vwContent(res);
+      const f = await ref.get();
+      if (!f.exists || vwGone.has(id)) return;
+      const old = f.data();
+      const at = new Date().toISOString();
+      const next = Object.assign({}, old, {
+        title: old.title || c.title,
+        intro: c.intro,
+        sections: c.sections,
+        at,
+        made: old.made || old.at || at,
+        toI: n0 >= 0 ? n0 : null,
       });
+      ["sent", "autoAt", "autoAfter", "autoErr", "autoBusy"].forEach(k => delete next[k]);
+      const sent = sentOf(P);
+      if (sent) next.sent = sent;
+      if (auto) {
+        next.autoAt = at;
+        /* the refresh that stored the new messages: it finished after this view was last built */
+        const rr = S.refresh;
+        if (rr && rr.state === "done" && rr.finishedAt && Date.parse(rr.finishedAt) > Date.parse(old.at || 0))
+          next.autoAfter = rr.finishedAt;
+      }
+      next.kind = "view";
+      await ref.set(next);
+      vwNotes.set(id, sentNote(P, true, retried));
+    } catch (e) {
+      const code = (e && e.code) || null;
+      if (auto)
+        try {
+          await ref.update({ autoErr: { at: new Date().toISOString(), code, toI: n0 }, autoBusy: null });
+        } catch (e2) {
+          vwSt.set(id, { t: errCopy(code) + " The earlier version stays.", err: true });
+        }
+      else vwSt.set(id, { t: errCopy(code), err: true });
+    } finally {
+      vwBusy = null;
+      renderViews();
+    }
+  }
+  /* Keep up to date: one view at a time, the one furthest behind first; waits while a refresh runs (its import may not
+     be done, and the "after the … refresh" line needs its end), while the user types on this tab, and a few seconds
+     more, so two open copies of the page seldom start together */
+  let vwAutoT = null,
+    vwDue0 = null;
+  const vwAutoMs = () => window.__mcViewAutoMs;
+  const vwRefreshing = () =>
+    !!S.refresh && S.refresh.state === "running" && (Date.now() - Date.parse(S.refresh.startedAt || 0)) / 60000 < 25;
+  const vwTyping = () => !!vwRen || (document.activeElement === $("#view-in") && !!$("#view-in").value.trim());
+  function vwAutoSoon(ms = 0) {
+    clearTimeout(vwAutoT);
+    vwAutoT = setTimeout(vwAutoCheck, ms);
+  }
+  function vwAutoCheck() {
+    vwAutoT = null;
+    if (vwBusy) return; /* its end checks again */
+    const n = vwNewest();
+    const due =
+      S.db && S.sample && n >= 0
+        ? vwViews().filter(
+            v =>
+              v.auto && v.prompt && vwTo(v) < n && !(v.autoErr && v.autoErr.toI >= n) && !vwTried.has(v._id + ":" + n),
+          )
+        : [];
+    if (!due.length) return void (vwDue0 = null);
+    if (vwRefreshing() || vwTyping()) {
+      vwDue0 = null;
+      return vwAutoSoon(vwAutoMs() ?? 10000);
+    }
+    const v = due.sort((a, b) => vwTo(a) - vwTo(b))[0];
+    const key = v._id + ":" + n;
+    if (!vwDue0 || vwDue0.key !== key)
+      vwDue0 = { key, at: Date.now(), wait: vwAutoMs() ?? 3000 + Math.random() * 5000 };
+    const left = vwDue0.at + vwDue0.wait - Date.now();
+    if (left > 0) return vwAutoSoon(left);
+    vwDue0 = null;
+    vwTried.add(key);
+    vwBuild(v, "auto");
   }
 
   /* ---------- refresh ---------- */
@@ -8168,16 +8843,10 @@
     };
     return a;
   }
-  function dayCard(k, g) {
-    const art = el("article", "item dg-day");
-    art.dataset.day = k;
-    art.tabIndex = -1;
-    const head = el("div", "row");
-    head.append(el("h3", null, dayTitle(k)));
-    if (Number.isInteger(g.n) && g.n > 0) head.append(el("span", "note", plural(g.n, "message")));
-    art.append(head);
+  /* a list of bullets ({t, refs}), each followed by its message numbers; null when none has text */
+  function dayBullets(bullets) {
     const ul = el("ul");
-    g.bullets.forEach(b => {
+    (Array.isArray(bullets) ? bullets : []).forEach(b => {
       if (!b || typeof b.t !== "string") return;
       const t = b.t
         .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
@@ -8191,8 +8860,106 @@
         .forEach(i => li.append(" ", dayCite(i)));
       ul.append(li);
     });
-    if (ul.children.length) art.append(ul);
+    return ul.children.length ? ul : null;
+  }
+  /* A day's card: its digest (g) when it has one, and what each refresh found that day (r, F27): under a digest as a
+     collapsed list, on a day without one (the day in progress) in full. cnt: stored messages per day, for the latter. */
+  function dayCard(k, g, r, cnt) {
+    const art = el("article", "item dg-day");
+    art.dataset.day = k;
+    art.tabIndex = -1;
+    const head = el("div", "row");
+    head.append(el("h3", null, dayTitle(k)));
+    const runs = r ? reportRuns(r) : [];
+    if (g) {
+      if (Number.isInteger(g.n) && g.n > 0) head.append(el("span", "note", plural(g.n, "message")));
+      art.append(head);
+      const ul = dayBullets(g.bullets);
+      if (ul) art.append(ul);
+      if (runs.length) {
+        const more = el("details", "rp-more");
+        more.append(el("summary", null, "What each refresh found (" + runs.length + ")"), runList(k, r, runs));
+        art.append(more);
+      }
+      return art;
+    }
+    art.classList.add("rp-day");
+    const n = cnt && cnt.get(k);
+    if (n) head.append(el("span", "note", plural(n, "message") + (cnt.last === k ? " so far" : "")));
+    art.append(head, el("p", "note rp-lead", "No digest yet. What each refresh found:"), runList(k, r, runs));
     return art;
+  }
+  /* ---------- Each refresh's report (F27) ----------
+      reports/d<YYYY-MM-DD> {day, runs:[{at, fromI, toI, n, bullets:[{t, refs}]}], dropped?}, written by catchup.py
+      with each build that adds messages: the bullets of the report that refresh gave in chat, under the day of the
+      messages they cite (a refresh over midnight has a run on each day). Read only, into S.reports; the By day tab
+      shows them. A listener that fails leaves the digests as they are. */
+  function watchReports(db) {
+    db.collection("reports").onSnapshot(
+      q => {
+        const m = new Map();
+        q.docs.forEach(d => {
+          const k = /^d(\d{4}-\d\d-\d\d)$/.exec(d.id);
+          const v = d.data();
+          if (k && v && typeof v === "object" && Array.isArray(v.runs)) m.set(k[1], v);
+        });
+        S.reports = m;
+        renderDays();
+      },
+      () => {},
+    );
+  }
+  /* a day's runs worth showing, in message order */
+  function reportRuns(r) {
+    const at = x => (Number.isInteger(x.fromI) ? x.fromI : Infinity);
+    return (Array.isArray(r.runs) ? r.runs : [])
+      .filter(x => x && typeof x === "object" && !Array.isArray(x))
+      .sort((a, b) => at(a) - at(b));
+  }
+  /* "9:04 AM" in the chat's time zone, with the weekday when the refresh ran on another day than k (after midnight) */
+  function runTime(at, k) {
+    const t = typeof at === "string" ? Date.parse(at) : NaN;
+    if (!Number.isFinite(t)) return "";
+    const tz = validTz(S.meta && S.meta.tz);
+    const d = new Date(t);
+    const s = d.toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
+    if (d.toLocaleDateString("en-CA", { timeZone: tz }) === k) return s;
+    return d.toLocaleDateString("en-US", { timeZone: tz, weekday: "short" }) + " " + s;
+  }
+  function runList(k, r, runs) {
+    const ol = el("ol", "rp-runs");
+    runs.forEach(x => {
+      const li = el("li", "rp-run");
+      const head = el("p", "rp-head");
+      head.append(el("span", "rp-time", runTime(x.at, k) || "A refresh"));
+      if (Number.isInteger(x.n) && x.n > 0) head.append(" ", el("span", "note", plural(x.n, "message")));
+      li.append(head, dayBullets(x.bullets) || el("p", "note", "Nothing stood out."));
+      ol.append(li);
+    });
+    const box = el("div", "rp-box");
+    const gone = Number.isInteger(r.dropped) && r.dropped > 0 ? r.dropped : 0;
+    if (gone)
+      box.append(
+        el(
+          "p",
+          "note",
+          gone === 1 ? "1 earlier refresh this day isn't kept." : gone + " earlier refreshes this day aren't kept.",
+        ),
+      );
+    box.append(ol);
+    return box;
+  }
+  /* stored messages per day, a day never going back (as dayScan counts them); .last: the newest day */
+  function dayCounts() {
+    const m = new Map();
+    let prev = "";
+    S.msgs.forEach(x => {
+      const d = x.d && x.d > prev ? x.d : prev || x.d || "";
+      prev = d;
+      if (d) m.set(d, (m.get(d) || 0) + 1);
+    });
+    m.last = prev;
+    return m;
   }
   /* the quiet line: which stored days have no digest yet, and why */
   function daysWhy(days) {
@@ -8219,9 +8986,11 @@
     const box = $("#days-list"),
       v = $("#v-days");
     if (!box || !v || v.hidden) return;
-    const key = [S.digests, S.msgs, S.daysN, S.meta, S.digestsIn];
+    const key = [S.digests, S.reports, S.msgs, S.daysN, S.meta, S.digestsIn];
     if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
     renderDays.k = key;
+    /* a run list the reader opened stays open when the tab redraws (after an import or a refresh's write) */
+    const opened = [...box.querySelectorAll("details.rp-more[open]")].map(d => d.closest("article").dataset.day);
     box.textContent = "";
     if (S.digestsIn !== true) {
       const why = {
@@ -8234,25 +9003,25 @@
     const days = [...S.digests]
       .filter(([k, g]) => /^\d{4}-\d\d-\d\d$/.test(k) && g && Array.isArray(g.bullets) && g.bullets.length)
       .sort((p, q) => (p[0] < q[0] ? 1 : -1));
-    if (!days.length) {
-      box.append(
-        el(
-          "div",
-          "empty",
-          "No day digests yet. A refresh writes a few lines on each day after it ends; to fill in earlier days, ask Claude to write digests for past days.",
-        ),
-      );
+    /* the days with what each refresh found (F27), and every day to draw: those and the digested ones, newest first */
+    const R = new Map([...(S.reports || [])].filter(([k, r]) => /^\d{4}-\d\d-\d\d$/.test(k) && reportRuns(r).length));
+    const G = new Map(days);
+    const all = [...new Set([...G.keys(), ...R.keys()])].sort().reverse();
+    const none =
+      "No day digests yet. A refresh writes a few lines on each day after it ends; to fill in earlier days, ask Claude to write digests for past days.";
+    if (!all.length) {
+      box.append(el("div", "empty", none));
       return;
     }
-    box.append(el("p", "note", daysWhy(days)));
+    box.append(el("p", "note", days.length ? daysWhy(days) : none));
+    const cnt = all.some(k => !G.has(k)) ? dayCounts() : null;
     const n = S.daysN || DAYS_STEP;
-    days.slice(0, n).forEach(([k, g]) => box.append(dayCard(k, g)));
-    if (days.length > n) {
-      const more = el(
-        "button",
-        "secondary dg-more",
-        "Show " + plural(Math.min(DAYS_STEP, days.length - n), "more day"),
-      );
+    all.slice(0, n).forEach(k => box.append(dayCard(k, G.get(k) || null, R.get(k) || null, cnt)));
+    box.querySelectorAll("article.dg-day > details.rp-more").forEach(d => {
+      if (opened.includes(d.parentNode.dataset.day)) d.open = true;
+    });
+    if (all.length > n) {
+      const more = el("button", "secondary dg-more", "Show " + plural(Math.min(DAYS_STEP, all.length - n), "more day"));
       more.onclick = () => {
         S.daysN = n + DAYS_STEP;
         renderDays();
@@ -8273,9 +9042,23 @@
       their nickname and full-name messages are one person; every message counts (five lines in a row are five), and
       the owner ("You") is ranked with everyone. Reactions are left out: they're captured once and never updated. The
       timeframe and the switched-off sections are remembered in this browser only, when it allows (localStorage). Drawn
-      only while the tab is open. */
+      only while the tab is open.
+      Part 2 adds conversations and topics (threading's conversations, the summary's tags), deals (the summary's deals,
+      claims and status), people (new voices, gone quiet, first and last seen), engagement (who replies to whom, the
+      summary's questions and how long they waited) and word trends. Each follows the span, a day and a person; what
+      they read from threading is worked out once per threading (stLinks), and each span is one more pass (stMore). */
   const ST_KEY = "mcStats";
-  const ST_SECS = { tiles: "Numbers", volume: "Volume", top: "Top 10", heat: "Day and hour" };
+  const ST_SECS = {
+    tiles: "Numbers",
+    volume: "Volume",
+    top: "Top 10",
+    heat: "Day and hour",
+    convs: "Conversations",
+    deals: "Deals",
+    people: "People",
+    engage: "Engagement",
+    words: "Word trends",
+  };
   const ST_DAYS = { today: 1, d7: 7, d30: 30, d90: 90 };
   const ST_WEEKS = { wk: 0, lastwk: 1 }; /* weeks start on Sunday, as the week bars do */
   const ST_DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -8329,7 +9112,9 @@
     return k;
   }
 
+  /* word: the word trend's applied word or phrase (this visit only); ctx: the span, day or person last drawn */
   S.stats = { tf: "d30", from: "", to: "", zoom: null, day: null, person: null, rets: [], focus: null, v: 0 };
+  Object.assign(S.stats, { word: "", ctx: null });
   S.stats.hide = new Set();
   try {
     const o = JSON.parse(localStorage.getItem(ST_KEY) || "null");
@@ -8352,9 +9137,11 @@
     const full = fullOf(m);
     return full ? "F" + full : "S" + (m.f || "?");
   }
-  /* S.msgs index of message number i (S.msgs is sorted by i), or -1 */
+  /* S.msgs index of message number i (S.msgs is sorted by i), or -1: straight there when the numbers have no gaps */
   function stJ(i) {
     const ms = S.msgs;
+    const g = ms.length ? i - ms[0].i : -1;
+    if (g >= 0 && g < ms.length && ms[g].i === i) return g;
     let a = 0,
       b = ms.length;
     while (a < b) {
@@ -8396,7 +9183,7 @@
       let p = idx.get(pk);
       if (p === undefined) {
         idx.set(pk, (p = people.length));
-        people.push({ key: pk, last: j, name: null });
+        people.push({ key: pk, first: j, last: j, name: null });
       } else people[p].last = j;
       who[j] = p;
       if (m.b && /\S/.test(m.b)) txt[j] = 1;
@@ -8437,15 +9224,61 @@
     if (k === "Y") return "You";
     return k[0] === "F" ? nameOf({ f: k.slice(1), fn: k.slice(1) }) : nameOf({ f: k.slice(1) });
   }
-  /* whom a message replies to, as a person key: its parent when stored (pi), else the name Messenger showed (r) */
-  function stReplyTo(B, m) {
-    if (Number.isInteger(m.pi)) {
-      const j = stJ(m.pi);
-      if (j >= 0) return B.people[B.who[j]].key;
+  /* a person id for any person key: their place in B.people when they posted, else a number past those for a name that
+     never posted (a reply's r, a claim's who) */
+  function stPid(B, k) {
+    if (B.idx.has(k)) return B.idx.get(k);
+    if (!B.xi) Object.assign(B, { xi: new Map(), xk: [] });
+    if (!B.xi.has(k)) {
+      B.xi.set(k, B.people.length + B.xk.length);
+      B.xk.push(k);
     }
-    const r = typeof m.r === "string" ? m.r.trim() : "";
-    if (!r) return null;
-    return /^you$/i.test(r) ? "Y" : stKey({ f: r });
+    return B.xi.get(k);
+  }
+  const stPKey = (B, id) => (id < B.people.length ? B.people[id].key : B.xk[id - B.people.length]);
+  const stPName = (B, id) => (id < B.people.length ? stName(B, id) : stKeyName(B, stPKey(B, id)));
+  /* Per threading (and S.msgs): each message's conversation (conv: its place in convs, -1 for none or "loose"; each
+     conversation's stored messages in js, oldest first) and whom it replies to (rto: a person id, -1 for none): its
+     stored parent (pi), else the name Messenger showed (r), else threading's link when that's a reply or an answer (r,
+     rq, rg, i; never c, the same person going on). firstRe: each message's first reply from someone else, by number. */
+  const ST_RE = new Set(["r", "rq", "rg", "i"]);
+  function stLinks(B) {
+    const T = S.threading;
+    if (B.ln && B.ln.T === T) return B.ln;
+    const ms = S.msgs,
+      n = B.n;
+    const conv = new Int32Array(n).fill(-1),
+      rto = new Int32Array(n).fill(-1);
+    const convs = [],
+      firstRe = new Map();
+    ((T && T.convs) || []).forEach(c => {
+      if (!c || c.id === "loose" || !Array.isArray(c.members)) return;
+      const js = [];
+      c.members.forEach(i => {
+        const j = Number.isInteger(i) ? stJ(i) : -1;
+        if (j >= 0) js.push(j);
+      });
+      if (!js.length) return;
+      js.sort((a, b) => a - b);
+      js.forEach(j => (conv[j] = convs.length));
+      convs.push({ id: String(c.id), title: String(c.title || c.id), js });
+    });
+    const L = (T && T.links) || {};
+    for (let j = 0; j < n; j++) {
+      const m = ms[j];
+      const pj = Number.isInteger(m.pi) ? stJ(m.pi) : -1;
+      const lk = L[m.i];
+      const lj = Array.isArray(lk) && ST_RE.has(lk[1]) && Number.isInteger(lk[0]) ? stJ(lk[0]) : -1;
+      const r = typeof m.r === "string" ? m.r.trim() : "";
+      if (pj >= 0) rto[j] = B.who[pj];
+      else if (r) rto[j] = stPid(B, /^you$/i.test(r) ? "Y" : stKey({ f: r }));
+      else if (lj >= 0) rto[j] = B.who[lj];
+      /* the messages go by number, so the first reply seen is the first */
+      const par = pj >= 0 ? pj : lj;
+      if (par >= 0 && B.who[par] !== B.who[j] && !firstRe.has(ms[par].i)) firstRe.set(ms[par].i, m.i);
+    }
+    B.ln = { T, conv, rto, convs, firstRe, agg: new Map() };
+    return B.ln;
   }
   /* the messages a span can hold, [a, b): by binary search when the times only go forward (they do, unless a capture
      misread a date), else all of them; each is checked against the span anyway */
@@ -8547,48 +9380,183 @@
     }
     return A.rank;
   }
-  /* each threading conversation's first message, as a minute ("loose" isn't a conversation); per threading */
+  /* each threading conversation's first stored message, as a minute ("loose" isn't a conversation); per threading */
   function stConvStarts(B) {
-    const T = S.threading;
-    if (B.cs && B.cs.T === T) return B.cs.v;
-    const v = [];
-    ((T && T.convs) || []).forEach(c => {
-      if (!c || c.id === "loose" || !Array.isArray(c.members)) return;
-      let lo = Infinity;
-      c.members.forEach(i => {
-        if (Number.isInteger(i) && i < lo) lo = i;
-      });
-      const j = lo === Infinity ? -1 : stJ(lo);
-      if (j >= 0) v.push(B.tm[j]);
-    });
-    B.cs = { T, v };
-    return v;
+    const Ln = stLinks(B);
+    if (!Ln.starts) Ln.starts = Ln.convs.map(c => B.tm[c.js[0]]);
+    return Ln.starts;
   }
-  /* the summary's deals by their first message, and the sold ones by the message that says so (statusAt, else their
-     last message); per summary */
-  function stDeals(B) {
+  /* The summary's deals: each posted at its first stored message (t0, by seller), its status ("sold" or "pending") at
+     the message that says so (ts: statusAt, else its last message), and its claims, each at its message, by the person
+     who made it (the message's sender when the names agree); per summary */
+  function stDealList(B) {
     const sm = S.summary;
-    if (B.dl && B.dl.sm === sm) return B.dl;
-    const posted = [],
-      sold = [];
+    if (B.dl && B.dl.sm === sm) return B.dl.list;
+    const list = [];
     ((sm && sm.deals) || []).forEach(x => {
       if (!x || typeof x !== "object") return;
       const refs = (Array.isArray(x.refs) ? x.refs : [])
         .map(r => (Array.isArray(r) ? r[0] : r))
         .filter(i => Number.isInteger(i) && i >= 0);
       if (!refs.length) return;
-      const j = stJ(Math.min(...refs));
-      if (j >= 0) posted.push(B.tm[j]);
+      const i0 = Math.min(...refs),
+        j0 = stJ(i0);
       const st = dealStatus(x);
-      if (st && x.status === "sold") {
-        const js = stJ(st.at != null ? st.at : Math.max(...refs));
-        if (js >= 0) sold.push(B.tm[js]);
-      }
+      const js = st ? stJ(st.at != null ? st.at : Math.max(...refs)) : -1;
+      const claims = [];
+      (Array.isArray(x.claims) ? x.claims : []).forEach(c => {
+        if (!c || typeof c !== "object" || !Number.isInteger(c.i) || typeof c.who !== "string" || !c.who.trim()) return;
+        const j = c.i >= 0 ? stJ(c.i) : -1;
+        if (j < 0) return;
+        const who = c.who.trim(),
+          m = S.msgs[j];
+        claims.push({ i: c.i, t: B.tm[j], who: m.f === who || m.fn === who ? B.who[j] : stPid(B, stKey({ f: who })) });
+      });
+      list.push({
+        x,
+        i0,
+        t0: j0 >= 0 ? B.tm[j0] : null,
+        seller: j0 >= 0 ? B.who[j0] : -1,
+        st: st ? x.status : null,
+        ts: js >= 0 ? B.tm[js] : null,
+        claims,
+      });
     });
-    B.dl = { sm, posted, sold };
-    return B.dl;
+    B.dl = { sm, list };
+    return list;
   }
   const stIn = (list, lo, hi) => list.reduce((n, v) => n + (v >= lo && v < hi ? 1 : 0), 0);
+  const stInSpan = (v, lo, hi) => v != null && v >= lo && v < hi;
+  /* The summary's questions (open and answered, one per asking message): who asked and when, and for an answered one
+     how long it waited (wait, minutes): to the earliest later message the summary cites for its answer, or the first
+     reply from someone else (firstRe), whichever came first; per summary and threading */
+  function stQuestions(B, Ln) {
+    const sm = S.summary;
+    if (Ln.qs && Ln.qs.sm === sm) return Ln.qs.list;
+    const by = new Map();
+    const add = (o, answered) => {
+      if (!o || typeof o !== "object" || !Number.isInteger(o.ask) || (by.has(o.ask) && !answered)) return;
+      const j = stJ(o.ask);
+      if (j < 0) return;
+      let a = Infinity;
+      if (answered) {
+        (Array.isArray(o.refs) ? o.refs : []).forEach(r => {
+          r = Array.isArray(r) ? r[0] : r;
+          if (Number.isInteger(r) && r > o.ask && r < a && stJ(r) >= 0) a = r;
+        });
+        if (Ln.firstRe.has(o.ask)) a = Math.min(a, Ln.firstRe.get(o.ask));
+      }
+      const aj = a < Infinity ? stJ(a) : -1;
+      by.set(o.ask, {
+        i: o.ask,
+        t: B.tm[j],
+        who: B.who[j],
+        answered,
+        wait: aj >= 0 ? Math.max(0, B.tm[aj] - B.tm[j]) : null,
+      });
+    };
+    ((sm && sm.open) || []).forEach(o => add(o, false));
+    ((sm && sm.answered) || []).forEach(o => add(o, true));
+    Ln.qs = { sm, list: [...by.values()] };
+    return Ln.qs.list;
+  }
+  /* The span's messages per conversation and its replies by pair (from * ST_PK + to), in one pass; for a person
+     (p >= 0) only their messages, plus the replies they got (got, by who sent them). Kept per span and person until
+     the messages or the threading change. */
+  const ST_PK = 1 << 20;
+  function stMore(B, Ln, lo, hi, p) {
+    const ck = lo + "_" + hi + "_" + p;
+    let M = Ln.agg.get(ck);
+    if (M) return M;
+    M = { byC: new Int32Array(Ln.convs.length), pairs: new Map(), replies: 0, got: new Map(), gotN: 0 };
+    const { tm, who } = B,
+      { conv, rto } = Ln;
+    const [a, b] = stJs(B, lo, hi);
+    for (let j = a; j < b; j++) {
+      const v = tm[j];
+      if (v < lo || v >= hi) continue;
+      const w = who[j],
+        t = rto[j];
+      if (p < 0 || w === p) {
+        if (conv[j] >= 0) M.byC[conv[j]]++;
+        if (t >= 0 && t !== w) {
+          M.replies++;
+          M.pairs.set(w * ST_PK + t, (M.pairs.get(w * ST_PK + t) || 0) + 1);
+        }
+      } else if (t === p) {
+        M.gotN++;
+        M.got.set(w, (M.got.get(w) || 0) + 1);
+      }
+    }
+    if (Ln.agg.size > 40) Ln.agg.clear();
+    Ln.agg.set(ck, M);
+    return M;
+  }
+  /* the summary's tag for each conversation (For sale, Group buy, Trip…), by conversation id; per summary */
+  function stTagMap() {
+    const sm = S.summary;
+    if (stTagMap.m && stTagMap.sm === sm) return stTagMap.m;
+    const m = new Map();
+    ((sm && sm.convs) || []).forEach(c => {
+      const t = c && typeof c.tag === "string" ? c.tag.trim() : "";
+      if (t && c.id != null && !m.has(String(c.id))) m.set(String(c.id), t);
+    });
+    Object.assign(stTagMap, { sm, m });
+    return m;
+  }
+  /* a word or phrase as a pattern: whole words (no letter, digit or _ on either side), any case, any spacing */
+  function stWordRe(w) {
+    const parts = w
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(x => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    return new RegExp("(?:^|[^\\p{L}\\p{N}_])" + parts.join("\\s+") + "(?![\\p{L}\\p{N}_])", "iu");
+  }
+  /* the messages mentioning w in a span (only p's when p >= 0): per bar of the span's chart (with each bar's first
+     match), per person and in all; one pass, kept per word, span and person until the messages change */
+  function stWordAgg(B, w, lo, hi, p) {
+    const ck = w.toLowerCase() + "\u0000" + lo + "_" + hi + "_" + p;
+    if (!B.wd) B.wd = new Map();
+    let W = B.wd.get(ck);
+    if (W) return W;
+    const bk = statsAgg(B, lo, hi).bk,
+      nb = bk.edges.length - 1,
+      re = stWordRe(w),
+      ms = S.msgs;
+    W = { bk, bars: new Int32Array(nb), first: new Int32Array(nb).fill(-1), byP: new Map(), total: 0 };
+    const [a, b] = stJs(B, lo, hi);
+    for (let j = a; j < b; j++) {
+      const v = B.tm[j];
+      if (v < lo || v >= hi || !B.txt[j] || (p >= 0 && B.who[j] !== p) || !re.test(ms[j].b)) continue;
+      const k = bk.at(v);
+      W.bars[k]++;
+      if (W.first[k] < 0) W.first[k] = j;
+      W.total++;
+      W.byP.set(B.who[j], (W.byP.get(B.who[j]) || 0) + 1);
+    }
+    if (B.wd.size > 40) B.wd.clear();
+    B.wd.set(ck, W);
+    return W;
+  }
+  function stMedian(a) {
+    if (!a.length) return null;
+    const s = a.slice().sort((x, y) => x - y),
+      h = s.length >> 1;
+    return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+  }
+  /* minutes as "45 min", "3 h 20 min" or "6 days 20 h" */
+  function stDur(v) {
+    v = Math.round(v);
+    if (v < 60) return v + " min";
+    if (v < DAY_MIN) return Math.floor(v / 60) + " h" + (v % 60 ? " " + (v % 60) + " min" : "");
+    let d = Math.floor(v / DAY_MIN),
+      h = Math.round((v % DAY_MIN) / 60);
+    if (h === 24) [d, h] = [d + 1, 0];
+    return d + (d === 1 ? " day" : " days") + (h ? " " + h + " h" : "");
+  }
+  /* "9:05 AM" for a minute of the day */
+  const stClock = v =>
+    (stHourOf(v) % 12 || 12) + ":" + String(v % 60).padStart(2, "0") + " " + (stHourOf(v) < 12 ? "AM" : "PM");
 
   /* The timeframe as a span [lo, hi) of minutes: whole days through today. All runs from the first stored day; a
      custom range is kept within a year of the stored history so its bars stay few. */
@@ -9046,7 +10014,8 @@
   function stNumbers(B, A) {
     const r = stRank(A);
     const top5 = r.slice(0, 5).reduce((n, p) => n + A.byP[p], 0);
-    const D = S.summary ? stDeals(B) : null;
+    const D = S.summary ? stDealList(B) : null;
+    const nD = f => D.reduce((n, d) => n + (f(d) ? 1 : 0), 0);
     const s = stSec("tiles", "Numbers", null);
     s.append(
       stTiles([
@@ -9059,41 +10028,65 @@
         ["top5", A.total ? Math.round((100 * top5) / A.total) + "%" : "—", "top 5's share"],
         ["you", B.you >= 0 ? A.byP[B.you] : 0, "your messages"],
         ["convs", S.threading ? stIn(stConvStarts(B), A.lo, A.hi) : "—", "conversations started"],
-        ["deals", D ? stIn(D.posted, A.lo, A.hi) : "—", "deals posted"],
-        ["sold", D ? stIn(D.sold, A.lo, A.hi) : "—", "deals sold"],
+        ["deals", D ? nD(d => stInSpan(d.t0, A.lo, A.hi)) : "—", "deals posted"],
+        ["sold", D ? nD(d => d.st === "sold" && stInSpan(d.ts, A.lo, A.hi)) : "—", "deals sold"],
       ]),
     );
     return s;
+  }
+  /* A ranked list (data-list: name): rank, a name or title (a button when the row has go), a count, a share, an
+     optional line under it (sub), and a bar against the first. A row's pk (a person) or id finds it again. */
+  function stList(name, rows) {
+    const ol = el("ol", "st-top");
+    ol.dataset.list = name;
+    const max = Math.max(1, ...rows.map(r => r.c));
+    rows.forEach((r, x) => {
+      const li = el("li");
+      if (r.pk != null) li.dataset.pk = r.pk;
+      else if (r.id != null) li.dataset.id = r.id;
+      let w = el("span", "who", r.label);
+      if (r.go) {
+        w = el("button", "link who", r.label);
+        w.type = "button";
+        if (r.title) w.title = r.title;
+        w.onclick = r.go;
+      }
+      const bar = el("span", "bar");
+      bar.setAttribute("aria-hidden", "true");
+      const f = el("i");
+      f.style.width = ((100 * r.c) / max).toFixed(1) + "%";
+      bar.append(f);
+      li.append(el("span", "rk", String(x + 1)), w, el("span", "c", stNum(r.c)), el("span", "pc", r.pc || ""));
+      if (r.sub) li.append(el("span", "sub", r.sub));
+      li.append(bar);
+      ol.append(li);
+    });
+    return ol;
+  }
+  /* a list row's button, found again after a redraw (Back, new data): by its section and its row's pk or id */
+  const stLiSel = (sec, attr, v) =>
+    '#st-body > [data-sec="' + sec + '"] li[' + attr + '="' + CSS.escape(v) + '"] button';
+  /* a person's row: their name opens their chart when they posted (sec: the list's section, for Back to come back to),
+     unless plain (inside a person's own chart) */
+  function stPRow(B, id, sec, c, pc, sub, plain) {
+    const key = stPKey(B, id);
+    const go = !plain && id < B.people.length ? () => stOpenPerson(key, stLiSel(sec, "data-pk", key)) : null;
+    return { pk: key, label: stPName(B, id), c, pc, sub, go };
+  }
+  /* [id, count] pairs, most first (a tie: the lower id, who posted first in the chat) */
+  function stCount(ids) {
+    const m = new Map();
+    ids.forEach(id => m.set(id, (m.get(id) || 0) + 1));
+    return [...m].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
   }
   /* the top 10: rank, name (opening their chart), messages and share, with a bar against the first */
   function stTop(B, A) {
     const r = stRank(A).slice(0, 10);
     if (!r.length) return el("p", "note", "Nobody posted in this span.");
-    const ol = el("ol", "st-top");
-    const max = A.byP[r[0]];
-    r.forEach((p, x) => {
-      const key = B.people[p].key,
-        c = A.byP[p];
-      const li = el("li");
-      li.dataset.pk = key;
-      const b = el("button", "link who", stName(B, p));
-      b.type = "button";
-      b.onclick = () => stOpenPerson(key, '.st-top li[data-pk="' + CSS.escape(key) + '"] button');
-      const bar = el("span", "bar");
-      bar.setAttribute("aria-hidden", "true");
-      const f = el("i");
-      f.style.width = ((100 * c) / max).toFixed(1) + "%";
-      bar.append(f);
-      li.append(
-        el("span", "rk", String(x + 1)),
-        b,
-        el("span", "c", stNum(c)),
-        el("span", "pc", stPct(c, A.total)),
-        bar,
-      );
-      ol.append(li);
-    });
-    return ol;
+    return stList(
+      "top",
+      r.map(p => stPRow(B, p, "top", A.byP[p], stPct(A.byP[p], A.total))),
+    );
   }
   function stTopSec(B, A) {
     const s = stSec("top", "Top 10", "Every message counts, yours too. Tap a name for that person's chart.");
@@ -9167,6 +10160,458 @@
     );
     return s;
   }
+
+  /* ----- part 2 sections: each takes the span drawn (X from stCtx), for everyone (p < 0) or one person ----- */
+  function stCtx(B, lo, hi, p, view, sp) {
+    const Ln = stLinks(B);
+    return { B, Ln, A: statsAgg(B, lo, hi), M: stMore(B, Ln, lo, hi, p), lo, hi, p, view, sp };
+  }
+  /* a list under a small heading, side by side with the next where there's room */
+  function stCol(title, body) {
+    const c = el("div", "st-col");
+    c.append(el("h4", "st-h", title), body);
+    return c;
+  }
+  /* "And 3 more conversations.", under a list cut at 10 (many: the plural when it isn't one + "s") */
+  const stMoreNote = (n, one, many) =>
+    n > 0 ? el("p", "note", "And " + stNum(n) + " more " + (n === 1 ? one : many || one + "s") + ".") : null;
+  /* a conversation opens at its first message in the span, in Messages, as a message link does (its day loaded when
+     it's before the catch-up window, its thread opened) */
+  function stGoConv(B, c, lo, hi) {
+    const j = c.js.find(j => B.tm[j] >= lo && B.tm[j] < hi);
+    goMsg(S.msgs[j != null ? j : c.js[0]].i);
+  }
+  /* Conversations and topics: how many started and how many had messages, the busiest (messages in the span, who
+     posted), and the summary's tags of the active ones; for a person, the conversations they started and posted in */
+  function stConvSec(X) {
+    const { B, Ln, A, M, lo, hi, p } = X;
+    const s = stSec(
+      "convs",
+      "Conversations and topics",
+      p < 0 ? "Conversations as threading groups the messages; topics are the summary's tags." : null,
+    );
+    if (!Ln.convs.length) {
+      s.append(el("p", "note", "No conversations yet: they show once a refresh has grouped the messages."));
+      return s;
+    }
+    let started = 0;
+    const act = [];
+    Ln.convs.forEach((c, k) => {
+      const j0 = c.js[0];
+      if (stInSpan(B.tm[j0], lo, hi) && (p < 0 || B.who[j0] === p)) started++;
+      if (M.byC[k]) act.push(k);
+    });
+    act.sort((x, y) => M.byC[y] - M.byC[x] || Ln.convs[x].js[0] - Ln.convs[y].js[0]);
+    s.append(
+      stTiles([
+        ["started", started, "conversations started"],
+        ["active", act.length, p < 0 ? "conversations active" : "conversations posted in"],
+      ]),
+    );
+    if (!act.length) {
+      s.append(
+        el(
+          "p",
+          "note",
+          "No conversation had messages " + (p < 0 ? "" : "from " + stName(B, p) + " ") + "in this span.",
+        ),
+      );
+      return s;
+    }
+    const tot = p < 0 ? A.total : A.byP[p];
+    const rows = act.slice(0, 10).map(k => {
+      const c = Ln.convs[k];
+      const by = new Map();
+      c.js.forEach(j => {
+        if (B.tm[j] >= lo && B.tm[j] < hi) by.set(B.who[j], (by.get(B.who[j]) || 0) + 1);
+      });
+      const who = [...by].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([q]) => stName(B, q));
+      const sub =
+        (who.length === 1 ? "1 person: " : who.length + " people: ") +
+        who.slice(0, 4).join(", ") +
+        (who.length > 4 ? " +" + (who.length - 4) + " more" : "");
+      const go = () => stGoConv(B, c, lo, hi);
+      return { id: c.id, label: c.title, c: M.byC[k], pc: stPct(M.byC[k], tot), sub, go, title: "Open it in Messages" };
+    });
+    s.append(el("h4", "st-h", p < 0 ? "Busiest" : "Where " + stName(B, p) + " posted most"), stList("busiest", rows));
+    const more = stMoreNote(act.length - 10, "conversation");
+    if (more) s.append(more);
+    const tags = stTagMap(),
+      byT = new Map();
+    let none = 0;
+    act.forEach(k => {
+      const t = tags.get(Ln.convs[k].id);
+      if (t) byT.set(t, (byT.get(t) || 0) + 1);
+      else none++;
+    });
+    const tl = [...byT].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    s.append(el("h4", "st-h", "Topics"));
+    if (tl.length)
+      s.append(
+        stList(
+          "tags",
+          tl.slice(0, 10).map(([t, n]) => ({ id: t, label: t, c: n, pc: stPct(n, act.length) })),
+        ),
+      );
+    const tn = [];
+    if (tl.length > 10) tn.push(plural(tl.length - 10, "more tag") + ".");
+    if (none) tn.push(plural(none, "conversation") + " without a tag in the summary.");
+    if (!tl.length) tn.unshift("No tagged conversations in this span.");
+    if (tn.length) s.append(el("p", "note", tn.join(" ")));
+    return s;
+  }
+  /* Deals: posted (by their first message), claimed, sold and pending (by the message that says so), the median time
+     from posted to sold, who posted and who claimed most, and the deals posted, newest first, each opening its first
+     message; for a person, their own deals and claims */
+  function stDealSec(X) {
+    const { B, lo, hi, p } = X;
+    const s = stSec(
+      "deals",
+      "Deals",
+      "From the summary's deals: posted at their first message; sold and pending at the message that says so.",
+    );
+    if (!S.summary) {
+      s.append(el("p", "note", "No summary yet: deals show once a refresh has written one."));
+      return s;
+    }
+    const D = stDealList(B),
+      mine = d => p < 0 || d.seller === p;
+    const posted = D.filter(d => stInSpan(d.t0, lo, hi) && mine(d));
+    const claims = [];
+    D.forEach(d => d.claims.forEach(c => stInSpan(c.t, lo, hi) && (p < 0 || c.who === p) && claims.push(c)));
+    const sold = D.filter(d => d.st === "sold" && stInSpan(d.ts, lo, hi) && mine(d));
+    const pend = D.filter(d => d.st === "pending" && stInSpan(d.ts, lo, hi) && mine(d));
+    const waits = sold.filter(d => d.t0 != null).map(d => Math.max(0, d.ts - d.t0));
+    const med = stMedian(waits);
+    s.append(
+      stTiles([
+        ["posted", posted.length, "deals posted"],
+        ["claims", claims.length, p < 0 ? "claims" : "claims made"],
+        ["sold", sold.length, "sold"],
+        ["pending", pend.length, "pending"],
+        [
+          "tosold",
+          med == null ? "—" : stDur(med),
+          "posted to sold, median" + (waits.length ? " of " + waits.length : ""),
+        ],
+      ]),
+    );
+    if (p < 0 && (posted.length || claims.length)) {
+      const col = (title, name, list, n) =>
+        stCol(
+          title,
+          list.length
+            ? stList(
+                name,
+                list.slice(0, 10).map(([id, c]) => stPRow(B, id, "deals", c, stPct(c, n))),
+              )
+            : el("p", "note", "None in this span."),
+        );
+      const cols = el("div", "st-cols");
+      cols.append(
+        col("Top sellers", "sellers", stCount(posted.map(d => d.seller)), posted.length),
+        col("Top claimers", "claimers", stCount(claims.map(c => c.who)), claims.length),
+      );
+      s.append(cols);
+    }
+    if (!posted.length) return s;
+    s.append(el("h4", "st-h", p < 0 ? "Deals posted" : stName(B, p) + "'s deals"));
+    /* newest first; past the first 10, the rows are made when asked for (a year holds thousands) */
+    const ul = el("ul", "st-deals");
+    ul.dataset.list = "deals";
+    const MAX = 10,
+      list = posted.slice().sort((a, b) => b.t0 - a.t0 || b.i0 - a.i0);
+    const row = d => {
+      const li = el("li");
+      li.dataset.id = "d" + d.i0;
+      const tag = d.x.tag || d.x.kind || "Deal";
+      const b = el("button", "link who", d.x.text ? tag + ": " + trunc(String(d.x.text), 100) : tag);
+      b.type = "button";
+      b.title = "Show this deal's first message (#" + d.i0 + ")";
+      b.onclick = () => goMsg(d.i0);
+      const sub = [stName(B, d.seller), stDayText(minDay(d.t0))];
+      if (d.st) sub.push(DEAL_STATUS[d.st].label);
+      if (d.claims.length) sub.push(plural(d.claims.length, "claim"));
+      li.append(b, el("span", "sub", sub.join(" · ")));
+      return li;
+    };
+    ul.append(...list.slice(0, MAX).map(row));
+    s.append(ul);
+    if (list.length > MAX) {
+      const b = el("button", "link", "Show " + (list.length - MAX) + " more");
+      b.type = "button";
+      b.onclick = () => {
+        const rest = list.slice(MAX).map(row);
+        ul.append(...rest);
+        b.remove();
+        rest[0].querySelector("button").focus();
+      };
+      s.append(b);
+    }
+    return s;
+  }
+  /* People: new voices (their first stored message falls in the span) and who went quiet (posted in the 30 days
+     before the span, not in it); for a person, when they were first and last seen */
+  function stPeopleSec(X) {
+    const { B, A, lo, hi, p } = X;
+    if (p >= 0) {
+      const s = stSec("people", "First and last seen", null);
+      const x = B.people[p],
+        f = S.msgs[x.first],
+        l = S.msgs[x.last];
+      const when = j => dayTitle(minDay(B.tm[j])) + ", " + stClock(B.tm[j]);
+      s.append(
+        stTiles([
+          ["first", stDayText(minDay(B.tm[x.first])), "first seen"],
+          ["last", stDayText(minDay(B.tm[x.last])), "last seen"],
+        ]),
+      );
+      const line = el("p", "note");
+      line.append("First message ", goLink("#" + f.i, f.i, goMsg), " (" + when(x.first) + "); last ");
+      line.append(goLink("#" + l.i, l.i, goMsg), " (" + when(x.last) + ").");
+      /* on the first stored day, they may well have posted before it */
+      if (B.tm[x.first] < dayFloor(B.firstTm) + DAY_MIN)
+        line.append(" Stored history starts " + stDayText(minDay(B.firstTm)) + ", so they may have posted before.");
+      else if (stInSpan(B.tm[x.first], lo, hi)) line.append(" New in this span.");
+      s.append(line);
+      return s;
+    }
+    const s = stSec("people", "People", null);
+    const fresh = [];
+    B.people.forEach((x, q) => stInSpan(B.tm[x.first], lo, hi) && fresh.push(q));
+    fresh.sort((a, b) => B.people[a].first - B.people[b].first);
+    const P = statsAgg(B, lo - 30 * DAY_MIN, lo);
+    const quiet = [];
+    P.byP.forEach((c, q) => c && !A.byP[q] && quiet.push(q));
+    quiet.sort((a, b) => P.byP[b] - P.byP[a] || B.people[b].last - B.people[a].last);
+    s.append(
+      stTiles([
+        ["new", fresh.length, "new voices"],
+        ["quiet", quiet.length, "gone quiet"],
+      ]),
+    );
+    const day = j => stDayText(minDay(B.tm[j]));
+    const list = (name, ids, row, none) => {
+      if (!ids.length) return el("p", "note", none);
+      const box = document.createDocumentFragment();
+      box.append(stList(name, ids.slice(0, 10).map(row)));
+      const more = stMoreNote(ids.length - 10, "person", "people");
+      if (more) box.append(more);
+      return box;
+    };
+    const cols = el("div", "st-cols");
+    const c1 = stCol(
+      "New voices",
+      list(
+        "new",
+        fresh,
+        q => stPRow(B, q, "people", A.byP[q], stPct(A.byP[q], A.total), "first message " + day(B.people[q].first)),
+        "Nobody new in this span.",
+      ),
+    );
+    if (B.firstTm >= 0 && lo <= B.firstTm)
+      c1.append(
+        el(
+          "p",
+          "note",
+          "Stored history starts " + stDayText(minDay(B.firstTm)) + ": everyone posting from then counts as new.",
+        ),
+      );
+    const c2 = stCol(
+      "Gone quiet",
+      list(
+        "quiet",
+        quiet,
+        q => stPRow(B, q, "people", P.byP[q], "", "last message " + day(B.people[q].last)),
+        "Nobody who posted in the 30 days before went quiet.",
+      ),
+    );
+    c2.append(el("p", "note", "Counts are their messages in the 30 days before " + stDayText(minDay(lo)) + "."));
+    cols.append(c1, c2);
+    s.append(cols);
+    return s;
+  }
+  /* Engagement: replies (Messenger replies, then threading's replies and answers) and the top pairs, and the summary's
+     questions asked in the span, how many were answered and the median wait for the first answer; for a person, who
+     replied to them and how their own questions fared */
+  function stEngageSec(X) {
+    const { B, Ln, A, M, lo, hi, p } = X;
+    const s = stSec(
+      "engage",
+      "Engagement",
+      "Replies are Messenger replies, plus the replies and answers threading found. Questions are the summary's, by when they were asked; the wait runs to the first answer or reply from someone else.",
+    );
+    const Q = S.summary ? stQuestions(B, Ln).filter(q => stInSpan(q.t, lo, hi) && (p < 0 || q.who === p)) : null;
+    const ans = Q ? Q.filter(q => q.answered) : [];
+    const waits = ans.filter(q => q.wait != null).map(q => q.wait);
+    const med = stMedian(waits);
+    const tot = p < 0 ? A.total : A.byP[p];
+    const qt = [
+      ["asked", Q ? Q.length : "—", p < 0 ? "questions asked" : "questions they asked"],
+      ["answered", Q ? ans.length : "—", "answered"],
+      [
+        "wait",
+        med == null ? "—" : stDur(med),
+        "to the first answer, median" + (waits.length ? " of " + waits.length : ""),
+      ],
+    ];
+    s.append(
+      stTiles(
+        p < 0
+          ? [
+              ["replies", M.replies, "replies"],
+              ["share", stPct(M.replies, tot), "of messages are replies"],
+            ].concat(qt)
+          : [["got", M.gotN, "replies to " + stName(B, p)]].concat(qt),
+      ),
+    );
+    if (p >= 0) {
+      s.append(el("h4", "st-h", "Replied to by"));
+      s.append(
+        M.gotN
+          ? stList(
+              "repliedBy",
+              [...M.got]
+                .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+                .slice(0, 5)
+                .map(([q, n]) => stPRow(B, q, "engage", n, stPct(n, M.gotN), null, true)),
+            )
+          : el("p", "note", "Nobody replied to " + stName(B, p) + " in this span."),
+      );
+      return s;
+    }
+    const pairs = [...M.pairs].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+    s.append(el("h4", "st-h", "Who replies to whom"));
+    if (!pairs.length) s.append(el("p", "note", "No replies in this span."));
+    else {
+      s.append(
+        stList(
+          "pairs",
+          pairs.slice(0, 10).map(([k, n]) => ({
+            id: k,
+            label: stPName(B, Math.floor(k / ST_PK)) + " → " + stPName(B, k % ST_PK),
+            c: n,
+            pc: stPct(n, M.replies),
+          })),
+        ),
+      );
+      const more = stMoreNote(pairs.length - 10, "pair");
+      if (more) s.append(more);
+    }
+    return s;
+  }
+  /* Word trends: the box is made once and never rebuilt (typing must keep its focus and what's typed). What it finds
+     is drawn below it after a pause in typing, on Enter, and with the rest of the tab: messages mentioning the word
+     per bar of the span (as the volume chart), the total and who mentions it most. */
+  const stWordsSec = stSec(
+    "words",
+    "Word trends",
+    "How many messages mention a word or phrase: whole words, any case.",
+  );
+  stWordsSec.id = "st-words";
+  const stWordIn = el("input");
+  Object.assign(stWordIn, { type: "search", id: "st-word", placeholder: "A word or phrase", autocomplete: "off" });
+  stWordIn.spellcheck = false;
+  stWordIn.setAttribute("aria-label", "Word or phrase");
+  stWordIn.setAttribute("enterkeyhint", "search");
+  const stWordSay = el("p", "note");
+  stWordSay.setAttribute("role", "status");
+  const stWordOut = el("div", "block");
+  {
+    const row = el("div", "toolbar st-wq");
+    row.append(stWordIn);
+    stWordsSec.append(row, stWordSay, stWordOut);
+    $("#st-body").append(stWordsSec);
+  }
+  function stWordsFill(draw) {
+    const X = S.stats.ctx,
+      w = S.stats.word;
+    stWordOut.textContent = "";
+    stWordsSec.hidden = !X || S.stats.hide.has("words");
+    if (stWordsSec.hidden) return;
+    if (w.length < 2) {
+      stWordSay.textContent = w ? "Type two letters or more." : "Type a word or phrase to see how often it comes up.";
+      return;
+    }
+    const { B, A, lo, hi, p } = X;
+    const W = stWordAgg(B, w, lo, hi, p),
+      bk = W.bk,
+      n = bk.edges.length - 1;
+    const q = "“" + w + "”",
+      from = p >= 0 ? " from " + stName(B, p) : "";
+    stWordSay.textContent = W.total
+      ? plural(W.total, "message") +
+        from +
+        (W.total === 1 ? " mentions " : " mention ") +
+        q +
+        ": " +
+        stPct(W.total, p < 0 ? A.total : A.byP[p]) +
+        " of " +
+        (p < 0 ? "the messages" : "theirs") +
+        " in " +
+        stSpanText(lo, hi) +
+        "."
+      : "No message" + from + " mentions " + q + " in " + stSpanText(lo, hi) + ".";
+    if (!W.total) return;
+    const zooms = bk.kind === "week" || bk.kind === "month",
+      opens = bk.kind === "day" && X.view === "main";
+    const pick = k => {
+      if (!W.bars[k]) return;
+      if (zooms) return stZoom({ lo: Math.max(bk.edges[k], X.sp.lo), hi: Math.min(bk.edges[k + 1], X.sp.hi) });
+      if (opens) return stOpenDay(minDay(Math.max(bk.edges[k], lo)), '.st-chart[data-chart="words"]');
+      goMsg(S.msgs[W.first[k]].i);
+    };
+    const what = zooms
+      ? "Tap a bar to zoom in."
+      : opens
+        ? "Tap a day for its detail."
+        : "Tap a bar for its first mention.";
+    stWordOut.append(
+      el("p", "note", what),
+      stBarChart({
+        name: "words",
+        n,
+        val: k => W.bars[k],
+        tip: k => [stBarText(bk, k), plural(W.bars[k], "message")],
+        tick: k => stTick(bk, k),
+        strides: ST_STRIDES[bk.kind],
+        label:
+          "Messages" + from + " mentioning " + q + " per " + bk.kind + ", " + stSpanText(lo, hi) + ": " + W.total + ".",
+        pick,
+      }),
+      stTable([bk.kind[0].toUpperCase() + bk.kind.slice(1), "Messages"], () =>
+        Array.from({ length: n }, (_, k) => [stBarText(bk, k), stNum(W.bars[k])]),
+      ),
+    );
+    if (p < 0) {
+      const by = [...W.byP].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+      stWordOut.append(
+        el("h4", "st-h", "Who mentions it most"),
+        stList(
+          "mentions",
+          by.slice(0, 5).map(([q, c]) => stPRow(B, q, "words", c, stPct(c, W.total))),
+        ),
+      );
+    }
+    if (draw) stWordOut.querySelectorAll(".st-chart").forEach(c => c._draw());
+  }
+  let stWT = null;
+  function stWordApply() {
+    clearTimeout(stWT);
+    const w = stWordIn.value.replace(/\s+/g, " ").trim();
+    if (w === S.stats.word) return;
+    S.stats.word = w;
+    stWordsFill(true);
+  }
+  stWordIn.addEventListener("input", () => {
+    clearTimeout(stWT);
+    stWT = setTimeout(stWordApply, 400);
+  });
+  stWordIn.addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    stWordApply();
+  });
   function stHead(title, back) {
     const h = el("div", "st-head");
     const b = el("button", "secondary st-back", "← " + back);
@@ -9195,7 +10640,19 @@
     if (!st.hide.has("volume")) body.append(stVolume(B, A, sp));
     if (!st.hide.has("top")) body.append(stTopSec(B, A));
     if (!st.hide.has("heat")) body.append(stHeatSec(A));
-    if (!body.children.length) body.append(el("p", "empty", "Every section is switched off. Tick one under Show."));
+    const X = stCtx(B, sp.lo, sp.hi, -1, "main", sp);
+    stPart2(body, X);
+    if (!body.children.length && st.hide.has("words"))
+      body.append(el("p", "empty", "Every section is switched off. Tick one under Show."));
+    return X;
+  }
+  /* the part 2 sections that are switched on (word trends draws itself, below them) */
+  function stPart2(body, X, skip) {
+    const h = S.stats.hide;
+    if (!h.has("convs")) body.append(stConvSec(X));
+    if (!h.has("deals")) body.append(stDealSec(X));
+    if (!h.has("people") && skip !== "people") body.append(stPeopleSec(X));
+    if (!h.has("engage")) body.append(stEngageSec(X));
   }
   /* A day: its tiles, its hours (each bar split by the day's top four, everyone else together; each hour's own top
      three in its tooltip and table) and its top 10 */
@@ -9209,6 +10666,9 @@
     if (!st.hide.has("tiles")) body.append(stNumbers(B, A));
     if (!st.hide.has("volume")) body.append(stDayHours(B, A, k));
     if (!st.hide.has("top")) body.append(stTopSec(B, A));
+    const X = stCtx(B, lo, lo + DAY_MIN, -1, "day", sp);
+    stPart2(body, X);
+    return X;
   }
   function stDayHours(B, A, k) {
     const per = Array.from({ length: 24 }, () => new Map());
@@ -9291,8 +10751,9 @@
     );
     return s;
   }
-  /* A person over the span (or the day they were picked from): their numbers and share, their messages over time,
-     their busiest hours and whom they reply to most */
+  /* A person over the span (or the day they were picked from): their numbers and share, when they were first and last
+     seen, their messages over time, their busiest hours, whom they reply to most (Messenger replies, then threading's
+     replies and answers, as Engagement counts them), then the part 2 sections for them */
   function stPersonView(body, B, sp) {
     const st = S.stats,
       p = B.idx.get(st.person);
@@ -9308,13 +10769,13 @@
       rank = r.indexOf(p) + 1;
     stSpanLine(name + ", " + span + ": " + plural(c, "message") + ".", false);
     body.append(stHead(name, "Back to " + (st.day ? dayTitle(st.day) : "everyone")));
+    const X = stCtx(B, lo, hi, p, "person", sp),
+      replies = X.M.replies;
     const bars = new Int32Array(nb),
-      hrs = new Int32Array(24),
-      to = new Map();
+      hrs = new Int32Array(24);
     let text = 0,
       photos = 0,
-      links = 0,
-      replies = 0;
+      links = 0;
     const [a, b] = stJs(B, lo, hi);
     for (let j = a; j < b; j++) {
       const v = B.tm[j];
@@ -9324,11 +10785,6 @@
       text += B.txt[j];
       photos += B.ph[j];
       links += B.lk[j];
-      const q = stReplyTo(B, S.msgs[j]);
-      if (q && q !== st.person) {
-        replies++;
-        to.set(q, (to.get(q) || 0) + 1);
-      }
     }
     const s1 = stSec(
       "p-tiles",
@@ -9387,32 +10843,20 @@
       stTable(["Hour", "Messages"], () => Array.from(hrs, (n, h) => [stHourSpan(h), n])),
     );
     const s4 = stSec("p-replies", "Replies to", replies ? "Whom " + name + " replied to most." : null);
-    const order = [...to].sort(
-      (x, y) => y[1] - x[1] || (B.idx.get(x[0]) ?? Infinity) - (B.idx.get(y[0]) ?? Infinity) || (x[0] < y[0] ? -1 : 1),
-    );
+    const order = [...X.M.pairs].sort((x, y) => y[1] - x[1] || x[0] - y[0]);
     if (!order.length) s4.append(el("p", "note", "No replies in this span."));
-    else {
-      const ol = el("ol", "st-top");
-      order.slice(0, 5).forEach(([q, n], x) => {
-        const li = el("li");
-        li.dataset.pk = q;
-        const bar = el("span", "bar");
-        bar.setAttribute("aria-hidden", "true");
-        const f = el("i");
-        f.style.width = ((100 * n) / order[0][1]).toFixed(1) + "%";
-        bar.append(f);
-        li.append(
-          el("span", "rk", String(x + 1)),
-          el("span", "who", stKeyName(B, q)),
-          el("span", "c", stNum(n)),
-          el("span", "pc", stPct(n, replies)),
-          bar,
-        );
-        ol.append(li);
-      });
-      s4.append(ol);
-    }
-    body.append(s1, s2, s3, s4);
+    else
+      s4.append(
+        stList(
+          "replies",
+          order.slice(0, 5).map(([k, n]) => stPRow(B, k % ST_PK, "p-replies", n, stPct(n, replies), null, true)),
+        ),
+      );
+    body.append(s1);
+    if (!st.hide.has("people")) body.append(stPeopleSec(X));
+    body.append(s2, s3, s4);
+    stPart2(body, X, "people");
+    return X;
   }
 
   /* the timeframe buttons, the From/To days and the switches, as the state says */
@@ -9441,17 +10885,23 @@
     if (!force && renderStats.k && key.every((x, j) => x === renderStats.k[j])) return;
     renderStats.k = key;
     stControls();
-    /* a redraw for new data (or a zoom) keeps the keyboard where it was: a chart, a name or Back, without scrolling */
+    /* a redraw for new data (or a zoom) keeps the keyboard where it was: a chart, a name in a list or Back, without
+       scrolling; the word box is never rebuilt, so it keeps the focus and what's typed by itself */
     const act = document.activeElement;
     let keep = null;
-    if (!st.focus && act && body.contains(act)) {
+    if (!st.focus && act && body.contains(act) && act !== stWordIn) {
       const c = act.closest(".st-chart"),
-        li = act.closest(".st-top li[data-pk]");
+        li = act.closest("li[data-pk], li[data-id]"),
+        sec = act.closest("#st-body > .st-sec");
       if (c) keep = '.st-chart[data-chart="' + c.dataset.chart + '"]';
-      else if (li && act.matches("button")) keep = '.st-top li[data-pk="' + CSS.escape(li.dataset.pk) + '"] button';
+      else if (li && sec && act.matches("button"))
+        keep =
+          li.dataset.pk != null
+            ? stLiSel(sec.dataset.sec, "data-pk", li.dataset.pk)
+            : stLiSel(sec.dataset.sec, "data-id", li.dataset.id);
       else if (act.matches(".st-back")) keep = ".st-back";
     }
-    body.textContent = "";
+    [...body.children].forEach(x => x !== stWordsSec && x.remove());
     if (!S.msgs.length) {
       stSpanLine("", false);
       const why =
@@ -9460,16 +10910,21 @@
           : S.meta
             ? "No messages stored yet. Ask Claude in chat to " + RP() + "."
             : "Stats show here once the chat data loads.";
-      body.append(el("div", "empty", why));
+      body.insertBefore(el("div", "empty", why), stWordsSec);
+      st.ctx = null;
+      stWordsFill();
       return;
     }
     const B = statsBase(),
-      sp = stSpan();
+      sp = stSpan(),
+      frag = document.createDocumentFragment();
     if (st.person != null && !B.idx.has(st.person)) st.person = null;
     if (st.day && !isDay(st.day)) st.day = null;
-    if (st.person != null) stPersonView(body, B, sp);
-    else if (st.day) stDayView(body, B, sp);
-    else stMain(body, B, sp);
+    if (st.person != null) st.ctx = stPersonView(frag, B, sp);
+    else if (st.day) st.ctx = stDayView(frag, B, sp);
+    else st.ctx = stMain(frag, B, sp);
+    body.insertBefore(frag, stWordsSec);
+    stWordsFill(false);
     body.querySelectorAll(".st-chart").forEach(c => c._draw());
     stW = body.clientWidth;
     const f = st.focus && body.querySelector(st.focus);
@@ -9552,6 +11007,7 @@
     S.msgs = all;
     S.byI = new Map(all.map(m => [m.i, m]));
     indexPeople();
+    renderViews(); /* the days views cover, and keeping views up to date (F28) */
     keepPlace(() => {
       renderHeader();
       renderSummary();
@@ -9638,7 +11094,8 @@
     );
     db.collection("views").onSnapshot(
       q => {
-        S.views = q.docs.map(d => d.data());
+        S.views = q.docs.map(d => Object.assign({}, d.data(), { _id: d.id }));
+        S.viewsIn = true;
         renderViews();
       },
       () => {},
@@ -9702,6 +11159,7 @@
         renderDays();
       },
     );
+    watchReports(db);
     db.doc("people/index").onSnapshot(
       s => {
         S.people = s.exists ? s.data() : null;

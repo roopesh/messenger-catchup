@@ -1431,7 +1431,7 @@ async function pipeline() {
     await until(
       p,
       () =>
-        /By person/.test(document.getElementById('view-out').textContent) &&
+        /Grouped by who posted/.test(document.getElementById('view-out').textContent) &&
         [...__rt.store.keys()].some(k => k.startsWith('views/')),
     ),
     'views: built view rendered and saved',
@@ -3132,7 +3132,7 @@ async function history() {
       p,
       () =>
         !document.getElementById('view-go').disabled &&
-        /By person/.test(document.getElementById('view-out').textContent),
+        /Grouped by who posted/.test(document.getElementById('view-out').textContent),
     );
     const vp = await lastSample(p);
     const V = parts(vp);
@@ -3510,7 +3510,7 @@ async function history2() {
       p,
       () =>
         !document.getElementById('view-go').disabled &&
-        /too long|By person/.test(
+        /too long|Grouped by who posted/.test(
           document.getElementById('view-note').textContent + document.getElementById('view-out').textContent,
         ),
     );
@@ -4130,7 +4130,7 @@ async function digests() {
 const bdSeed = (o = {}) => {
   const msgs = hmsgs(o.n || 500, { perDay: o.perDay || 100 });
   const days = new Set(msgs.map(m => m.d)).size;
-  const docs = o.noDigests ? {} : hdigests(msgs, k => k < days - 1, o.make);
+  const docs = Object.assign(o.noDigests ? {} : hdigests(msgs, k => k < days - 1, o.make), o.docs || {});
   return { msgs, seed: hseed(msgs, { threads: true, meta: { caughtUpI: msgs.length - 21 }, docs, opts: o.opts }) };
 };
 const bdOpen = async (o = {}, ctx) => {
@@ -4476,6 +4476,277 @@ async function byDay() {
       fits(m1) && fits(m2),
       'F24 BD9: at 390 px all six tabs fit the bar, at least 32 px tall, no sideways scroll, also in a wide font ' +
         JSON.stringify({ m1, m2 }),
+    );
+  });
+}
+
+/* ---------- F27: each refresh's report on the By day tab ---------- */
+async function byDayReports() {
+  /* F27: each refresh's report (reports/d<YYYY-MM-DD>, written by catchup.py with each build), on By day. Oct 5 is the
+     day in progress (no digest yet): two runs, stored out of order; Oct 4 has its digest, two runs (the second written
+     after midnight) and two older runs that left the document. The chat's zone is Los Angeles. */
+  const RP = () => ({
+    'reports/d2026-10-05': {
+      day: '2026-10-05',
+      runs: [
+        { at: '2026-10-05T17:04:00Z', fromI: 450, toI: 499, n: 50, bullets: [] },
+        {
+          at: '2026-10-05T16:04:00Z',
+          fromI: 400,
+          toI: 449,
+          n: 50,
+          bullets: [
+            { t: 'Ana offered a stove; <b>Ben</b> claimed it', refs: [401, 405] },
+            { t: 'Cy asked about permits', refs: [440] },
+          ],
+        },
+      ],
+    },
+    'reports/d2026-10-04': {
+      day: '2026-10-04',
+      dropped: 2,
+      runs: [
+        { at: '2026-10-04T23:04:00Z', fromI: 300, toI: 389, n: 90, bullets: [{ t: 'Dee sold the tarp', refs: [310] }] },
+        {
+          at: '2026-10-05T07:30:00Z',
+          fromI: 390,
+          toI: 399,
+          n: 10,
+          bullets: [{ t: 'Ben said goodnight', refs: [399] }],
+        },
+      ],
+    },
+  });
+  const rpRuns = (p, day) =>
+    p.evaluate(
+      day =>
+        [...document.querySelectorAll('#days-list article[data-day="' + day + '"] .rp-run')].map(li => ({
+          head: li.querySelector('.rp-head').textContent,
+          bullets: [...li.querySelectorAll('li')].map(x => x.textContent),
+          quiet: (li.querySelector(':scope > p.note') || {}).textContent || '',
+          /* a closed <details> keeps its content's boxes (content-visibility: hidden), so ask whether it's drawn */
+          seen: li.checkVisibility() && li.getBoundingClientRect().height > 0,
+        })),
+      day,
+    );
+  const rpOpens = async (p, sel, i) => {
+    await p.click(sel);
+    await until(p, i => document.querySelector('#m' + i + '.flash'), i, 5000);
+    return p.evaluate(i => {
+      const n = document.getElementById('m' + i);
+      const b = n && n.getBoundingClientRect();
+      return location.hash === '#messages' && !!b && b.height > 0 && b.top >= 0 && b.bottom <= innerHeight;
+    }, i);
+  };
+
+  /* BD13: the day in progress shows each refresh's run in order (time, count, bullets with their numbers; a run with
+     no bullets says so), with the day's count so far; markup stays text; a number opens its message */
+  await hcase('BD13', async () => {
+    const { p } = await bdOpen({ docs: RP() });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.rp-day'), null, 5000);
+    const card = await p.evaluate(() => {
+      const a = document.querySelector('#days-list article[data-day="2026-10-05"]');
+      return {
+        first: document.querySelector('#days-list article').dataset.day,
+        title: a.querySelector('h3').textContent,
+        count: a.querySelector('.row .note').textContent,
+        lead: (a.querySelector('.rp-lead') || {}).textContent,
+        details: a.querySelectorAll('details').length,
+        tags: a.querySelectorAll('li b, li img').length,
+      };
+    });
+    const runs = await rpRuns(p, '2026-10-05');
+    ok(
+      card.first === '2026-10-05' &&
+        card.title === 'Mon, Oct 5' &&
+        card.count === '100 messages so far' &&
+        card.lead === 'No digest yet. What each refresh found:' &&
+        card.details === 0 &&
+        card.tags === 0,
+      'F27 BD13: the day in progress comes first, titled, with its count so far, its runs in full ' +
+        JSON.stringify(card),
+    );
+    ok(
+      runs.length === 2 &&
+        runs[0].head === '9:04 AM 50 messages' &&
+        runs[0].bullets.join(' / ') ===
+          'Ana offered a stove; <b>Ben</b> claimed it #401 #405 / Cy asked about permits #440' &&
+        runs[1].head === '10:04 AM 50 messages' &&
+        runs[1].bullets.length === 0 &&
+        runs[1].quiet === 'Nothing stood out.' &&
+        runs.every(x => x.seen),
+      'F27 BD13: the runs in order, each with its time, count and bullets (markup as text); an empty run says so ' +
+        JSON.stringify(runs),
+    );
+    const opened = await rpOpens(p, '#days-list article[data-day="2026-10-05"] .rp-run a.cite:has-text("#440")', 440);
+    ok(opened, "F27 BD13: a run's number (#440, before the window) opens that message in Messages, on screen");
+    ok(p.errors.length === 0, 'F27 BD13: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* BD14: a finished day keeps its digest and adds a collapsed "What each refresh found (2)"; opened, its runs show
+     (one after midnight, with the weekday) and the note on the runs not kept; their numbers open messages; days with
+     no runs have no list */
+  await hcase('BD14', async () => {
+    const { p } = await bdOpen({ docs: RP() });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list details.rp-more'), null, 5000);
+    const sel = '#days-list article[data-day="2026-10-04"]';
+    const before = await p.evaluate(sel => {
+      const a = document.querySelector(sel);
+      const d = a.querySelector('details.rp-more');
+      return {
+        digest: [...a.querySelectorAll(':scope > ul > li')].map(x => x.textContent),
+        count: a.querySelector('.row .note').textContent,
+        summary: d.querySelector('summary').textContent,
+        open: d.open,
+        others: document.querySelectorAll('#days-list details.rp-more').length,
+        lastChild: a.lastElementChild === d,
+      };
+    }, sel);
+    const hidden = await rpRuns(p, '2026-10-04');
+    await p.focus(sel + ' details.rp-more > summary');
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(100);
+    const runs = await rpRuns(p, '2026-10-04');
+    const note = await p.evaluate(
+      sel => (document.querySelector(sel + ' .rp-box > p.note') || {}).textContent || '',
+      sel,
+    );
+    ok(
+      before.digest.join(' / ') === 'Ana sold a stove on day 3 #301 #302 / Ben asked about permits on day 3 #305' &&
+        before.count === '100 messages' &&
+        before.summary === 'What each refresh found (2)' &&
+        !before.open &&
+        before.lastChild &&
+        before.others === 1 &&
+        hidden.length === 2 &&
+        hidden.every(x => !x.seen),
+      'F27 BD14: the finished day keeps its digest, with the runs collapsed under it; other days have none ' +
+        JSON.stringify([before, hidden]),
+    );
+    ok(
+      runs.length === 2 &&
+        runs[0].head === '4:04 PM 90 messages' &&
+        runs[0].bullets[0] === 'Dee sold the tarp #310' &&
+        runs[1].head === 'Mon 12:30 AM 10 messages' &&
+        runs[1].bullets[0] === 'Ben said goodnight #399' &&
+        runs.every(x => x.seen) &&
+        note === "2 earlier refreshes this day aren't kept.",
+      'F27 BD14: opened from the keyboard, the runs show in order, the one after midnight with its weekday, and the note ' +
+        JSON.stringify([runs, note]),
+    );
+    /* a refresh writes the day again while the list is open: it redraws, still open, with the new run */
+    await p.evaluate(() => {
+      const d = __rt.get('reports/d2026-10-04');
+      d.runs.push({ at: '2026-10-05T07:40:00Z', fromI: 400, toI: 400, n: 1, bullets: [] });
+      __rt.write('reports/d2026-10-04', d);
+    });
+    await until(
+      p,
+      sel => /\(3\)$/.test(document.querySelector(sel + ' details.rp-more > summary').textContent),
+      sel,
+      5000,
+    );
+    const redrawn = await p.evaluate(sel => document.querySelector(sel + ' details.rp-more').open, sel);
+    ok(redrawn, 'F27 BD14: the opened list stays open when the tab redraws with a new run');
+    ok(await rpOpens(p, sel + ' .rp-run a.cite:has-text("#310")', 310), 'F27 BD14: #310 opens in Messages');
+    ok(p.errors.length === 0, 'F27 BD14: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* BD15: nothing saved, nothing shown: no reports, or a day's document with no run worth showing, adds nothing; a
+     refresh's write reaches the open tab without a reload */
+  await hcase('BD15', async () => {
+    const junk = {
+      'reports/d2026-10-05': { day: '2026-10-05', runs: [] },
+      'reports/d2026-10-03': { day: '2026-10-03', runs: [null, 5, 'x', []] },
+      'reports/today': { day: '2026-10-05', runs: [{ at: '2026-10-05T16:04:00Z', n: 3, bullets: [] }] },
+      'reports/d2026-10-02': { day: '2026-10-02', runs: 'no' },
+    };
+    for (const docs of [{}, junk]) {
+      const { p } = await bdOpen({ docs });
+      await bdShow(p);
+      await p.waitForTimeout(200);
+      const r = await p.evaluate(() => ({
+        days: [...document.querySelectorAll('#days-list article')].map(a => a.dataset.day).join(),
+        rp: document.querySelectorAll('#days-list .rp-more, #days-list .rp-day, #days-list .rp-run').length,
+      }));
+      ok(
+        r.days === '2026-10-04,2026-10-03,2026-10-02,2026-10-01' && r.rp === 0 && p.errors.length === 0,
+        'F27 BD15: ' +
+          (docs === junk ? 'documents with no run to show' : 'no reports') +
+          ' add nothing; the day in progress is left out as before ' +
+          JSON.stringify([r, p.errors]),
+      );
+      if (docs !== junk) continue;
+      await p.evaluate(d => __rt.write('reports/d2026-10-05', d), RP()['reports/d2026-10-05']);
+      await until(p, () => document.querySelectorAll('#days-list article.rp-day .rp-run').length === 2, null, 5000);
+      ok(
+        (await rpRuns(p, '2026-10-05')).length === 2 && p.errors.length === 0,
+        'F27 BD15: a refresh writing the day in progress shows its runs in the open tab ' + JSON.stringify(p.errors),
+      );
+    }
+  });
+
+  /* BD16: no digests yet, only runs: the quiet line says no digests, each day with runs gets its card (a finished one
+     without "so far") */
+  await hcase('BD16', async () => {
+    const { p } = await bdOpen({ noDigests: true, docs: RP() });
+    await bdShow(p);
+    await until(p, () => document.querySelectorAll('#days-list article.rp-day').length === 2, null, 5000);
+    const r = await p.evaluate(() => ({
+      note: (document.querySelector('#days-list > p.note') || {}).textContent || '',
+      days: [...document.querySelectorAll('#days-list article')].map(a => [
+        a.dataset.day,
+        a.querySelector('.row .note').textContent,
+        a.querySelectorAll('.rp-run').length,
+      ]),
+      empty: document.querySelectorAll('#days-list .empty').length,
+    }));
+    ok(
+      /^No day digests yet\./.test(r.note) &&
+        JSON.stringify(r.days) ===
+          JSON.stringify([
+            ['2026-10-05', '100 messages so far', 2],
+            ['2026-10-04', '100 messages', 2],
+          ]) &&
+        r.empty === 0 &&
+        p.errors.length === 0,
+      'F27 BD16: with runs and no digests, the days with runs show them in full ' + JSON.stringify([r, p.errors]),
+    );
+  });
+
+  /* BD17: at 390 px a run's long bullet with ten numbers wraps, in the day in progress and in an opened list: nothing
+     scrolls sideways */
+  await hcase('BD17', async () => {
+    const long = 'Ana listed ' + 'tentpolesandstakes'.repeat(8) + ' with a long note about the ridge trail and spares';
+    const docs = RP();
+    docs['reports/d2026-10-05'].runs[1].bullets.push({
+      t: long,
+      refs: [430, 431, 432, 433, 434, 435, 436, 437, 438, 439],
+    });
+    docs['reports/d2026-10-04'].runs[0].bullets.push({
+      t: long,
+      refs: [320, 321, 322, 323, 324, 325, 326, 327, 328, 329],
+    });
+    const { p } = await bdOpen({ docs }, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list details.rp-more'), null, 5000);
+    await p.evaluate(() => document.querySelectorAll('#days-list details.rp-more').forEach(d => (d.open = true)));
+    await p.waitForTimeout(150);
+    const r = await p.evaluate(() => ({
+      sw: document.documentElement.scrollWidth,
+      w: innerWidth,
+      right: Math.max(
+        ...[...document.querySelectorAll('#days-list article, #days-list .rp-run, #days-list .rp-run li')].map(x =>
+          Math.round(x.getBoundingClientRect().right),
+        ),
+      ),
+      runs: document.querySelectorAll('#days-list .rp-run').length,
+    }));
+    ok(
+      r.runs === 4 && r.sw <= r.w && r.right <= r.w && p.errors.length === 0,
+      'F27 BD17: at 390 px the runs fit the width, no sideways scroll ' + JSON.stringify(r),
     );
   });
 }
@@ -8810,14 +9081,710 @@ async function savedQuestions() {
   });
 }
 
+/* ---------- Views: a picker with Rename, Rebuild and Remove, and views that keep themselves up to date (F28) ----------
+   Two saved views over 20 stored messages (#0–#19, all on Oct 1): v1 "By person" built Nov 10 and v2 "Products" built
+   Nov 12, plus a method idea and a note from Claude. vjson scripts Claude's view replies (a delay, a failure); vmore
+   stores newer messages as an import does (the chunk, then meta/chat). The automatic update's waits are shortened with
+   __mcViewAutoMs. */
+const VW_UNDO = 400;
+const VW_DOCS = (o = {}) => ({
+  'views/v1': Object.assign(
+    {
+      kind: 'view',
+      title: 'By person',
+      intro: 'Grouped by who posted.',
+      sections: [{ heading: 'Ben', tag: 'open', summary: 'Sells a stove [#1].', refs: [1] }],
+      prompt: 'group by person',
+      at: '2026-11-10T18:00:00.000Z',
+      toI: 19,
+      sent: { from: 0, to: 19, sumFrom: null, afterFrom: null },
+    },
+    o.v1,
+  ),
+  'views/v2': Object.assign(
+    {
+      kind: 'view',
+      title: 'Products',
+      intro: 'Every product mentioned.',
+      sections: [{ heading: 'Stove', summary: 'Ben has one [#1].', refs: [1] }],
+      prompt: 'only products, with who owns what',
+      at: '2026-11-12T18:00:00.000Z',
+      toI: 19,
+      sent: { from: 5, to: 19, sumFrom: 0, afterFrom: null },
+    },
+    o.v2,
+  ),
+  'views/i1': { kind: 'idea', prompt: 'Flag every raffle with its spots left', at: '2026-11-11T10:00:00.000Z' },
+  'notes/n1': { title: 'How a refresh works', when: 'Nov 12', at: '2026-11-12T10:00:00.000Z', intro: 'A short note.' },
+});
+/* every case counts the dialogs its page opens; the page must never open one */
+let vwDialogs = 0;
+async function vopen(o = {}) {
+  const seed = hseed(hmsgs(20), {
+    meta: { markerMode: null },
+    docs: o.docs || VW_DOCS(o),
+    opts: Object.assign({ undoMs: VW_UNDO }, o.opts),
+  });
+  const p = await open(seed, PAGE, o.ctx);
+  HP.push(p);
+  p.on('dialog', d => {
+    vwDialogs++;
+    d.dismiss().catch(() => {});
+  });
+  await vready(p);
+  return p;
+}
+async function vready(p) {
+  await until(p, () => typeof S !== 'undefined' && S.msgs.length === 20 && S.viewsIn);
+  await p.evaluate(() => {
+    window.__mcViewAutoMs = 60;
+    location.hash = '#views';
+  });
+  await sleep(80);
+}
+/* what the list, the open view, the undo line and the store show */
+const vstate = p =>
+  p.evaluate(() => {
+    const q = s => [...document.querySelectorAll(s)];
+    const out = document.getElementById('view-out');
+    const a = document.activeElement;
+    const keys = Object.keys(__rt.all()).filter(k => /^views\//.test(k));
+    return {
+      list: q('#views-list .vw').map(d => d.dataset.id),
+      open: q('#views-list .vw[open]').map(d => d.dataset.id),
+      titles: q('#views-list .vw > summary h3').map(h => h.textContent),
+      metas: q('#views-list .vw > summary .vw-meta').map(h => h.textContent),
+      errs: q('#views-list .vw > summary .vw-err').map(h => h.textContent),
+      out: out.textContent,
+      outIn: out.closest('.vw') ? out.closest('.vw').dataset.id : null,
+      st: q('#views-list .vw-st')
+        .map(x => x.textContent)
+        .join(' '),
+      undo: document.getElementById('vw-undo').textContent,
+      stored: keys.map(k => k.slice(6)).sort(),
+      toI: Object.fromEntries(keys.map(k => [k.slice(6), __rt.get(k).toI])),
+      dels: __rt.writes.filter(w => w.op === 'delete' && /^views\//.test(w.p)).map(w => w.p),
+      box: !document.getElementById('view-box').hidden,
+      newBtn: !document.getElementById('view-new').hidden,
+      calls: __rt.sampleLog.length,
+      focus: a && a !== document.body ? a.dataset.f || a.id || a.textContent : null,
+    };
+  });
+const vclick = (p, id, sel) => p.click('#views-list .vw[data-id="' + id + '"] ' + sel, { timeout: 2000 });
+const vtoggle = async (p, id) => {
+  await vclick(p, id, '> summary');
+  await sleep(100);
+};
+/* Claude's view replies from here on: each waits delay ms, then fails with code fail or answers reply */
+const vjson = (p, m) =>
+  p.evaluate(async m => {
+    const s = await claude.use('sample');
+    s.json = async prompt => {
+      __rt.samples.push(prompt);
+      __rt.sampleLog.push({ bytes: prompt.length, code: m.fail || null });
+      await new Promise(r => setTimeout(r, m.delay || 0));
+      if (m.fail) throw Object.assign(new Error('scripted ' + m.fail), { code: m.fail });
+      return (
+        m.reply || {
+          title: 'Rebuilt',
+          intro: 'Rebuilt intro.',
+          sections: [{ heading: 'Cy', summary: 'Wants a tent [#3].', refs: [3] }],
+        }
+      );
+    };
+  }, m);
+/* newer messages stored, as an import writes them: the chunk with #20… added, then meta/chat */
+const vmore = (p, n) =>
+  p.evaluate(
+    msgs => {
+      __rt.write('chunks/c0000', { start: 0, msgs });
+      __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { lastI: msgs[msgs.length - 1].i }));
+    },
+    hmsgs(20).concat(hmsgs(n).slice(20)),
+  );
+const vtoI = (p, id, n) => until(p, ([id, n]) => (__rt.get('views/' + id) || {}).toI === n, [id, n], 5000);
+async function viewsTab() {
+  /* V1: a compact list, newest first: title, when built and the span; nothing open; ideas and notes collapsed below */
+  await hcase('V1', async () => {
+    const p = await vopen();
+    const s = await vstate(p);
+    const more = await p.evaluate(() => ({
+      ideas: document.getElementById('vw-ideas').tagName === 'DETAILS' && !document.getElementById('vw-ideas').open,
+      notes: document.getElementById('vw-notes').tagName === 'DETAILS' && !document.getElementById('vw-notes').open,
+      last: [...document.getElementById('v-views').children]
+        .slice(-2)
+        .map(x => x.id)
+        .join(),
+      ideasTxt: document.getElementById('ideas-list').textContent,
+      notesTxt: document.getElementById('notes-list').textContent,
+      counts: document.getElementById('ideas-n').textContent + '|' + document.getElementById('notes-n').textContent,
+      inList: /raffle|How a refresh/.test(document.getElementById('views-list').textContent),
+      h: Math.max(...[...document.querySelectorAll('#views-list .vw')].map(x => x.getBoundingClientRect().height)),
+    }));
+    ok(
+      s.list.join() === 'v2,v1' &&
+        !s.open.length &&
+        s.titles.join() === 'Products,By person' &&
+        /^Built Nov 12(, 2026)?, 10:00 AM · #5–#19 \(Oct 1\)$/.test(s.metas[0]) &&
+        /^Built Nov 10(, 2026)?, 10:00 AM · #0–#19 \(Oct 1\)$/.test(s.metas[1]) &&
+        !s.out &&
+        !s.box &&
+        s.newBtn &&
+        more.h < 90,
+      'views V1: saved views are a compact list, newest first, each a title and "' +
+        s.metas[0] +
+        '", none open, the build box closed behind New view (' +
+        JSON.stringify({ s, h: more.h }) +
+        ')',
+    );
+    ok(
+      more.ideas &&
+        more.notes &&
+        more.last === 'vw-ideas,vw-notes' &&
+        /Flag every raffle/.test(more.ideasTxt) &&
+        /How a refresh works/.test(more.notesTxt) &&
+        more.counts === ' (1)| (1)' &&
+        !more.inList,
+      'views V1: method ideas and notes from Claude are in their own collapsed sections at the foot of the tab, with counts (' +
+        JSON.stringify(more) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V1: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V2: opening one closes the other; the open one is remembered in this browser after a reload */
+  await hcase('V2', async () => {
+    const p = await vopen();
+    await vtoggle(p, 'v1');
+    const a = await vstate(p);
+    await vtoggle(p, 'v2');
+    const b = await vstate(p);
+    await p.reload();
+    await vready(p);
+    const c = await vstate(p);
+    await vtoggle(p, 'v2');
+    const d = await vstate(p);
+    await p.reload();
+    await vready(p);
+    const e = await vstate(p);
+    ok(
+      a.open.join() === 'v1' &&
+        a.outIn === 'v1' &&
+        /Asked for: group by person/.test(a.out) &&
+        /Built from #0–#19 word for word\./.test(a.out) &&
+        /Grouped by who posted\./.test(a.out) &&
+        /Sells a stove/.test(a.out) &&
+        a.focus === 'open:v1',
+      'views V2: opening a view shows its content inside its card, focus kept on its title (' + JSON.stringify(a) + ')',
+    );
+    ok(
+      b.open.join() === 'v2' && b.outIn === 'v2' && /Every product mentioned/.test(b.out) && !/Grouped by/.test(b.out),
+      'views V2: opening another view closes the first (' + JSON.stringify(b) + ')',
+    );
+    ok(
+      c.open.join() === 'v2' && c.outIn === 'v2' && /Every product mentioned/.test(c.out),
+      'views V2: after a reload the same view is open (' + JSON.stringify(c) + ')',
+    );
+    ok(
+      !d.open.length && !d.out && !e.open.length && !e.out,
+      'views V2: closing it leaves none open, also after a reload (' + JSON.stringify({ d, e }) + ')',
+    );
+    ok(p.errors.length === 0, 'views V2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V3: Rename inline: Enter saves views/<id>.title, Escape cancels, a failed write puts the old name back */
+  await hcase('V3', async () => {
+    const p = await vopen();
+    await vtoggle(p, 'v1');
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await sleep(50);
+    const f = await p.evaluate(() => {
+      const i = document.activeElement;
+      return {
+        tag: i.tagName,
+        val: i.value,
+        sel: i.selectionEnd - i.selectionStart,
+        label: i.getAttribute('aria-label'),
+      };
+    });
+    await p.keyboard.type('People and wants');
+    await p.keyboard.press('Enter');
+    await until(p, () => (__rt.get('views/v1') || {}).title === 'People and wants');
+    await sleep(100);
+    const a = await vstate(p);
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await p.keyboard.type('Nope');
+    await p.keyboard.press('Escape');
+    await sleep(100);
+    const b = await vstate(p);
+    const bTitle = (await get(p, 'views/v1')).title;
+    await p.evaluate(() => __rt.fails.push({ p: 'views/v1', op: 'update' }));
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await p.keyboard.type('Folks');
+    await p.click('#views-list .vw-ren button.secondary', { timeout: 2000 });
+    await sleep(200);
+    const c = await vstate(p);
+    ok(
+      f.tag === 'INPUT' &&
+        f.val === 'By person' &&
+        f.sel === 9 &&
+        f.label === 'New name for the view “By person”' &&
+        a.titles.join() === 'Products,People and wants' &&
+        a.open.join() === 'v1' &&
+        a.focus === 'ren:v1',
+      'views V3: Rename opens a field holding the name, selected; Enter saves the new name to views/v1 and focus returns to Rename (' +
+        JSON.stringify({ f, a }) +
+        ')',
+    );
+    ok(
+      b.titles[1] === 'People and wants' && bTitle === 'People and wants' && b.focus === 'ren:v1',
+      'views V3: Escape cancels a rename (' + JSON.stringify(b) + ')',
+    );
+    ok(
+      c.titles[1] === 'People and wants' && /Couldn't rename it/.test(c.st),
+      'views V3: a rename that fails to save puts the old name back with a short line (' + JSON.stringify(c) + ')',
+    );
+    ok(p.errors.length === 0, 'views V3: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V4: Rebuild runs the same request again and replaces the content (name kept), with progress; a failure keeps it */
+  await hcase('V4', async () => {
+    const p = await vopen();
+    await vjson(p, { delay: 500 });
+    await vtoggle(p, 'v1');
+    const before = await get(p, 'views/v1');
+    await vclick(p, 'v1', '[data-f="reb:v1"]');
+    await sleep(120);
+    const mid = await vstate(p);
+    const dis = await p.evaluate(() => ({
+      go: document.getElementById('view-go').disabled,
+      reb: document.querySelector('[data-f="reb:v1"]').disabled,
+      spin: !!document.querySelector('#views-list .vw-st .spin'),
+    }));
+    await until(p, () => /Rebuilt intro/.test(document.getElementById('view-out').textContent));
+    await sleep(100);
+    const after = await vstate(p);
+    const doc = await get(p, 'views/v1');
+    const prompt = await p.evaluate(() => __rt.samples[__rt.samples.length - 1]);
+    ok(
+      /Rebuilding… this can take a minute\./.test(mid.st) &&
+        dis.spin &&
+        dis.go &&
+        dis.reb &&
+        /rebuilding…/.test(mid.metas[1]) &&
+        /Grouped by who posted/.test(mid.out),
+      'views V4: while it rebuilds, the view says so with a spinner and every build button waits (' +
+        JSON.stringify({ mid, dis }) +
+        ')',
+    );
+    ok(
+      doc.intro === 'Rebuilt intro.' &&
+        doc.sections[0].heading === 'Cy' &&
+        doc.title === 'By person' &&
+        doc.prompt === 'group by person' &&
+        doc.made === before.at &&
+        doc.at > before.at &&
+        doc.toI === 19 &&
+        doc.kind === 'view' &&
+        doc.sent &&
+        doc.sent.to === 19 &&
+        /group by person/.test(prompt) &&
+        after.calls === 1 &&
+        /Rebuilt intro/.test(after.out) &&
+        !/Grouped by/.test(after.out) &&
+        /Built from #\d+–#19 word for word/.test(after.out) &&
+        after.open.join() === 'v1' &&
+        /^Built at \d/.test(after.metas[1]) &&
+        !after.st,
+      'views V4: Rebuild sends the saved request again and replaces the content in views/v1, keeping its name (' +
+        JSON.stringify({ doc, after }) +
+        ')',
+    );
+    await vjson(p, { fail: 'rate_limited' });
+    await vclick(p, 'v1', '[data-f="reb:v1"]');
+    await until(p, () => /Too many requests/.test(document.querySelector('#views-list .vw-st').textContent));
+    const f = await vstate(p);
+    ok(
+      /Rebuilt intro/.test(f.out) &&
+        (await get(p, 'views/v1')).intro === 'Rebuilt intro.' &&
+        /Too many requests right now/.test(f.st),
+      'views V4: a failed rebuild keeps the content and says why (' + JSON.stringify(f) + ')',
+    );
+    ok(p.errors.length === 0, 'views V4: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V5: Remove hides it at once with "Removed … · Undo" in a live region; Undo brings it back open; the delete waits */
+  await hcase('V5', async () => {
+    const p = await vopen();
+    await vtoggle(p, 'v1');
+    const label = await p.$eval('[data-f="rm:v1"]', b => b.getAttribute('aria-label'));
+    await p.focus('[data-f="rm:v1"]');
+    await p.keyboard.press('Enter');
+    await sleep(60);
+    const now = await vstate(p);
+    const live = await p.evaluate(() => {
+      const u = document.getElementById('vw-undo');
+      return u.getAttribute('role') === 'status' && u.getAttribute('aria-live') === 'polite';
+    });
+    await p.keyboard.press('Enter'); /* focus is on Undo */
+    await sleep(60);
+    const back = await vstate(p);
+    await sleep(VW_UNDO + 200);
+    const still = await vstate(p);
+    await vclick(p, 'v1', '[data-f="rm:v1"]');
+    await sleep(VW_UNDO + 300);
+    const later = await vstate(p);
+    ok(
+      label === 'Remove the view “By person”' &&
+        live &&
+        now.list.join() === 'v2' &&
+        now.stored.join() === 'i1,v1,v2' &&
+        now.undo === 'Removed “By person” · Undo' &&
+        now.focus === 'Undo' &&
+        !now.dels.length &&
+        !now.out,
+      'views V5: Remove (a labelled button, pressed with Enter) hides the view at once, keeps views/v1 for now and says "' +
+        now.undo +
+        '" in a polite live region, focus on Undo (' +
+        JSON.stringify(now) +
+        ')',
+    );
+    ok(
+      back.list.join() === 'v2,v1' &&
+        back.open.join() === 'v1' &&
+        back.focus === 'open:v1' &&
+        !back.undo &&
+        still.stored.join() === 'i1,v1,v2' &&
+        !still.dels.length,
+      'views V5: Undo brings it back open with focus on it, and nothing is deleted after the pause (' +
+        JSON.stringify({ back, still }) +
+        ')',
+    );
+    ok(
+      later.list.join() === 'v2' && later.stored.join() === 'i1,v2' && later.dels.join() === 'views/v1' && !later.undo,
+      'views V5: removed again, views/v1 is deleted after the pause and the undo line goes (' +
+        JSON.stringify(later) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V5: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V6: a failed delete brings the view back with a short line */
+  await hcase('V6', async () => {
+    const p = await vopen();
+    await p.evaluate(() => __rt.fails.push({ p: 'views/v2', op: 'delete' }));
+    await vtoggle(p, 'v2');
+    await vclick(p, 'v2', '[data-f="rm:v2"]');
+    await sleep(VW_UNDO + 300);
+    const s = await vstate(p);
+    ok(
+      s.list.join() === 'v2,v1' &&
+        s.stored.includes('v2') &&
+        /^Couldn't remove “Products”\. It's back in the list\.$/.test(s.undo),
+      'views V6: when the delete fails the view is back in the list with "' + s.undo + '" (' + JSON.stringify(s) + ')',
+    );
+  });
+
+  /* V7: New view opens the build box; a built view is saved, opened, and the box closes; Cancel; no views: box open */
+  await hcase('V7', async () => {
+    let p = await vopen();
+    await p.click('#view-new', { timeout: 2000 });
+    await sleep(60);
+    const opened = await vstate(p);
+    await p.keyboard.type('group by person');
+    await p.click('#view-go', { timeout: 2000 });
+    await until(
+      p,
+      () => !document.getElementById('view-go').disabled && document.querySelectorAll('#views-list .vw').length === 3,
+    );
+    await sleep(100);
+    const s = await vstate(p);
+    const id = s.list[0];
+    const doc = await get(p, 'views/' + id);
+    ok(
+      opened.box && !opened.newBtn && opened.focus === 'view-in',
+      'views V7: New view opens the build box, focus in it (' + JSON.stringify(opened) + ')',
+    );
+    ok(
+      doc &&
+        doc.kind === 'view' &&
+        doc.auto === false &&
+        doc.title === 'By person' &&
+        doc.made === doc.at &&
+        doc.toI === 19 &&
+        s.open.join() === id &&
+        s.outIn === id &&
+        /Grouped by who posted/.test(s.out) &&
+        /Built from #\d+–#19 word for word/.test(s.out) &&
+        !s.box &&
+        s.newBtn,
+      'views V7: Build view saves the view (auto off), puts it first and open, and the build box closes (' +
+        JSON.stringify({ doc, s }) +
+        ')',
+    );
+    await p.click('#view-new', { timeout: 2000 });
+    await p.click('#view-cancel', { timeout: 2000 });
+    await sleep(60);
+    const c = await vstate(p);
+    ok(
+      !c.box && c.newBtn && c.focus === 'view-new',
+      'views V7: Cancel closes the build box (' + JSON.stringify(c) + ')',
+    );
+    ok(p.errors.length === 0, 'views V7: no page errors ' + JSON.stringify(p.errors));
+    p = await vopen({ docs: {} });
+    const e = await vstate(p);
+    ok(
+      e.box && !e.newBtn && !e.list.length && /No views yet/.test(await txt(p, '#views-list')),
+      'views V7: with no saved views the build box is open (' + JSON.stringify(e) + ')',
+    );
+  });
+
+  /* V8: the "Keep up to date" switch saves auto on the view's doc and says what it costs */
+  await hcase('V8', async () => {
+    const p = await vopen();
+    await vtoggle(p, 'v2');
+    const sw = await p.evaluate(() => {
+      const c = document.querySelector('[data-f="auto:v2"]');
+      return {
+        role: c.getAttribute('role'),
+        checked: c.checked,
+        label: c.closest('label').textContent,
+        help: document.getElementById(c.getAttribute('aria-describedby')).textContent,
+      };
+    });
+    await vclick(p, 'v2', '[data-f="auto:v2"]');
+    await until(p, () => (__rt.get('views/v2') || {}).auto === true);
+    await sleep(300);
+    const on = await vstate(p);
+    await vclick(p, 'v2', '[data-f="auto:v2"]');
+    const off = await until(p, () => (__rt.get('views/v2') || {}).auto === false);
+    ok(
+      sw.role === 'switch' &&
+        !sw.checked &&
+        sw.label === 'Keep up to date' &&
+        /refresh/.test(sw.help) &&
+        /claude\.ai usage/.test(sw.help),
+      'views V8: each view has a "Keep up to date" switch whose help says when it rebuilds and that it uses claude.ai usage ("' +
+        sw.help +
+        '")',
+    );
+    ok(
+      /kept up to date/.test(on.metas[0]) && on.calls === 0 && on.focus === 'auto:v2' && off,
+      'views V8: switched on it is saved as auto:true (no rebuild: nothing newer), off as auto:false (' +
+        JSON.stringify(on) +
+        ')',
+    );
+  });
+
+  /* V9: a view kept up to date waits while a refresh runs, then rebuilds once, saying after which refresh; nothing
+     more without a new import; the next import rebuilds it once more */
+  await hcase('V9', async () => {
+    const p = await vopen({ v1: { auto: true } });
+    await vjson(p, {});
+    await p.evaluate(() =>
+      __rt.write('refresh/status', { state: 'running', startedAt: new Date().toISOString(), step: 'build' }),
+    );
+    await vmore(p, 25);
+    await sleep(600);
+    const during = await vstate(p);
+    const fin = new Date(Date.now() - 1000).toISOString();
+    await p.evaluate(f => __rt.write('refresh/status', { state: 'done', startedAt: f, finishedAt: f, added: 5 }), fin);
+    await vtoI(p, 'v1', 24);
+    await sleep(150);
+    const after = await vstate(p);
+    const doc = await get(p, 'views/v1');
+    const want = await p.evaluate(
+      f => new Date(f).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+      fin,
+    );
+    await sleep(600);
+    const again = await vstate(p);
+    await p.evaluate(() => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { lastRefresh: 'Later' })));
+    await sleep(600);
+    const meta = await vstate(p);
+    await vmore(p, 30);
+    await vtoI(p, 'v1', 29);
+    await sleep(150);
+    const next = await vstate(p);
+    ok(
+      during.calls === 0 && during.toI.v1 === 19,
+      'views V9: nothing is rebuilt while the refresh that stored the messages runs (' + JSON.stringify(during) + ')',
+    );
+    ok(
+      after.calls === 1 &&
+        doc.intro === 'Rebuilt intro.' &&
+        doc.title === 'By person' &&
+        doc.auto === true &&
+        doc.autoAt === doc.at &&
+        doc.autoAfter === fin &&
+        doc.autoBusy === undefined &&
+        doc.sent.to === 24 &&
+        after.toI.v2 === 19 &&
+        after.metas[1].startsWith('Updated after the ' + want + ' refresh · #') &&
+        /kept up to date$/.test(after.metas[1]),
+      'views V9: once it has finished, the view rebuilds itself once with the new messages and says "' +
+        after.metas[1] +
+        '"; the other view is left alone (' +
+        JSON.stringify({ doc, after }) +
+        ')',
+    );
+    ok(
+      again.calls === 1 && meta.calls === 1,
+      'views V9: no second rebuild without a new import, also after meta/chat changes (' +
+        JSON.stringify({ again: again.calls, meta: meta.calls }) +
+        ')',
+    );
+    ok(
+      next.calls === 2 &&
+        next.toI.v1 === 29 &&
+        /^Updated at \d{1,2}:\d\d [AP]M with newer messages/.test(next.metas[1]),
+      'views V9: the next import rebuilds it once more ("' + next.metas[1] + '")',
+    );
+    ok(p.errors.length === 0, 'views V9: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V10: never while another build runs, nor while the user is typing on the tab (renaming) */
+  await hcase('V10', async () => {
+    const p = await vopen({ v1: { auto: true } });
+    await vjson(p, { delay: 800 });
+    await vtoggle(p, 'v2');
+    await vclick(p, 'v2', '[data-f="reb:v2"]');
+    await sleep(100);
+    await vmore(p, 25);
+    await sleep(450);
+    const mid = await vstate(p);
+    await vtoI(p, 'v1', 24);
+    await until(p, () => !document.querySelector('#views-list .vw-st .spin'), null, 5000);
+    const end = await vstate(p);
+    ok(
+      mid.calls === 1 && mid.toI.v1 === 19 && end.calls === 2 && end.toI.v1 === 24 && end.toI.v2 === 19,
+      'views V10: an import during a Rebuild waits for it, then the view kept up to date rebuilds (' +
+        JSON.stringify({ mid, end }) +
+        ')',
+    );
+    await vjson(p, {});
+    await vtoggle(p, 'v1');
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await sleep(50);
+    await vmore(p, 30);
+    await sleep(600);
+    const typing = await vstate(p);
+    await p.keyboard.press('Escape');
+    await vtoI(p, 'v1', 29);
+    const done = await vstate(p);
+    ok(
+      typing.calls === 2 && typing.toI.v1 === 24 && done.calls === 3,
+      'views V10: no automatic rebuild while a rename is open; it runs once the rename ends (' +
+        JSON.stringify({ typing: typing.calls, done: done.calls }) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V10: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V11: a failed automatic rebuild keeps the old content, notes it briefly, and isn't tried again for that import */
+  await hcase('V11', async () => {
+    const p = await vopen({ v1: { auto: true } });
+    await vjson(p, { fail: 'rate_limited' });
+    await vmore(p, 25);
+    await until(p, () => (__rt.get('views/v1') || {}).autoErr, null, 5000);
+    await sleep(600);
+    const s = await vstate(p);
+    const doc = await get(p, 'views/v1');
+    await vtoggle(p, 'v1');
+    const o = await vstate(p);
+    ok(
+      s.calls === 1 &&
+        doc.intro === 'Grouped by who posted.' &&
+        doc.toI === 19 &&
+        doc.autoErr.code === 'rate_limited' &&
+        doc.autoErr.toI === 24 &&
+        !doc.autoBusy &&
+        /^Couldn't update at \d{1,2}:\d\d [AP]M: this is the earlier version\.$/.test(s.errs[0]) &&
+        /Grouped by who posted/.test(o.out) &&
+        /Too many requests/.test(o.st),
+      'views V11: a failed automatic rebuild keeps the content, says "' +
+        s.errs[0] +
+        '" and isn\'t retried for the same import (' +
+        JSON.stringify({ doc, s, st: o.st }) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V11: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V12: another open copy of the page already updating the view (a fresh autoBusy) is left to it */
+  await hcase('V12', async () => {
+    const p = await vopen({ v1: { auto: true, autoBusy: { tab: 'other', at: new Date().toISOString() } } });
+    await vjson(p, {});
+    await vmore(p, 25);
+    await sleep(800);
+    const s = await vstate(p);
+    ok(
+      s.calls === 0 && s.toI.v1 === 19,
+      'views V12: a view another copy of the page is updating is left to it (' + JSON.stringify(s) + ')',
+    );
+  });
+
+  /* V13: at 390 px the list, an open view's actions and content, rename, the undo line, the build box and the
+     collapsed sections fit the width */
+  await hcase('V13', async () => {
+    const long = 'A long view name about stoves, tents, packs and water filters that goes on ' + 'x'.repeat(60);
+    const p = await vopen({
+      ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
+      v1: {
+        title: long,
+        auto: true,
+        autoAt: '2026-11-10T18:00:00.000Z',
+        autoErr: { at: '2026-11-11T18:00:00.000Z', code: 'rate_limited', toI: 19 },
+      },
+    });
+    await vtoggle(p, 'v2');
+    await vclick(p, 'v2', '[data-f="rm:v2"]');
+    await sleep(60);
+    await vtoggle(p, 'v1');
+    await p.click('#view-new', { timeout: 2000 });
+    const fit = s =>
+      p.evaluate(s => {
+        document.getElementById('vw-ideas').open = true;
+        document.getElementById('vw-notes').open = true;
+        const r = s => Math.max(0, ...[...document.querySelectorAll(s)].map(x => x.getBoundingClientRect().right));
+        return {
+          sw: document.documentElement.scrollWidth,
+          iw: innerWidth,
+          max: r(s),
+          n: document.querySelectorAll(s).length,
+        };
+      }, s);
+    const all =
+      '#views-list .vw, #views-list .vw *, #vw-undo p, #vw-undo button, #view-box *, #view-new, .vw-more, .vw-more *';
+    const a = await fit(all);
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await sleep(60);
+    const b = await fit('.vw-ren, .vw-ren *');
+    ok(
+      a.n > 20 && a.sw <= a.iw && a.max <= a.iw && b.n === 4 && b.sw <= b.iw && b.max <= b.iw,
+      'views V13: at 390 px the list, the open view with its actions and note, rename, Undo, the build box and the collapsed sections fit, no sideways scroll (' +
+        JSON.stringify({ a, b }) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V13: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V14: none of it opens a dialog */
+  ok(vwDialogs === 0, 'views V14: Remove, Undo, Rename and Rebuild never open a dialog (' + vwDialogs + ')');
+}
+
 /* ---------- Stats (F31) ----------
    The Stats tab counts everything on the page from the stored messages. 27 messages from the mock cast on four days
    (Sun Nov 1, Thu Nov 12, Thu Nov 19 and today, Fri Nov 20), with the clock at noon on Nov 20 in Los Angeles. Dee posts
    as "Dee", under the nickname "Deedee", and once as "Deedee" without a full name (the page ties it to her), so she
    must count as one person; two Bens are told apart by their full names. Per person over all 27: Ana 9, Ben Brooks 6,
    Dee 5, Cy 3, You 3, Ben Ortiz 1. #5 is a photo, #26 a GIF; #6 has one link and #23 two. Threading has four
-   conversations (Nov 1, 12, 19, 20) and the loose messages; the summary has a deal posted Nov 12 and sold Nov 19 (#20),
-   and one posted today. */
+   conversations (Nov 1, 12, 19, 20; Ben's #22 today closes the Nov 12 one) and the loose messages; the summary has a
+   deal posted Nov 12 and sold Nov 19 (#20), and one posted today and pending (#24).
+   Part 2 adds: the summary's tags (Trip, For sale, Gear talk, For sale); claims (Dee #7, You #8 for 2, Dee #25);
+   threading links (#6 answers #5, #14 quotes #12, #19 replies to #18, #17 continues #16); questions #5 (first
+   answered by #6, 10 min), #9 (by #13, 20 min) and #24 (by #25, 5 min) answered, #1 and #26 open; and "tent" whole
+   in #0, #6 (as TENT), #13, #16 (tent-pole), #22 and #24, but not "Tents" (#2) or "contents" (#17). */
 const ST_NOW = Date.parse('2026-11-20T20:00:00Z');
 function stMsgs() {
   const L = [];
@@ -8830,28 +9797,33 @@ function stMsgs() {
   const ANA = { fn: 'Ana Alvarez' },
     BEN = { fn: 'Ben Brooks' },
     DEE = { fn: 'Dee Dalton' };
-  add('2026-11-01', '9:05', 'Ana', ANA); /* 0 */
+  add('2026-11-01', '9:05', 'Ana', Object.assign({ b: 'Who is up for a tent trip?' }, ANA)); /* 0 */
   add('2026-11-01', '9:10', 'Ana', ANA);
-  add('2026-11-01', '9:20', 'Ben', BEN);
+  add('2026-11-01', '9:20', 'Ben', Object.assign({ b: 'Tents are cheap now' }, BEN));
   add('2026-11-01', '14:00', 'Cy');
   add('2026-11-01', '14:05', 'Deedee'); /* 4: no full name */
   add('2026-11-12', '19:30', 'Ana', Object.assign({ b: '', p: 'att5' }, ANA)); /* 5: a photo */
-  add('2026-11-12', '19:40', 'Ben', Object.assign({ l: ['https://example.com/tent'] }, BEN));
+  add(
+    '2026-11-12',
+    '19:40',
+    'Ben',
+    Object.assign({ b: 'How much for the TENT?', l: ['https://example.com/tent'] }, BEN),
+  );
   add('2026-11-12', '19:45', 'Deedee', DEE);
   add('2026-11-12', '20:15', 'You');
   ['10:00', '10:05', '10:10', '10:15'].forEach(t => add('2026-11-19', t, 'Ana', ANA)); /* 9-12 */
-  add('2026-11-19', '10:20', 'Ben', BEN);
+  add('2026-11-19', '10:20', 'Ben', Object.assign({ b: 'Is the tent still around?' }, BEN));
   add('2026-11-19', '10:25', 'Ben', BEN);
   add('2026-11-19', '10:30', 'Dee', DEE); /* 15 */
-  add('2026-11-19', '11:00', 'Cy');
-  add('2026-11-19', '11:05', 'Cy');
+  add('2026-11-19', '11:00', 'Cy', { b: 'tent-pole question' });
+  add('2026-11-19', '11:05', 'Cy', { b: 'The contents arrived' });
   add('2026-11-19', '11:10', 'You');
   add('2026-11-19', '11:20', 'Ben', { fn: 'Ben Ortiz' });
   add('2026-11-19', '15:00', 'Ben', Object.assign({ r: 'Ana' }, BEN)); /* 20: a reply known by name only */
   add('2026-11-19', '15:10', 'Deedee', Object.assign({ r: 'Ana', pi: 12 }, DEE));
-  add('2026-11-20', '8:00', 'Ben', BEN); /* 22 */
+  add('2026-11-20', '8:00', 'Ben', Object.assign({ b: 'Tent sold?' }, BEN)); /* 22 */
   add('2026-11-20', '8:30', 'Ana', Object.assign({ l: ['https://example.com/a', 'https://example.com/b'] }, ANA));
-  add('2026-11-20', '10:15', 'You');
+  add('2026-11-20', '10:15', 'You', { b: 'My tent is pending' });
   add('2026-11-20', '10:20', 'Dee', Object.assign({ r: 'You', pi: 24 }, DEE));
   add('2026-11-20', '11:00', 'Ana', Object.assign({ b: '' }, ANA)); /* 26: a GIF */
   return L;
@@ -8863,23 +9835,54 @@ function stDocs() {
     'threading/current': {
       convs: [
         conv('c1', [0, 1, 2]),
-        conv('c2', [5, 6, 7, 8]),
+        conv('c2', [5, 6, 7, 8, 22]),
         conv('c3', [21, 20].concat(ids(9, 19))),
-        conv('c4', ids(22, 26)),
+        conv('c4', ids(23, 26)),
         conv('loose', [3, 4]),
       ],
-      links: {},
+      links: { 6: [5, 'i'], 14: [12, 'rq'], 17: [16, 'c'], 19: [18, 'r'] },
       to: 26,
       note: '',
     },
     'summary/current': {
       version: 2,
-      convs: [],
-      open: [],
-      answered: [],
+      convs: [
+        { id: 'c4', tag: 'For sale' },
+        { id: 'c3', tag: 'Gear talk' },
+        { id: 'c2', tag: 'For sale' },
+        { id: 'c1', tag: 'Trip' },
+      ],
+      open: [
+        { conv: 'c4', ask: 26, to: 'anyone', note: '' },
+        { conv: 'c1', ask: 1, to: 'anyone', note: '' },
+      ],
+      answered: [
+        { conv: 'c4', ask: 24, answer: 'yes', refs: [25] },
+        { conv: 'c3', ask: 9, answer: 'yes', refs: [13] },
+        { conv: 'c2', ask: 5, answer: 'yes', refs: [7] },
+      ],
       deals: [
-        { conv: 'c2', refs: [5, 6], tag: 'For sale', status: 'sold', statusAt: 20 },
-        { conv: 'c4', refs: [23], tag: 'For sale' },
+        {
+          conv: 'c2',
+          refs: [5, 6],
+          tag: 'For sale',
+          text: 'Tent, $80',
+          status: 'sold',
+          statusAt: 20,
+          claims: [
+            { i: 7, who: 'Deedee' },
+            { i: 8, who: 'You', n: 2 },
+          ],
+        },
+        {
+          conv: 'c4',
+          refs: [23],
+          tag: 'For sale',
+          text: 'Stove, $40',
+          status: 'pending',
+          statusAt: 24,
+          claims: [{ i: 25, who: 'Dee' }],
+        },
       ],
       mentions: [],
       toI: 26,
@@ -8907,7 +9910,7 @@ const stState = p =>
     const q = s => document.querySelector(s);
     const tiles = {};
     document
-      .querySelectorAll('#st-body .st-tile')
+      .querySelectorAll('#st-body > [data-sec="tiles"] .st-tile, #st-body > [data-sec="p-tiles"] .st-tile')
       .forEach(t => (tiles[t.dataset.k] = t.querySelector('.n').textContent));
     const list = sel =>
       [...document.querySelectorAll(sel + ' .st-top li')].map(li =>
@@ -8919,7 +9922,7 @@ const stState = p =>
       tiles,
       span: q('#st-span').textContent,
       reset: !q('#st-reset').hidden,
-      secs: [...document.querySelectorAll('#st-body > .st-sec')].map(s => s.dataset.sec),
+      secs: [...document.querySelectorAll('#st-body > .st-sec')].filter(s => !s.hidden).map(s => s.dataset.sec),
       top: list('#st-body > [data-sec="top"]'),
       replies: list('#st-body > [data-sec="p-replies"]'),
       volume: bars('volume'),
@@ -8928,7 +9931,7 @@ const stState = p =>
       personHours: bars('person-hours'),
       head: (q('#st-body .st-head h3') || {}).textContent || null,
       tf: (q('#v-stats [data-tf][aria-pressed="true"]') || { dataset: {} }).dataset.tf || null,
-      title: [...document.querySelectorAll('#st-body > .st-sec h3')].map(h => h.textContent),
+      title: [...document.querySelectorAll('#st-body > .st-sec:not([hidden]) h3')].map(h => h.textContent),
     };
   });
 /* the middle of bar k of a chart, scrolled into view */
@@ -8969,6 +9972,7 @@ const ST_ALL = {
   deals: '2',
   sold: '1',
 };
+const ST_SECS = ['tiles', 'volume', 'top', 'heat', 'convs', 'deals', 'people', 'engage', 'words'];
 const ST_TOP = ['Ana 9 33.3%', 'Ben Brooks 6 22.2%', 'Dee 5 18.5%', 'Cy 3 11.1%', 'You 3 11.1%', 'Ben Ortiz 1 3.7%'];
 const stSame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -8991,7 +9995,7 @@ async function stats() {
       'F31 ST1: the Stats tab opens from the nav alone and marked current ' + JSON.stringify(nav).slice(0, 120),
     );
     ok(
-      s.tf === 'd30' && stSame(s.tiles, ST_ALL) && stSame(s.secs, ['tiles', 'volume', 'top', 'heat']),
+      s.tf === 'd30' && stSame(s.tiles, ST_ALL) && stSame(s.secs, ST_SECS),
       'F31 ST1: on 30 days the tiles count all 27 messages: text, people, photos and GIFs, links, busiest hour, top 5, yours, conversations, deals ' +
         JSON.stringify(s.tiles),
     );
@@ -9296,8 +10300,11 @@ async function stats() {
     await p.waitForTimeout(150);
     const ben = await stState(p);
     ok(
-      f === 'FDee Dalton' && ben.head === 'Ben Brooks' && stSame(ben.replies, ['Ana 1 100.0%']),
-      'F31 ST6: Back focuses her name again; Ben Brooks replied to Ana by name only ' +
+      f === 'FDee Dalton' &&
+        ben.head === 'Ben Brooks' &&
+        stSame(ben.replies, ['Ana 3 100.0%']) &&
+        ben.tiles.replies === '3',
+      'F31 ST6: Back focuses her name again; Ben Brooks replied to Ana three times: by name only (#20), and by the links threading found (#6 answers her, #14 quotes her) ' +
         JSON.stringify([f, ben.replies]),
     );
     /* from a day, a person's chart covers that day */
@@ -9446,14 +10453,12 @@ async function stats() {
         k => document.querySelector('#v-stats input[data-sec="' + k + '"]').checked,
       ),
     );
+    const rest = ST_SECS.filter(k => k !== 'tiles' && k !== 'heat');
     ok(
-      stSame(s1.secs, ['volume', 'top']) &&
-        stSame(s2.secs, ['volume', 'top']) &&
-        boxes.join() === 'false,true,true,false',
+      stSame(s1.secs, rest) && stSame(s2.secs, rest) && boxes.join() === 'false,true,true,false',
       'F31 ST9: Numbers and Heatmap switched off stay off after a reload ' + JSON.stringify([s1.secs, s2.secs, boxes]),
     );
-    await p.click('#v-stats input[data-sec="volume"]');
-    await p.click('#v-stats input[data-sec="top"]');
+    for (const k of rest) await p.click('#v-stats input[data-sec="' + k + '"]');
     await p.waitForTimeout(100);
     const none = await p.evaluate(() => (document.querySelector('#st-body .empty') || {}).textContent || '');
     ok(/Every section is switched off/.test(none), 'F31 ST9: with every section off, one line says so: "' + none + '"');
@@ -9666,6 +10671,49 @@ async function stats() {
       S.stats.v++;
       renderStats(true);
       const t5 = performance.now();
+      /* part 2: threading with a conversation per 30 messages and every third message a reply to the one before; a
+         summary with a tag per conversation, a deal per 120 messages (each claimed, every other one sold) and a
+         question per 60 (every other one answered) */
+      const T = { convs: [], links: {} };
+      for (let c = 0; c < 6000; c++)
+        T.convs.push({ id: 'c' + c, title: 'Topic ' + c, members: Array.from({ length: 30 }, (_, k) => c * 30 + k) });
+      for (let i = 3; i < 180000; i += 3) T.links[i] = [i - 1, 'r'];
+      const SM = { convs: [], open: [], answered: [], deals: [] };
+      T.convs.forEach((c, k) => SM.convs.push({ id: c.id, tag: ['For sale', 'Trip', 'Gear talk'][k % 3] }));
+      for (let i = 0; i + 40 < 180000; i += 120) {
+        const x = { conv: 'c' + Math.floor(i / 30), refs: [i], tag: 'For sale', text: 'Item ' + i };
+        x.claims = [{ i: i + 5, who: cast[(i + 5) % 5] }];
+        if (i % 240 === 0) Object.assign(x, { status: 'sold', statusAt: i + 40 });
+        SM.deals.push(x);
+      }
+      for (let i = 1; i + 10 < 180000; i += 60) {
+        if (i % 120 === 1) SM.answered.push({ conv: 'c' + Math.floor(i / 30), ask: i, answer: 'yes', refs: [i + 10] });
+        else SM.open.push({ conv: 'c' + Math.floor(i / 30), ask: i, to: 'anyone', note: '' });
+      }
+      const t6 = performance.now();
+      S.threading = T;
+      S.summary = SM;
+      stLinks(statsBase());
+      const t7 = performance.now();
+      S.stats.tf = 'd30';
+      S.stats.v++;
+      renderStats(true);
+      const t8 = performance.now();
+      const busiest = document.querySelectorAll('#st-body [data-list="busiest"] > li').length;
+      const pairs = document.querySelectorAll('#st-body [data-list="pairs"] > li').length;
+      const deals = document.querySelectorAll('#st-body [data-list="deals"] > li').length;
+      const more = (document.querySelector('#st-body > [data-sec="deals"] > button.link') || {}).textContent;
+      const moreC = [...document.querySelectorAll('#st-body > [data-sec="convs"] > p.note')]
+        .map(x => x.textContent)
+        .find(t => /^And /.test(t));
+      S.stats.tf = 'all';
+      S.stats.v++;
+      renderStats(true);
+      const t9 = performance.now();
+      S.stats.word = 'message';
+      stWordsFill(true);
+      const t10 = performance.now();
+      const say = document.querySelector('#st-words .note[role="status"]').textContent;
       return {
         people: t2 - t1,
         base: t3 - t2,
@@ -9675,6 +10723,16 @@ async function stats() {
         bars: document.querySelectorAll('#st-body .st-chart[data-chart="volume"] g[data-k]').length,
         n: B.n,
         kind: (document.querySelector('#st-body [data-sec="volume"] h3') || {}).textContent,
+        links: t7 - t6,
+        render30: t8 - t7,
+        renderAll: t9 - t8,
+        word: t10 - t9,
+        busiest,
+        pairs,
+        deals,
+        more,
+        moreC,
+        say,
       };
     });
     console.log(
@@ -9705,7 +10763,589 @@ async function stats() {
         ' ms ' +
         JSON.stringify(r),
     );
+    console.log(
+      '  part 2 at 180,000 messages: threading read in ' +
+        r.links.toFixed(0) +
+        ' ms, 30 days with every section ' +
+        r.render30.toFixed(0) +
+        ' ms, All ' +
+        r.renderAll.toFixed(0) +
+        ' ms, a word over All ' +
+        r.word.toFixed(0) +
+        ' ms',
+    );
+    ok(
+      r.links < 1500 &&
+        r.render30 < 1000 &&
+        r.renderAll < 2000 &&
+        r.word < 1000 &&
+        r.busiest === 10 &&
+        r.pairs === 10 &&
+        r.deals === 10 &&
+        /^Show 1\d\d more$/.test(r.more) &&
+        /^And \d\d\d more conversations\.$/.test(r.moreC) &&
+        /^160,000 messages mention “message”/.test(r.say),
+      'F31 ST15: with 6,000 conversations, 60,000 links, 1,500 deals and 3,000 questions, threading is read in ' +
+        r.links.toFixed(0) +
+        ' ms, 30 days draw every section in ' +
+        r.render30.toFixed(0) +
+        ' ms, All in ' +
+        r.renderAll.toFixed(0) +
+        ' ms, and a word over All counts in ' +
+        r.word.toFixed(0) +
+        ' ms ' +
+        JSON.stringify(r),
+    );
     ok(p.errors.length === 0, 'F31 ST15: no page errors ' + JSON.stringify(p.errors));
+  });
+}
+
+/* ---------- Stats part 2 (F31) ----------
+   The same seed as stats (see there): conversations and topics, deals, people, engagement and word trends, each over
+   the timeframe, a day and a person, opening what they name. Split from stats so the two run side by side. */
+/* one section of the Stats tab, or null when it's switched off: its tiles (and their labels), its lists (rows as
+   "name count share", or a deal's text) with the line under each row, its text, and for word trends the status line
+   and the bars */
+const stPart = (p, sec) =>
+  p.evaluate(sec => {
+    const s = document.querySelector('#st-body > [data-sec="' + sec + '"]');
+    if (!s || s.hidden) return null;
+    const tiles = {},
+      labels = {},
+      lists = {},
+      subs = {};
+    s.querySelectorAll('.st-tile').forEach(t => {
+      tiles[t.dataset.k] = t.querySelector('.n').textContent;
+      labels[t.dataset.k] = t.querySelector('.l').textContent;
+    });
+    s.querySelectorAll('[data-list]').forEach(ol => {
+      const li = [...ol.children];
+      lists[ol.dataset.list] = li.map(x =>
+        ol.matches('.st-deals')
+          ? x.querySelector('.who').textContent
+          : ['.who', '.c', '.pc']
+              .map(c => x.querySelector(c).textContent)
+              .join(' ')
+              .trim(),
+      );
+      subs[ol.dataset.list] = li.map(x => (x.querySelector('.sub') || {}).textContent || '');
+    });
+    const say = s.querySelector('.note[role="status"]');
+    return {
+      tiles,
+      labels,
+      lists,
+      subs,
+      text: s.textContent,
+      say: say ? say.textContent : null,
+      bars: [...s.querySelectorAll('.st-chart g[data-k]')].map(g => +g.dataset.v),
+    };
+  }, sec);
+/* click row k (from 0) of a list in a section */
+const stRow = (p, sec, list, k) =>
+  p.click('#st-body > [data-sec="' + sec + '"] [data-list="' + list + '"] > li:nth-child(' + (k + 1) + ') button');
+/* open a person's chart from the top 10, by the name shown; returns the chart's heading */
+async function stPerson(p, name) {
+  await p.evaluate(n => {
+    const b = [...document.querySelectorAll('#st-body > [data-sec="top"] li button')].find(x => x.textContent === n);
+    b.click();
+  }, name);
+  await p.waitForTimeout(150);
+  return (await stState(p)).head;
+}
+async function stBack(p) {
+  await p.click('#st-body .st-back');
+  await p.waitForTimeout(150);
+}
+async function stDay(p, k) {
+  const b = await stBar(p, 'volume', k);
+  await p.mouse.click(b.x, b.y);
+  await p.waitForTimeout(150);
+}
+/* after a click that should open message i in Messages: the tab, the row flashing (null if it never does), and
+   whether the conversation it's in is open */
+const stAtMsg = (p, i) =>
+  until(
+    p,
+    i => {
+      const n = document.getElementById('m' + i);
+      const d = n && n.closest('details');
+      const shown = location.hash === '#messages' && !document.getElementById('v-messages').hidden;
+      return shown && n && n.classList.contains('flash') && { flash: true, inConv: !!d && d.open };
+    },
+    i,
+    3000,
+  );
+/* type into the word box key by key, as a reader does */
+async function stType(p, text) {
+  await p.click('#st-word', { clickCount: 3 });
+  await p.keyboard.press('Backspace');
+  await p.keyboard.type(text, { delay: 80 });
+}
+/* the word box: still the box first seen (window.__box) and focused, what it holds, and the status line under it */
+const stBox = p =>
+  p.evaluate(() => {
+    const b = document.getElementById('st-word');
+    const say = document.querySelector('#st-words .note[role="status"]').textContent;
+    return [b === window.__box && document.activeElement === b, b.value, say];
+  });
+
+async function stats2() {
+  /* ST17: conversations and topics: started, active, the busiest (messages, share, who posted) and the summary's
+     tags, over 30 days, today, a day and a person; a click opens the conversation in Messages */
+  await hcase('ST17', async () => {
+    const p = await stOpen();
+    const m = await stPart(p, 'convs');
+    ok(
+      stSame(m.tiles, { started: '4', active: '4' }) &&
+        stSame(m.lists.busiest, ['Topic c3 13 48.1%', 'Topic c2 5 18.5%', 'Topic c4 4 14.8%', 'Topic c1 3 11.1%']) &&
+        stSame(m.subs.busiest, [
+          '6 people: Ana, Ben Brooks, Cy, Dee +2 more',
+          '4 people: Ben Brooks, Ana, Dee, You',
+          '3 people: Ana, Dee, You',
+          '2 people: Ana, Ben Brooks',
+        ]) &&
+        stSame(m.lists.tags, ['For sale 2 50.0%', 'Gear talk 1 25.0%', 'Trip 1 25.0%']),
+      'F31 ST17: on 30 days 4 conversations started and were active; the busiest with their messages, share and people; the summary tags by conversations ' +
+        JSON.stringify(m),
+    );
+    await stTf(p, 'today');
+    const t = await stPart(p, 'convs');
+    ok(
+      stSame(t.tiles, { started: '1', active: '2' }) &&
+        stSame(t.lists.busiest, ['Topic c4 4 80.0%', 'Topic c2 1 20.0%']) &&
+        stSame(t.lists.tags, ['For sale 2 100.0%']),
+      'F31 ST17: today one conversation started and two were active (Ben came back to the Nov 12 one) ' +
+        JSON.stringify(t),
+    );
+    await stTf(p, 'd30');
+    await stDay(p, 28);
+    const d = await stPart(p, 'convs');
+    await stPerson(p, 'Ana');
+    const ana = await stPart(p, 'convs');
+    await stBack(p);
+    await stBack(p);
+    const head = await stPerson(p, 'Ana');
+    const anaAll = await stPart(p, 'convs');
+    ok(
+      stSame(d.tiles, { started: '1', active: '1' }) &&
+        stSame(d.lists.busiest, ['Topic c3 13 100.0%']) &&
+        stSame(d.lists.tags, ['Gear talk 1 100.0%']) &&
+        stSame(ana.lists.busiest, ['Topic c3 4 100.0%']) &&
+        head === 'Ana' &&
+        stSame(anaAll.tiles, { started: '4', active: '4' }) &&
+        stSame(anaAll.lists.busiest, [
+          'Topic c3 4 44.4%',
+          'Topic c1 2 22.2%',
+          'Topic c4 2 22.2%',
+          'Topic c2 1 11.1%',
+        ]) &&
+        /Where Ana posted most/.test(anaAll.text),
+      "F31 ST17: Nov 19 has its one conversation; Ana's chart, that day and over 30 days, counts her own messages " +
+        JSON.stringify([d.lists, ana.lists, anaAll.tiles, anaAll.lists]),
+    );
+    await stBack(p);
+    await stRow(p, 'convs', 'busiest', 0);
+    const at = await stAtMsg(p, 9);
+    ok(
+      at && at.flash && at.inConv,
+      'F31 ST17: a click on the busiest conversation opens Messages at its first message in the span (#9), its thread open ' +
+        JSON.stringify(at),
+    );
+    ok(p.errors.length === 0, 'F31 ST17: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST18: deals: posted, claims, sold, pending and the median time from posted to sold (with how many it's based on),
+     top sellers and claimers, and the deals posted, each opening its first message; over a day and a person too */
+  await hcase('ST18', async () => {
+    const p = await stOpen();
+    const m = await stPart(p, 'deals');
+    ok(
+      stSame(m.tiles, { posted: '2', claims: '3', sold: '1', pending: '1', tosold: '6 days 20 h' }) &&
+        m.labels.tosold === 'posted to sold, median of 1' &&
+        stSame(m.lists.sellers, ['Ana 2 100.0%']) &&
+        stSame(m.lists.claimers, ['Dee 2 66.7%', 'You 1 33.3%']) &&
+        stSame(m.lists.deals, ['For sale: Stove, $40', 'For sale: Tent, $80']) &&
+        stSame(m.subs.deals, ['Ana · Nov 20 · Pending · 1 claim', 'Ana · Nov 12 · Sold · 2 claims']),
+      'F31 ST18: on 30 days 2 posted, 3 claims, 1 sold after 6 days 20 h (Nov 12 7:30 PM to Nov 19 3 PM), 1 pending; Ana posted both, Dee claimed twice ("Deedee" is Dee) ' +
+        JSON.stringify(m),
+    );
+    await stTf(p, 'today');
+    const t = await stPart(p, 'deals');
+    await stTf(p, 'lastwk');
+    const lw = await stPart(p, 'deals');
+    ok(
+      stSame(t.tiles, { posted: '1', claims: '1', sold: '0', pending: '1', tosold: '—' }) &&
+        t.labels.tosold === 'posted to sold, median' &&
+        stSame(lw.tiles, { posted: '1', claims: '2', sold: '0', pending: '0', tosold: '—' }),
+      'F31 ST18: today one deal was posted, claimed and put on pending; last week the tent was posted and claimed twice ' +
+        JSON.stringify([t.tiles, lw.tiles]),
+    );
+    await stTf(p, 'd30');
+    await stDay(p, 28);
+    const d = await stPart(p, 'deals');
+    await stBack(p);
+    await stPerson(p, 'Dee');
+    const dee = await stPart(p, 'deals');
+    await stBack(p);
+    ok(
+      stSame(d.tiles, { posted: '0', claims: '0', sold: '1', pending: '0', tosold: '6 days 20 h' }) &&
+        !d.lists.deals &&
+        stSame(dee.tiles, { posted: '0', claims: '2', sold: '0', pending: '0', tosold: '—' }) &&
+        dee.labels.claims === 'claims made' &&
+        !dee.lists.sellers,
+      'F31 ST18: Nov 19 is the day the tent sold; Dee made two claims and posted no deal ' +
+        JSON.stringify([d.tiles, dee.tiles]),
+    );
+    /* a seller's name opens their chart, and Back comes back to it */
+    await stRow(p, 'deals', 'sellers', 0);
+    await p.waitForTimeout(150);
+    const head = (await stState(p)).head;
+    await stBack(p);
+    const f = await p.evaluate(() => {
+      const a = document.activeElement;
+      return a && a.closest('[data-list]') && [a.closest('[data-list]').dataset.list, a.closest('li').dataset.pk];
+    });
+    ok(
+      head === 'Ana' && stSame(f, ['sellers', 'FAna Alvarez']),
+      "F31 ST18: a seller's name opens their chart; Back focuses it again " + JSON.stringify([head, f]),
+    );
+    await p.click('#st-body > [data-sec="deals"] [data-list="deals"] > li:nth-child(2) button');
+    const at = await stAtMsg(p, 5);
+    ok(at && at.flash, 'F31 ST18: a click on a deal opens its first message (#5) in Messages ' + JSON.stringify(at));
+    ok(p.errors.length === 0, 'F31 ST18: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST19: people: new voices (first stored message in the span) and gone quiet (posted in the 30 days before, not in
+     it), over 30 days, today, last week and 7 days; first and last seen on a person's chart, each opening its message */
+  await hcase('ST19', async () => {
+    const p = await stOpen();
+    const m = await stPart(p, 'people');
+    ok(
+      stSame(m.tiles, { new: '6', quiet: '0' }) &&
+        stSame(m.lists.new, [
+          'Ana 9 33.3%',
+          'Ben Brooks 6 22.2%',
+          'Cy 3 11.1%',
+          'Dee 5 18.5%',
+          'You 3 11.1%',
+          'Ben Ortiz 1 3.7%',
+        ]) &&
+        m.subs.new[5] === 'first message Nov 19' &&
+        /Stored history starts Nov 1: everyone posting from then counts as new\./.test(m.text),
+      'F31 ST19: on 30 days, which reach the start of the history, all six are new, in the order they first posted; a note says why ' +
+        JSON.stringify(m),
+    );
+    await stTf(p, 'today');
+    const t = await stPart(p, 'people');
+    await stTf(p, 'lastwk');
+    const lw = await stPart(p, 'people');
+    await stTf(p, 'd7');
+    const d7 = await stPart(p, 'people');
+    ok(
+      stSame(t.tiles, { new: '0', quiet: '2' }) &&
+        stSame(t.lists.quiet, ['Cy 3', 'Ben Ortiz 1']) &&
+        stSame(t.subs.quiet, ['last message Nov 19', 'last message Nov 19']) &&
+        stSame(lw.lists.new, ['You 1 25.0%']) &&
+        stSame(lw.lists.quiet, ['Cy 1']) &&
+        stSame(d7.lists.new, ['Ben Ortiz 1 5.6%']) &&
+        d7.tiles.quiet === '0' &&
+        !/Stored history starts/.test(t.text),
+      'F31 ST19: today Cy and Ben Ortiz went quiet; last week You were new and Cy quiet; the last 7 days brought Ben Ortiz ' +
+        JSON.stringify([t.lists, lw.lists, d7.lists]),
+    );
+    await stTf(p, 'd30');
+    await stPerson(p, 'Dee');
+    const dee = await stPart(p, 'people');
+    const secs = (await stState(p)).secs;
+    ok(
+      stSame(dee.tiles, { first: 'Nov 1', last: 'Nov 20' }) &&
+        dee.text.endsWith(
+          'First message #4 (Sun, Nov 1, 2:05 PM); last #25 (Fri, Nov 20, 10:20 AM). Stored history starts Nov 1, so they may have posted before.',
+        ) &&
+        secs[1] === 'people',
+      "F31 ST19: Dee's chart says when she was first and last seen, under her numbers " + JSON.stringify([dee, secs]),
+    );
+    await stBack(p);
+    await stPerson(p, 'Ben Ortiz');
+    const bo = await stPart(p, 'people');
+    ok(
+      stSame(bo.tiles, { first: 'Nov 19', last: 'Nov 19' }) && / New in this span\.$/.test(bo.text),
+      "F31 ST19: Ben Ortiz's chart: first seen inside the span, so he's new in it " + JSON.stringify(bo),
+    );
+    await stBack(p);
+    await stPerson(p, 'Dee');
+    await p.click('#st-body > [data-sec="people"] p.note a:nth-of-type(2)');
+    const at = await stAtMsg(p, 25);
+    ok(at && at.flash, 'F31 ST19: "#25" opens her last message in Messages ' + JSON.stringify(at));
+    ok(p.errors.length === 0, 'F31 ST19: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST20: engagement: replies and who replies to whom (Messenger's pi and r, then threading's r, rq, rg and i links;
+     never c), the summary's questions, how many were answered and the median wait for the first answer */
+  await hcase('ST20', async () => {
+    const p = await stOpen();
+    const m = await stPart(p, 'engage');
+    ok(
+      stSame(m.tiles, { replies: '6', share: '22.2%', asked: '5', answered: '3', wait: '10 min' }) &&
+        m.labels.wait === 'to the first answer, median of 3' &&
+        stSame(m.lists.pairs, [
+          'Ben Brooks → Ana 3 50.0%',
+          'Dee → Ana 1 16.7%',
+          'Dee → You 1 16.7%',
+          'Ben Ortiz → You 1 16.7%',
+        ]),
+      'F31 ST20: on 30 days 6 replies, Ben Brooks to Ana most (by name, an answer link and a quote link; Cy going on is no reply); 5 questions, 3 answered after 10, 20 and 5 minutes ' +
+        JSON.stringify(m),
+    );
+    await stTf(p, 'today');
+    const t = await stPart(p, 'engage');
+    await stTf(p, 'd30');
+    await stDay(p, 28);
+    const d = await stPart(p, 'engage');
+    ok(
+      stSame(t.tiles, { replies: '1', share: '20.0%', asked: '2', answered: '1', wait: '5 min' }) &&
+        stSame(d.tiles, { replies: '4', share: '30.8%', asked: '1', answered: '1', wait: '20 min' }) &&
+        stSame(d.lists.pairs, ['Ben Brooks → Ana 2 50.0%', 'Dee → Ana 1 25.0%', 'Ben Ortiz → You 1 25.0%']),
+      'F31 ST20: today and Nov 19 count their own replies and questions ' + JSON.stringify([t.tiles, d.tiles, d.lists]),
+    );
+    await stBack(p);
+    await stPerson(p, 'Ana');
+    const ana = await stPart(p, 'engage');
+    ok(
+      stSame(ana.tiles, { got: '4', asked: '4', answered: '2', wait: '15 min' }) &&
+        stSame(ana.lists.repliedBy, ['Ben Brooks 3 75.0%', 'Dee 1 25.0%']) &&
+        ana.labels.got === 'replies to Ana',
+      "F31 ST20: Ana's chart: 4 replies to her; her 4 questions, 2 answered after a median 15 minutes " +
+        JSON.stringify(ana),
+    );
+    const text = await p.evaluate(() => document.getElementById('v-stats').textContent);
+    ok(!/reaction/i.test(text), 'F31 ST20: still no reactions anywhere on the tab');
+    ok(p.errors.length === 0, 'F31 ST20: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST21: word trends: the box keeps its focus and what's typed while typing (nothing applies until the pause), and
+     while the tab redraws for new data; whole words in any case, per bar of the span, who mentions it most; as a
+     table; a click on a day opens it, and on an hour opens its first mention */
+  await hcase('ST21', async () => {
+    const p = await stOpen();
+    await p.evaluate(() => (window.__box = document.getElementById('st-word')));
+    const before = (await stPart(p, 'words')).say;
+    await stType(p, 'tent');
+    const mid = await stBox(p);
+    await p.waitForTimeout(700);
+    const w = await stPart(p, 'words');
+    ok(
+      mid[0] && mid[1] === 'tent' && mid[2] === before && /^Type a word or phrase/.test(before),
+      'F31 ST21: while typing, the box keeps its focus and text, and nothing applies yet ' +
+        JSON.stringify([mid, before]),
+    );
+    ok(
+      w.say === '6 messages mention “tent”: 22.2% of the messages in Oct 22 – Nov 20.' &&
+        w.bars.length === 30 &&
+        w.bars[10] === 1 &&
+        w.bars[21] === 1 &&
+        w.bars[28] === 2 &&
+        w.bars[29] === 2 &&
+        w.bars.reduce((a, b) => a + b, 0) === 6 &&
+        stSame(w.lists.mentions, ['Ben Brooks 3 50.0%', 'Ana 1 16.7%', 'Cy 1 16.7%', 'You 1 16.7%']),
+      'F31 ST21: after the pause, "tent" in 6 messages by day (TENT and tent-pole count, Tents and contents don\'t), Ben Brooks most ' +
+        JSON.stringify(w),
+    );
+    /* new data redraws the tab while the box has the focus: the same box, focused, with its text */
+    await p.focus('#st-word');
+    await p.evaluate(() => {
+      const c = __rt.get('chunks/c0000');
+      c.msgs.push({ i: 27, t: 'Fri 11:30 AM', d: '2026-11-20', f: 'Cy', b: 'Tent pegs too', m: 'mid.27' });
+      __rt.write('chunks/c0000', c);
+    });
+    await until(p, () => S.msgs.length === 28, null);
+    await p.waitForTimeout(150);
+    const kept = await stBox(p);
+    ok(
+      kept[0] && kept[1] === 'tent' && /^7 messages mention/.test(kept[2]),
+      'F31 ST21: a redraw for a new message keeps the box, its focus and text, and counts the new mention ' +
+        JSON.stringify(kept),
+    );
+    await stType(p, 'Tent  trip');
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(50);
+    const ph = (await stPart(p, 'words')).say;
+    await stType(p, 'ten');
+    await p.waitForTimeout(600);
+    const none = await stPart(p, 'words');
+    ok(
+      /^1 message mentions “Tent trip”/.test(ph) &&
+        none.say === 'No message mentions “ten” in Oct 22 – Nov 20.' &&
+        !none.bars.length,
+      'F31 ST21: a phrase applies at once on Enter (spacing and case don\'t matter); "ten" is no whole word here ' +
+        JSON.stringify([ph, none.say]),
+    );
+    await stType(p, 'tent');
+    await p.waitForTimeout(600);
+    /* the table, then a click on Nov 19: its day, the word by the hour; a click on 10 AM opens its first mention */
+    await p.click('#st-words details.st-tbl > summary');
+    await p.waitForTimeout(100);
+    const rows = await p.evaluate(() =>
+      [...document.querySelectorAll('#st-words details.st-tbl tbody tr')].map(r => r.textContent),
+    );
+    const b = await stBar(p, 'words', 28);
+    await p.mouse.click(b.x, b.y);
+    await p.waitForTimeout(150);
+    const day = await stPart(p, 'words');
+    const head = (await stState(p)).head;
+    ok(
+      rows.length === 30 &&
+        rows[28] === 'Thu, Nov 192' &&
+        head === 'Thu, Nov 19' &&
+        day.bars.length === 24 &&
+        day.bars[10] === 1 &&
+        day.bars[11] === 1 &&
+        /^2 messages mention “tent”: 15\.4% of the messages in Thu, Nov 19\./.test(day.say),
+      'F31 ST21: as a table, then a click on Nov 19 opens its day, where the word shows by the hour ' +
+        JSON.stringify([rows[28], head, day.bars, day.say]),
+    );
+    const h = await stBar(p, 'words', 10);
+    await p.mouse.click(h.x, h.y);
+    const at = await stAtMsg(p, 13);
+    ok(at && at.flash, 'F31 ST21: a click on 10 AM opens its first mention (#13) in Messages ' + JSON.stringify(at));
+    ok(p.errors.length === 0, 'F31 ST21: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST22: a person's word trend; the keyboard on the word chart; over a long span the word goes by week and a week bar
+     zooms in */
+  await hcase('ST22', async () => {
+    const p = await stOpen();
+    await stType(p, 'tent');
+    await p.waitForTimeout(600);
+    await stPerson(p, 'Ben Brooks');
+    const ben = await stPart(p, 'words');
+    ok(
+      ben.say === '3 messages from Ben Brooks mention “tent”: 50.0% of theirs in Oct 22 – Nov 20.' &&
+        ben.bars[21] === 1 &&
+        ben.bars[28] === 1 &&
+        ben.bars[29] === 1 &&
+        !ben.lists.mentions,
+      "F31 ST22: on Ben Brooks' chart the word counts his messages only " + JSON.stringify(ben),
+    );
+    await stBack(p);
+    await stTf(p, 'd90');
+    await p.focus('#st-body .st-chart[data-chart="words"]');
+    await p.keyboard.press('End');
+    await p.keyboard.press('ArrowLeft');
+    const said = await p.evaluate(() => document.querySelector('#st-words .st-chart .sr').textContent);
+    await p.keyboard.press('ArrowRight');
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(150);
+    const s = await stState(p);
+    ok(
+      said === 'Thu, Nov 19, 2 messages' && s.head === 'Fri, Nov 20',
+      "F31 ST22: the arrow keys read the word chart's bars and Enter opens a day " + JSON.stringify([said, s.head]),
+    );
+    await stBack(p);
+    await p.click('#v-stats [data-tf="custom"]');
+    await p.fill('#st-from', '2026-07-01');
+    await p.fill('#st-to', '2026-11-20');
+    await p.press('#st-to', 'Enter');
+    await p.waitForTimeout(150);
+    const wk = await stPart(p, 'words');
+    const label = await p.evaluate(() => document.querySelector('#st-words .st-chart').getAttribute('aria-label'));
+    const bb = await stBar(p, 'words', wk.bars.length - 1);
+    await p.mouse.click(bb.x, bb.y);
+    await p.waitForTimeout(150);
+    const z = await stState(p);
+    const zw = await stPart(p, 'words');
+    ok(
+      /per week/.test(label) &&
+        wk.bars[wk.bars.length - 1] === 4 &&
+        z.reset &&
+        /^Nov 15 – Nov 20 \(zoomed in/.test(z.span) &&
+        zw.bars.length === 6 &&
+        zw.bars.join() === '0,0,0,0,2,2',
+      'F31 ST22: from Jul 1 the word goes by week, and the last week bar zooms into its days ' +
+        JSON.stringify([label, wk.bars.slice(-3), z.span, zw.bars]),
+    );
+    ok(p.errors.length === 0, 'F31 ST22: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* ST23: each new section's switch stays off after a reload (this browser only), word trends included, on a
+     person's chart too */
+  await hcase('ST23', async () => {
+    const p = await stOpen();
+    const NEW = ['convs', 'deals', 'people', 'engage', 'words'];
+    for (const k of NEW) await p.click('#v-stats input[data-sec="' + k + '"]');
+    await p.waitForTimeout(100);
+    const s1 = await stState(p);
+    await p.reload();
+    await until(p, () => S.msgs.length === 27 && S.threading && S.summary, null);
+    await stGo(p);
+    const s2 = await stState(p);
+    const boxes = await p.evaluate(
+      ks => ks.map(k => document.querySelector('#v-stats input[data-sec="' + k + '"]').checked),
+      NEW,
+    );
+    const words = await p.evaluate(() => document.getElementById('st-words').hidden);
+    await stPerson(p, 'Ana');
+    const per = (await stState(p)).secs;
+    ok(
+      stSame(s1.secs, ['tiles', 'volume', 'top', 'heat']) &&
+        stSame(s2.secs, ['tiles', 'volume', 'top', 'heat']) &&
+        boxes.join() === 'false,false,false,false,false' &&
+        words &&
+        stSame(per, ['p-tiles', 'p-volume', 'p-hours', 'p-replies']),
+      "F31 ST23: the five new sections switched off stay off after a reload, on a person's chart too " +
+        JSON.stringify([s1.secs, s2.secs, boxes, per]),
+    );
+    await stBack(p);
+    await p.click('#v-stats input[data-sec="words"]');
+    await p.waitForTimeout(100);
+    const on = await stState(p);
+    ok(
+      stSame(on.secs, ['tiles', 'volume', 'top', 'heat', 'words']) && p.errors.length === 0,
+      'F31 ST23: switched back on, word trends shows again; no page errors ' + JSON.stringify([on.secs, p.errors]),
+    );
+  });
+
+  /* ST24: at 390 px nothing scrolls sideways with every new section showing, a word typed and very long words in a
+     title and a deal, on 30 days, a tapped day and a person */
+  await hcase('ST24', async () => {
+    const p = await stOpen({ ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } });
+    await p.evaluate(() => {
+      const t = __rt.get('threading/current');
+      t.convs[2].title = 'Supercalifragilisticexpialidocious-tent-and-stove-swap-meet-planning-thread';
+      __rt.write('threading/current', t);
+      const s = __rt.get('summary/current');
+      s.deals[0].text = 'Tent-with-footprint-and-stakes-and-guylines-and-the-original-stuff-sack-barely-used';
+      __rt.write('summary/current', s);
+    });
+    await until(p, () => /Supercali/.test(document.getElementById('st-body').textContent), null, 3000);
+    await stType(p, 'tent');
+    await p.waitForTimeout(600);
+    const wide = () =>
+      p.evaluate(() => ({
+        sw: document.documentElement.scrollWidth,
+        w: innerWidth,
+        over: [...document.querySelectorAll('#v-stats *')]
+          .filter(e => e.getClientRects().length && e.getBoundingClientRect().right > innerWidth + 0.5)
+          .map(e => e.tagName + '.' + (e.getAttribute('class') || ''))
+          .slice(0, 5),
+      }));
+    const m = await wide();
+    const b = await stBar(p, 'volume', 28);
+    await p.touchscreen.tap(b.x, b.y);
+    await p.waitForTimeout(150);
+    const day = await wide();
+    await p.tap('#st-body > [data-sec="top"] li:nth-child(1) button');
+    await p.waitForTimeout(150);
+    const per = await wide();
+    const head = (await stState(p)).head;
+    const fit = x => x.sw <= x.w && !x.over.length;
+    ok(
+      fit(m) && fit(day) && fit(per) && head === 'Ana',
+      'F31 ST24: at 390 px nothing runs past the right edge with the new sections (main, a day, a person) ' +
+        JSON.stringify({ m, day, per }),
+    );
+    ok(p.errors.length === 0, 'F31 ST24: no page errors ' + JSON.stringify(p.errors));
   });
 }
 
@@ -9725,10 +11365,12 @@ const SECTIONS = {
   bigPaste,
   standIn,
   stats,
+  stats2,
   history,
   history2,
   digests,
   byDay,
+  byDayReports,
   notices,
   schedule,
   claims,
@@ -9739,6 +11381,7 @@ const SECTIONS = {
   olderByDay,
   crossReply,
   savedQuestions,
+  viewsTab,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1

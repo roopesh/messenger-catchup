@@ -3998,6 +3998,273 @@ class TestDigests(unittest.TestCase):
             catchup.digests_cmd(self.e.work, db, spec)
 
 
+def land_reports(run, into):
+    """Step 5's query of the reports once RUN's manifest landed: what RUN's query held plus the documents written."""
+    os.makedirs(os.path.join(into, "reports"), exist_ok=True)
+    for d in (os.path.join(run, "reports"), os.path.join(run, "out", "reports")):
+        for f in glob_json(d):
+            if os.path.dirname(f) != os.path.join(into, "reports"):
+                shutil.copy(f, os.path.join(into, "reports"))
+    return into
+
+
+class TestReports(unittest.TestCase):
+    """F27: each refresh's report, saved through the build's manifest, one document per day of its messages."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+        catchup.NOW = utc("2026-11-13T18:04:00")  # 10:04 AM on Nov 13 in Los Angeles
+        catchup.TZ = "America/Los_Angeles"
+
+    def tearDown(self):
+        catchup.NOW = None
+        catchup.TZ = "America/Los_Angeles"
+        self.t.cleanup()
+
+    def seeded(self, old, new, reports=True):
+        """old built in one conversation; a RUN importing new into it, with step 5's (empty) query of the reports"""
+        th = {
+            "convs": [{"id": "a", "title": "Talk", "members": [m["i"] for m in old]}],
+            "links": {},
+            "to": old[-1]["i"],
+        }
+        sm = {
+            "version": 2,
+            "convs": [{"id": "a", "tag": "", "synopsis": [], "outcome": "", "key": []}],
+            "open": [],
+            "answered": [],
+            "deals": [],
+            "mentions": [],
+            "toI": old[-1]["i"],
+        }
+        self.e.seed(old, threading=th, summary=sm)
+        return self.next_run(new, reports=reports)
+
+    def next_run(self, new, after=None, reports=True):
+        run = self.e.run(new)
+        if after:
+            land_reports(after, run)
+        elif reports:
+            os.makedirs(os.path.join(run, "reports"))
+        return run, {"join": {"a": [m["i"] for m in new]}}
+
+    def written(self, run):
+        """{doc id: (pinned, document)} of the reports in the manifest, which are all in its first batch"""
+        man = r(os.path.join(run, "out", "manifest.json"))
+        later = [x for bt in man["batches"][1:] for x in bt if x["collection"] == "reports"]
+        self.assertEqual(later, [], "reports go in the first batch")
+        return {
+            x["doc_id"]: (x.get("pin", False), r(x["file_path"]))
+            for x in man["batches"][0]
+            if x["collection"] == "reports"
+        }
+
+    def test_a_build_saves_its_report_under_the_day(self):
+        ms = day_msgs(0, 3, first="2026-11-11")  # Nov 11 #0-#9, Nov 12 #10-#19, Nov 13 #20-#29 (today)
+        run, spec = self.seeded(ms[:24], ms[24:])
+        spec["report"] = [
+            ["Ana offered a stove; Ben claimed it", [24, 26]],
+            {"t": "Cy asked about permits", "refs": [29]},
+        ]
+        out = self.e.build(run, spec)
+        self.assertIn("report: 2026-11-13 (new) #24-#29, 2 bullets", out)
+        got = self.written(run)
+        self.assertEqual(list(got), ["d2026-11-13"])
+        pinned, doc = got["d2026-11-13"]
+        self.assertFalse(pinned, "a new day's document is created, not pinned")
+        self.assertEqual(
+            doc,
+            {
+                "day": "2026-11-13",
+                "runs": [
+                    {
+                        "at": "2026-11-13T18:04:00Z",
+                        "fromI": 24,
+                        "toI": 29,
+                        "n": 6,
+                        "bullets": [
+                            {"t": "Ana offered a stove; Ben claimed it", "refs": [24, 26]},
+                            {"t": "Cy asked about permits", "refs": [29]},
+                        ],
+                    }
+                ],
+            },
+        )
+        # the next refresh the same day: pinned, its run after the first, which stays as it was
+        catchup.NOW = utc("2026-11-13T19:04:00")
+        more = day_msgs(30, 1, per=4, first="2026-11-13")
+        run2, spec2 = self.next_run(more, after=run)
+        spec2["report"] = []  # nothing stood out: the run is still saved, with its count
+        out = self.e.build(run2, spec2)
+        self.assertIn("report: 2026-11-13 #30-#33, 0 bullets", out)
+        pinned, doc2 = self.written(run2)["d2026-11-13"]
+        self.assertTrue(pinned)
+        self.assertEqual(doc2["runs"][0], doc["runs"][0])
+        self.assertEqual(doc2["runs"][1], {"at": "2026-11-13T19:04:00Z", "fromI": 30, "toI": 33, "n": 4, "bullets": []})
+
+    def test_a_run_over_midnight_splits_by_the_messages_day(self):
+        ms = day_msgs(0, 2, first="2026-11-12")  # Nov 12 #0-#9, Nov 13 #10-#19
+        run, spec = self.seeded(ms[:7], ms[7:])  # this run: Nov 12 #7-#9 and Nov 13 #10-#19
+        spec["report"] = [
+            ["Ben sold the tent to Cy across midnight", [8, 11]],
+            ["Dee asked about the trailhead", [15]],
+            ["Ana said goodnight", [9]],
+        ]
+        out = self.e.build(run, spec)
+        self.assertIn("report: 2026-11-12 (new) #7-#9, 2 bullets, 2026-11-13 (new) #10-#19, 2 bullets", out)
+        got = {k: d for k, (_, d) in self.written(run).items()}
+        self.assertEqual(sorted(got), ["d2026-11-12", "d2026-11-13"])
+        a, b = got["d2026-11-12"]["runs"], got["d2026-11-13"]["runs"]
+        self.assertEqual((a[0]["fromI"], a[0]["toI"], a[0]["n"]), (7, 9, 3))
+        self.assertEqual((b[0]["fromI"], b[0]["toI"], b[0]["n"]), (10, 19, 10))
+        self.assertEqual(
+            a[0]["bullets"],
+            [{"t": "Ben sold the tent to Cy across midnight", "refs": [8]}, {"t": "Ana said goodnight", "refs": [9]}],
+        )
+        self.assertEqual(
+            b[0]["bullets"],
+            [
+                {"t": "Ben sold the tent to Cy across midnight", "refs": [11]},
+                {"t": "Dee asked about the trailhead", "refs": [15]},
+            ],
+        )
+        self.assertEqual(a[0]["at"], b[0]["at"])
+
+    def test_a_message_dated_before_the_one_before_it_counts_in_that_ones_day(self):
+        ms = [msg(0, "Ana", "a", d="2026-11-13"), msg(1, "Ben", "b", d="2026-11-13")]
+        new = [msg(2, "Cy", "c", d="2026-11-12"), msg(3, "Dee", "d", d="2026-11-12")]  # the browser's zone went back
+        run, spec = self.seeded(ms, new)
+        spec["report"] = [["Cy and Dee", [2, 3]]]
+        self.e.build(run, spec)
+        doc = self.written(run)["d2026-11-13"][1]
+        self.assertEqual([(x["fromI"], x["toI"], x["n"]) for x in doc["runs"]], [(2, 3, 2)])
+
+    def test_the_report_is_required_once_step_5_queries_reports(self):
+        ms = day_msgs(0, 1, first="2026-11-13")
+        run, spec = self.seeded(ms[:5], ms[5:])
+        before = self.e.state()
+        with self.assertRaisesRegex(AssertionError, r"report: add this run's report to the spec"):
+            self.e.build(run, spec)
+        self.assertEqual(self.e.state(), before, "nothing moved")
+        self.assertFalse(os.path.exists(os.path.join(run, "out", "manifest.json")))
+        # without the query (an older procedure, or the tests above): built, nothing saved, and it says why
+        os.rmdir(os.path.join(run, "reports"))
+        out = self.e.build(run, spec)
+        self.assertIn("no report saved (RUN has no reports/ folder: step 5 queries reports)", out)
+        self.assertEqual(self.written(run), {})
+        # a report with no folder to know what's there: refused
+        quiet(catchup.restore, self.e.work)
+        with self.assertRaisesRegex(AssertionError, "has no reports/ folder: query the reports collection"):
+            self.e.build(run, dict(spec, report=[]))
+
+    def test_the_first_build_needs_no_report(self):
+        self.e.seed([])
+        ms = day_msgs(0, 1, first="2026-11-13")
+        run = self.e.run(ms)
+        os.makedirs(os.path.join(run, "reports"))
+        out = self.e.build(run, {"newconvs": [{"id": "a", "title": "Talk"}], "join": {"a": [m["i"] for m in ms]}})
+        self.assertIn("no report saved |", out)
+        self.assertEqual(self.written(run), {})
+
+    def test_bad_reports_stop_the_build_before_anything_moves(self):
+        ms = day_msgs(0, 2, first="2026-11-12")
+        run, spec = self.seeded(ms[:12], ms[12:])  # this run: #12-#19
+        ok = ["Ana", [12]]
+        for bad, why in (
+            ("Ana", "a list of at most 8 bullets"),
+            ([ok] * 9, "a list of at most 8 bullets"),
+            ([["Ana", [5]]], r"#5 is not among the messages this build adds \(#12-#19\)"),
+            ([["Ana", [12, 25]]], "#25 is not among"),
+            ([["Ana", []]], "each bullet cites 1 to 10"),
+            ([["Ana", list(range(12, 20)) * 2]], "each bullet cites 1 to 10"),
+            ([["Ana", [True]]], "each bullet cites 1 to 10"),
+            ([["Ana", 12]], "each bullet cites 1 to 10"),
+            ([["  ", [12]]], r"each bullet is \[text, \[refs\]\]"),
+            ([["Ana\nBen", [12]]], "one line of plain text"),
+            ([[" ".join(["word"] * 26), [12]]], "over 25 words"),
+            ([["é" * 151, [12]]], "over 300 bytes"),
+        ):
+            with self.subTest(bad=bad):
+                before = self.e.state()
+                with self.assertRaisesRegex(AssertionError, why):
+                    self.e.build(run, dict(spec, report=bad))
+                self.assertEqual(self.e.state(), before)
+                self.assertFalse(os.path.exists(os.path.join(run, "out", "manifest.json")))
+        out = self.e.build(run, dict(spec, report=[[" ".join(["word"] * 25), list(range(12, 20)) + [12]]]))
+        self.assertIn("report: 2026-11-13", out)
+        bullet = self.written(run)["d2026-11-13"][1]["runs"][0]["bullets"][0]
+        self.assertEqual(bullet["refs"], list(range(12, 20)), "a number cited twice is kept once")
+
+    def test_a_rebuild_of_the_same_messages_replaces_its_run(self):
+        """After a refused or partly applied write: restore, query again, build again. The run isn't saved twice."""
+        ms = day_msgs(0, 1, per=30, first="2026-11-13")
+        run, spec = self.seeded(ms[:10], ms[10:20])
+        self.e.build(run, dict(spec, report=[["First run", [10]]]))
+        run2, spec2 = self.next_run(ms[20:], after=run)
+        self.e.build(run2, dict(spec2, report=[["Second run", [20]]]))
+        # its first batch landed, then a later write was refused: restore, query again (its document is there), rebuild
+        quiet(catchup.restore, self.e.work)
+        land_reports(run2, run2)
+        self.e.build(run2, dict(spec2, report=[["Second run, corrected", [21]]]))
+        runs = self.written(run2)["d2026-11-13"][1]["runs"]
+        self.assertEqual(
+            [(x["fromI"], x["toI"], [b["t"] for b in x["bullets"]]) for x in runs],
+            [(10, 19, ["First run"]), (20, 29, ["Second run, corrected"])],
+        )
+
+    def test_other_fields_of_a_day_stay(self):
+        """A later version (F29's day summary, say) may keep more in the day's document: a build leaves it alone."""
+        listed = {"2026-11-13": {"day": "2026-11-13", "runs": [], "summary": {"final": False}, "dropped": 2}}
+        e = {"at": "x", "fromI": 5, "toI": 6, "n": 2, "bullets": []}
+        doc = catchup._report_docs({"2026-11-13": e}, listed)["reports/d2026-11-13"]
+        self.assertEqual(doc, {"day": "2026-11-13", "runs": [e], "summary": {"final": False}, "dropped": 2})
+        self.assertEqual(listed["2026-11-13"]["runs"], [], "the listing isn't changed")
+
+    def test_a_day_keeps_its_newest_runs_within_the_caps(self):
+        word = "tentpoles"
+        full = [{"t": " ".join([word] * 25)[:300], "refs": list(range(k, k + 10))} for k in range(8)]
+        big = lambda k: {"at": "2026-11-13T18:04:00Z", "fromI": k * 100, "toI": k * 100 + 99, "n": 100, "bullets": full}
+        self.assertLess(catchup._size(big(99)), 3600, "a run at every cap")
+        # 40 runs at every cap: the newest one in, the oldest out, and counted
+        listed = {"2026-11-13": {"day": "2026-11-13", "runs": [big(k) for k in range(40)]}}
+        doc = catchup._report_docs({"2026-11-13": big(40)}, listed)["reports/d2026-11-13"]
+        self.assertLessEqual(catchup._size(doc), catchup.REPORT_DOC)
+        self.assertEqual(doc["runs"][-1], big(40))
+        self.assertEqual(len(doc["runs"]) + doc["dropped"], 41)
+        self.assertEqual(doc["runs"][0]["fromI"], doc["dropped"] * 100, "the oldest left first")
+        # small runs: 40 kept by count
+        small = lambda k: {"at": "x", "fromI": k, "toI": k, "n": 1, "bullets": []}
+        listed = {"2026-11-13": {"day": "2026-11-13", "runs": [small(k) for k in range(40)], "dropped": 3}}
+        doc = catchup._report_docs({"2026-11-13": small(40)}, listed)["reports/d2026-11-13"]
+        self.assertEqual((len(doc["runs"]), doc["dropped"], doc["runs"][0]["fromI"]), (40, 4, 1))
+        self.assertLess(catchup.REPORT_DOC, catchup.DOC_LIMIT)
+
+    def test_a_query_that_may_miss_the_day_is_refused(self):
+        ms = day_msgs(0, 1, first="2026-11-13")
+        run, spec = self.seeded(ms[:5], ms[5:])
+        for k in range(5):  # the newest 5 reports, all after this run's day (they can't be, unless something's off)
+            w(os.path.join(run, "reports", "d2026-11-%d.json" % (14 + k)), {"day": "2026-11-%d" % (14 + k), "runs": []})
+        with self.assertRaisesRegex(AssertionError, "query the reports collection again with a larger limit"):
+            self.e.build(run, dict(spec, report=[]))
+        os.remove(os.path.join(run, "reports", "d2026-11-18.json"))  # 4: the whole collection
+        self.assertIn("report: 2026-11-13 (new)", self.e.build(run, dict(spec, report=[])))
+
+    def test_reports_and_digests_share_the_first_batch(self):
+        ms = day_msgs(0, 3, first="2026-11-11")
+        run, spec = self.seeded(ms[:15], ms[15:])
+        os.makedirs(os.path.join(run, "digests"))
+        spec["digests"] = {"2026-11-12": [["Ana and Ben swapped notes", [12, 13]]]}
+        spec["report"] = [["Ben and Cy talked late", [17]], ["Dee said hi", [25]]]
+        self.e.build(run, spec)
+        man = r(os.path.join(run, "out", "manifest.json"))
+        first = [(x["collection"], x["doc_id"]) for x in man["batches"][0]]
+        self.assertEqual(
+            first[:3], [("digests", "m2026-11"), ("reports", "d2026-11-12"), ("reports", "d2026-11-13")], first
+        )
+        self.assertIn(("threading", "current"), [(x["collection"], x["doc_id"]) for x in man["batches"][-1]])
+
+
 def read_page():
     with open(os.path.join(ROOT, "plugin", "skills", "refresh", "assets", "page.html"), encoding="utf-8") as fh:
         return fh.read()
