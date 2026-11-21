@@ -14,11 +14,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
-| R10 | P3 | risk | Unchecked live: does a refresh from claude.ai in a browser need the Claude Desktop app open? The page, setup and README say it does |
-| R11 | P3 | risk | Desktop local scheduled tasks may reach Claude in Chrome; not checked, so not offered |
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
 | R18 | P3 | risk | Now that a chain run arms as it starts, a run still going when the next one fires (`every` minus 3 minutes after it started) has a lock older than 20 minutes for usual settings, which the next run takes over |
-| R13 | P2 | risk | A page holds at most 5,000 photo files: the owner's page has 876 (Nov 14) and adds 55–80 a day (to design) |
+| R13 | P2 | risk | A page holds at most 5,000 photo files and 1 GiB: day packs (v1.30.0) end the file problem; archive pages for the 1 GiB are left |
 | R19 | P3 | risk | Claude's own maintenance writes (link cleanup, digest backfill) hold the refresh lock while the user's approval waits, often past the lock's 20 minutes |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | F1 | P3 | feature | More than one chat per page |
@@ -34,11 +32,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **What:** the helper reads English UI labels, `[role="log"]`, `data-message-id`, "Go to replied message", "Reply to this message" and the `At <time>, <name>: ` aria-label shape. Since v1.20.0 (helper 2.0), a changed label shows as a warning or a `selfcheck` failure instead of wrong data.
 - **What remains:** a change to every marker of a feature at once (for example all three reply markers) still reads as "none" rather than a warning. A non-English Messenger warns and continues.
 
-### R10 · P3 · Does claude.ai in a browser need the Desktop app open?
-- **What:** since v1.25.0 the page, setup and README all say to keep the Claude Desktop app open, because Claude in Chrome needs it when a refresh runs from claude.ai, the phone, Cowork or a schedule. Whether claude.ai in the same Chrome needs it hasn't been checked live.
-- **Check:** run a refresh from claude.ai in Chrome with the Desktop app quit. If it works, drop that case from the wording in all three places.
-
-### R13 · P2 · A page holds at most 5,000 photo files
+### R13 · P2 · A page holds at most 5,000 photo files and 1 GiB
 - **Found (Nov 12, live, read only):** the owner's page has 715 asset files against claude.ai's 5,000-file limit per artifact (bytes: 38.8 MB of 1 GiB), growing about 55 files a day, so it reaches the limit in roughly 11 weeks. There are also more files than indexed photos (715 against 549 in the old `byI`), probably copies from re-pastes before v1.22.
 - **Now (v1.22.0):** the page records usage with each import and warns at 80%; `references/photos.md` › Cleanup removes copies and unused files on the user's say-so. That buys time, not a fix.
 - **Corrected (Nov 14, full count, read only):** of 855 files, 853 are in use, each by exactly one slot; the 549 above was an undercount. No unused copies: the only unused files are 2 unique ones (163 KB) from one Nov 3 upload, left by the record loss v1.22.0 fixed. 4 pairs of identical files are both in use (the same photo posted twice). 876 files on Nov 14, so at 55–80 a day the limit arrives between early and late January.
@@ -48,16 +42,15 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Recommended (option E on the board):** the page makes a small preview of each photo (about 240 px) and packs each day's previews into one file; originals stay on the main page for about two months, then move to archive pages (copied server-side, checked by fingerprint before the main page deletes its copy). Old photos still show inline as previews, full size one click away in the archive. Two releases, both before the 4,000-file warning in late December. Unknown: whether a link can open an archive page at a given photo.
 - **Add-on, photo search:** Claude captions each photo once from its preview, and search matches the caption together with the message and its conversation. About 30k tokens a day plus about 400k once (estimates); waiting on the owner.
 
+- **Owner decided (Nov 21): E + S.** Built differently from the plan above, because files run out first (about 60 KB a photo; 1,131 files and 66 MB on Nov 21): **day packs (v1.30.0)** put each finished day's photos, byte for byte, into one pack plus one preview pack, checked by SHA-256 before the originals are deleted, behind the page's Photo storage switch. Photo captions and caption search (S) shipped in the same release.
+- **Left (release 2): archive pages** for the 1 GiB, about 5 months out at the owner's pace (a full pack holds the photos as base64, a third bigger than the files, plus about 8 KB of preview per photo: roughly 6 MB a day): move the oldest full packs (`photos/packs`) to archive pages by server-side copy, checked by sha256 from the asset listings; previews stay on the main page. Also: packing runs only while the owner has the page open on claude.ai (Claude's page tab holds the run lock); if it lags, give it time in the refresh, or have setup offer the switch for new pages.
+
 ### R17 · P3 · The helper notice runs ahead of the release
 - **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.
 - **Options:** run `tools/release.sh` straight after every merge that bumps the helper (today's practice, so the gap is usually minutes); or have the page hold E until a day after `versions.helper` first appears (a `since` the skill keeps), which the owner turned down for F5 ("flagged right away").
 
 ### R5 · P2 · E2EE and messenger.com
 - **What:** `/messages/e2ee/t/` URLs are stored and used but untested against a live E2EE chat. The userscript `@match` covers only `www.facebook.com/messages/*`, so `messenger.com` isn't supported.
-
-### R11 · P3 · Desktop local scheduled tasks
-- **What:** the Desktop app's local scheduled tasks run on the computer while the app is open, with one catch-up run after waking. If such a task's session has Claude in Chrome, it would be a sturdier recurring option than a device-bound cloud task. Unchecked, so `references/scheduling.md` doesn't list it.
-- **Fix:** create one in a Desktop Code-tab session and look for the Claude in Chrome tools in its run; if they're there, add the tool to `references/scheduling.md` › Tools.
 
 ### R12 · P3 · A chain conversation keeps growing
 - **What:** every hourly run adds tool output to the same conversation, so each run costs more over weeks. Predates v1.21.0. Arming at `every` minus 5 minutes (minus 3 from a run's start since v1.23.0) keeps runs inside the prompt cache, but the context still grows.

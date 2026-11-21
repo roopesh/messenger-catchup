@@ -312,9 +312,24 @@ class TestSkillReferences(unittest.TestCase):
         cmds = re.findall(r'cmd == "([\w-]+)"', py)
         self.assertEqual(
             sorted(cmds),
-            ["bootstrap", "build", "check-digests", "days", "digests", "relink", "restore", "restore-summary"],
+            [
+                "bootstrap",
+                "build",
+                "captions",
+                "check-digests",
+                "days",
+                "digests",
+                "relink",
+                "restore",
+                "restore-summary",
+            ],
         )
-        rare = {"restore-summary": "restoring-a-summary.md", "digests": "digests.md", "check-digests": "digests.md"}
+        rare = {
+            "restore-summary": "restoring-a-summary.md",
+            "digests": "digests.md",
+            "check-digests": "digests.md",
+            "captions": "photos.md",
+        }
         for c in cmds:
             where = in_skill("references", rare[c]) if c in rare else in_skill("SKILL.md")
             self.assertIn("catchup.py " + c, where, c)

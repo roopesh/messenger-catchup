@@ -643,6 +643,19 @@
   .msg.own {
     background: var(--accent-soft);
   }
+  /* R13: under a message the filter found by a photo's caption */
+  .msg .caphit {
+    font-size: 0.8rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .lb .lbcap {
+    color: #fff;
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 6px 4px 0;
+    overflow-wrap: anywhere;
+  }
   .pt:empty {
     display: none;
   }
@@ -1036,6 +1049,37 @@
   }
   .pics a {
     cursor: zoom-in;
+  }
+  /* a packed photo (R13) while its pack loads, and the tile left when it can't */
+  img.ph-wait {
+    min-width: 80px;
+    min-height: 80px;
+    background: var(--surface);
+  }
+  .phfail {
+    display: grid;
+    place-items: center;
+    width: 120px;
+    height: 90px;
+    padding: 6px;
+    box-sizing: border-box;
+    font-size: 0.8rem;
+    line-height: 1.25;
+    text-align: center;
+    color: var(--muted);
+    background: var(--surface);
+  }
+  .snip .phfail {
+    width: 56px;
+    height: 56px;
+    font-size: 0.65rem;
+  }
+  .lb .phfail {
+    width: auto;
+    height: auto;
+    font-size: 1rem;
+    color: #fff;
+    background: transparent;
   }
   .lb {
     position: fixed;
@@ -2279,6 +2323,26 @@
         </div>
       </div>
     </details>
+    <details class="item" id="phstore">
+      <summary>
+        <h3>Photo storage</h3>
+        <div class="note">How much of this page's photo storage is used, and packing finished days to save room.</div>
+      </summary>
+      <div class="composer">
+        <p class="note" id="phstore-use">Not measured yet: the page measures it with each import.</p>
+        <label class="note"
+          ><input type="checkbox" id="phpack-on" disabled /> Pack each finished day's photos into one file (full size,
+          checked before the originals are deleted)</label
+        >
+        <p class="note">
+          A page holds at most 5,000 files. Packed, a day's photos take 2 files instead of one each: the photos at full
+          size, exactly as stored, and small previews that show in the messages (click one for full size). A day is
+          packed once it's over and every photo of it is stored, so the newest packed day is the day before yesterday.
+          Packing runs only while this page is open on claude.ai, a day at a time, and waits while Claude refreshes.
+        </p>
+        <p class="note" id="phpack-st" role="status"></p>
+      </div>
+    </details>
   </section>
 </div>
 
@@ -2286,7 +2350,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.5";
+  const PAGE_VERSION = "3.6";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -2389,6 +2453,7 @@
     views: [],
     rangeSums: {},
     digests: new Map() /* "YYYY-MM-DD" -> that day's digest (digests/m<YYYY-MM>, written by catchup.py) */,
+    caps: null /* R13: caps[i][k] = what photo slot k of message i shows (captions/b<start>, written by catchup.py) */,
   };
 
   /* ---------- routing ---------- */
@@ -2888,10 +2953,12 @@
   function lineFor(m) {
     let s = "#" + m.i + " [" + m.t + "] " + nameOf(m);
     if (m.r) s += " (replying to " + m.r + (m.q ? ': "' + cutCp(m.q.replace(/\s+/g, " "), 120) + '"' : "") + ")";
+    /* R13: what its photos show, so Ask and Views can find a thing that's only in a photo */
+    const cs = capsOf(m.i).map(c => cutCp(c, 200));
     s +=
       ": " +
       (m.b || "") +
-      (m.p ? " [photo]" : "") +
+      (cs.length ? " [photo: " + cs.join(" | ") + "]" : m.p ? " [photo]" : "") +
       (m.a ? " [link preview: " + cutCp(m.a.replace(/\s+/g, " "), 240) + "]" : "") +
       (m.l ? " " + m.l.join(" ") : "") +
       (m.x ? " {reactions: " + m.x + "}" : "");
@@ -3141,10 +3208,10 @@
     const pics = (S.photos && S.photos[i]) || [];
     if (pics.length) {
       const im = el("img");
-      im.src = pics[0];
       im.alt = "";
       im.loading = "lazy";
       li.append(im);
+      setPhoto(im, pics[0], ((S.photoPv && S.photoPv[i]) || [])[0]);
     } else li.style.gridTemplateColumns = "1fr";
     const tx = el("div", "tx");
     tx.append(el("span", "meta", "#" + i + " · " + m.t + (m.r ? " · replying to " + m.r : "")));
@@ -5041,21 +5108,24 @@
     if (m.q && !o.xr && (layout === "flat" || showQuote)) c.append(el("div", "quote", m.q));
     if (m.b && !/^\w[\w ]* sent \d+ photos$/.test(m.b)) c.append(el("div", "body", m.b));
     const pics = (S.photos && S.photos[m.i]) || [];
+    const pvs = (S.photoPv && S.photoPv[m.i]) || [];
+    const caps = capsFor(m.i);
     if (pics.length) {
       const pw = el("div", "pics" + (pics.length > 2 ? " many" : ""));
       pics.forEach((u, k) => {
         const a = el("a");
-        a.href = u;
+        a.href = isPacked(u) ? "#" : u;
         a.title = "View full size";
         a.onclick = e => {
           e.preventDefault();
-          lightbox(pics, k, "#" + m.i + " · " + nameOf(m) + " · " + m.t);
+          lightbox(pics, k, "#" + m.i + " · " + nameOf(m) + " · " + m.t, pvs, caps);
         };
         const im = el("img");
-        im.src = u;
-        im.alt = "Photo " + (k + 1) + " from " + nameOf(m);
+        im.alt = caps[k] || "Photo " + (k + 1) + " from " + nameOf(m);
+        if (caps[k]) im.title = caps[k];
         im.loading = "lazy";
         a.append(im);
+        setPhoto(im, u, pvs[k]);
         pw.append(a);
       });
       c.append(pw);
@@ -5082,8 +5152,10 @@
     r.append(c);
     return r;
   }
-  /* Full-size photo viewer on the page itself: opening the image URL in a new tab fails outside the artifact frame. */
-  function lightbox(urls, k, cap) {
+  /* Full-size photo viewer on the page itself: opening the image URL in a new tab fails outside the artifact frame. A
+     packed photo (R13) shows its preview while the full pack loads. caps (R13): each photo's caption, in the order of
+     urls, shown as a line under it. */
+  function lightbox(urls, k, cap, pvs = [], caps = []) {
     let o = $("#lb");
     if (o) o.remove();
     o = el("div", "lb");
@@ -5096,16 +5168,26 @@
     const x = el("button", null, "Close ✕");
     bar.append(lab, x);
     const st = el("div", "stage");
-    const im = el("img");
-    st.append(im);
     const nav = el("div", "nav");
     const prev = el("button", null, "‹ Prev"),
       next = el("button", null, "Next ›");
     if (urls.length > 1) nav.append(prev, next);
+    const capEl = el("div", "lbcap");
     const show = () => {
-      im.src = urls[k];
-      im.alt = "Photo " + (k + 1) + " of " + urls.length;
+      /* a new img for each photo, so a pack that answers late never lands on the next one */
+      const im = el("img");
+      im.alt = caps[k] || "Photo " + (k + 1) + " of " + urls.length;
+      st.textContent = "";
+      st.append(im);
+      if (isPacked(urls[k]) && isPacked(pvs[k]))
+        packSrc(pvs[k], false).then(
+          src => im.isConnected && !im.getAttribute("src") && (im.src = src),
+          () => {},
+        );
+      setPhoto(im, urls[k], pvs[k], true);
       lab.textContent = cap + (urls.length > 1 ? " · " + (k + 1) + "/" + urls.length : "");
+      capEl.textContent = caps[k] || "";
+      capEl.hidden = !caps[k];
     };
     const close = () => {
       o.remove();
@@ -5127,10 +5209,86 @@
       if (e.target === o || e.target === st) close();
     };
     addEventListener("keydown", key);
-    o.append(bar, st, nav);
+    o.append(bar, st, capEl, nav);
     document.body.append(o);
     show();
     x.focus();
+  }
+  /* ---------- R13: photo captions ----------
+     Claude writes one line per stored photo, saying what it shows, when it looks at the photo on a refresh:
+     captions/b<start> {start, byK:{"<i>":{"<k>":"caption"}}}, one document per 500 messages. The Messages filter finds a
+     message by its photos' captions as well as its text, Ask and Views read them in the message lines, and they're each
+     photo's alt and title and the line under it in the viewer. Stats' word trends count only what people wrote, and the
+     phrase for Messenger's own search is the text alone, so neither uses them. */
+  function mergeCaps(docs) {
+    const out = Object.create(null);
+    Object.keys(docs || {})
+      .filter(id => /^b\d+$/.test(id))
+      .forEach(id => {
+        const bk = (docs[id] || {}).byK;
+        if (!bk || typeof bk !== "object") return;
+        Object.entries(bk).forEach(([i, m]) => {
+          if (!/^\d+$/.test(i) || !m || typeof m !== "object") return;
+          Object.entries(m).forEach(([k, c]) => {
+            const t = typeof c === "string" ? c.replace(/\s+/g, " ").trim() : "";
+            if (/^\d+$/.test(k) && t) (out[i] || (out[i] = Object.create(null)))[k] = t;
+          });
+        });
+      });
+    return out;
+  }
+  /* message i's captions in slot order, whether or not the photo is stored here */
+  function capsOf(i) {
+    const c = S.caps && S.caps[i];
+    return c
+      ? Object.keys(c)
+          .sort((a, b) => a - b)
+          .map(k => c[k])
+      : [];
+  }
+  /* message i's captions lined up with its stored photos (S.photos[i] skips slots that are owed or given up) */
+  function capsFor(i) {
+    const c = S.caps && S.caps[i],
+      m = S.photoK && S.photoK[i];
+    if (!c || !m) return [];
+    return Object.keys(m)
+      .sort((a, b) => a - b)
+      .filter(k => isStored(m[k]))
+      .map(k => c[k] || "");
+  }
+  /* the captions of message i that hold q (lower case), or (words: 2 or more) any one of the words */
+  function capHits(i, q, words) {
+    if (!q) return [];
+    const w = words && words.length > 1 ? words : null;
+    return capsOf(i).filter(t => {
+      const l = t.toLowerCase();
+      return l.includes(q) || (!!w && w.some(x => l.includes(x)));
+    });
+  }
+  /* Does the filter (q, its words) find message i, whose text in lower case is text? null if not, else the captions
+     to show under it. It matches when q is in its text or in one caption, or (2 or more words) every word is in its
+     text and captions together. Shown: the captions holding q, and, when the text alone doesn't match, those holding
+     any of the words. */
+  function filterHit(text, i, q, words) {
+    const phrase = capHits(i, q);
+    const multi = words.length > 1;
+    if (text.includes(q) || (multi && words.every(w => text.includes(w)))) return phrase;
+    if (!multi) return phrase.length ? phrase : null;
+    const all = text + " " + capsOf(i).join(" ").toLowerCase();
+    return phrase.length || words.every(w => all.includes(w)) ? capHits(i, q, words) : null;
+  }
+  /* under each row the filter found, the captions that matched */
+  function markCapHits(box, q, words, textOf) {
+    if (!q || !S.caps) return;
+    box.querySelectorAll(".msg[id^='m']").forEach(r => {
+      const m = S.byI.get(+r.id.slice(1));
+      const hits = (m && filterHit(textOf(m), m.i, q, words)) || [];
+      const c = r.querySelector(":scope > .c");
+      if (!hits.length || !c) return;
+      const d = el("div", "caphit", "📷 caption: " + hits.join(" · "));
+      d.title = "Found in what this photo shows (a caption Claude wrote)";
+      c.insertBefore(d, c.querySelector(":scope > .sub"));
+    });
   }
   function norm(s) {
     return (s || "").replace(/…$/, "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -5434,13 +5592,13 @@
     let list = span ? S.msgs.slice(span.a, span.b + 1) : S.msgs.filter(m => all || inWindow(m));
     /* "#123" finds message 123 */
     const qn = /^#\d+$/.test(q) ? +q.slice(1) : null;
-    const match = m =>
-      !q ||
-      (qn != null
-        ? m.i === qn
-        : (m.f + " " + (fullOf(m) || "") + " " + (m.b || "") + " " + (m.a || "") + " " + (m.r || ""))
-            .toLowerCase()
-            .includes(q));
+    /* R13: or what one of its photos shows (its captions); a query of 2 or more words also matches when every word is
+       somewhere in the text and the captions together */
+    const capQ = qn == null ? q : "";
+    const words = capQ.split(/\s+/).filter(Boolean);
+    const textOf = m =>
+      (m.f + " " + (fullOf(m) || "") + " " + (m.b || "") + " " + (m.a || "") + " " + (m.r || "")).toLowerCase();
+    const match = m => !q || (qn != null ? m.i === qn : !!filterHit(textOf(m), m.i, capQ, words));
     if (!S.msgs.length) {
       box.append(el("div", "empty", "No messages stored yet."));
       return;
@@ -5451,11 +5609,13 @@
       flatRows(shown, box, m => (m.i === ws + 1 && all ? el("div", "divider", "Catch-up window starts") : null));
       $("#msg-note").textContent = shown.length + " messages" + (q ? " matching" : "") + ".";
       box.dataset.mode = "flat";
+      markCapHits(box, capQ, words, textOf);
       if (span) olderEdges(span);
       return;
     }
     if (S.threading && renderConversations(list, match, !!span)) {
       box.dataset.mode = "conv";
+      markCapHits(box, capQ, words, textOf);
       if (span) olderEdges(span);
       return;
     }
@@ -5503,6 +5663,7 @@
       " reply threads (" +
       linked +
       " replies matched to the message they answer). Replies whose original isn't stored show on their own.";
+    markCapHits(box, capQ, words, textOf);
     if (span) olderEdges(span);
   }
 
@@ -6056,7 +6217,7 @@
     cut: true,
   };
   const LINE_FMT =
-    'one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo], link previews, links and {reactions}. Senders use group nicknames.';
+    'one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions}. Senders use group nicknames.';
   /* "What you have": which messages are word for word, which are summaries, and what's left out */
   function haveText(P) {
     const none = "- MESSAGES: none" + (P.win ? " (the catch-up window is empty)" : "") + ".";
@@ -7479,11 +7640,20 @@
   );
   const photoBlock = i => "b" + Math.floor(i / PHOTO_BLOCK) * PHOTO_BLOCK;
   const isStored = v => typeof v === "string";
+  /* R13: a packed slot is "/_blob/<pack id>#<n>", item n of a day pack; a plain one "/_blob/<id>" is its own file */
+  const isPacked = v => typeof v === "string" && /^\/_blob\/[^#\s]+#\d+$/.test(v);
+  const packRef = v => {
+    const m = /^\/_blob\/([^#\s]+)#(\d+)$/.exec(typeof v === "string" ? v : "");
+    return m ? { id: m[1], n: +m[2] } : null;
+  };
+  const plainId = v => (typeof v === "string" && /^\/_blob\/[^#\s?/]+$/.test(v) ? v.slice(7) : null);
   /* docs: {id: data} of the photos collection, or the part of it read fresh. The old index first (its byK, or for the
      oldest indexes byI by position), then each block slot by slot; a stored photo wins over an owed or given-up slot,
-     and a block's over the old index's. byI (what the page shows) is derived: stored photos in slot order. */
+     and a block's over the old index's. byI (what the page shows) is derived: stored photos in slot order; pvI (R13) is
+     byI's preview for each (pv[i][k], the slot's place in a preview pack, or null). */
   function mergePhotos(docs) {
     const byK = {};
+    const pv = {};
     const aids = {};
     const tries = {};
     const h = {};
@@ -7509,17 +7679,20 @@
         Object.entries(d.aids || {}).forEach(([i, m]) => Object.assign(aids[i] || (aids[i] = {}), m));
         Object.entries(d.tries || {}).forEach(([i, m]) => Object.assign(tries[i] || (tries[i] = {}), m));
         Object.entries(d.h || {}).forEach(([i, m]) => Object.assign(h[i] || (h[i] = {}), m));
+        Object.entries(d.pv || {}).forEach(([i, m]) => Object.assign(pv[i] || (pv[i] = {}), m));
         (d.gifs || []).forEach(g => gifs.add(+g));
       });
     const byI = {};
+    const pvI = {};
     Object.entries(byK).forEach(([i, m]) => {
-      const l = Object.keys(m)
+      const ks = Object.keys(m)
         .sort((a, b) => a - b)
-        .map(k => m[k])
-        .filter(isStored);
-      if (l.length) byI[i] = l;
+        .filter(k => isStored(m[k]));
+      if (!ks.length) return;
+      byI[i] = ks.map(k => m[k]);
+      pvI[i] = ks.map(k => (isPacked(m[k]) && (pv[i] || {})[k]) || null);
     });
-    return { byK, byI, gifs, aids, tries, h };
+    return { byK, byI, pvI, pv, gifs, aids, tries, h };
   }
   /* R16: the slot each capture entry (a photo, a phfail or a phskip) stands for. By Messenger's attachment id when the
      entry and a slot of its message both have one; then, for a photo, by its content hash (h) when a slot of its message
@@ -8054,9 +8227,650 @@
     st.hidden = !n;
     st.textContent = n
       ? n +
-        " New photos still store for now. To make room, ask Claude to tidy up photo storage: it lists unused and duplicate files and asks before deleting anything."
+        " New photos still store for now. To make room, ask Claude to tidy up photo storage: it lists unused and duplicate files and asks before deleting anything." +
+        (packWanted() ? "" : " Packing finished days (Photo storage, at the foot of the page) saves far more.")
       : "";
   }
+  /* ---------- day packs (R13) ----------
+     A page holds at most 5,000 asset files. With meta/chat.photoPack.on, a tab that can store photos packs each finished
+     day's stored photos into one "full" pack (the originals' bytes, exactly) and one "preview" pack (JPEGs at most pvPx
+     on the long side), oldest day first, one day at a time under the import lease (holder TAB + ":pack", so even this
+     tab's own paste waits for it), and never while a refresh holds the run lock or a paste's photos are uploading. A day
+     (each message's d) is finished once it ends at or before the start of yesterday in meta/chat.tz, and waits while
+     any slot of its messages is owed. A pack is uploaded, fetched back and checked against every original's SHA-256
+     before its slots are repointed: byK[i][k] = "/_blob/<full>#<n>" and pv[i][k] = "/_blob/<preview>#<n>" (n = the
+     item's place in its pack). Only once the repoint reads back are the originals deleted. photos/packs keeps the list
+     of packs {full, pv, day, part, n, bytes, pvBytes, at} (release 2 moves old packs to archive pages), the last error
+     (err) and how many originals couldn't be deleted (orphans; Cleanup finds them). Tests shorten the timings with
+     window.__mcPackTune; nothing in production sets it. */
+  const PACK_TUNE = Object.freeze(
+    Object.assign(
+      {
+        startMs: 5000,
+        idleMs: 600000,
+        waitMs: 60000,
+        gapMs: 3000,
+        delMs: 250,
+        errMs: 60000,
+        maxErrMs: 3600000,
+        partBytes: 12 << 20,
+        itemMax: 14 << 20,
+        pvPx: 320,
+        pvQ: 0.72,
+        uploadTimeoutMs: 300000,
+        lockMin: 20,
+        staleUploadMs: 600000,
+      },
+      window.__mcPackTune || {},
+    ),
+  );
+  const PACK_HOLDER = TAB + ":pack";
+  const PK = {
+    busy: false,
+    timer: null,
+    next: 0,
+    wait: null,
+    day: null,
+    err: null,
+    backoff: 0,
+    skip: new Set() /* "i.k" slots this tab couldn't read, or too big for a pack: they stay as they are */,
+    can: null /* this view can store photos (assets) */,
+    saving: false,
+    note: "",
+  };
+  const packWait = ms => new Promise(r => setTimeout(r, ms));
+  const packErr = (code, msg) => Object.assign(new Error(msg), { code });
+  const shaOf = async buf =>
+    [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].map(x => x.toString(16).padStart(2, "0")).join("");
+  function b64Bytes(b64) {
+    const bin = atob(b64);
+    const u = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) u[k] = bin.charCodeAt(k);
+    return u;
+  }
+  const bytesB64 = buf =>
+    new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).replace(/^data:[^,]*,/, ""));
+      r.onerror = () => rej(r.error);
+      r.readAsDataURL(new Blob([buf]));
+    });
+
+  /* Packs read on this page view, by id: previews (up to 60) and full packs (megabytes each: up to 4). A pack that
+     couldn't load is tried again a minute later, not on every redraw. */
+  const PACKS = { pv: new Map(), full: new Map() };
+  function loadPack(id, full) {
+    const C = full ? PACKS.full : PACKS.pv;
+    let p = C.get(id);
+    if (p) {
+      C.delete(id);
+      C.set(id, p);
+      return p;
+    }
+    p = fetch("/_blob/" + id)
+      .then(r => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(j => {
+        if (!j || !Array.isArray(j.items)) throw new Error("not a pack");
+        return j;
+      });
+    p.catch(() => setTimeout(() => C.get(id) === p && C.delete(id), 60000));
+    C.set(id, p);
+    while (C.size > (full ? 4 : 60)) C.delete(C.keys().next().value);
+    return p;
+  }
+  /* a packed slot's photo as a data: URL (data: images work in claude.ai's viewer) */
+  async function packSrc(v, full) {
+    const r = packRef(v);
+    if (!r) throw new Error("not packed");
+    const it = (await loadPack(r.id, full)).items[r.n];
+    if (!it || typeof it.b64 !== "string" || !it.b64) throw new Error("no photo " + r.n);
+    return "data:" + (it.type || "image/jpeg") + ";base64," + it.b64;
+  }
+  /* Shows stored photo v in img im: a plain /_blob/ URL as it is; a packed one from its pack: the preview (pv) inline,
+     the original when big (the lightbox) or when it has no preview. A pack that can't load leaves a "Photo couldn't
+     load" tile in place of the img, never a broken image. */
+  function setPhoto(im, v, pv, big) {
+    if (!isPacked(v)) {
+      im.src = v;
+      return;
+    }
+    im.classList.add("ph-wait");
+    (!big && isPacked(pv) ? packSrc(pv, false).catch(() => packSrc(v, true)) : packSrc(v, true)).then(
+      src => {
+        im.classList.remove("ph-wait");
+        im.src = src;
+      },
+      () => {
+        const t = el("span", "phfail", "Photo couldn't load");
+        t.setAttribute("role", "img");
+        t.setAttribute("aria-label", (im.alt ? im.alt + ": " : "") + "couldn't load");
+        im.replaceWith(t);
+      },
+    );
+  }
+
+  /* the chat's day k days before today ("YYYY-MM-DD"), in meta/chat.tz or else the browser's zone */
+  function tzDayBack(k) {
+    const d = new Date(stToday() + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() - k);
+    return d.toISOString().slice(0, 10);
+  }
+  /* Days ready to pack, oldest first: over before yesterday began (by each message's d), no slot of its messages owed,
+     and at least one slot holding a plain /_blob/<id> (not packed yet). all: every finished day with photos, ready or
+     not ({day, owed, slots}). */
+  function packDays(M, all) {
+    if (!M) return [];
+    const cut = tzDayBack(1);
+    const days = new Map();
+    Object.entries(M.byK).forEach(([i, m]) => {
+      const msg = S.byI.get(+i);
+      const d = msg && msg.d;
+      if (!isDay(d) || d >= cut) return;
+      let x = days.get(d);
+      if (!x) days.set(d, (x = { day: d, owed: 0, slots: [] }));
+      Object.entries(m || {}).forEach(([k, v]) => {
+        const id = plainId(v);
+        if (v === null) x.owed++;
+        else if (id && !PK.skip.has(i + "." + k)) x.slots.push({ i: +i, k: +k, id });
+      });
+    });
+    return [...days.values()]
+      .filter(x => all || (!x.owed && x.slots.length))
+      .sort((a, b) => (a.day < b.day ? -1 : 1))
+      .map(x => Object.assign(x, { slots: x.slots.sort((a, b) => a.i - b.i || a.k - b.k) }));
+  }
+  /* why packing must wait now, or null: an import in this tab, a refresh holding the run lock (lockMin minutes at most),
+     or a paste's photos still uploading (a record whose heartbeat stopped staleUploadMs ago is a closed tab's) */
+  async function packBlocked() {
+    if (S.importing) return "an import is running in this tab";
+    const st = await S.db.doc("refresh/status").get();
+    const s = (st.exists && st.data()) || {};
+    if (s.state === "running" && Date.now() - Date.parse(s.startedAt || 0) < PACK_TUNE.lockMin * 60000)
+      return "Claude is refreshing";
+    const li = await S.db.doc("refresh/lastImport").get();
+    const l = (li.exists && li.data()) || {};
+    if (l.state === "uploading" && Date.now() - Date.parse(l.beat || l.at || 0) < PACK_TUNE.staleUploadMs)
+      return "photos from the last paste are still storing";
+    return null;
+  }
+  /* the import lease, as packing's holder; ms 1000 lets it lapse (a runtime without leases never packs) */
+  async function packLease(ms) {
+    const ref = S.db.doc("refresh/importLock");
+    if (typeof ref.acquire !== "function") return { ok: false };
+    try {
+      const r = await ref.acquire({ holder: PACK_HOLDER, ttlMs: ms });
+      return r.acquired !== false ? { ok: true } : { ok: false, until: r.expiresAt };
+    } catch (e) {
+      return { ok: false };
+    }
+  }
+  /* the day's slots read fresh (under the lease): the old index and the blocks its messages fall in */
+  async function packFresh(day) {
+    const ids = new Set();
+    S.msgs.forEach(m => m.d === day && ids.add(photoBlock(m.i)));
+    const docs = {};
+    const ig = await S.db.doc("photos/index").get();
+    if (ig.exists) docs.index = ig.data();
+    for (const id of [...ids].sort()) {
+      const g = await S.db.doc("photos/" + id).get();
+      if (g.exists) docs[id] = g.data();
+    }
+    return packDays(mergePhotos(docs)).find(x => x.day === day) || null;
+  }
+  /* a JPEG preview: at most pvPx on the long side, never upscaled; a GIF's first frame. null if it won't decode. */
+  async function packPreview(it) {
+    try {
+      const bm = await createImageBitmap(new Blob([it.buf], { type: it.type }));
+      const s = Math.min(1, PACK_TUNE.pvPx / Math.max(bm.width, bm.height));
+      const w = Math.max(1, Math.round(bm.width * s)),
+        h = Math.max(1, Math.round(bm.height * s));
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const g = c.getContext("2d");
+      g.imageSmoothingQuality = "high";
+      g.fillStyle = "#fff";
+      g.fillRect(0, 0, w, h);
+      g.drawImage(bm, 0, 0, w, h);
+      if (bm.close) bm.close();
+      const b = await new Promise(r => c.toBlob(r, "image/jpeg", PACK_TUNE.pvQ));
+      return b ? { w, h, b64: await bytesB64(await b.arrayBuffer()) } : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function packUpload(assets, json) {
+    return new Promise((res, rej) => {
+      const t = setTimeout(() => rej(packErr("timeout", "an upload took too long")), PACK_TUNE.uploadTimeoutMs);
+      assets.upload(new Blob([json], { type: "application/json" }), { type: "application/json" }).then(
+        r => {
+          clearTimeout(t);
+          if (r && r.id) res(r);
+          else rej(packErr("upload", "an upload gave no file id"));
+        },
+        e => {
+          clearTimeout(t);
+          const c = (e && e.code) || "upstream_error";
+          rej(packErr(c, "the upload was refused (" + c + ")"));
+        },
+      ); /* a late answer after the timeout leaves one unused file, which Cleanup finds */
+    });
+  }
+  async function packFetch(r) {
+    const u = typeof r.url === "string" && r.url.startsWith("/_blob/") ? r.url : "/_blob/" + r.id;
+    let res;
+    try {
+      res = await fetch(u);
+    } catch (e) {
+      throw packErr("verify", "couldn't read the new pack back");
+    }
+    if (!res.ok) throw packErr("verify", "couldn't read the new pack back (HTTP " + res.status + ")");
+    try {
+      return await res.json();
+    } catch (e) {
+      return null;
+    }
+  }
+  /* null when the packs read back hold every photo of the part, byte for byte (SHA-256), in order; else what's wrong */
+  async function packCheck(fb, pb, part, day) {
+    if (!fb || fb.v !== 1 || fb.kind !== "full" || fb.day !== day || !Array.isArray(fb.items)) return "not a pack";
+    if (fb.items.length !== part.length) return fb.items.length + " of " + part.length + " photos";
+    for (let n = 0; n < part.length; n++) {
+      const a = fb.items[n],
+        o = part[n];
+      if (!a || a.i !== o.i || a.k !== o.k || a.id !== o.id || a.sha !== o.sha || typeof a.b64 !== "string")
+        return "photo " + (n + 1) + " out of place";
+      let got = "";
+      try {
+        got = await shaOf(b64Bytes(a.b64));
+      } catch (e) {}
+      if (got !== o.sha) return "the photo on #" + o.i + " changed";
+    }
+    if (
+      !pb ||
+      pb.kind !== "preview" ||
+      !Array.isArray(pb.items) ||
+      pb.items.length !== part.length ||
+      pb.items.some((x, n) => !x || x.i !== part[n].i || x.k !== part[n].k)
+    )
+      return "the previews don't match";
+    return null;
+  }
+  /* photos/packs, merged with a fresh read: f(current) gives the fields to change */
+  async function packRecord(f) {
+    const ref = S.db.doc("photos/packs");
+    const g = await ref.get();
+    const cur = (g.exists && g.data()) || {};
+    await ref.set(Object.assign({}, cur, f(cur)));
+  }
+  /* Points the part's slots at the packs, block by block, each write only the slots it changes (update merges, so
+     slots another tab holds are untouched), and only slots that still hold their original. Read back: landed = the
+     items whose slot now holds its pack; refs = every plain id the re-read blocks (over the old index) still use. */
+  async function packRepoint(part, fu, pu, pvs) {
+    const fullV = n => "/_blob/" + fu.id + "#" + n;
+    const pvV = n => "/_blob/" + pu.id + "#" + n;
+    const by = {};
+    part.forEach((it, n) => (by[photoBlock(it.i)] || (by[photoBlock(it.i)] = [])).push(n));
+    const ig = await S.db.doc("photos/index").get();
+    const idx = ig.exists ? ig.data() : null;
+    const landed = [];
+    const refs = new Set();
+    for (const id of Object.keys(by).sort()) {
+      const ref = S.db.doc("photos/" + id);
+      const g = await ref.get();
+      const M = mergePhotos({ index: idx, [id]: g.exists ? g.data() : {} });
+      const mine = by[id].filter(n => (M.byK[part[n].i] || {})[part[n].k] === "/_blob/" + part[n].id);
+      if (mine.length) {
+        const up = { byK: {}, pv: {} };
+        mine.forEach(n => {
+          const it = part[n];
+          (up.byK[it.i] || (up.byK[it.i] = {}))[it.k] = fullV(n);
+          if (pvs[n]) (up.pv[it.i] || (up.pv[it.i] = {}))[it.k] = pvV(n);
+        });
+        if (!Object.keys(up.pv).length) delete up.pv;
+        for (let t = 0; t < 2; t++) {
+          try {
+            if (g.exists) await ref.update(up);
+            else await ref.set(Object.assign({ start: +id.slice(1), gifs: [] }, up));
+            break;
+          } catch (e) {
+            if (e && e.code === "invalid_argument") break;
+            await packWait(IMPORT_TUNE.retryMs);
+          }
+        }
+      }
+      const g2 = await ref.get();
+      const M2 = mergePhotos({ index: idx, [id]: g2.exists ? g2.data() : {} });
+      mine.forEach(n => (M2.byK[part[n].i] || {})[part[n].k] === fullV(n) && landed.push(n));
+      Object.values(M2.byK).forEach(m => Object.values(m).forEach(v => plainId(v) && refs.add(plainId(v))));
+    }
+    return { landed, refs };
+  }
+  /* One part of a day: previews, both packs uploaded, read back and checked, then the repoint; a pack that fails its
+     check (or anything before the repoint lands) is deleted and the originals stay. After the repoint, the photos/packs
+     entry, then the originals no slot uses any more are deleted one at a time; one that won't delete is an orphan. */
+  async function packPart(day, part, assets, guard) {
+    const pvs = [];
+    for (const it of part) {
+      guard();
+      pvs.push(await packPreview(it));
+    }
+    const full = JSON.stringify({
+      v: 1,
+      kind: "full",
+      day,
+      items: part.map(it => ({ i: it.i, k: it.k, id: it.id, type: it.type, sha: it.sha, b64: it.b64 })),
+    });
+    const prev = JSON.stringify({
+      v: 1,
+      kind: "preview",
+      day,
+      items: part.map((it, n) =>
+        pvs[n]
+          ? { i: it.i, k: it.k, type: "image/jpeg", w: pvs[n].w, h: pvs[n].h, b64: pvs[n].b64 }
+          : { i: it.i, k: it.k, type: null, w: null, h: null, b64: null },
+      ),
+    });
+    const made = [];
+    const drop = async () => {
+      for (const id of made)
+        try {
+          await assets.delete(id);
+        } catch (e) {}
+    };
+    let fu, pu;
+    try {
+      guard();
+      fu = await packUpload(assets, full);
+      made.push(fu.id);
+      guard();
+      pu = await packUpload(assets, prev);
+      made.push(pu.id);
+      const bad = await packCheck(await packFetch(fu), await packFetch(pu), part, day);
+      if (bad) throw packErr("verify", "the pack for " + dayTitle(day) + " didn't match the originals (" + bad + ")");
+      guard();
+    } catch (e) {
+      await drop();
+      throw e;
+    }
+    const { landed, refs } = await packRepoint(part, fu, pu, pvs);
+    if (!landed.length) {
+      await drop();
+      throw packErr("repoint", "couldn't point the photos of " + dayTitle(day) + " at their pack");
+    }
+    const at = new Date().toISOString();
+    try {
+      await packRecord(cur => {
+        const list = Array.isArray(cur.list) ? cur.list : [];
+        const e = { full: fu.id, pv: pu.id, day, part: list.filter(x => x.day === day).length + 1, n: part.length };
+        return { list: list.concat(Object.assign(e, { bytes: full.length, pvBytes: prev.length, at })) };
+      });
+    } catch (e) {} /* the blocks' byK and pv name the packs too, so Cleanup still keeps them */
+    const gone = [...new Set(landed.map(n => part[n].id))].filter(id => !refs.has(id));
+    let orphans = 0;
+    for (const id of gone) {
+      try {
+        await assets.delete(id);
+      } catch (e) {
+        orphans++;
+      }
+      await packWait(PACK_TUNE.delMs);
+    }
+    if (orphans)
+      try {
+        await packRecord(cur => ({ orphans: (+cur.orphans || 0) + orphans }));
+      } catch (e) {}
+    if (landed.length < part.length)
+      throw packErr(
+        "repoint",
+        plural(part.length - landed.length, "photo") +
+          " of " +
+          dayTitle(day) +
+          " couldn't be pointed at the pack; they stay as they are until the next try",
+      );
+  }
+  /* Packs one day, in parts of about partBytes of photos (an upload takes at most 20 MiB), holding the lease the whole
+     time; guard() stops it before the next step once the lease is lost or packing is switched off. */
+  async function packDay(x, assets) {
+    const T = PACK_TUNE;
+    let lost = false;
+    const guard = () => {
+      if (lost) throw packErr("lease", "another import took over");
+      if (!packWanted()) throw packErr("off", "packing was switched off");
+    };
+    const timer = setInterval(async () => {
+      if (!lost && !(await packLease(IMPORT_TUNE.leaseMs)).ok) lost = true;
+    }, IMPORT_TUNE.beatMs);
+    try {
+      let part = [],
+        size = 0;
+      for (const s of x.slots) {
+        guard();
+        let r;
+        try {
+          r = await fetch("/_blob/" + s.id);
+        } catch (e) {
+          throw packErr("fetch", "couldn't read the photo on #" + s.i);
+        }
+        if (r.status === 404) {
+          PK.skip.add(s.i + "." + s.k);
+          continue;
+        }
+        if (!r.ok) throw packErr("fetch", "couldn't read the photo on #" + s.i + " (HTTP " + r.status + ")");
+        const buf = await r.arrayBuffer();
+        if (buf.byteLength > T.itemMax) {
+          PK.skip.add(s.i + "." + s.k);
+          continue;
+        }
+        if (part.length && size + buf.byteLength > T.partBytes) {
+          await packPart(x.day, part, assets, guard);
+          part = [];
+          size = 0;
+        }
+        const type = (r.headers.get("content-type") || "").split(";")[0].trim() || "image/jpeg";
+        part.push({ i: s.i, k: s.k, id: s.id, type, buf, sha: await shaOf(buf), b64: await bytesB64(buf) });
+        size += buf.byteLength;
+      }
+      if (part.length) await packPart(x.day, part, assets, guard);
+    } finally {
+      clearInterval(timer);
+    }
+  }
+  /* the page's asset usage, read now (save: also into meta/chat.assetUsage when it changed) */
+  async function packUsage(assets, save) {
+    try {
+      const l = (await assets.list()).usage;
+      if (!l || typeof l.files !== "number") return;
+      const u = { files: l.files, bytes: l.bytes, maxFiles: l.maxFiles, maxBytes: l.maxBytes };
+      S.assetLive = Object.assign({ at: new Date().toISOString() }, u);
+      renderStorage();
+      renderPack();
+      const was = (S.meta && S.meta.assetUsage) || {};
+      if (save && ["files", "bytes", "maxFiles", "maxBytes"].some(k => was[k] !== u[k]))
+        await S.db.doc("meta/chat").update({ assetUsage: S.assetLive });
+    } catch (e) {}
+  }
+  function packWanted() {
+    return !!(S.db && S.meta && S.meta.photoPack && S.meta.photoPack.on === true);
+  }
+  function packSoon(ms) {
+    clearTimeout(PK.timer);
+    PK.next = Date.now() + ms;
+    PK.timer = setTimeout(packTick, ms);
+  }
+  /* on every meta/chat snapshot: start or stop the loop */
+  function packWatch() {
+    if (PK.can === null && S.db) {
+      PK.can = undefined;
+      claude.use("assets").then(
+        a => {
+          PK.can = !!a;
+          renderPack();
+        },
+        () => {
+          PK.can = false;
+          renderPack();
+        },
+      );
+    }
+    if (!packWanted()) {
+      clearTimeout(PK.timer);
+      PK.timer = null;
+      PK.wait = null;
+    } else if (!PK.timer && !PK.busy) packSoon(PACK_TUNE.startMs);
+    renderPack();
+  }
+  /* One step of the loop: pack the oldest day that's ready, if nothing holds things up. Next step: soon after a day,
+     waitMs while something holds things up, idleMs with nothing to pack, and after an error errMs doubling to maxErrMs. */
+  async function packTick() {
+    PK.timer = null;
+    if (PK.busy || !packWanted()) return renderPack();
+    PK.busy = true;
+    let next = PACK_TUNE.idleMs;
+    try {
+      const assets = await claude.use("assets");
+      PK.can = !!assets;
+      if (!assets) {
+        PK.wait = "this view can't store photos (open the page on claude.ai as its owner)";
+        return;
+      }
+      const days = packDays(S.photoM);
+      if (!days.length) {
+        PK.wait = null;
+        return;
+      }
+      const why = await packBlocked();
+      const L = why ? null : await packLease(IMPORT_TUNE.leaseMs);
+      if (why || !L.ok) {
+        PK.wait = why || "another import is running" + (L.until ? " until " + fmtTime(L.until) : "");
+        next = PACK_TUNE.waitMs;
+        return;
+      }
+      PK.wait = null;
+      try {
+        const x = await packFresh(days[0].day);
+        if (x) {
+          PK.day = x.day;
+          renderPack();
+          await packDay(x, assets);
+          await packUsage(assets, true);
+          next = PACK_TUNE.gapMs;
+        }
+      } finally {
+        await packLease(1000);
+      }
+      PK.backoff = 0;
+      if (PK.err || (S.packsDoc && S.packsDoc.err)) {
+        PK.err = null;
+        await packRecord(() => ({ err: null })).catch(() => {});
+      }
+    } catch (e) {
+      if (!packWanted()) return;
+      PK.backoff = Math.min(PACK_TUNE.maxErrMs, PK.backoff ? PK.backoff * 2 : PACK_TUNE.errMs);
+      next = PK.backoff;
+      const msg = (e && e.message) || String(e);
+      PK.err = { at: new Date().toISOString(), day: PK.day, code: (e && e.code) || "error", msg };
+      const err = PK.err;
+      await packRecord(() => ({ err })).catch(() => {});
+    } finally {
+      PK.busy = false;
+      PK.day = null;
+      if (packWanted()) packSoon(next);
+      renderPack();
+    }
+  }
+  function renderPack() {
+    const cb = $("#phpack-on");
+    if (!cb) return;
+    const on = packWanted();
+    if (!PK.saving) cb.checked = on;
+    cb.disabled = !S.db || !PK.can || PK.saving;
+    const m = S.meta && S.meta.assetUsage;
+    const u = S.assetLive && (!m || !(m.at > S.assetLive.at)) ? S.assetLive : m;
+    $("#phstore-use").textContent =
+      u && u.maxFiles
+        ? "This page holds " +
+          u.files.toLocaleString("en-US") +
+          " of " +
+          u.maxFiles.toLocaleString("en-US") +
+          " files (" +
+          Math.floor((u.files / u.maxFiles) * 100) +
+          "%) and " +
+          fmtBytes(u.bytes) +
+          " of " +
+          (u.maxBytes === 1 << 30 ? "1 GiB" : fmtBytes(u.maxBytes)) +
+          "."
+        : "Not measured yet: the page measures it with each import.";
+    const P = S.packsDoc || {};
+    const list = Array.isArray(P.list) ? P.list : [];
+    const last = list.reduce((a, x) => (x && isDay(x.day) && x.day > a ? x.day : a), "");
+    const out = [];
+    if (PK.note) out.push(PK.note);
+    if (!on)
+      out.push(
+        "Off: each photo is its own file." +
+          (PK.can === false ? " Only the page's owner, on claude.ai, can switch it on." : ""),
+      );
+    else {
+      out.push(last ? "Last packed day: " + dayTitle(last) + "." : "No day packed yet.");
+      const ds = packDays(S.photoM, true);
+      const todo = ds.filter(x => !x.owed && x.slots.length).length;
+      const owed = ds.filter(x => x.owed).length;
+      out.push(
+        todo
+          ? "Days still to pack: " + todo + "."
+          : last
+            ? "Every finished day is packed."
+            : "No finished day to pack yet.",
+      );
+      if (owed) out.push(plural(owed, "day") + (owed === 1 ? " waits" : " wait") + " for photos still to be stored.");
+      if (PK.day) out.push("Packing " + dayTitle(PK.day) + " now…");
+      else if (PK.wait && todo) out.push("Waiting: " + PK.wait + ".");
+    }
+    const err = PK.err || P.err;
+    if (on && err && err.msg)
+      out.push(
+        "The last try failed (" +
+          fmtTs(err.at) +
+          "): " +
+          err.msg +
+          ". The originals are kept" +
+          (PK.err && PK.timer ? "; it tries again at " + fmtTime(PK.next) : "") +
+          ".",
+      );
+    if (+P.orphans > 0)
+      out.push(
+        plural(+P.orphans, "original file") +
+          " couldn't be deleted after packing. Ask Claude to tidy up photo storage to remove them.",
+      );
+    $("#phpack-st").textContent = out.join(" ");
+  }
+  $("#phpack-on").onchange = async e => {
+    const cb = e.target;
+    const on = cb.checked;
+    if (!S.db) return;
+    PK.saving = true;
+    PK.note = "";
+    renderPack();
+    const v = { on, at: new Date().toISOString() };
+    try {
+      await S.db.doc("meta/chat").update({ photoPack: v });
+      if (S.meta) S.meta.photoPack = v;
+    } catch (x) {
+      cb.checked = !on;
+      PK.note = "Couldn't save the switch (" + ((x && x.code) || "error") + "); try again.";
+    }
+    PK.saving = false;
+    packWatch();
+  };
+  $("#phstore").addEventListener("toggle", async () => {
+    if (!$("#phstore").open || !S.db) return;
+    const a = await claude.use("assets");
+    if (a) packUsage(a, false);
+  });
   async function importCore(raw, opts) {
     const src = (opts && opts.src) || "button";
     const R = { src, ok: false };
@@ -8089,7 +8903,7 @@
       R.lock = L.lock;
       if (!L.ok)
         return done(
-          "Another import is running in another open copy of this page. Nothing saved. Try again in a minute" +
+          "Another import is running in another open copy of this page, or the page is packing photos. Nothing saved. Try again in a minute" +
             (L.until ? " (after " + fmtTime(L.until) + ")" : "") +
             ".",
         );
@@ -11059,6 +11873,7 @@
           S.meta = s.exists ? s.data() : null;
           applyCfg();
           rebuild();
+          packWatch();
           renderRefresh();
           renderUpdates();
           renderSchedule();
@@ -11171,8 +11986,14 @@
     /* photos/index (pages up to 2.6) and the photos/b<start> blocks, merged */
     db.collection("photos").onSnapshot(
       q => {
-        const M = q.docs.length ? mergePhotos(collDocs(q)) : null;
+        const D = collDocs(q);
+        const M = q.docs.length ? mergePhotos(D) : null;
         S.photos = M ? M.byI : null;
+        S.photoPv = M ? M.pvI : null;
+        S.photoM = M; /* day packs (R13): what's left to pack */
+        S.packsDoc = D.packs || null;
+        renderPack();
+        S.photoK = M ? M.byK : null; /* R13: which slot each stored photo is, for its caption */
         S.gifs = M ? M.gifs : new Set();
         /* the summary shows photos too: in snippets and in context blocks */
         keepPlace(() => {
@@ -11180,6 +12001,17 @@
           renderSummary();
         });
         renderStats();
+      },
+      () => {},
+    );
+    /* R13: photo captions (captions/b<start>, written by Claude's refresh): searched with the text, shown on the photo */
+    db.collection("captions").onSnapshot(
+      q => {
+        S.caps = mergeCaps(collDocs(q));
+        keepPlace(() => {
+          renderMessages();
+          renderSummary();
+        });
       },
       () => {},
     );
