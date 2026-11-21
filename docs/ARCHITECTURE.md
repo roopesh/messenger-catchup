@@ -211,7 +211,7 @@ SKILL.md lists the core schema; this is the full set the code touches.
 | `refresh/importLock` | Page importer (lease only) | the platform's lease state; holds no data |
 | `outbox/*` | Page, then Claude | see Outbox above |
 | `qa/*` | Page (Ask; the user removes them there) | `q`, `a`, `at`, `scope` (`window`, `all`, `deeper`), `toI`, `sent` (`{from, to, sumFrom, afterFrom}`: read word for word, where older summaries start, where newer ones start; a Look deeper answer: `{from, to, stretches, wanted}`; optional) |
-| `views/*` | Page (Views) | `kind:"view"` (title, intro, sections, prompt, at, toI, `sent`) or `kind:"idea"` (prompt, at) |
+| `views/*` | Page (Views) | `kind:"view"` (title, intro, sections, prompt, at, made, toI, `sent`, auto, and for "Keep up to date" autoAt, autoAfter, autoErr, autoBusy; F28) or `kind:"idea"` (prompt, at) |
 | `rangeSummaries/*` | Page (only when the summary has `fromI`) | same shape as summary plus `by:"page"`, `fromI`, and `parts` when it was read in parts |
 | `digests/m<YYYY-MM>` | `catchup.py` (a build's or the backfill's manifest; v1.25.0, F16) | `month`, `days:{"<YYYY-MM-DD>": {bullets:[{t, refs}], fromI, toI, n, at}}`; the page reads them (Ask, By day) |
 | `notes/*` | Claude (SKILL.md › What the page saves for Claude) | `title`, `when`, `at`, `intro`, `table`, `sections`, `footer` |

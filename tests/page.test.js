@@ -1431,7 +1431,7 @@ async function pipeline() {
     await until(
       p,
       () =>
-        /By person/.test(document.getElementById('view-out').textContent) &&
+        /Grouped by who posted/.test(document.getElementById('view-out').textContent) &&
         [...__rt.store.keys()].some(k => k.startsWith('views/')),
     ),
     'views: built view rendered and saved',
@@ -3132,7 +3132,7 @@ async function history() {
       p,
       () =>
         !document.getElementById('view-go').disabled &&
-        /By person/.test(document.getElementById('view-out').textContent),
+        /Grouped by who posted/.test(document.getElementById('view-out').textContent),
     );
     const vp = await lastSample(p);
     const V = parts(vp);
@@ -3510,7 +3510,7 @@ async function history2() {
       p,
       () =>
         !document.getElementById('view-go').disabled &&
-        /too long|By person/.test(
+        /too long|Grouped by who posted/.test(
           document.getElementById('view-note').textContent + document.getElementById('view-out').textContent,
         ),
     );
@@ -8810,6 +8810,698 @@ async function savedQuestions() {
   });
 }
 
+/* ---------- Views: a picker with Rename, Rebuild and Remove, and views that keep themselves up to date (F28) ----------
+   Two saved views over 20 stored messages (#0–#19, all on Oct 1): v1 "By person" built Nov 10 and v2 "Products" built
+   Nov 12, plus a method idea and a note from Claude. vjson scripts Claude's view replies (a delay, a failure); vmore
+   stores newer messages as an import does (the chunk, then meta/chat). The automatic update's waits are shortened with
+   __mcViewAutoMs. */
+const VW_UNDO = 400;
+const VW_DOCS = (o = {}) => ({
+  'views/v1': Object.assign(
+    {
+      kind: 'view',
+      title: 'By person',
+      intro: 'Grouped by who posted.',
+      sections: [{ heading: 'Ben', tag: 'open', summary: 'Sells a stove [#1].', refs: [1] }],
+      prompt: 'group by person',
+      at: '2026-11-10T18:00:00.000Z',
+      toI: 19,
+      sent: { from: 0, to: 19, sumFrom: null, afterFrom: null },
+    },
+    o.v1,
+  ),
+  'views/v2': Object.assign(
+    {
+      kind: 'view',
+      title: 'Products',
+      intro: 'Every product mentioned.',
+      sections: [{ heading: 'Stove', summary: 'Ben has one [#1].', refs: [1] }],
+      prompt: 'only products, with who owns what',
+      at: '2026-11-12T18:00:00.000Z',
+      toI: 19,
+      sent: { from: 5, to: 19, sumFrom: 0, afterFrom: null },
+    },
+    o.v2,
+  ),
+  'views/i1': { kind: 'idea', prompt: 'Flag every raffle with its spots left', at: '2026-11-11T10:00:00.000Z' },
+  'notes/n1': { title: 'How a refresh works', when: 'Nov 12', at: '2026-11-12T10:00:00.000Z', intro: 'A short note.' },
+});
+/* every case counts the dialogs its page opens; the page must never open one */
+let vwDialogs = 0;
+async function vopen(o = {}) {
+  const seed = hseed(hmsgs(20), {
+    meta: { markerMode: null },
+    docs: o.docs || VW_DOCS(o),
+    opts: Object.assign({ undoMs: VW_UNDO }, o.opts),
+  });
+  const p = await open(seed, PAGE, o.ctx);
+  HP.push(p);
+  p.on('dialog', d => {
+    vwDialogs++;
+    d.dismiss().catch(() => {});
+  });
+  await vready(p);
+  return p;
+}
+async function vready(p) {
+  await until(p, () => typeof S !== 'undefined' && S.msgs.length === 20 && S.viewsIn);
+  await p.evaluate(() => {
+    window.__mcViewAutoMs = 60;
+    location.hash = '#views';
+  });
+  await sleep(80);
+}
+/* what the list, the open view, the undo line and the store show */
+const vstate = p =>
+  p.evaluate(() => {
+    const q = s => [...document.querySelectorAll(s)];
+    const out = document.getElementById('view-out');
+    const a = document.activeElement;
+    const keys = Object.keys(__rt.all()).filter(k => /^views\//.test(k));
+    return {
+      list: q('#views-list .vw').map(d => d.dataset.id),
+      open: q('#views-list .vw[open]').map(d => d.dataset.id),
+      titles: q('#views-list .vw > summary h3').map(h => h.textContent),
+      metas: q('#views-list .vw > summary .vw-meta').map(h => h.textContent),
+      errs: q('#views-list .vw > summary .vw-err').map(h => h.textContent),
+      out: out.textContent,
+      outIn: out.closest('.vw') ? out.closest('.vw').dataset.id : null,
+      st: q('#views-list .vw-st')
+        .map(x => x.textContent)
+        .join(' '),
+      undo: document.getElementById('vw-undo').textContent,
+      stored: keys.map(k => k.slice(6)).sort(),
+      toI: Object.fromEntries(keys.map(k => [k.slice(6), __rt.get(k).toI])),
+      dels: __rt.writes.filter(w => w.op === 'delete' && /^views\//.test(w.p)).map(w => w.p),
+      box: !document.getElementById('view-box').hidden,
+      newBtn: !document.getElementById('view-new').hidden,
+      calls: __rt.sampleLog.length,
+      focus: a && a !== document.body ? a.dataset.f || a.id || a.textContent : null,
+    };
+  });
+const vclick = (p, id, sel) => p.click('#views-list .vw[data-id="' + id + '"] ' + sel, { timeout: 2000 });
+const vtoggle = async (p, id) => {
+  await vclick(p, id, '> summary');
+  await sleep(100);
+};
+/* Claude's view replies from here on: each waits delay ms, then fails with code fail or answers reply */
+const vjson = (p, m) =>
+  p.evaluate(async m => {
+    const s = await claude.use('sample');
+    s.json = async prompt => {
+      __rt.samples.push(prompt);
+      __rt.sampleLog.push({ bytes: prompt.length, code: m.fail || null });
+      await new Promise(r => setTimeout(r, m.delay || 0));
+      if (m.fail) throw Object.assign(new Error('scripted ' + m.fail), { code: m.fail });
+      return (
+        m.reply || {
+          title: 'Rebuilt',
+          intro: 'Rebuilt intro.',
+          sections: [{ heading: 'Cy', summary: 'Wants a tent [#3].', refs: [3] }],
+        }
+      );
+    };
+  }, m);
+/* newer messages stored, as an import writes them: the chunk with #20… added, then meta/chat */
+const vmore = (p, n) =>
+  p.evaluate(
+    msgs => {
+      __rt.write('chunks/c0000', { start: 0, msgs });
+      __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { lastI: msgs[msgs.length - 1].i }));
+    },
+    hmsgs(20).concat(hmsgs(n).slice(20)),
+  );
+const vtoI = (p, id, n) => until(p, ([id, n]) => (__rt.get('views/' + id) || {}).toI === n, [id, n], 5000);
+async function viewsTab() {
+  /* V1: a compact list, newest first: title, when built and the span; nothing open; ideas and notes collapsed below */
+  await hcase('V1', async () => {
+    const p = await vopen();
+    const s = await vstate(p);
+    const more = await p.evaluate(() => ({
+      ideas: document.getElementById('vw-ideas').tagName === 'DETAILS' && !document.getElementById('vw-ideas').open,
+      notes: document.getElementById('vw-notes').tagName === 'DETAILS' && !document.getElementById('vw-notes').open,
+      last: [...document.getElementById('v-views').children]
+        .slice(-2)
+        .map(x => x.id)
+        .join(),
+      ideasTxt: document.getElementById('ideas-list').textContent,
+      notesTxt: document.getElementById('notes-list').textContent,
+      counts: document.getElementById('ideas-n').textContent + '|' + document.getElementById('notes-n').textContent,
+      inList: /raffle|How a refresh/.test(document.getElementById('views-list').textContent),
+      h: Math.max(...[...document.querySelectorAll('#views-list .vw')].map(x => x.getBoundingClientRect().height)),
+    }));
+    ok(
+      s.list.join() === 'v2,v1' &&
+        !s.open.length &&
+        s.titles.join() === 'Products,By person' &&
+        /^Built Nov 12(, 2026)?, 10:00 AM · #5–#19 \(Oct 1\)$/.test(s.metas[0]) &&
+        /^Built Nov 10(, 2026)?, 10:00 AM · #0–#19 \(Oct 1\)$/.test(s.metas[1]) &&
+        !s.out &&
+        !s.box &&
+        s.newBtn &&
+        more.h < 90,
+      'views V1: saved views are a compact list, newest first, each a title and "' +
+        s.metas[0] +
+        '", none open, the build box closed behind New view (' +
+        JSON.stringify({ s, h: more.h }) +
+        ')',
+    );
+    ok(
+      more.ideas &&
+        more.notes &&
+        more.last === 'vw-ideas,vw-notes' &&
+        /Flag every raffle/.test(more.ideasTxt) &&
+        /How a refresh works/.test(more.notesTxt) &&
+        more.counts === ' (1)| (1)' &&
+        !more.inList,
+      'views V1: method ideas and notes from Claude are in their own collapsed sections at the foot of the tab, with counts (' +
+        JSON.stringify(more) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V1: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V2: opening one closes the other; the open one is remembered in this browser after a reload */
+  await hcase('V2', async () => {
+    const p = await vopen();
+    await vtoggle(p, 'v1');
+    const a = await vstate(p);
+    await vtoggle(p, 'v2');
+    const b = await vstate(p);
+    await p.reload();
+    await vready(p);
+    const c = await vstate(p);
+    await vtoggle(p, 'v2');
+    const d = await vstate(p);
+    await p.reload();
+    await vready(p);
+    const e = await vstate(p);
+    ok(
+      a.open.join() === 'v1' &&
+        a.outIn === 'v1' &&
+        /Asked for: group by person/.test(a.out) &&
+        /Built from #0–#19 word for word\./.test(a.out) &&
+        /Grouped by who posted\./.test(a.out) &&
+        /Sells a stove/.test(a.out) &&
+        a.focus === 'open:v1',
+      'views V2: opening a view shows its content inside its card, focus kept on its title (' + JSON.stringify(a) + ')',
+    );
+    ok(
+      b.open.join() === 'v2' && b.outIn === 'v2' && /Every product mentioned/.test(b.out) && !/Grouped by/.test(b.out),
+      'views V2: opening another view closes the first (' + JSON.stringify(b) + ')',
+    );
+    ok(
+      c.open.join() === 'v2' && c.outIn === 'v2' && /Every product mentioned/.test(c.out),
+      'views V2: after a reload the same view is open (' + JSON.stringify(c) + ')',
+    );
+    ok(
+      !d.open.length && !d.out && !e.open.length && !e.out,
+      'views V2: closing it leaves none open, also after a reload (' + JSON.stringify({ d, e }) + ')',
+    );
+    ok(p.errors.length === 0, 'views V2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V3: Rename inline: Enter saves views/<id>.title, Escape cancels, a failed write puts the old name back */
+  await hcase('V3', async () => {
+    const p = await vopen();
+    await vtoggle(p, 'v1');
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await sleep(50);
+    const f = await p.evaluate(() => {
+      const i = document.activeElement;
+      return {
+        tag: i.tagName,
+        val: i.value,
+        sel: i.selectionEnd - i.selectionStart,
+        label: i.getAttribute('aria-label'),
+      };
+    });
+    await p.keyboard.type('People and wants');
+    await p.keyboard.press('Enter');
+    await until(p, () => (__rt.get('views/v1') || {}).title === 'People and wants');
+    await sleep(100);
+    const a = await vstate(p);
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await p.keyboard.type('Nope');
+    await p.keyboard.press('Escape');
+    await sleep(100);
+    const b = await vstate(p);
+    const bTitle = (await get(p, 'views/v1')).title;
+    await p.evaluate(() => __rt.fails.push({ p: 'views/v1', op: 'update' }));
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await p.keyboard.type('Folks');
+    await p.click('#views-list .vw-ren button.secondary', { timeout: 2000 });
+    await sleep(200);
+    const c = await vstate(p);
+    ok(
+      f.tag === 'INPUT' &&
+        f.val === 'By person' &&
+        f.sel === 9 &&
+        f.label === 'New name for the view “By person”' &&
+        a.titles.join() === 'Products,People and wants' &&
+        a.open.join() === 'v1' &&
+        a.focus === 'ren:v1',
+      'views V3: Rename opens a field holding the name, selected; Enter saves the new name to views/v1 and focus returns to Rename (' +
+        JSON.stringify({ f, a }) +
+        ')',
+    );
+    ok(
+      b.titles[1] === 'People and wants' && bTitle === 'People and wants' && b.focus === 'ren:v1',
+      'views V3: Escape cancels a rename (' + JSON.stringify(b) + ')',
+    );
+    ok(
+      c.titles[1] === 'People and wants' && /Couldn't rename it/.test(c.st),
+      'views V3: a rename that fails to save puts the old name back with a short line (' + JSON.stringify(c) + ')',
+    );
+    ok(p.errors.length === 0, 'views V3: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V4: Rebuild runs the same request again and replaces the content (name kept), with progress; a failure keeps it */
+  await hcase('V4', async () => {
+    const p = await vopen();
+    await vjson(p, { delay: 500 });
+    await vtoggle(p, 'v1');
+    const before = await get(p, 'views/v1');
+    await vclick(p, 'v1', '[data-f="reb:v1"]');
+    await sleep(120);
+    const mid = await vstate(p);
+    const dis = await p.evaluate(() => ({
+      go: document.getElementById('view-go').disabled,
+      reb: document.querySelector('[data-f="reb:v1"]').disabled,
+      spin: !!document.querySelector('#views-list .vw-st .spin'),
+    }));
+    await until(p, () => /Rebuilt intro/.test(document.getElementById('view-out').textContent));
+    await sleep(100);
+    const after = await vstate(p);
+    const doc = await get(p, 'views/v1');
+    const prompt = await p.evaluate(() => __rt.samples[__rt.samples.length - 1]);
+    ok(
+      /Rebuilding… this can take a minute\./.test(mid.st) &&
+        dis.spin &&
+        dis.go &&
+        dis.reb &&
+        /rebuilding…/.test(mid.metas[1]) &&
+        /Grouped by who posted/.test(mid.out),
+      'views V4: while it rebuilds, the view says so with a spinner and every build button waits (' +
+        JSON.stringify({ mid, dis }) +
+        ')',
+    );
+    ok(
+      doc.intro === 'Rebuilt intro.' &&
+        doc.sections[0].heading === 'Cy' &&
+        doc.title === 'By person' &&
+        doc.prompt === 'group by person' &&
+        doc.made === before.at &&
+        doc.at > before.at &&
+        doc.toI === 19 &&
+        doc.kind === 'view' &&
+        doc.sent &&
+        doc.sent.to === 19 &&
+        /group by person/.test(prompt) &&
+        after.calls === 1 &&
+        /Rebuilt intro/.test(after.out) &&
+        !/Grouped by/.test(after.out) &&
+        /Built from #\d+–#19 word for word/.test(after.out) &&
+        after.open.join() === 'v1' &&
+        /^Built at \d/.test(after.metas[1]) &&
+        !after.st,
+      'views V4: Rebuild sends the saved request again and replaces the content in views/v1, keeping its name (' +
+        JSON.stringify({ doc, after }) +
+        ')',
+    );
+    await vjson(p, { fail: 'rate_limited' });
+    await vclick(p, 'v1', '[data-f="reb:v1"]');
+    await until(p, () => /Too many requests/.test(document.querySelector('#views-list .vw-st').textContent));
+    const f = await vstate(p);
+    ok(
+      /Rebuilt intro/.test(f.out) &&
+        (await get(p, 'views/v1')).intro === 'Rebuilt intro.' &&
+        /Too many requests right now/.test(f.st),
+      'views V4: a failed rebuild keeps the content and says why (' + JSON.stringify(f) + ')',
+    );
+    ok(p.errors.length === 0, 'views V4: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V5: Remove hides it at once with "Removed … · Undo" in a live region; Undo brings it back open; the delete waits */
+  await hcase('V5', async () => {
+    const p = await vopen();
+    await vtoggle(p, 'v1');
+    const label = await p.$eval('[data-f="rm:v1"]', b => b.getAttribute('aria-label'));
+    await p.focus('[data-f="rm:v1"]');
+    await p.keyboard.press('Enter');
+    await sleep(60);
+    const now = await vstate(p);
+    const live = await p.evaluate(() => {
+      const u = document.getElementById('vw-undo');
+      return u.getAttribute('role') === 'status' && u.getAttribute('aria-live') === 'polite';
+    });
+    await p.keyboard.press('Enter'); /* focus is on Undo */
+    await sleep(60);
+    const back = await vstate(p);
+    await sleep(VW_UNDO + 200);
+    const still = await vstate(p);
+    await vclick(p, 'v1', '[data-f="rm:v1"]');
+    await sleep(VW_UNDO + 300);
+    const later = await vstate(p);
+    ok(
+      label === 'Remove the view “By person”' &&
+        live &&
+        now.list.join() === 'v2' &&
+        now.stored.join() === 'i1,v1,v2' &&
+        now.undo === 'Removed “By person” · Undo' &&
+        now.focus === 'Undo' &&
+        !now.dels.length &&
+        !now.out,
+      'views V5: Remove (a labelled button, pressed with Enter) hides the view at once, keeps views/v1 for now and says "' +
+        now.undo +
+        '" in a polite live region, focus on Undo (' +
+        JSON.stringify(now) +
+        ')',
+    );
+    ok(
+      back.list.join() === 'v2,v1' &&
+        back.open.join() === 'v1' &&
+        back.focus === 'open:v1' &&
+        !back.undo &&
+        still.stored.join() === 'i1,v1,v2' &&
+        !still.dels.length,
+      'views V5: Undo brings it back open with focus on it, and nothing is deleted after the pause (' +
+        JSON.stringify({ back, still }) +
+        ')',
+    );
+    ok(
+      later.list.join() === 'v2' && later.stored.join() === 'i1,v2' && later.dels.join() === 'views/v1' && !later.undo,
+      'views V5: removed again, views/v1 is deleted after the pause and the undo line goes (' +
+        JSON.stringify(later) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V5: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V6: a failed delete brings the view back with a short line */
+  await hcase('V6', async () => {
+    const p = await vopen();
+    await p.evaluate(() => __rt.fails.push({ p: 'views/v2', op: 'delete' }));
+    await vtoggle(p, 'v2');
+    await vclick(p, 'v2', '[data-f="rm:v2"]');
+    await sleep(VW_UNDO + 300);
+    const s = await vstate(p);
+    ok(
+      s.list.join() === 'v2,v1' &&
+        s.stored.includes('v2') &&
+        /^Couldn't remove “Products”\. It's back in the list\.$/.test(s.undo),
+      'views V6: when the delete fails the view is back in the list with "' + s.undo + '" (' + JSON.stringify(s) + ')',
+    );
+  });
+
+  /* V7: New view opens the build box; a built view is saved, opened, and the box closes; Cancel; no views: box open */
+  await hcase('V7', async () => {
+    let p = await vopen();
+    await p.click('#view-new', { timeout: 2000 });
+    await sleep(60);
+    const opened = await vstate(p);
+    await p.keyboard.type('group by person');
+    await p.click('#view-go', { timeout: 2000 });
+    await until(
+      p,
+      () => !document.getElementById('view-go').disabled && document.querySelectorAll('#views-list .vw').length === 3,
+    );
+    await sleep(100);
+    const s = await vstate(p);
+    const id = s.list[0];
+    const doc = await get(p, 'views/' + id);
+    ok(
+      opened.box && !opened.newBtn && opened.focus === 'view-in',
+      'views V7: New view opens the build box, focus in it (' + JSON.stringify(opened) + ')',
+    );
+    ok(
+      doc &&
+        doc.kind === 'view' &&
+        doc.auto === false &&
+        doc.title === 'By person' &&
+        doc.made === doc.at &&
+        doc.toI === 19 &&
+        s.open.join() === id &&
+        s.outIn === id &&
+        /Grouped by who posted/.test(s.out) &&
+        /Built from #\d+–#19 word for word/.test(s.out) &&
+        !s.box &&
+        s.newBtn,
+      'views V7: Build view saves the view (auto off), puts it first and open, and the build box closes (' +
+        JSON.stringify({ doc, s }) +
+        ')',
+    );
+    await p.click('#view-new', { timeout: 2000 });
+    await p.click('#view-cancel', { timeout: 2000 });
+    await sleep(60);
+    const c = await vstate(p);
+    ok(
+      !c.box && c.newBtn && c.focus === 'view-new',
+      'views V7: Cancel closes the build box (' + JSON.stringify(c) + ')',
+    );
+    ok(p.errors.length === 0, 'views V7: no page errors ' + JSON.stringify(p.errors));
+    p = await vopen({ docs: {} });
+    const e = await vstate(p);
+    ok(
+      e.box && !e.newBtn && !e.list.length && /No views yet/.test(await txt(p, '#views-list')),
+      'views V7: with no saved views the build box is open (' + JSON.stringify(e) + ')',
+    );
+  });
+
+  /* V8: the "Keep up to date" switch saves auto on the view's doc and says what it costs */
+  await hcase('V8', async () => {
+    const p = await vopen();
+    await vtoggle(p, 'v2');
+    const sw = await p.evaluate(() => {
+      const c = document.querySelector('[data-f="auto:v2"]');
+      return {
+        role: c.getAttribute('role'),
+        checked: c.checked,
+        label: c.closest('label').textContent,
+        help: document.getElementById(c.getAttribute('aria-describedby')).textContent,
+      };
+    });
+    await vclick(p, 'v2', '[data-f="auto:v2"]');
+    await until(p, () => (__rt.get('views/v2') || {}).auto === true);
+    await sleep(300);
+    const on = await vstate(p);
+    await vclick(p, 'v2', '[data-f="auto:v2"]');
+    const off = await until(p, () => (__rt.get('views/v2') || {}).auto === false);
+    ok(
+      sw.role === 'switch' &&
+        !sw.checked &&
+        sw.label === 'Keep up to date' &&
+        /refresh/.test(sw.help) &&
+        /claude\.ai usage/.test(sw.help),
+      'views V8: each view has a "Keep up to date" switch whose help says when it rebuilds and that it uses claude.ai usage ("' +
+        sw.help +
+        '")',
+    );
+    ok(
+      /kept up to date/.test(on.metas[0]) && on.calls === 0 && on.focus === 'auto:v2' && off,
+      'views V8: switched on it is saved as auto:true (no rebuild: nothing newer), off as auto:false (' +
+        JSON.stringify(on) +
+        ')',
+    );
+  });
+
+  /* V9: a view kept up to date waits while a refresh runs, then rebuilds once, saying after which refresh; nothing
+     more without a new import; the next import rebuilds it once more */
+  await hcase('V9', async () => {
+    const p = await vopen({ v1: { auto: true } });
+    await vjson(p, {});
+    await p.evaluate(() =>
+      __rt.write('refresh/status', { state: 'running', startedAt: new Date().toISOString(), step: 'build' }),
+    );
+    await vmore(p, 25);
+    await sleep(600);
+    const during = await vstate(p);
+    const fin = new Date(Date.now() - 1000).toISOString();
+    await p.evaluate(f => __rt.write('refresh/status', { state: 'done', startedAt: f, finishedAt: f, added: 5 }), fin);
+    await vtoI(p, 'v1', 24);
+    await sleep(150);
+    const after = await vstate(p);
+    const doc = await get(p, 'views/v1');
+    const want = await p.evaluate(
+      f => new Date(f).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+      fin,
+    );
+    await sleep(600);
+    const again = await vstate(p);
+    await p.evaluate(() => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { lastRefresh: 'Later' })));
+    await sleep(600);
+    const meta = await vstate(p);
+    await vmore(p, 30);
+    await vtoI(p, 'v1', 29);
+    await sleep(150);
+    const next = await vstate(p);
+    ok(
+      during.calls === 0 && during.toI.v1 === 19,
+      'views V9: nothing is rebuilt while the refresh that stored the messages runs (' + JSON.stringify(during) + ')',
+    );
+    ok(
+      after.calls === 1 &&
+        doc.intro === 'Rebuilt intro.' &&
+        doc.title === 'By person' &&
+        doc.auto === true &&
+        doc.autoAt === doc.at &&
+        doc.autoAfter === fin &&
+        doc.autoBusy === undefined &&
+        doc.sent.to === 24 &&
+        after.toI.v2 === 19 &&
+        after.metas[1].startsWith('Updated after the ' + want + ' refresh · #') &&
+        /kept up to date$/.test(after.metas[1]),
+      'views V9: once it has finished, the view rebuilds itself once with the new messages and says "' +
+        after.metas[1] +
+        '"; the other view is left alone (' +
+        JSON.stringify({ doc, after }) +
+        ')',
+    );
+    ok(
+      again.calls === 1 && meta.calls === 1,
+      'views V9: no second rebuild without a new import, also after meta/chat changes (' +
+        JSON.stringify({ again: again.calls, meta: meta.calls }) +
+        ')',
+    );
+    ok(
+      next.calls === 2 &&
+        next.toI.v1 === 29 &&
+        /^Updated at \d{1,2}:\d\d [AP]M with newer messages/.test(next.metas[1]),
+      'views V9: the next import rebuilds it once more ("' + next.metas[1] + '")',
+    );
+    ok(p.errors.length === 0, 'views V9: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V10: never while another build runs, nor while the user is typing on the tab (renaming) */
+  await hcase('V10', async () => {
+    const p = await vopen({ v1: { auto: true } });
+    await vjson(p, { delay: 800 });
+    await vtoggle(p, 'v2');
+    await vclick(p, 'v2', '[data-f="reb:v2"]');
+    await sleep(100);
+    await vmore(p, 25);
+    await sleep(450);
+    const mid = await vstate(p);
+    await vtoI(p, 'v1', 24);
+    await until(p, () => !document.querySelector('#views-list .vw-st .spin'), null, 5000);
+    const end = await vstate(p);
+    ok(
+      mid.calls === 1 && mid.toI.v1 === 19 && end.calls === 2 && end.toI.v1 === 24 && end.toI.v2 === 19,
+      'views V10: an import during a Rebuild waits for it, then the view kept up to date rebuilds (' +
+        JSON.stringify({ mid, end }) +
+        ')',
+    );
+    await vjson(p, {});
+    await vtoggle(p, 'v1');
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await sleep(50);
+    await vmore(p, 30);
+    await sleep(600);
+    const typing = await vstate(p);
+    await p.keyboard.press('Escape');
+    await vtoI(p, 'v1', 29);
+    const done = await vstate(p);
+    ok(
+      typing.calls === 2 && typing.toI.v1 === 24 && done.calls === 3,
+      'views V10: no automatic rebuild while a rename is open; it runs once the rename ends (' +
+        JSON.stringify({ typing: typing.calls, done: done.calls }) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V10: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V11: a failed automatic rebuild keeps the old content, notes it briefly, and isn't tried again for that import */
+  await hcase('V11', async () => {
+    const p = await vopen({ v1: { auto: true } });
+    await vjson(p, { fail: 'rate_limited' });
+    await vmore(p, 25);
+    await until(p, () => (__rt.get('views/v1') || {}).autoErr, null, 5000);
+    await sleep(600);
+    const s = await vstate(p);
+    const doc = await get(p, 'views/v1');
+    await vtoggle(p, 'v1');
+    const o = await vstate(p);
+    ok(
+      s.calls === 1 &&
+        doc.intro === 'Grouped by who posted.' &&
+        doc.toI === 19 &&
+        doc.autoErr.code === 'rate_limited' &&
+        doc.autoErr.toI === 24 &&
+        !doc.autoBusy &&
+        /^Couldn't update at \d{1,2}:\d\d [AP]M: this is the earlier version\.$/.test(s.errs[0]) &&
+        /Grouped by who posted/.test(o.out) &&
+        /Too many requests/.test(o.st),
+      'views V11: a failed automatic rebuild keeps the content, says "' +
+        s.errs[0] +
+        '" and isn\'t retried for the same import (' +
+        JSON.stringify({ doc, s, st: o.st }) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V11: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V12: another open copy of the page already updating the view (a fresh autoBusy) is left to it */
+  await hcase('V12', async () => {
+    const p = await vopen({ v1: { auto: true, autoBusy: { tab: 'other', at: new Date().toISOString() } } });
+    await vjson(p, {});
+    await vmore(p, 25);
+    await sleep(800);
+    const s = await vstate(p);
+    ok(
+      s.calls === 0 && s.toI.v1 === 19,
+      'views V12: a view another copy of the page is updating is left to it (' + JSON.stringify(s) + ')',
+    );
+  });
+
+  /* V13: at 390 px the list, an open view's actions and content, rename, the undo line, the build box and the
+     collapsed sections fit the width */
+  await hcase('V13', async () => {
+    const long = 'A long view name about stoves, tents, packs and water filters that goes on ' + 'x'.repeat(60);
+    const p = await vopen({
+      ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
+      v1: {
+        title: long,
+        auto: true,
+        autoAt: '2026-11-10T18:00:00.000Z',
+        autoErr: { at: '2026-11-11T18:00:00.000Z', code: 'rate_limited', toI: 19 },
+      },
+    });
+    await vtoggle(p, 'v2');
+    await vclick(p, 'v2', '[data-f="rm:v2"]');
+    await sleep(60);
+    await vtoggle(p, 'v1');
+    await p.click('#view-new', { timeout: 2000 });
+    const fit = s =>
+      p.evaluate(s => {
+        document.getElementById('vw-ideas').open = true;
+        document.getElementById('vw-notes').open = true;
+        const r = s => Math.max(0, ...[...document.querySelectorAll(s)].map(x => x.getBoundingClientRect().right));
+        return {
+          sw: document.documentElement.scrollWidth,
+          iw: innerWidth,
+          max: r(s),
+          n: document.querySelectorAll(s).length,
+        };
+      }, s);
+    const all =
+      '#views-list .vw, #views-list .vw *, #vw-undo p, #vw-undo button, #view-box *, #view-new, .vw-more, .vw-more *';
+    const a = await fit(all);
+    await vclick(p, 'v1', '[data-f="ren:v1"]');
+    await sleep(60);
+    const b = await fit('.vw-ren, .vw-ren *');
+    ok(
+      a.n > 20 && a.sw <= a.iw && a.max <= a.iw && b.n === 4 && b.sw <= b.iw && b.max <= b.iw,
+      'views V13: at 390 px the list, the open view with its actions and note, rename, Undo, the build box and the collapsed sections fit, no sideways scroll (' +
+        JSON.stringify({ a, b }) +
+        ')',
+    );
+    ok(p.errors.length === 0, 'views V13: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* V14: none of it opens a dialog */
+  ok(vwDialogs === 0, 'views V14: Remove, Undo, Rename and Rebuild never open a dialog (' + vwDialogs + ')');
+}
+
 /* ---------- Stats (F31) ----------
    The Stats tab counts everything on the page from the stored messages. 27 messages from the mock cast on four days
    (Sun Nov 1, Thu Nov 12, Thu Nov 19 and today, Fri Nov 20), with the clock at noon on Nov 20 in Los Angeles. Dee posts
@@ -9739,6 +10431,7 @@ const SECTIONS = {
   olderByDay,
   crossReply,
   savedQuestions,
+  viewsTab,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1

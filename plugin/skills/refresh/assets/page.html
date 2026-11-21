@@ -404,6 +404,111 @@
   .qa-undo p.err {
     color: var(--warn);
   }
+  /* Views (F28): a compact list of saved views, one open at a time with its actions; ideas and notes collapsed below.
+     A details element isn't a dependable grid container in every browser, so the open view's body keeps its own gap. */
+  details.item.vw {
+    display: block;
+  }
+  .vw > summary h3,
+  .vw > summary .note {
+    overflow-wrap: anywhere;
+  }
+  .vw > summary .vw-err {
+    color: var(--warn);
+  }
+  .vw-body {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+    min-width: 0;
+  }
+  .vw-acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    align-items: center;
+  }
+  .vw-auto {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 0.92rem;
+  }
+  .vw-body .vw-help,
+  .vw-body .vw-st {
+    font-size: 0.84rem;
+    overflow-wrap: anywhere;
+  }
+  .vw-body .vw-st:empty {
+    display: none;
+  }
+  .vw-body .vw-st.err {
+    color: var(--warn);
+  }
+  .vw-ren {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .vw-ren input {
+    flex: 1 1 200px;
+    font: inherit;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 7px 10px;
+    min-width: 0;
+  }
+  #view-out:empty {
+    display: none;
+  }
+  .vw #view-out .item {
+    padding: 10px 12px;
+  }
+  .vw-idea {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .vw-undo {
+    display: grid;
+    gap: 6px;
+  }
+  .vw-undo:empty {
+    display: none;
+  }
+  .vw-undo p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .vw-undo p.err {
+    color: var(--warn);
+  }
+  details.vw-more > summary {
+    cursor: pointer;
+    list-style: none;
+  }
+  details.vw-more > summary::-webkit-details-marker {
+    display: none;
+  }
+  details.vw-more > summary h2::after {
+    content: " +";
+    color: var(--muted);
+    font-weight: 500;
+  }
+  details.vw-more[open] > summary h2::after {
+    content: " –";
+  }
+  details.vw-more > .block {
+    margin-top: 12px;
+  }
+  .vw-n {
+    color: var(--muted);
+    font-weight: 500;
+  }
   .tablewrap {
     overflow-x: auto;
     border: 1px solid var(--line);
@@ -1867,10 +1972,11 @@
   <section class="view" id="v-views" hidden>
     <div class="block">
       <div class="sec-head">
-        <h2>Reorganize the catch-up</h2>
-        <p>Describe a different way to group the chat. Claude builds it from the messages and saves it.</p>
+        <h2>Views</h2>
+        <button type="button" class="secondary" id="view-new" aria-controls="view-box" hidden>New view</button>
       </div>
-      <div class="composer">
+      <p class="note">Other ways to group the chat, built by Claude from the messages. Open one to read it.</p>
+      <div class="composer" id="view-box">
         <label for="view-in" class="note">How should it be organized?</label>
         <textarea
           id="view-in"
@@ -1879,25 +1985,32 @@
         <div class="btns">
           <button class="primary" id="view-go">Build view</button>
           <button class="secondary" id="view-keep">Keep as a method idea</button>
+          <button type="button" class="link" id="view-cancel" hidden>Cancel</button>
           <span class="note" id="view-note"></span>
         </div>
       </div>
-      <div id="view-out"></div>
-    </div>
-    <div class="block">
-      <div class="sec-head">
-        <h2>Notes from Claude</h2>
-        <p>Analyses and answers about how this page and its refreshes work.</p>
-      </div>
-      <div class="list" id="notes-list"><p class="note">No notes yet.</p></div>
-    </div>
-    <div class="block">
-      <div class="sec-head">
-        <h2>Saved views &amp; method ideas</h2>
-        <p>Claude reads these when improving how catch-ups are built.</p>
-      </div>
+      <div id="view-home"><div id="view-out"></div></div>
+      <div class="vw-undo" id="vw-undo" role="status" aria-live="polite"></div>
       <div class="list" id="views-list"></div>
     </div>
+    <details class="vw-more" id="vw-ideas">
+      <summary>
+        <h2>Method ideas<span class="vw-n" id="ideas-n"></span></h2>
+      </summary>
+      <div class="block">
+        <p class="note">Ideas you left for Claude. It reads them after each refresh and offers to apply them.</p>
+        <div class="list" id="ideas-list"></div>
+      </div>
+    </details>
+    <details class="vw-more" id="vw-notes">
+      <summary>
+        <h2>Notes from Claude<span class="vw-n" id="notes-n"></span></h2>
+      </summary>
+      <div class="block">
+        <p class="note">Analyses and answers about how this page and its refreshes work.</p>
+        <div class="list" id="notes-list"><p class="note">No notes yet.</p></div>
+      </div>
+    </details>
   </section>
 
   <section class="view" id="v-stats" hidden>
@@ -2099,6 +2212,7 @@
     const box = document.getElementById("notes-list");
     if (!box) return;
     box.innerHTML = "";
+    document.getElementById("notes-n").textContent = list.length ? " (" + list.length + ")" : "";
     if (!list.length) {
       box.append(el("p", "note", "No notes yet."));
       return;
@@ -6604,16 +6718,81 @@
       });
   }
 
-  /* ---------- views ---------- */
-  function renderViewDoc(v, into, note) {
+  /* ---------- views (F28) ----------
+     A compact list of the views the user built (views/*, kind "view"), newest first, one open at a time (remembered in
+     this browser). The open view has Rename, Rebuild, Remove and a "Keep up to date" switch. Remove hides it with
+     "Removed … · Undo" for QA_UNDO_MS, then deletes views/<id>, as saved questions do (F26). One build at a time: Build
+     view, Rebuild and the automatic updates share vwBusy. A view kept up to date (auto) rebuilds itself once an import
+     has stored messages newer than its toI: once per import, after the refresh that stored them has finished, never
+     while the user is typing on this tab. Before it starts it reads the view fresh and marks it (autoBusy), so a second
+     open copy of the page leaves it alone. A failed update keeps the old content and records autoErr, so that import
+     isn't tried again. Method ideas and Claude's notes are in collapsed sections at the foot of the tab. Tests shorten
+     the automatic update's waits with window.__mcViewAutoMs; nothing in production sets it. */
+  const VW_KEY = "mcViewOpen";
+  let vwOpen = null; /* the open view's id */
+  try {
+    vwOpen = localStorage.getItem(VW_KEY) || null;
+  } catch (e) {}
+  function vwKeepOpen(id) {
+    vwOpen = id;
+    try {
+      if (id) localStorage.setItem(VW_KEY, id);
+      else localStorage.removeItem(VW_KEY);
+    } catch (e) {}
+  }
+  let vwNew = false; /* the build box, opened with New view */
+  let vwBusy = null; /* {id, how} while a build runs: id null for a new view; how "new", "user" (Rebuild) or "auto" */
+  let vwRen = null; /* {id, value} while a view is renamed; the list isn't redrawn meanwhile */
+  const vwNotes = new Map(); /* id -> the full "Built from …" line of a build in this page load */
+  const vwSt = new Map(); /* id -> {t, err}: the line under a view's actions */
+  const vwGone = new Set(); /* ids hidden: waiting to be deleted, or deleted */
+  const vwPending = new Set(); /* {id, row, what, wasOpen, timer} */
+  const vwTried = new Set(); /* "id:newest": automatic updates started in this page load */
+  const vwName = v => (v && v.title) || "View";
+  const vwNewest = () => (S.msgs.length ? S.msgs[S.msgs.length - 1].i : -1);
+  /* the newest stored message when it was built (sent.to for views saved before toI) */
+  const vwTo = v => (typeof v.toI === "number" ? v.toI : v.sent && typeof v.sent.to === "number" ? v.sent.to : -1);
+  const vwViews = () =>
+    S.views
+      .filter(v => v.kind !== "idea" && v._id && !vwGone.has(v._id))
+      .sort((a, b) => (b.made || b.at || "").localeCompare(a.made || a.at || ""));
+  /* "5:03 PM" today, else "Nov 19, 5:03 PM" */
+  function vwWhen(iso) {
+    const d = new Date(iso);
+    if (!iso || isNaN(d)) return "";
+    const now = new Date();
+    const o = { hour: "numeric", minute: "2-digit" };
+    if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString("en-US", o);
+    const y = d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {};
+    return d.toLocaleString("en-US", Object.assign({ month: "short", day: "numeric" }, y, o));
+  }
+  const vwAt = iso => (w => (/^\d/.test(w) ? "at " + w : w))(vwWhen(iso));
+  /* the messages it was built from, word for word: numbers and days */
+  function vwSpan(v) {
+    const s = v.sent;
+    if (!s || s.from == null) return typeof v.toI === "number" ? "to #" + v.toI : "";
+    const days = daySpan((S.byI.get(s.from) || {}).d, (S.byI.get(s.to) || {}).d);
+    return "#" + s.from + "–#" + s.to + (days ? " (" + days + ")" : "");
+  }
+  function vwMeta(v) {
+    const busy = vwBusy && vwBusy.id === v._id ? (vwBusy.how === "auto" ? "updating…" : "rebuilding…") : "";
+    const when = v.autoAt
+      ? "Updated " +
+        (v.autoAfter ? "after the " + vwWhen(v.autoAfter) + " refresh" : vwAt(v.autoAt) + " with newer messages")
+      : v.at
+        ? "Built " + vwAt(v.at)
+        : "";
+    return [when, vwSpan(v), v.auto ? "kept up to date" : "", busy].filter(Boolean).join(" · ");
+  }
+  function renderViewDoc(v, into, note, head) {
     into.textContent = "";
     const d = el("div", "block");
     const h = el("div", "sec-head");
-    h.append(el("h2", null, v.title || "View"));
+    if (head) h.append(el("h2", null, vwName(v)));
     if (v.prompt) h.append(el("p", null, "Asked for: " + v.prompt));
     const read = note || (sentShort(v) ? "Built from " + sentShort(v) + "." : "");
     if (read) h.append(el("p", "note sent", read));
-    d.append(h);
+    if (h.childNodes.length) d.append(h);
     if (v.intro) d.append(el("p", null, v.intro));
     const l = el("div", "list");
     (v.sections || []).forEach(s => {
@@ -6633,14 +6812,25 @@
     d.append(l);
     into.append(d);
   }
+  /* only the parts of Claude's reply a view shows, so a reply can't set any other field (B51: kind is set after it) */
+  function vwContent(r) {
+    if (!r || typeof r !== "object" || Array.isArray(r))
+      throw Object.assign(new Error("not a view"), { code: "invalid_json" });
+    return {
+      title: typeof r.title === "string" ? r.title : "",
+      intro: typeof r.intro === "string" ? r.intro : "",
+      sections: Array.isArray(r.sections) ? r.sections : [],
+    };
+  }
   $("#view-go").onclick = async () => {
     const p = $("#view-in").value.trim();
-    if (!p) return;
+    if (!p || vwBusy) return;
     if (!S.sample) {
       $("#view-note").textContent = "Asking Claude isn't available in this view.";
       return;
     }
-    $("#view-go").disabled = true;
+    vwBusy = { id: null, how: "new" };
+    renderViews();
     $("#view-note").textContent = "Building… this can take a minute.";
     try {
       await capWait();
@@ -6648,33 +6838,43 @@
         $("#view-note").textContent = "That request is too long to send. Shorten it.";
         return;
       }
-      const {
-        res: v,
-        P,
-        retried,
-      } = await sendFitted(
+      const n0 = vwNewest();
+      const { res, P, retried } = await sendFitted(
         cap => viewPrompt(p, cap),
         m => S.sample.json(m.text),
       );
-      v.prompt = p;
-      v.at = new Date().toISOString();
-      v.toI = S.msgs[S.msgs.length - 1]?.i ?? null;
+      const at = new Date().toISOString();
+      const v = Object.assign(vwContent(res), { prompt: p, at, made: at, toI: n0 >= 0 ? n0 : null, auto: false });
       const sent = sentOf(P);
       if (sent) v.sent = sent;
-      renderViewDoc(v, $("#view-out"), sentNote(P, true, retried));
+      const note = sentNote(P, true, retried);
       $("#view-note").textContent = "";
+      let id = null;
       if (S.db) {
         try {
           /* B51: kind last, so a reply that says kind "idea" can't pose as a method idea */
-          await S.db.collection("views").add({ ...v, kind: "view" });
-        } catch (e) {
-          $("#view-note").textContent = "Built, but not saved.";
-        }
+          id = (await S.db.collection("views").add({ ...v, kind: "view" })).id;
+        } catch (e) {}
+      }
+      if (id) {
+        vwNotes.set(id, note);
+        vwKeepOpen(id);
+        vwNew = false;
+        $("#view-in").value = "";
+        if (!S.views.some(x => x._id === id)) S.views = S.views.concat([{ ...v, kind: "view", _id: id }]);
+      } else {
+        /* shown on its own under the build box until a saved view is opened (the remembered one stays remembered) */
+        vwOpen = null;
+        $("#view-home").append($("#view-out"));
+        renderViewDoc(v, $("#view-out"), note, true);
+        $("#view-out").dataset.k = "u";
+        $("#view-note").textContent = "Built, but not saved.";
       }
     } catch (e) {
-      $("#view-note").textContent = errCopy(e.code);
+      $("#view-note").textContent = errCopy(e && e.code);
     } finally {
-      $("#view-go").disabled = false;
+      vwBusy = null;
+      renderViews();
     }
   };
   $("#view-keep").onclick = async () => {
@@ -6688,37 +6888,396 @@
       $("#view-note").textContent = "Couldn't save.";
     }
   };
-  function renderViews() {
-    const l = $("#views-list");
+  $("#view-new").onclick = () => {
+    vwRen = null;
+    vwNew = true;
+    renderViews();
+    $("#view-in").focus();
+  };
+  $("#view-cancel").onclick = () => {
+    vwNew = false;
+    $("#view-note").textContent = "";
+    renderViews();
+    $("#view-new").focus();
+  };
+  /* typing in the box keeps it open when the list fills in */
+  $("#view-in").addEventListener("input", () => (vwNew = true));
+  function renderIdeas() {
+    const l = $("#ideas-list");
+    const ideas = S.views.filter(v => v.kind === "idea").sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+    $("#ideas-n").textContent = ideas.length ? " (" + ideas.length + ")" : "";
     l.textContent = "";
-    if (!S.views.length) {
-      l.append(el("p", "note", "Nothing saved yet."));
-      return;
+    if (!ideas.length)
+      l.append(el("p", "note", "No method ideas yet. “Keep as a method idea” in the build box adds one."));
+    ideas.forEach(v => {
+      const it = el("div", "item");
+      it.append(el("p", "vw-idea", v.prompt || ""));
+      if (v.at) it.append(el("div", "note", "Left " + vwAt(v.at)));
+      l.append(it);
+    });
+  }
+  /* The list, drawn whole from S.views each time; the open view's content (#view-out) is moved into its card and
+     drawn again only when it changes. force: redraw while a rename is open (the rename's own steps). */
+  function renderViews(force) {
+    renderIdeas();
+    if (vwBusy) $("#view-go").disabled = true;
+    else if (S.sample) $("#view-go").disabled = false;
+    if (vwRen && !force) return;
+    const l = $("#views-list");
+    const out = $("#view-out");
+    const ae = document.activeElement;
+    const fk = ae && l.contains(ae) ? ae.dataset.f : null;
+    $("#view-home").append(out);
+    l.textContent = "";
+    const list = vwViews();
+    if (vwOpen && S.viewsIn && !list.some(v => v._id === vwOpen)) vwKeepOpen(null);
+    const empty = !!S.viewsIn && !list.length;
+    const box = $("#view-box");
+    box.hidden = !(vwNew || empty);
+    $("#view-new").hidden = !box.hidden;
+    $("#view-cancel").hidden = empty;
+    if (empty) l.append(el("p", "note", "No views yet."));
+    list.forEach(v => l.append(vwRow(v)));
+    const v = list.find(x => x._id === vwOpen);
+    const row = v && [...l.children].find(r => r.dataset.id === v._id);
+    if (row) {
+      row.querySelector(".vw-body").append(out);
+      const k = "v:" + v._id + "|" + (v.at || "") + "|" + (vwNotes.get(v._id) || "") + "|" + S.msgs.length;
+      if (out.dataset.k !== k) {
+        renderViewDoc(v, out, vwNotes.get(v._id), false);
+        out.dataset.k = k;
+      }
+    } else if ((out.dataset.k || "").startsWith("v:")) {
+      out.textContent = "";
+      out.dataset.k = "";
     }
-    S.views
-      .slice()
-      .sort((a, b) => (b.at || "").localeCompare(a.at || ""))
-      .forEach(v => {
-        const d = el("details", "item");
-        const s = el("summary");
-        s.append(
-          el("h3", null, v.kind === "idea" ? "Idea: " + v.prompt : v.title || "View"),
-          el(
-            "div",
-            "note",
-            (v.at || "").replace("T", " ").slice(0, 16) + (v.kind === "idea" ? " · method idea" : " · built view"),
-          ),
-        );
-        d.append(s);
-        if (v.kind !== "idea") {
-          const box = el("div");
-          d.addEventListener("toggle", () => {
-            if (d.open && !box.childNodes.length) renderViewDoc(v, box);
-          });
-          d.append(box);
-        }
-        l.append(d);
+    $("#view-home").hidden = !$("#view-home").contains(out) || !out.childNodes.length;
+    if (fk) {
+      const f = [...l.querySelectorAll("[data-f]")].find(x => x.dataset.f === fk);
+      if (f) f.focus({ preventScroll: true });
+    }
+    vwAutoSoon();
+  }
+  function vwRow(v) {
+    const id = v._id;
+    const d = el("details", "item vw");
+    d.dataset.id = id;
+    d.open = id === vwOpen;
+    const s = el("summary");
+    s.dataset.f = "open:" + id;
+    s.append(el("h3", null, vwName(v)), el("div", "note vw-meta", vwMeta(v)));
+    if (v.autoErr)
+      s.append(el("div", "note vw-err", "Couldn't update " + vwAt(v.autoErr.at) + ": this is the earlier version."));
+    d.append(s);
+    if (d.open) d.append(vwBody(v));
+    d.addEventListener("toggle", () => vwToggle(id, d.open));
+    return d;
+  }
+  /* opening one closes the other */
+  function vwToggle(id, open) {
+    if (open ? vwOpen === id : vwOpen !== id) return;
+    vwRen = null;
+    vwKeepOpen(open ? id : null);
+    renderViews();
+    const row = open && [...$("#views-list").children].find(r => r.dataset.id === id);
+    if (row) {
+      const top = row.getBoundingClientRect().top - $("nav.tabs").getBoundingClientRect().bottom;
+      if (top < 0) scrollBy(0, top - 8);
+    }
+  }
+  function vwBody(v) {
+    const id = v._id;
+    const b = el("div", "vw-body");
+    const busy = !!vwBusy && vwBusy.id === id;
+    const what = "“" + qaShort(vwName(v)) + "”";
+    if (vwRen && vwRen.id === id) b.append(vwRenForm(v, what));
+    else {
+      const a = el("div", "vw-acts");
+      const act = (t, f, label, fn) => {
+        const x = el("button", "link", t);
+        x.type = "button";
+        x.dataset.f = f + ":" + id;
+        x.setAttribute("aria-label", label + " " + what);
+        x.onclick = fn;
+        return x;
+      };
+      const ren = act("Rename", "ren", "Rename the view", () => vwRenStart(v));
+      const reb = act("Rebuild", "reb", "Rebuild from the current messages the view", () => vwBuild(v, "user"));
+      const rm = act("Remove", "rm", "Remove the view", () => vwRemove(id));
+      ren.disabled = rm.disabled = busy;
+      reb.disabled = !!vwBusy || !S.sample || !v.prompt;
+      const sw = el("label", "vw-auto");
+      const cb = el("input");
+      cb.type = "checkbox";
+      cb.setAttribute("role", "switch");
+      cb.checked = !!v.auto;
+      cb.disabled = !v.prompt;
+      cb.dataset.f = "auto:" + id;
+      cb.setAttribute("aria-describedby", "vw-help");
+      cb.onchange = () => vwSetAuto(id, cb.checked);
+      sw.append(cb, "Keep up to date");
+      a.append(ren, reb, rm, sw);
+      const help = el(
+        "p",
+        "note vw-help",
+        "Rebuilds it after each refresh with new messages while this page is open; each rebuild uses your claude.ai usage.",
+      );
+      help.id = "vw-help";
+      b.append(a, help);
+    }
+    const st = el("p", "note vw-st");
+    st.setAttribute("role", "status");
+    if (busy)
+      st.append(
+        el("span", "spin"),
+        " ",
+        vwBusy.how === "auto" ? "Updating with the newest messages…" : "Rebuilding… this can take a minute.",
+      );
+    else {
+      /* a failed automatic update says why; Rebuild tries now, and the next import tries again by itself */
+      const x = vwSt.get(id) || (v.autoErr ? { t: errCopy(v.autoErr.code), err: true } : null);
+      if (x) st.textContent = x.t;
+      if (x && x.err) st.classList.add("err");
+    }
+    b.append(st);
+    return b;
+  }
+  /* Rename: inline, saved to views/<id>.title; a rebuild keeps it. Enter saves, Escape cancels. No form element: a
+     sandboxed frame may block form submission, and with it the submit event. */
+  function vwRenStart(v) {
+    vwRen = { id: v._id, value: vwName(v) };
+    vwSt.delete(v._id);
+    renderViews(true);
+    const i = $("#views-list .vw-ren input");
+    if (i) {
+      i.focus();
+      i.select();
+    }
+  }
+  function vwRenForm(v, what) {
+    const f = el("div", "vw-ren");
+    const i = el("input");
+    i.type = "text";
+    i.maxLength = 80;
+    i.value = vwRen.value;
+    i.dataset.f = "name:" + v._id;
+    i.setAttribute("aria-label", "New name for the view " + what);
+    i.oninput = () => (vwRen.value = i.value);
+    i.onkeydown = e => {
+      if (e.isComposing) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        vwRenSave(v._id);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        vwRenEnd(v._id);
+      }
+    };
+    const save = el("button", "secondary", "Save");
+    save.type = "button";
+    save.onclick = () => vwRenSave(v._id);
+    const no = el("button", "link", "Cancel");
+    no.type = "button";
+    no.onclick = () => vwRenEnd(v._id);
+    f.append(i, save, no);
+    return f;
+  }
+  function vwRenEnd(id) {
+    vwRen = null;
+    renderViews();
+    const b = [...$("#views-list").querySelectorAll("[data-f]")].find(x => x.dataset.f === "ren:" + id);
+    if (b) b.focus();
+  }
+  async function vwRenSave(id) {
+    if (!vwRen || vwRen.id !== id) return;
+    const v = S.views.find(x => x._id === id);
+    const t = vwRen.value.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!v || !t || t === vwName(v) || !S.db) return vwRenEnd(id);
+    const old = v.title;
+    v.title = t;
+    vwRenEnd(id);
+    try {
+      await S.db.doc("views/" + id).update({ title: t });
+    } catch (e) {
+      const cur = S.views.find(x => x._id === id);
+      if (cur && cur.title === t) cur.title = old;
+      vwSt.set(id, { t: "Couldn't rename it. Try again.", err: true });
+      renderViews();
+    }
+  }
+  async function vwSetAuto(id, on) {
+    const v = S.views.find(x => x._id === id);
+    if (!v || !S.db) return;
+    const was = !!v.auto;
+    v.auto = on;
+    v.autoErr = null;
+    vwSt.delete(id);
+    renderViews();
+    try {
+      await S.db.doc("views/" + id).update({ auto: on, autoErr: null });
+    } catch (e) {
+      const cur = S.views.find(x => x._id === id);
+      if (cur) cur.auto = was;
+      vwSt.set(id, { t: "Couldn't save that. Try again.", err: true });
+      renderViews();
+    }
+  }
+  /* Remove, as saved questions (F26): hidden at once with "Removed … · Undo" in #vw-undo, deleted after QA_UNDO_MS; a
+     failed delete brings it back with a short line. Closing the page or its going hidden deletes at once. */
+  function vwLine(text, err) {
+    const row = el("p", err ? "err" : null, text);
+    $("#vw-undo").append(row);
+    if (err) setTimeout(() => row.remove(), 8000);
+    return row;
+  }
+  function vwRemove(id) {
+    if (vwGone.has(id) || !S.db) return;
+    const what = "“" + qaShort(vwName(S.views.find(x => x._id === id))) + "”";
+    vwGone.add(id);
+    const wasOpen = vwOpen === id;
+    if (wasOpen) vwKeepOpen(null);
+    if (vwRen && vwRen.id === id) vwRen = null;
+    const row = vwLine("Removed " + what + " · ");
+    const u = el("button", "link", "Undo");
+    u.type = "button";
+    u.setAttribute("aria-label", "Undo: keep " + what);
+    row.append(u);
+    const P = { id, row, what, wasOpen };
+    P.timer = setTimeout(() => vwCommit(P), QA_UNDO_MS);
+    vwPending.add(P);
+    u.onclick = () => {
+      if (!vwPending.delete(P)) return;
+      clearTimeout(P.timer);
+      vwGone.delete(id);
+      row.remove();
+      if (P.wasOpen) vwKeepOpen(id);
+      renderViews();
+      const s = [...$("#views-list").querySelectorAll("[data-f]")].find(x => x.dataset.f === "open:" + id);
+      if (s) s.focus();
+    };
+    renderViews();
+    u.focus();
+  }
+  async function vwCommit(P) {
+    if (!vwPending.delete(P)) return;
+    clearTimeout(P.timer);
+    P.row.remove();
+    /* the delete starts before the first await: on pagehide only the code up to it runs */
+    try {
+      await S.db.doc("views/" + P.id).delete();
+      return;
+    } catch (e) {}
+    vwGone.delete(P.id);
+    renderViews();
+    vwLine("Couldn't remove " + P.what + ". It's back in the list.", true);
+  }
+  const vwFlush = () => [...vwPending].forEach(vwCommit);
+  addEventListener("pagehide", vwFlush);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") vwFlush();
+  });
+  /* Rebuild (how "user") and the automatic update ("auto"): the same request as Build view, over the current window,
+     replacing the content; the name, made, auto and the id stay. A failure keeps the old content. */
+  async function vwBuild(v, how) {
+    const id = v._id;
+    if (vwBusy || !S.sample || !S.db || !v.prompt) return;
+    const auto = how === "auto";
+    vwBusy = { id, how };
+    vwSt.delete(id);
+    renderViews();
+    const n0 = vwNewest();
+    const ref = S.db.doc("views/" + id);
+    try {
+      if (auto) {
+        const f = await ref.get();
+        const x = f.exists ? f.data() : null;
+        const other = x && x.autoBusy && x.autoBusy.tab !== TAB && Date.now() - Date.parse(x.autoBusy.at || 0) < 180000;
+        if (!x || !x.auto || vwTo(x) >= n0 || other || vwGone.has(id)) return;
+        await ref.update({ autoBusy: { tab: TAB, at: new Date().toISOString() } });
+      }
+      await capWait();
+      const { res, P, retried } = await sendFitted(
+        cap => viewPrompt(v.prompt, cap),
+        m => S.sample.json(m.text),
+      );
+      const c = vwContent(res);
+      const f = await ref.get();
+      if (!f.exists || vwGone.has(id)) return;
+      const old = f.data();
+      const at = new Date().toISOString();
+      const next = Object.assign({}, old, {
+        title: old.title || c.title,
+        intro: c.intro,
+        sections: c.sections,
+        at,
+        made: old.made || old.at || at,
+        toI: n0 >= 0 ? n0 : null,
       });
+      ["sent", "autoAt", "autoAfter", "autoErr", "autoBusy"].forEach(k => delete next[k]);
+      const sent = sentOf(P);
+      if (sent) next.sent = sent;
+      if (auto) {
+        next.autoAt = at;
+        /* the refresh that stored the new messages: it finished after this view was last built */
+        const rr = S.refresh;
+        if (rr && rr.state === "done" && rr.finishedAt && Date.parse(rr.finishedAt) > Date.parse(old.at || 0))
+          next.autoAfter = rr.finishedAt;
+      }
+      next.kind = "view";
+      await ref.set(next);
+      vwNotes.set(id, sentNote(P, true, retried));
+    } catch (e) {
+      const code = (e && e.code) || null;
+      if (auto)
+        try {
+          await ref.update({ autoErr: { at: new Date().toISOString(), code, toI: n0 }, autoBusy: null });
+        } catch (e2) {
+          vwSt.set(id, { t: errCopy(code) + " The earlier version stays.", err: true });
+        }
+      else vwSt.set(id, { t: errCopy(code), err: true });
+    } finally {
+      vwBusy = null;
+      renderViews();
+    }
+  }
+  /* Keep up to date: one view at a time, the one furthest behind first; waits while a refresh runs (its import may not
+     be done, and the "after the … refresh" line needs its end), while the user types on this tab, and a few seconds
+     more, so two open copies of the page seldom start together */
+  let vwAutoT = null,
+    vwDue0 = null;
+  const vwAutoMs = () => window.__mcViewAutoMs;
+  const vwRefreshing = () =>
+    !!S.refresh && S.refresh.state === "running" && (Date.now() - Date.parse(S.refresh.startedAt || 0)) / 60000 < 25;
+  const vwTyping = () => !!vwRen || (document.activeElement === $("#view-in") && !!$("#view-in").value.trim());
+  function vwAutoSoon(ms = 0) {
+    clearTimeout(vwAutoT);
+    vwAutoT = setTimeout(vwAutoCheck, ms);
+  }
+  function vwAutoCheck() {
+    vwAutoT = null;
+    if (vwBusy) return; /* its end checks again */
+    const n = vwNewest();
+    const due =
+      S.db && S.sample && n >= 0
+        ? vwViews().filter(
+            v =>
+              v.auto && v.prompt && vwTo(v) < n && !(v.autoErr && v.autoErr.toI >= n) && !vwTried.has(v._id + ":" + n),
+          )
+        : [];
+    if (!due.length) return void (vwDue0 = null);
+    if (vwRefreshing() || vwTyping()) {
+      vwDue0 = null;
+      return vwAutoSoon(vwAutoMs() ?? 10000);
+    }
+    const v = due.sort((a, b) => vwTo(a) - vwTo(b))[0];
+    const key = v._id + ":" + n;
+    if (!vwDue0 || vwDue0.key !== key)
+      vwDue0 = { key, at: Date.now(), wait: vwAutoMs() ?? 3000 + Math.random() * 5000 };
+    const left = vwDue0.at + vwDue0.wait - Date.now();
+    if (left > 0) return vwAutoSoon(left);
+    vwDue0 = null;
+    vwTried.add(key);
+    vwBuild(v, "auto");
   }
 
   /* ---------- refresh ---------- */
@@ -9552,6 +10111,7 @@
     S.msgs = all;
     S.byI = new Map(all.map(m => [m.i, m]));
     indexPeople();
+    renderViews(); /* the days views cover, and keeping views up to date (F28) */
     keepPlace(() => {
       renderHeader();
       renderSummary();
@@ -9638,7 +10198,8 @@
     );
     db.collection("views").onSnapshot(
       q => {
-        S.views = q.docs.map(d => d.data());
+        S.views = q.docs.map(d => Object.assign({}, d.data(), { _id: d.id }));
+        S.viewsIn = true;
         renderViews();
       },
       () => {},
