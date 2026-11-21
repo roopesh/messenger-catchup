@@ -48,6 +48,13 @@
                                      After that write, AFTERDIR = a fresh `list digests`: every day the backup held is
                                      unchanged, every day written is there, and how many days still need one.
                                      The refresh skill's references/digests.md has both procedures.
+  catchup.py captions WORK RUNDIR [SPEC] [--max=N]
+                                     Captions for photos stored before (R13): RUNDIR holds `list photos` and `list
+                                     captions`. Without SPEC: the next N (50) stored photos with no caption, oldest first,
+                                     how to open each and the messages around it (RUNDIR/out/captions-todo.json and .txt).
+                                     With SPEC {"captions": {...}} alone, each slot a stored photo: writes
+                                     RUNDIR/out/manifest.json; WORK doesn't move. references/photos.md › Captions for
+                                     older photos.
 LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summary are collections of documents:
   threading/current {layout:2, block, blocks:[ids], to, note, builtAt, rev, summaryRev?, convs:[conversations with no
                    messages yet]}
@@ -87,6 +94,10 @@ SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or 
   the messages: reports/d<YYYY-MM-DD> {day, runs:[{at, fromI, toI, n, bullets:[{t, refs}]}], dropped?}, one run per
   day the build's messages cover (a run over midnight is split, each bullet going to the days it cites, with those
   refs); a run of the same messages already there is replaced; pinned when RUN holds that day),
+  "captions":{"<i>":{"<k>":"caption"}} (what photo slot k of message i shows, from the photo and the messages around
+  it: one line of at most 200 characters, trimmed; message i stored or in this build, with a photo; merged slot by
+  slot into captions/b<start> {start, byK:{"<i>":{"<k>":"caption"}}}, one per 500 messages, pinned when RUN's `list
+  captions` holds it),
   "relink":{"i":[parent,type] or null} (relink: messages an earlier build threaded; null removes the link),
   "move":{"i":"convid" or "new"} (a built message and its Messenger replies (r, rq, rg) into another conversation: an
   existing one, one in newconvs, or "new"; its own link must end up in that conversation or null. Messages linked to
@@ -206,7 +217,7 @@ BATCH_DOCS = 48  # documents per batch: the tool takes 50 writes, and the last b
 BATCH_BYTES = 900 * 1024  # the tool takes 1 MiB per batch
 LAYOUT_KEYS = ("layout", "block", "blocks", "activeFrom")
 BLOCK_ID = re.compile(r"^b\d{6,}-[0-9a-f]{8}$")
-FIXED_IDS = ("digests", "reports")  # collections whose documents keep their ids (a month, a day), written first
+FIXED_IDS = ("digests", "reports", "captions")  # collections whose documents keep their ids (a month, a day, a block)
 NEWEST_FIRST = ("convs", "open", "answered", "mentions")  # summary lists kept newest first; deals are oldest first
 SUMMARY_LISTS = NEWEST_FIRST + ("deals",)
 
@@ -1743,6 +1754,7 @@ def build(work, run, specp):
     _roundtrip(docs, t, s)
     digested = _digest_spec(sp, pool, run, docs, listing)  # digests/m<month> documents join docs (first batch)
     reported = _report_spec(sp, pool, ids, base, run, docs, listing)  # and reports/d<day> (F27)
+    captioned = _caption_spec(sp, pool, run, docs, listing)  # and captions/b<start> (R13)
     # _plan fails here, before anything is written, if a document is too big
     batches, cleanup = _plan(docs, listing)
     told = _write_out(run + "/out", docs, batches, cleanup, {"threading": t, "summary": s}, _pins(docs, listing))
@@ -1757,8 +1769,16 @@ def build(work, run, specp):
         st["chunks"] = sorted(set(chunks) | starts)
     _dump(st, work + "/state.json")
     print(
-        "build ok: #%d-#%d | %s | %s | %s | next STOPS=%s"
-        % (ids[0], ids[-1], dict(collections.Counter(joined.values())), digested, reported, json.dumps(st["stops"]))
+        "build ok: #%d-#%d | %s | %s | %s | %s | next STOPS=%s"
+        % (
+            ids[0],
+            ids[-1],
+            dict(collections.Counter(joined.values())),
+            digested,
+            reported,
+            captioned,
+            json.dumps(st["stops"]),
+        )
     )
     print("write: " + told)
 
@@ -2214,6 +2234,236 @@ def _report_spec(sp, pool, ids, base, run, docs, listing):
     )
 
 
+# Photo captions (R13): one line per stored photo, saying what it shows, written by Claude when it opens the photo, so
+# the page's search finds what only a photo shows. One document per 500 messages, like photos/b<start>:
+# captions/b<start> {start, byK:{"<i>":{"<k>":"caption"}}}. A build's `captions`, and `catchup.py captions` for older
+# photos, merge slot by slot into the block as listed: other captions in it are never lost.
+
+CAPTION_BLOCK = 500  # messages per captions document, as photos/b<start>
+CAPTION_MAX = 200  # characters in one caption (aim for about 160)
+CAPTION_BATCH = 50  # photos `catchup.py captions` lists per batch of the backfill
+CAPTION_ID = re.compile(r"^b\d+$")
+
+
+def _caption_listing(run):  # RUN's `list captions`: {doc id: document}
+    assert os.path.isdir(run + "/captions"), (
+        "%s has no captions/ folder: list the captions collection into it (list, limit 1000). If the collection is "
+        "empty and the list leaves no folder, create an empty %s/captions folder (references/photos.md › Looking)"
+        % (run, run)
+    )
+    return {k: v for k, v in _docs(run + "/captions").items() if CAPTION_ID.match(k)}
+
+
+def _caption_have(listed):  # the slots that already have a caption: {(i, k)}
+    return {
+        (int(i), int(k))
+        for d in listed.values()
+        for i, s in ((d or {}).get("byK") or {}).items()
+        if isinstance(s, dict) and re.fullmatch(r"\d+", str(i))
+        for k, c in s.items()
+        if isinstance(c, str) and c.strip() and re.fullmatch(r"\d+", str(k))
+    }
+
+
+def _caption_entries(sc, why):
+    """The spec's `captions` ({"<i>": {"<k>": "caption"}}), checked: -> {i: {k: caption}}, trimmed. why(i, k): None, or
+    why that photo slot can't take a caption."""
+    assert isinstance(sc, dict), 'captions: {"<i>": {"<k>": "caption"}}: message number, photo slot k, one line'
+    out = {}
+    for i, slots in sc.items():
+        assert re.fullmatch(r"0|[1-9]\d*", i), "captions: %r is not a message number" % (i,)
+        assert isinstance(slots, dict) and slots, (
+            'captions #%s: {"<k>": "caption"}, one entry per photo slot k (0 for its first photo)' % i
+        )
+        for k, c in slots.items():
+            assert re.fullmatch(r"0|[1-9]\d?", k), "captions #%s: %r is not a photo slot (0 to 99)" % (i, k)
+            w = why(int(i), int(k))
+            assert not w, "captions #%s/%s: %s" % (i, k, w)
+            assert isinstance(c, str) and c.strip(), "captions #%s/%s: a caption is a non-empty string" % (i, k)
+            c = c.strip()
+            assert not re.search(r"[\x00-\x1f\x7f  ]", c), (
+                "captions #%s/%s: a caption is one line of plain text (no line breaks or control characters): %r"
+                % (i, k, c)
+            )
+            assert len(c) <= CAPTION_MAX, "captions #%s/%s: %d characters, over %d: shorten it: %r" % (
+                i,
+                k,
+                len(c),
+                CAPTION_MAX,
+                c,
+            )
+            out.setdefault(int(i), {})[int(k)] = c
+    return out
+
+
+def _caption_docs(entries, listed):
+    """The block documents to write: each as the listing holds it, with these captions merged in slot by slot.
+    -> (docs, how many slots had no caption before)"""
+    docs, fresh = {}, 0
+    num = lambda kv: int(kv[0]) if re.fullmatch(r"\d+", str(kv[0])) else -1
+    for i in sorted(entries):
+        start = i // CAPTION_BLOCK * CAPTION_BLOCK
+        p = "captions/b%d" % start
+        if p not in docs:
+            d = copy.deepcopy(listed.get(p.split("/")[1]) or {})
+            d["start"] = start
+            d["byK"] = d["byK"] if isinstance(d.get("byK"), dict) else {}
+            docs[p] = d
+        bk = docs[p]["byK"]
+        old = bk.get(str(i)) if isinstance(bk.get(str(i)), dict) else {}
+        fresh += sum(1 for k in entries[i] if not (isinstance(old.get(str(k)), str) and old[str(k)].strip()))
+        bk[str(i)] = dict(sorted(dict(old, **{str(k): c for k, c in entries[i].items()}).items(), key=num))
+    for d in docs.values():
+        d["byK"] = dict(sorted(d["byK"].items(), key=num))
+    return docs, fresh
+
+
+def _caption_spec(sp, pool, run, docs, listing):
+    """A build's `captions`: checked, their block documents added to docs and listing. -> a line on what it saved."""
+    if not sp.get("captions"):
+        return "0 captions"
+
+    def why(i, k):
+        m = pool.get(i)
+        if m is None:
+            return "no stored message, or message in this build, has that number"
+        return None if m.get("p") else "that message has no photo"
+
+    listed = _caption_listing(run)
+    entries = _caption_entries(sp["captions"], why)
+    cd, fresh = _caption_docs(entries, listed)
+    docs.update(cd)
+    listing["captions"] = listed
+    n = sum(map(len, entries.values()))
+    return "%d caption%s (%d new, %d replaced)" % (n, "" if n == 1 else "s", fresh, n - fresh)
+
+
+def _photo_slots(run):
+    """RUN's `list photos`: the stored photo slots, {(i, k): (value, preview)}. value "/_blob/<id>" (an asset of its
+    own) or "/_blob/<pack>#<n>" (item n of a pack), preview the block's pv[i][k] or None. The old photos/index is
+    read under the blocks, as the page does."""
+    assert os.path.isdir(run + "/photos"), (
+        "%s has no photos/ folder: list the photos collection into it (list, limit 1000)" % run
+    )
+    docs = _docs(run + "/photos")
+    got = {}
+    idx = docs.get("index") or {}
+    ik = idx.get("byK") or {}
+    for i, l in (idx.get("byI") or {}).items():
+        if str(i) not in ik and isinstance(l, list):
+            for k, v in enumerate(l):
+                got[(int(i), k)] = (v, None)
+    for i, s in ik.items():
+        for k, v in (s or {}).items():
+            got[(int(i), int(k))] = (v, None)
+    for did in sorted((x for x in docs if CAPTION_ID.match(x)), key=lambda x: int(x[1:])):
+        d = docs[did] or {}
+        pv = d.get("pv") or {}
+        for i, s in (d.get("byK") or {}).items():
+            for k, v in (s or {}).items():
+                if isinstance(v, str) or (int(i), int(k)) not in got:
+                    got[(int(i), int(k))] = (v, ((pv.get(i) or {}).get(k)))
+    return {ik_: v for ik_, v in got.items() if isinstance(v[0], str) and v[0].startswith("/_blob/")}
+
+
+def _how_to_open(v, pv):
+    """How Claude opens a stored photo: {asset} for a file of its own, {pack, n} for item n of a pack (with
+    {preview, pn}: item pn of its small preview pack, the cheap one to read)."""
+    ref = v[len("/_blob/") :]
+    if "#" not in ref:
+        return {"asset": ref}
+    pack, n = ref.split("#", 1)
+    o = {"pack": pack, "n": int(n) if n.isdigit() else n}
+    if isinstance(pv, str) and pv.startswith("/_blob/") and "#" in pv:
+        a, b = pv[len("/_blob/") :].split("#", 1)
+        o.update(preview=a, pn=int(b) if b.isdigit() else b)
+    return o
+
+
+def _caption_context(i, pool, th):
+    """The lines Claude reads beside photo i: the message, what it replies to, its conversation's messages around it,
+    and messages up to 5 minutes either side."""
+    m = pool.get(i)
+    if m is None:
+        return ["  (#%d isn't in WORK: bootstrap WORK again)" % i]
+    want = {i}
+    L = (th.get("links") or {}).get(str(i))
+    if L:
+        want.add(L[0])
+    if m.get("pi") is not None:
+        want.add(m["pi"])
+    mem = next((sorted(c["members"]) for c in th.get("convs") or [] if i in c.get("members", [])), [])
+    if mem:
+        at = mem.index(i)
+        want.update(mem[max(0, at - 4) : at + 4])
+    for j in range(i - 6, i + 7):
+        if j in pool and abs(_min(pool[j]) - _min(m)) <= 5:
+            want.add(j)
+    title = next((c.get("title") for c in th.get("convs") or [] if i in c.get("members", [])), None)
+    out = ['  in "%s"' % title] if title else []
+    return out + ["  %s %s" % ("*" if j == i else " ", _day_line(pool[j])) for j in sorted(want) if j in pool]
+
+
+def captions_cmd(work, run, specp=None, most=CAPTION_BATCH):
+    """`catchup.py captions WORK RUN [SPEC] [--max=N]`: captions for photos stored before this skill wrote them
+    (references/photos.md › Captions for older photos). RUN holds `list photos` and `list captions`. Without SPEC:
+    the next photos with no caption, oldest first, in RUN/out/captions-todo.json and, with the messages around each,
+    captions-todo.txt. With SPEC {"captions": {...}}: checked against the stored photos, merged into their blocks, and
+    RUN/out/manifest.json written; WORK doesn't move."""
+    global TZ
+    TZ = _load(work + "/state.json").get("tz") or TZ
+    slots = _photo_slots(run)
+    listed = _caption_listing(run)
+    have = _caption_have(listed)
+    todo = sorted(set(slots) - have)
+    out = os.path.join(run, "out")
+    if specp is None:
+        pool = _pool(work, run)
+        th = _load(work + "/base/threading.json")
+        take = todo[:most]
+        rows = [dict({"i": i, "k": k}, **_how_to_open(*slots[(i, k)])) for i, k in take]
+        os.makedirs(out, exist_ok=True)
+        _dump(rows, os.path.join(out, "captions-todo.json"))
+        with open(os.path.join(out, "captions-todo.txt"), "w", encoding="utf-8") as fh:
+            for x in rows:
+                how = (
+                    "asset %s" % x["asset"]
+                    if "asset" in x
+                    else "preview %s item %s" % (x["preview"], x["pn"])
+                    if "preview" in x
+                    else "pack %s item %s (no preview)" % (x["pack"], x["n"])
+                )
+                fh.write("#%d/%d: %s\n" % (x["i"], x["k"], how))
+                fh.write("\n".join(_caption_context(x["i"], pool, th)) + "\n\n")
+        print(
+            "captions todo: %d of %d stored photo%s without a caption%s: %s"
+            % (
+                len(take),
+                len(todo),
+                "" if len(todo) == 1 else "s",
+                ", oldest first (#%d to #%d)" % (take[0][0], take[-1][0]) if take else "",
+                os.path.join(out, "captions-todo.txt") if take else "every stored photo has a caption: done",
+            )
+        )
+        return
+    sp = _load(specp)
+    assert set(sp) == {"captions"}, 'captions SPEC takes only "captions" (a refresh puts them in the build spec)'
+    entries = _caption_entries(
+        sp["captions"], lambda i, k: None if (i, k) in slots else "no stored photo in that slot (RUN/photos)"
+    )
+    docs, fresh = _caption_docs(entries, listed)
+    listing = {"captions": listed}
+    batches, cleanup = _plan(docs, listing)  # fails here, before anything is written, if a document is too big
+    told = _write_out(out, docs, batches, cleanup, {}, _pins(docs, listing))
+    n = sum(map(len, entries.values()))
+    left = len(set(todo) - {(i, k) for i in entries for k in entries[i]})
+    print(
+        "captions ok: %d caption%s (%d new, %d replaced); %d stored photo%s still without one"
+        % (n, "" if n == 1 else "s", fresh, n - fresh, left, "" if left == 1 else "s")
+    )
+    print("write: " + told)
+
+
 # restore-summary: put back what sessions before v1.17 dropped from the summary, from their copy in `backups`
 
 PART_META = ("part", "of", "what", "savedAt")
@@ -2607,6 +2857,12 @@ if __name__ == "__main__":
         days_cmd(a[0].rstrip("/"), a[1].rstrip("/"), "--backfill" in sys.argv[2:], mx[0] if mx else None)
     elif cmd == "digests":
         digests_cmd(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4])
+    elif cmd == "captions":
+        a = [x for x in sys.argv[2:] if not x.startswith("--")]
+        mx = [int(x.split("=", 1)[1]) for x in sys.argv[2:] if x.startswith("--max=")]
+        if len(a) not in (2, 3):
+            sys.exit(__doc__)
+        captions_cmd(a[0].rstrip("/"), a[1].rstrip("/"), a[2] if len(a) == 3 else None, mx[0] if mx else CAPTION_BATCH)
     elif cmd == "check-digests":
         check_digests(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4].rstrip("/"))
     elif cmd == "restore-summary":

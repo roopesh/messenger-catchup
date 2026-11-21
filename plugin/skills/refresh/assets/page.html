@@ -643,6 +643,19 @@
   .msg.own {
     background: var(--accent-soft);
   }
+  /* R13: under a message the filter found by a photo's caption */
+  .msg .caphit {
+    font-size: 0.8rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .lb .lbcap {
+    color: #fff;
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 6px 4px 0;
+    overflow-wrap: anywhere;
+  }
   .pt:empty {
     display: none;
   }
@@ -2286,7 +2299,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.5";
+  const PAGE_VERSION = "3.6";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -2389,6 +2402,7 @@
     views: [],
     rangeSums: {},
     digests: new Map() /* "YYYY-MM-DD" -> that day's digest (digests/m<YYYY-MM>, written by catchup.py) */,
+    caps: null /* R13: caps[i][k] = what photo slot k of message i shows (captions/b<start>, written by catchup.py) */,
   };
 
   /* ---------- routing ---------- */
@@ -2888,10 +2902,12 @@
   function lineFor(m) {
     let s = "#" + m.i + " [" + m.t + "] " + nameOf(m);
     if (m.r) s += " (replying to " + m.r + (m.q ? ': "' + cutCp(m.q.replace(/\s+/g, " "), 120) + '"' : "") + ")";
+    /* R13: what its photos show, so Ask and Views can find a thing that's only in a photo */
+    const cs = capsOf(m.i).map(c => cutCp(c, 200));
     s +=
       ": " +
       (m.b || "") +
-      (m.p ? " [photo]" : "") +
+      (cs.length ? " [photo: " + cs.join(" | ") + "]" : m.p ? " [photo]" : "") +
       (m.a ? " [link preview: " + cutCp(m.a.replace(/\s+/g, " "), 240) + "]" : "") +
       (m.l ? " " + m.l.join(" ") : "") +
       (m.x ? " {reactions: " + m.x + "}" : "");
@@ -5041,6 +5057,7 @@
     if (m.q && !o.xr && (layout === "flat" || showQuote)) c.append(el("div", "quote", m.q));
     if (m.b && !/^\w[\w ]* sent \d+ photos$/.test(m.b)) c.append(el("div", "body", m.b));
     const pics = (S.photos && S.photos[m.i]) || [];
+    const caps = capsFor(m.i);
     if (pics.length) {
       const pw = el("div", "pics" + (pics.length > 2 ? " many" : ""));
       pics.forEach((u, k) => {
@@ -5049,11 +5066,12 @@
         a.title = "View full size";
         a.onclick = e => {
           e.preventDefault();
-          lightbox(pics, k, "#" + m.i + " · " + nameOf(m) + " · " + m.t);
+          lightbox(pics, k, "#" + m.i + " · " + nameOf(m) + " · " + m.t, caps);
         };
         const im = el("img");
         im.src = u;
-        im.alt = "Photo " + (k + 1) + " from " + nameOf(m);
+        im.alt = caps[k] || "Photo " + (k + 1) + " from " + nameOf(m);
+        if (caps[k]) im.title = caps[k];
         im.loading = "lazy";
         a.append(im);
         pw.append(a);
@@ -5083,7 +5101,8 @@
     return r;
   }
   /* Full-size photo viewer on the page itself: opening the image URL in a new tab fails outside the artifact frame. */
-  function lightbox(urls, k, cap) {
+  /* caps (R13): each photo's caption, in the order of urls, shown as a line under it */
+  function lightbox(urls, k, cap, caps = []) {
     let o = $("#lb");
     if (o) o.remove();
     o = el("div", "lb");
@@ -5102,10 +5121,13 @@
     const prev = el("button", null, "‹ Prev"),
       next = el("button", null, "Next ›");
     if (urls.length > 1) nav.append(prev, next);
+    const capEl = el("div", "lbcap");
     const show = () => {
       im.src = urls[k];
-      im.alt = "Photo " + (k + 1) + " of " + urls.length;
+      im.alt = caps[k] || "Photo " + (k + 1) + " of " + urls.length;
       lab.textContent = cap + (urls.length > 1 ? " · " + (k + 1) + "/" + urls.length : "");
+      capEl.textContent = caps[k] || "";
+      capEl.hidden = !caps[k];
     };
     const close = () => {
       o.remove();
@@ -5127,10 +5149,68 @@
       if (e.target === o || e.target === st) close();
     };
     addEventListener("keydown", key);
-    o.append(bar, st, nav);
+    o.append(bar, st, capEl, nav);
     document.body.append(o);
     show();
     x.focus();
+  }
+  /* ---------- R13: photo captions ----------
+     Claude writes one line per stored photo, saying what it shows, when it looks at the photo on a refresh:
+     captions/b<start> {start, byK:{"<i>":{"<k>":"caption"}}}, one document per 500 messages. The Messages filter finds a
+     message by its photos' captions as well as its text, Ask and Views read them in the message lines, and they're each
+     photo's alt and title and the line under it in the viewer. Stats' word trends count only what people wrote, and the
+     phrase for Messenger's own search is the text alone, so neither uses them. */
+  function mergeCaps(docs) {
+    const out = Object.create(null);
+    Object.keys(docs || {})
+      .filter(id => /^b\d+$/.test(id))
+      .forEach(id => {
+        const bk = (docs[id] || {}).byK;
+        if (!bk || typeof bk !== "object") return;
+        Object.entries(bk).forEach(([i, m]) => {
+          if (!/^\d+$/.test(i) || !m || typeof m !== "object") return;
+          Object.entries(m).forEach(([k, c]) => {
+            const t = typeof c === "string" ? c.replace(/\s+/g, " ").trim() : "";
+            if (/^\d+$/.test(k) && t) (out[i] || (out[i] = Object.create(null)))[k] = t;
+          });
+        });
+      });
+    return out;
+  }
+  /* message i's captions in slot order, whether or not the photo is stored here */
+  function capsOf(i) {
+    const c = S.caps && S.caps[i];
+    return c
+      ? Object.keys(c)
+          .sort((a, b) => a - b)
+          .map(k => c[k])
+      : [];
+  }
+  /* message i's captions lined up with its stored photos (S.photos[i] skips slots that are owed or given up) */
+  function capsFor(i) {
+    const c = S.caps && S.caps[i],
+      m = S.photoK && S.photoK[i];
+    if (!c || !m) return [];
+    return Object.keys(m)
+      .sort((a, b) => a - b)
+      .filter(k => isStored(m[k]))
+      .map(k => c[k] || "");
+  }
+  /* the captions of message i that hold q (lower case) */
+  function capHits(i, q) {
+    return q ? capsOf(i).filter(t => t.toLowerCase().includes(q)) : [];
+  }
+  /* under each row the filter found by a caption, the caption it matched */
+  function markCapHits(box, q) {
+    if (!q || !S.caps) return;
+    box.querySelectorAll(".msg[id^='m']").forEach(r => {
+      const hits = capHits(+r.id.slice(1), q);
+      const c = r.querySelector(":scope > .c");
+      if (!hits.length || !c) return;
+      const d = el("div", "caphit", "📷 caption: " + hits.join(" · "));
+      d.title = "Found in what this photo shows (a caption Claude wrote)";
+      c.insertBefore(d, c.querySelector(":scope > .sub"));
+    });
   }
   function norm(s) {
     return (s || "").replace(/…$/, "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -5434,13 +5514,15 @@
     let list = span ? S.msgs.slice(span.a, span.b + 1) : S.msgs.filter(m => all || inWindow(m));
     /* "#123" finds message 123 */
     const qn = /^#\d+$/.test(q) ? +q.slice(1) : null;
+    /* R13: or what one of its photos shows (its caption) */
     const match = m =>
       !q ||
       (qn != null
         ? m.i === qn
         : (m.f + " " + (fullOf(m) || "") + " " + (m.b || "") + " " + (m.a || "") + " " + (m.r || ""))
             .toLowerCase()
-            .includes(q));
+            .includes(q) || capHits(m.i, q).length > 0);
+    const capQ = qn == null ? q : "";
     if (!S.msgs.length) {
       box.append(el("div", "empty", "No messages stored yet."));
       return;
@@ -5451,11 +5533,13 @@
       flatRows(shown, box, m => (m.i === ws + 1 && all ? el("div", "divider", "Catch-up window starts") : null));
       $("#msg-note").textContent = shown.length + " messages" + (q ? " matching" : "") + ".";
       box.dataset.mode = "flat";
+      markCapHits(box, capQ);
       if (span) olderEdges(span);
       return;
     }
     if (S.threading && renderConversations(list, match, !!span)) {
       box.dataset.mode = "conv";
+      markCapHits(box, capQ);
       if (span) olderEdges(span);
       return;
     }
@@ -5503,6 +5587,7 @@
       " reply threads (" +
       linked +
       " replies matched to the message they answer). Replies whose original isn't stored show on their own.";
+    markCapHits(box, capQ);
     if (span) olderEdges(span);
   }
 
@@ -6056,7 +6141,7 @@
     cut: true,
   };
   const LINE_FMT =
-    'one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo], link previews, links and {reactions}. Senders use group nicknames.';
+    'one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions}. Senders use group nicknames.';
   /* "What you have": which messages are word for word, which are summaries, and what's left out */
   function haveText(P) {
     const none = "- MESSAGES: none" + (P.win ? " (the catch-up window is empty)" : "") + ".";
@@ -11173,6 +11258,7 @@
       q => {
         const M = q.docs.length ? mergePhotos(collDocs(q)) : null;
         S.photos = M ? M.byI : null;
+        S.photoK = M ? M.byK : null; /* R13: which slot each stored photo is, for its caption */
         S.gifs = M ? M.gifs : new Set();
         /* the summary shows photos too: in snippets and in context blocks */
         keepPlace(() => {
@@ -11180,6 +11266,17 @@
           renderSummary();
         });
         renderStats();
+      },
+      () => {},
+    );
+    /* R13: photo captions (captions/b<start>, written by Claude's refresh): searched with the text, shown on the photo */
+    db.collection("captions").onSnapshot(
+      q => {
+        S.caps = mergeCaps(collDocs(q));
+        keepPlace(() => {
+          renderMessages();
+          renderSummary();
+        });
       },
       () => {},
     );
