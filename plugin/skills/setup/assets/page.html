@@ -2367,7 +2367,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.8";
+  const PAGE_VERSION = "3.9";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -8666,10 +8666,12 @@
      (each message's d) is finished once it ends at or before the start of yesterday in meta/chat.tz, and waits while
      any slot of its messages is owed. A pack is uploaded, fetched back and checked against every original's SHA-256
      before its slots are repointed: byK[i][k] = "/_blob/<full>#<n>" and pv[i][k] = "/_blob/<preview>#<n>" (n = the
-     item's place in its pack). Only once the repoint reads back are the originals deleted. photos/packs keeps the list
-     of packs {full, pv, day, part, n, bytes, pvBytes, at} (release 2 moves old packs to archive pages), the last error
-     (err) and how many originals couldn't be deleted (orphans; Cleanup finds them). Tests shorten the timings with
-     window.__mcPackTune; nothing in production sets it. */
+     item's place in its pack). Only once the repoint reads back, and the whole photos collection read fresh shows no
+     slot, preview or pack entry still using an original (photoRefs), is it deleted. photos/packs keeps the list of
+     packs {full, pv, day, part, n, bytes, pvBytes, at} (release 2 moves old packs to archive pages), the last error
+     (err), how many originals were refused deletion for good (orphans; Cleanup finds them), the leftover sweep's
+     progress (reclaim, below) and busy {tab, at} while a tab holds the lease to pack or sweep. Tests shorten the
+     timings with window.__mcPackTune; nothing in production sets it. */
   const PACK_TUNE = Object.freeze(
     Object.assign(
       {
@@ -8687,6 +8689,7 @@
         uploadTimeoutMs: 300000,
         lockMin: 20,
         staleUploadMs: 600000,
+        sweepMax: 25,
       },
       window.__mcPackTune || {},
     ),
@@ -8698,6 +8701,7 @@
     next: 0,
     wait: null,
     day: null,
+    sweep: false /* checking a pack for leftover originals now */,
     err: null,
     backoff: 0,
     skip: new Set() /* "i.k" slots this tab couldn't read, or too big for a pack: they stay as they are */,
@@ -8926,16 +8930,53 @@
       return "the previews don't match";
     return null;
   }
-  /* photos/packs, merged with a fresh read: f(current) gives the fields to change */
+  /* photos/packs, merged with a fresh read: f(current) gives the fields to change (none: nothing is written) */
   async function packRecord(f) {
     const ref = S.db.doc("photos/packs");
     const g = await ref.get();
     const cur = (g.exists && g.data()) || {};
-    await ref.set(Object.assign({}, cur, f(cur)));
+    const ch = f(cur);
+    if (Object.keys(ch).length) await ref.set(Object.assign({}, cur, ch));
+  }
+  /* The whole photos collection, read fresh, as {id: data}; null when the read fails or lacks a document the live
+     snapshot holds (then nothing is deleted: a check in doubt keeps every file) */
+  async function photoDocs() {
+    try {
+      const d = collDocs(await S.db.collection("photos").get());
+      return (S.photoIds || []).every(id => id in d) ? d : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  /* The asset ids the photos documents still use (docs: the whole collection), by Cleanup's rule (references/photos.md
+     › Cleanup, step 2): every "/_blob/<id>", with any "#<n>" removed, plus the full and pv of every photos/packs entry
+     and the originals the leftover sweep kept (reclaim.keep). The old index counts as the page shows it, merged under
+     the blocks, so a slot a block has since pointed at a pack no longer uses the original the old index still names.
+     Up to v1.31.2 each block was merged with the old index on its own, so a day across blocks kept all its originals.
+     Every other document counts as it is, field by field. */
+  function photoRefs(docs) {
+    const refs = new Set();
+    const walk = v => {
+      if (typeof v === "string") {
+        const m = /^\/_blob\/([^#?\s/]+)/.exec(v);
+        if (m) refs.add(m[1]);
+      } else if (v && typeof v === "object") Object.values(v).forEach(walk);
+    };
+    const M = mergePhotos(docs);
+    walk(M.byK);
+    walk(M.pv);
+    Object.keys(docs).forEach(id => id !== "index" && walk(docs[id]));
+    const P = docs.packs || {};
+    const bare = x => typeof x === "string" && x && refs.add(x);
+    (Array.isArray(P.list) ? P.list : []).forEach(e => e && [e.full, e.pv].forEach(bare));
+    const keep = (P.reclaim || {}).keep;
+    (Array.isArray(keep) ? keep : []).forEach(bare);
+    return refs;
   }
   /* Points the part's slots at the packs, block by block, each write only the slots it changes (update merges, so
      slots another tab holds are untouched), and only slots that still hold their original. Read back: landed = the
-     items whose slot now holds its pack; refs = every plain id the re-read blocks (over the old index) still use. */
+     items whose slot now holds its pack; refs = every id the photos documents still use (photoRefs), read whole once
+     every block is written, or null if that read fails (nothing is deleted then; the leftover sweep takes them). */
   async function packRepoint(part, fu, pu, pvs) {
     const fullV = n => "/_blob/" + fu.id + "#" + n;
     const pvV = n => "/_blob/" + pu.id + "#" + n;
@@ -8944,7 +8985,6 @@
     const ig = await S.db.doc("photos/index").get();
     const idx = ig.exists ? ig.data() : null;
     const landed = [];
-    const refs = new Set();
     for (const id of Object.keys(by).sort()) {
       const ref = S.db.doc("photos/" + id);
       const g = await ref.get();
@@ -8972,13 +9012,14 @@
       const g2 = await ref.get();
       const M2 = mergePhotos({ index: idx, [id]: g2.exists ? g2.data() : {} });
       mine.forEach(n => (M2.byK[part[n].i] || {})[part[n].k] === fullV(n) && landed.push(n));
-      Object.values(M2.byK).forEach(m => Object.values(m).forEach(v => plainId(v) && refs.add(plainId(v))));
     }
-    return { landed, refs };
+    const D = await photoDocs();
+    return { landed, refs: D ? photoRefs(D) : null };
   }
   /* One part of a day: previews, both packs uploaded, read back and checked, then the repoint; a pack that fails its
      check (or anything before the repoint lands) is deleted and the originals stay. After the repoint, the photos/packs
-     entry, then the originals no slot uses any more are deleted one at a time; one that won't delete is an orphan. */
+     entry, then the originals nothing uses any more are deleted one at a time. A delete that fails stops that, and the
+     leftover sweep (reclaimStep) takes the rest; a part that leaves nothing behind marks its entry checked. */
   async function packPart(day, part, assets, guard) {
     const pvs = [];
     for (const it of part) {
@@ -9033,22 +9074,31 @@
       await packRecord(cur => {
         const list = Array.isArray(cur.list) ? cur.list : [];
         const e = { full: fu.id, pv: pu.id, day, part: list.filter(x => x.day === day).length + 1, n: part.length };
-        return { list: list.concat(Object.assign(e, { bytes: full.length, pvBytes: prev.length, at })) };
+        const o = { list: list.concat(Object.assign(e, { bytes: full.length, pvBytes: prev.length, at })) };
+        if (cur.busy && cur.busy.tab === TAB) o.busy = { tab: TAB, at };
+        return o;
       });
     } catch (e) {} /* the blocks' byK and pv name the packs too, so Cleanup still keeps them */
-    const gone = [...new Set(landed.map(n => part[n].id))].filter(id => !refs.has(id));
-    let orphans = 0;
-    for (const id of gone) {
+    /* only once the fresh read shows the new pack in use, and only originals it shows nothing using */
+    const gone = refs && refs.has(fu.id) ? [...new Set(landed.map(n => part[n].id))].filter(id => !refs.has(id)) : null;
+    let left = !gone;
+    for (const id of gone || []) {
       try {
         await assets.delete(id);
       } catch (e) {
-        orphans++;
+        left = true;
+        break;
       }
       await packWait(PACK_TUNE.delMs);
     }
-    if (orphans)
+    if (!left)
       try {
-        await packRecord(cur => ({ orphans: (+cur.orphans || 0) + orphans }));
+        await packRecord(cur => {
+          const list = Array.isArray(cur.list) ? cur.list : [];
+          const k = list.findIndex(x => x && x.full === fu.id);
+          if (k < 0 || reclaimFrom(cur) !== k) return {};
+          return { reclaim: Object.assign({}, cur.reclaim, { checked: k + 1, last: fu.id }) };
+        });
       } catch (e) {}
     if (landed.length < part.length)
       throw packErr(
@@ -9059,10 +9109,9 @@
           " couldn't be pointed at the pack; they stay as they are until the next try",
       );
   }
-  /* Packs one day, in parts of about partBytes of photos (an upload takes at most 20 MiB), holding the lease the whole
-     time; guard() stops it before the next step once the lease is lost or packing is switched off. */
-  async function packDay(x, assets) {
-    const T = PACK_TUNE;
+  /* f(guard) holding the import lease as packing's holder, renewed every beatMs; guard() throws before the next step
+     once the lease is lost or packing is switched off */
+  async function packHeld(f) {
     let lost = false;
     const guard = () => {
       if (lost) throw packErr("lease", "another import took over");
@@ -9072,6 +9121,16 @@
       if (!lost && !(await packLease(IMPORT_TUNE.leaseMs)).ok) lost = true;
     }, IMPORT_TUNE.beatMs);
     try {
+      return await f(guard);
+    } finally {
+      clearInterval(timer);
+    }
+  }
+  /* Packs one day, in parts of about partBytes of photos (an upload takes at most 20 MiB), holding the lease the whole
+     time (packHeld). */
+  function packDay(x, assets) {
+    const T = PACK_TUNE;
+    return packHeld(async guard => {
       let part = [],
         size = 0;
       for (const s of x.slots) {
@@ -9102,9 +9161,188 @@
         size += buf.byteLength;
       }
       if (part.length) await packPart(x.day, part, assets, guard);
-    } finally {
-      clearInterval(timer);
+    });
+  }
+
+  /* ---------- leftover originals (v1.31.3) ----------
+     Up to v1.31.2 a day whose photos sat in more than one block kept its originals after packing when the old
+     photos/index named them (each block was checked on its own over the old index), and a delete that fails or a tab
+     closed mid-way leaves some too. While packing is on, with no day ready to pack, the page removes them under the
+     same lease and waits as packing, a batch at a time: photos/packs' entries in order, from reclaim.checked. An
+     original goes only when (a) nothing in the photos documents, read fresh, uses it (photoRefs), (b) it's an item of
+     that entry's full pack, which reads back as a full pack of that day with every photo matching its SHA-256, (c) its
+     slot shows that very item (byK[i][k] = "/_blob/<full>#<n>"), and (d) its own bytes, read now, have the item's
+     SHA-256. A pack that fails (b) gives nothing up: its day goes in reclaim.bad and the originals it holds in
+     reclaim.keep, and so does an original failing (d); photoRefs counts kept ones as in use. A delete refused for good
+     (DEL_NEVER) is an orphan; any other failure stops the batch for a retry after the error backoff.
+     photos/packs.reclaim = {n (deleted so far), at (the last delete), checked (entries done), last (the full id of the
+     last one done: a list that changed under it is checked again from the start), keep, bad}. */
+  const DEL_NEVER = new Set([
+    "not_uploader",
+    "not_granted",
+    "invalid_request",
+    "capability_disabled",
+    "capability_removed",
+  ]);
+  function reclaimFrom(P) {
+    const list = Array.isArray(P && P.list) ? P.list : [];
+    const R = (P && P.reclaim) || {};
+    const k = Number.isInteger(R.checked) && R.checked > 0 && R.checked <= list.length ? R.checked : 0;
+    return k && (list[k - 1] || {}).full === R.last ? k : 0;
+  }
+  /* photos/packs entries still to check for leftovers */
+  const reclaimLeft = P => (Array.isArray(P && P.list) ? P.list.length : 0) - reclaimFrom(P);
+  /* (b): null when fb, a photos/packs entry's full pack read back, is a full pack of that day whose every photo has its
+     original id and matches its SHA-256; else what's wrong */
+  async function reclaimCheck(fb, e) {
+    if (!fb || fb.v !== 1 || fb.kind !== "full" || fb.day !== e.day || !Array.isArray(fb.items)) return "not a pack";
+    if (Number.isInteger(e.n) && fb.items.length !== e.n) return fb.items.length + " of " + e.n + " photos";
+    for (const a of fb.items) {
+      if (!a || typeof a.id !== "string" || typeof a.sha !== "string" || typeof a.b64 !== "string") return "a gap";
+      let got = "";
+      try {
+        got = await shaOf(b64Bytes(a.b64));
+      } catch (x) {}
+      if (got !== a.sha) return "a photo changed";
     }
+    return null;
+  }
+  /* One batch of the sweep: at most sweepMax originals of the next entry to check. true when there's more to do. */
+  async function reclaimStep(assets, guard) {
+    const g = await S.db.doc("photos/packs").get();
+    const P = (g.exists && g.data()) || {};
+    const list = Array.isArray(P.list) ? P.list : [];
+    const k = reclaimFrom(P);
+    if (k >= list.length) return false;
+    guard();
+    const D = await photoDocs();
+    if (!D) throw packErr("refs", "couldn't read the photo index to see which files are in use");
+    const refs = photoRefs(D);
+    const M = mergePhotos(D);
+    let L = null;
+    try {
+      L = await assets.list();
+    } catch (x) {}
+    if (!L || !Array.isArray(L.assets)) throw packErr("list", "couldn't list the page's files");
+    /* the listing, when it holds every file usage counts: an id not in it is gone (otherwise each is read to see) */
+    const have = L.usage && L.assets.length === L.usage.files ? new Set(L.assets.map(a => a && a.id)) : null;
+    const done = { n: 0, orphans: 0, keep: [], bad: [], checked: k, last: k ? list[k - 1].full : null };
+    const finish = n => {
+      done.checked = n;
+      done.last = list[n - 1].full;
+    };
+    try {
+      /* no file unused: nothing anywhere to reclaim */
+      if (have && [...have].every(id => refs.has(id))) {
+        finish(list.length);
+        return false;
+      }
+      const e = list[k] || {};
+      const title = isDay(e.day) ? dayTitle(e.day) : "a packed day";
+      let fb = null;
+      let bad = typeof e.full !== "string" || !/^[^#?\s/]+$/.test(e.full);
+      if (!bad) {
+        let r;
+        try {
+          r = await fetch("/_blob/" + e.full);
+        } catch (x) {
+          throw packErr("fetch", "couldn't read the pack for " + title + " to check it");
+        }
+        if (r.status === 404) bad = true;
+        else if (!r.ok)
+          throw packErr("fetch", "couldn't read the pack for " + title + " to check it (HTTP " + r.status + ")");
+        else {
+          try {
+            fb = await r.json();
+          } catch (x) {}
+          bad = !!(await reclaimCheck(fb, e));
+        }
+      }
+      /* what this pack leaves: items whose original nothing uses and that may still be stored */
+      const left = [];
+      (fb && Array.isArray(fb.items) ? fb.items : []).forEach((it, n) => {
+        const id = it && typeof it.id === "string" && /^[^#?\s/]+$/.test(it.id) ? it.id : null;
+        if (id && !refs.has(id) && (!have || have.has(id))) left.push({ it, n, id });
+      });
+      if (bad) {
+        if (isDay(e.day)) done.bad.push(e.day);
+        left.forEach(x => done.keep.push(x.id));
+        finish(k + 1);
+        return k + 1 < list.length;
+      }
+      /* a batch: sweepMax originals still stored (one already gone doesn't count, so every batch moves on) */
+      let used = 0;
+      for (const x of left) {
+        if ((M.byK[x.it.i] || {})[x.it.k] !== "/_blob/" + e.full + "#" + x.n) continue;
+        if (used >= PACK_TUNE.sweepMax) return true;
+        guard();
+        let r;
+        try {
+          r = await fetch("/_blob/" + x.id);
+        } catch (y) {
+          throw packErr("fetch", "couldn't read an original photo of " + title);
+        }
+        if (r.status === 404) continue;
+        if (!r.ok) throw packErr("fetch", "couldn't read an original photo of " + title + " (HTTP " + r.status + ")");
+        used++;
+        let got = "";
+        try {
+          got = await shaOf(await r.arrayBuffer());
+        } catch (y) {}
+        if (got !== x.it.sha) {
+          done.keep.push(x.id);
+          continue;
+        }
+        guard();
+        try {
+          const d = await assets.delete(x.id);
+          if (!d || d.deleted !== false) done.n++;
+        } catch (y) {
+          const c = (y && y.code) || "upstream_error";
+          if (!DEL_NEVER.has(c)) throw packErr(c, "couldn't delete an original photo of " + title + " (" + c + ")");
+          done.orphans++;
+        }
+        await packWait(PACK_TUNE.delMs);
+      }
+      finish(k + 1);
+      return k + 1 < list.length;
+    } finally {
+      if (done.n || done.orphans || done.keep.length || done.bad.length || done.checked !== k)
+        await packRecord(cur => {
+          const R = cur.reclaim || {};
+          const was = f => (Array.isArray(R[f]) ? R[f] : []);
+          const o = {
+            reclaim: Object.assign({}, R, {
+              n: (+R.n || 0) + done.n,
+              at: done.n ? new Date().toISOString() : R.at || null,
+              checked: done.checked,
+              last: done.last,
+              keep: [...new Set(was("keep").concat(done.keep))].slice(-1000),
+              bad: [...new Set(was("bad").concat(done.bad))].slice(-50),
+            }),
+          };
+          if (done.orphans) o.orphans = (+cur.orphans || 0) + done.orphans;
+          return o;
+        }).catch(() => {});
+    }
+  }
+  /* photos/packs.busy {tab, at} while this tab holds the lease to pack or sweep, so another copy can say what it waits for */
+  function packBusy(on) {
+    const at = new Date().toISOString();
+    return packRecord(cur =>
+      on ? { busy: { tab: TAB, at } } : cur.busy && cur.busy.tab === TAB ? { busy: null } : {},
+    ).catch(() => {});
+  }
+  /* the lease is busy: "packing is running in another open copy of this page" when photos/packs.busy names another tab
+     that wrote it in the last staleUploadMs (a closed tab's stops), else null */
+  async function packElsewhere() {
+    try {
+      const g = await S.db.doc("photos/packs").get();
+      const b = (g.exists && g.data().busy) || null;
+      if (b && b.tab !== TAB && Date.now() - Date.parse(b.at || 0) < PACK_TUNE.staleUploadMs)
+        return "packing is running in another open copy of this page";
+    } catch (e) {}
+    return null;
   }
   /* the page's asset usage, read now (save: also into meta/chat.assetUsage when it changed) */
   async function packUsage(assets, save) {
@@ -9150,8 +9388,9 @@
     } else if (!PK.timer && !PK.busy) packSoon(PACK_TUNE.startMs);
     renderPack();
   }
-  /* One step of the loop: pack the oldest day that's ready, if nothing holds things up. Next step: soon after a day,
-     waitMs while something holds things up, idleMs with nothing to pack, and after an error errMs doubling to maxErrMs. */
+  /* One step of the loop: pack the oldest day that's ready, or with none, a batch of the leftover sweep, if nothing
+     holds things up. Next step: soon after a day or a batch with more to do, waitMs while something holds things up,
+     idleMs with nothing to do, and after an error errMs doubling to maxErrMs. */
   async function packTick() {
     PK.timer = null;
     if (PK.busy || !packWanted()) return renderPack();
@@ -9165,28 +9404,39 @@
         return;
       }
       const days = packDays(S.photoM);
-      if (!days.length) {
+      if (!days.length && reclaimLeft(S.packsDoc) <= 0) {
         PK.wait = null;
         return;
       }
       const why = await packBlocked();
       const L = why ? null : await packLease(IMPORT_TUNE.leaseMs);
       if (why || !L.ok) {
-        PK.wait = why || "another import is running" + (L.until ? " until " + fmtTime(L.until) : "");
+        PK.wait =
+          why || (await packElsewhere()) || "another import is running" + (L.until ? " until " + fmtTime(L.until) : "");
         next = PACK_TUNE.waitMs;
         return;
       }
       PK.wait = null;
       try {
-        const x = await packFresh(days[0].day);
-        if (x) {
-          PK.day = x.day;
+        await packBusy(true);
+        if (days.length) {
+          const x = await packFresh(days[0].day);
+          if (x) {
+            PK.day = x.day;
+            renderPack();
+            await packDay(x, assets);
+            await packUsage(assets, true);
+            next = PACK_TUNE.gapMs;
+          }
+        } else {
+          PK.sweep = true;
           renderPack();
-          await packDay(x, assets);
+          if (await packHeld(guard => reclaimStep(assets, guard))) next = PACK_TUNE.gapMs;
           await packUsage(assets, true);
-          next = PACK_TUNE.gapMs;
         }
       } finally {
+        PK.sweep = false;
+        await packBusy(false);
         await packLease(1000);
       }
       PK.backoff = 0;
@@ -9232,6 +9482,7 @@
           "."
         : "Not measured yet: the page measures it with each import.";
     const P = S.packsDoc || {};
+    const R = P.reclaim || {};
     const list = Array.isArray(P.list) ? P.list : [];
     const last = list.reduce((a, x) => (x && isDay(x.day) && x.day > a ? x.day : a), "");
     const out = [];
@@ -9254,8 +9505,28 @@
             : "No finished day to pack yet.",
       );
       if (owed) out.push(plural(owed, "day") + (owed === 1 ? " waits" : " wait") + " for photos still to be stored.");
+      const rLeft = reclaimLeft(P);
+      const rn = +R.n > 0 ? +R.n : 0;
       if (PK.day) out.push("Packing " + dayTitle(PK.day) + " now…");
-      else if (PK.wait && todo) out.push("Waiting: " + PK.wait + ".");
+      else if (PK.sweep) out.push("Checking a pack for original files left over after packing now…");
+      else if (PK.wait && (todo || rLeft > 0)) out.push("Waiting: " + PK.wait + ".");
+      if (rLeft > 0)
+        out.push(
+          "Removing original files left over after packing: " +
+            plural(rLeft, "pack") +
+            " still to check" +
+            (rn ? ", " + rn.toLocaleString("en-US") + " removed so far" : "") +
+            ".",
+        );
+      else if (rn)
+        out.push(
+          plural(rn, "original file") +
+            " left over after packing " +
+            (rn === 1 ? "was" : "were") +
+            " removed" +
+            (R.at ? " (last " + fmtTs(R.at) + ")" : "") +
+            ".",
+        );
     }
     const err = PK.err || P.err;
     if (on && err && err.msg)
@@ -9267,6 +9538,28 @@
           ". The originals are kept" +
           (PK.err && PK.timer ? "; it tries again at " + fmtTime(PK.next) : "") +
           ".",
+      );
+    /* originals the leftover sweep kept because a check didn't pass (reclaim.keep), and the packs that failed (bad) */
+    const bad = [...new Set(Array.isArray(R.bad) ? R.bad.filter(isDay) : [])];
+    const kept = Array.isArray(R.keep) ? R.keep.length : 0;
+    if (bad.length)
+      out.push(
+        (bad.length === 1
+          ? "The pack for " + dayTitle(bad[0])
+          : "The packs for " +
+            bad.slice(0, 5).map(dayTitle).join(", ") +
+            (bad.length > 5 ? " and " + (bad.length - 5) + " more" : "")) +
+          " didn't pass a check, so the original files " +
+          (bad.length === 1 ? "it holds are" : "they hold are") +
+          " kept" +
+          (kept ? " (" + plural(kept, "file") + ")" : "") +
+          ".",
+      );
+    else if (kept)
+      out.push(
+        kept === 1
+          ? "1 original file is kept because it doesn't match its packed copy."
+          : plural(kept, "original file") + " are kept because they don't match their packed copies.",
       );
     if (+P.orphans > 0)
       out.push(
@@ -12422,6 +12715,7 @@
     db.collection("photos").onSnapshot(
       q => {
         const D = collDocs(q);
+        S.photoIds = Object.keys(D); /* a fresh read for deleting must hold at least these (photoDocs) */
         const M = q.docs.length ? mergePhotos(D) : null;
         S.photos = M ? M.byI : null;
         S.photoPv = M ? M.pvI : null;
