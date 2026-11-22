@@ -11,6 +11,7 @@ v=$(cat VERSION); tag="v$v"
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then echo "release: $tag already exists" >&2; exit 1; fi
 notes=$(awk -v h="## [$v] " 'index($0,h)==1{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
 [ -n "$notes" ] || { echo "release: no CHANGELOG entry for $v" >&2; exit 1; }
+sh tools/ci-green.sh "$(git rev-parse HEAD)"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/messenger-catchup"
 git tag -a "$tag" -m "$tag"

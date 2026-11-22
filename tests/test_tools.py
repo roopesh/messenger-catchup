@@ -2253,6 +2253,37 @@ class TestReleaseScript(unittest.TestCase):
         self.assertTrue(os.access(f, os.X_OK))
         self.assertEqual(subprocess.run(["sh", "-n", f]).returncode, 0)
 
+    def test_release_waits_for_mains_ci(self):
+        rel = read("tools", "release.sh")
+        guard, tag = rel.index('sh tools/ci-green.sh "$(git rev-parse HEAD)"'), rel.index('git tag -a "$tag"')
+        self.assertLess(guard, tag, "release.sh checks main's CI before it tags anything")
+
+    def test_ci_green_takes_only_a_first_attempt_pass(self):
+        # a fake gh prints what `gh run list ... -q` would for each case; ci-green.sh must pass only the last
+        cases = [
+            ("", 1, "no CI run on main"),
+            ("7 in_progress  1", 1, "still running; watch it: gh run watch 7"),
+            ("7 completed failure 1", 1, "failed (run 7); fix the cause in a new PR, or tell the owner"),
+            ("7 completed failure 2", 1, "failed (run 7)"),
+            ("7 completed success 2", 1, "passed only on attempt 2 (run 7); a re-run isn't a pass"),
+            ("7 completed success 1", 0, "passed on its first attempt (run 7)"),
+        ]
+        for line, code, says in cases:
+            with tempfile.TemporaryDirectory() as t:
+                gh = os.path.join(t, "gh")
+                with open(gh, "w") as fh:
+                    fh.write("#!/bin/sh\nprintf '%%s' '%s'\n" % line)
+                os.chmod(gh, 0o755)
+                env = dict(os.environ, PATH=t + os.pathsep + os.environ["PATH"])
+                r = subprocess.run(
+                    ["sh", os.path.join(ROOT, "tools", "ci-green.sh"), "abc123"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertEqual(r.returncode, code, (line, r.stdout, r.stderr))
+                self.assertIn(says, r.stdout + r.stderr, line)
+
     def test_notes_extraction_matches_changelog(self):
         v = read("VERSION").strip()
         out = subprocess.run(
