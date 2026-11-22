@@ -2283,6 +2283,21 @@ const topOf = (p, sel) =>
     return r && r.height ? Math.round(r.top) : null;
   }, sel);
 const opacity = (p, sel) => p.$eval(sel, e => getComputedStyle(e).opacity).catch(() => null);
+/* each selector's computed opacity once they all read want (strings), or what they read when that didn't happen in
+   5 s: the page fades a bubble's actions over 0.12 s, which a fixed 250 ms wait raced on a busy runner (B42, Nov 22) */
+async function opacities(p, sels, want) {
+  await until(
+    p,
+    ([ss, w]) =>
+      ss.every((x, k) => {
+        const e = document.querySelector(x);
+        return e && getComputedStyle(e).opacity === w[k];
+      }),
+    [sels, want],
+    5000,
+  );
+  return Promise.all(sels.map(x => opacity(p, x)));
+}
 const txt = (p, sel) => p.$eval(sel, e => e.textContent).catch(() => '');
 /* a click that may not land, reported as true or false, never a crash; it waits as long as until() does, and a
    case that needs the click asserts it, so a click lost on a busy runner fails as that, not as a wrong result */
@@ -2334,11 +2349,9 @@ async function messagesView() {
   );
   await p.click('#msgs details.conv[data-conv="packs"] > summary');
   await p.mouse.move(5, 5);
-  await p.waitForTimeout(250);
-  const hid = [await opacity(p, '#m30 .acts'), await opacity(p, '#m31 .acts')];
+  const hid = await opacities(p, ['#m30 .acts', '#m31 .acts'], ['0', '0']);
   await p.hover('#m31 .pics');
-  await p.waitForTimeout(250);
-  const shown = [await opacity(p, '#m30 .acts'), await opacity(p, '#m31 .acts')];
+  const shown = await opacities(p, ['#m30 .acts', '#m31 .acts'], ['0', '1']);
   ok(
     hid.join() === '0,0' && shown.join() === '0,1',
     "B42: a bubble's actions are hidden until you hover that bubble (before " + hid + ', hovering #31 ' + shown + ')',
@@ -2348,9 +2361,8 @@ async function messagesView() {
     const a = document.querySelector('#m30 .acts a.replylink');
     if (a) a.focus();
   });
-  await p.waitForTimeout(250);
   ok(
-    (await opacity(p, '#m30 .acts')) === '1' && (await opacity(p, '#m31 .acts')) === '0',
+    (await opacities(p, ['#m30 .acts', '#m31 .acts'], ['1', '0'])).join() === '1,0',
     "B42: keyboard focus on a bubble's action shows that bubble's actions",
   );
   ok(
@@ -2360,7 +2372,15 @@ async function messagesView() {
     'B42: each bubble keeps its own actions (the photo bubble has Open photo)',
   );
   await p.evaluate(() => document.activeElement.blur());
-  await p.waitForTimeout(250);
+  await until(
+    p,
+    () =>
+      [...document.querySelectorAll('#msgs details.conv[open] .msg > .c > .acts')].every(
+        a => getComputedStyle(a).opacity === '0',
+      ),
+    null,
+    5000,
+  );
   const rowsHid = await p.evaluate(() => {
     const rows = [...document.querySelectorAll('#msgs details.conv[open] .msg')];
     return {
@@ -2373,8 +2393,7 @@ async function messagesView() {
     };
   });
   await p.hover('#m35 .body');
-  await p.waitForTimeout(250);
-  const single = await opacity(p, '#m35 .acts');
+  const single = (await opacities(p, ['#m35 .acts'], ['1']))[0];
   ok(
     rowsHid.n > 20 && rowsHid.hidden === rowsHid.n && single === '1',
     'every message row hides its actions until you hover it (' +
