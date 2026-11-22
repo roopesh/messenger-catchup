@@ -109,17 +109,22 @@ function runtime(seed) {
     const v = store.get(p);
     return { exists: v !== undefined, id: p.split('/').pop(), data: () => clone(v) };
   };
-  const collSnap = c => ({
+  /* opts.getPage n: a get() of the photos collection (with or without limit) holds at most n documents, in id order,
+     as a runtime that lists in pages would; opts.snapPage n: so does its listener's snapshot (other collections are
+     listed whole) */
+  const collSnap = (c, cap) => ({
     docs: [...store.keys()]
       .filter(k => k.split('/')[0] === c && k.split('/').length === 2)
       .sort()
+      .slice(0, (c === 'photos' && cap) || Infinity)
       .map(k => ({ id: k.split('/')[1], data: () => clone(store.get(k)) })),
   });
+  const colGets = []; /* each collection get(), by collection */
   const notify = p =>
     setTimeout(() => {
       (subs.get('d:' + p) || []).forEach(cb => cb(docSnap(p)));
       const c = p.split('/')[0];
-      (subs.get('c:' + c) || []).forEach(cb => cb(collSnap(c)));
+      (subs.get('c:' + c) || []).forEach(cb => cb(collSnap(c, opts.snapPage)));
     }, 0);
   /* fails: [{p, op, after?}]: the next matching write throws "unavailable" (after: let that many through first) */
   const failIf = (p, op) => {
@@ -188,7 +193,8 @@ function runtime(seed) {
     orderBy: (f, d) => query(c, { f, d: d || 'asc' }, lim),
     limit: n => query(c, ord, n),
     get: async () => {
-      let docs = collSnap(c).docs;
+      colGets.push(c);
+      let docs = collSnap(c, opts.getPage).docs;
       if (ord)
         docs = docs.slice().sort((a, b) => {
           const x = a.data()[ord.f],
@@ -201,7 +207,7 @@ function runtime(seed) {
     onSnapshot: (cb, err) => {
       if (snapFail('c:' + c, err)) return () => {};
       sub('c:' + c, cb);
-      setTimeout(() => cb(collSnap(c)), 0);
+      setTimeout(() => cb(collSnap(c, opts.snapPage)), 0);
       return () => {};
     },
   });
@@ -476,6 +482,7 @@ function runtime(seed) {
     usage,
     fetches,
     deletes,
+    colGets,
     /* a stored file's bytes as base64 (R13 tests read packs and originals) */
     blob: async id => {
       const b = blobs.get(id);
@@ -12312,9 +12319,9 @@ async function packs2() {
    Up to v1.31.2 packing checked each block on its own, merged with the old photos/index, which still names every
    original: a day whose photos sat in two or more blocks kept all of its originals as unused files (on a live page, 10
    of 12 packed days). spanWorld: o.days [[back, messages]] oldest first, so a day can cross the 500-message photo
-   blocks; o.photos [[i, k]] stored as originals in the old index, as on a page from before v1.22. o.tweak(w) changes
-   it: w.put(i, k, v, true) writes a slot in its block instead, w.file(type, b64) stores a file, w.docs adds documents.
-   Returns w with seed. */
+   blocks; o.photos [[i, k]] stored as originals in the old index, as on a page from before v1.22 (o.inBlocks: in their
+   blocks, as since). o.tweak(w) changes it: w.put(i, k, v, true) writes a slot in its block instead, w.file(type, b64)
+   stores a file, w.docs adds documents. Returns w with seed. */
 function spanWorld(o) {
   const msgs = [];
   o.days.forEach(([b, n]) => {
@@ -12339,7 +12346,7 @@ function spanWorld(o) {
   (o.photos || []).forEach(([i, k]) => {
     const id = w.file('image/png', phB64(i, k));
     w.orig[i + '.' + k] = id;
-    w.put(i, k, '/_blob/' + id);
+    w.put(i, k, '/_blob/' + id, o.inBlocks);
   });
   if (o.tweak) o.tweak(w);
   const last = msgs[msgs.length - 1];
@@ -12357,8 +12364,9 @@ function spanWorld(o) {
 }
 /* A day packed by v1.30.0-v1.31.2 that left its originals behind: a full pack of the slots (each original's bytes, id
    and SHA-256) and a preview pack, the slots (in their blocks) and pv pointing at them, an entry in photos/packs, and
-   the originals still stored and still named by the old index. o.mangle changes a photo in the full pack after its
-   SHA-256 was taken (a pack that fails its check). */
+   the originals still stored (and named by the old index, unless spanWorld put them in blocks). o.mangle changes a
+   photo in the full pack after its SHA-256 was taken (a pack that fails its check); o.missing leaves the full pack
+   unstored; o.garbage stores it as text that isn't JSON. Returns the entry. */
 function oldPack(w, back, slots, o = {}) {
   const day = laDay(back);
   const items = slots.map(([i, k]) => {
@@ -12375,11 +12383,42 @@ function oldPack(w, back, slots, o = {}) {
     const b = w.blk(i);
     (b.pv[i] = b.pv[i] || {})[k] = '/_blob/' + pv + '#' + n;
   });
+  if (o.missing) delete w.files[full];
+  if (o.garbage) w.files[full] = { type: 'application/json', b64: Buffer.from('{"v":1,"kind":"fu').toString('base64') };
   const P = (w.docs['photos/packs'] = w.docs['photos/packs'] || { list: [] });
   const at = new Date(Date.now() - back * 86400000).toISOString();
-  P.list.push({ full, pv, day, part: 1, n: items.length, bytes: 1, pvBytes: 1, at });
+  const e = { full, pv, day, part: 1, n: items.length, bytes: 1, pvBytes: 1, at };
+  P.list.push(e);
+  return e;
 }
 const reclaimOf = async p => ((await packsDoc(p)) || {}).reclaim || {};
+/* the leftover sweep's documents, photos/swept-<key>, by key */
+const sweptOf = p =>
+  p.evaluate(() =>
+    Object.fromEntries([...__rt.store].filter(([k]) => /^photos\/swept-/.test(k)).map(([k, v]) => [k.slice(13), v])),
+  );
+/* Cleanup's rule, as references/photos.md › Cleanup gives it to Claude: referenced = every "/_blob/<id>" in any photos
+   document (the old index as it is), plus every photos/packs entry's full and pv; unused = stored files not referenced;
+   while any swept document is lost, only duplicates (same SHA-256 as a referenced file) may be deleted. deletable: the
+   files Cleanup could delete. */
+const cleanupView = p =>
+  p.evaluate(() => {
+    const refs = new Set();
+    const walk = v => {
+      const m = typeof v === 'string' ? /^\/_blob\/([^#?\s/]+)/.exec(v) : null;
+      if (m) refs.add(m[1]);
+      else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+    };
+    const docs = [...__rt.store].filter(([k]) => /^photos\//.test(k));
+    docs.forEach(([, v]) => walk(v));
+    ((__rt.get('photos/packs') || {}).list || []).forEach(e => e && [e.full, e.pv].forEach(x => x && refs.add(x)));
+    const lost = docs.some(([k, v]) => /^photos\/swept-/.test(k) && v && v.lost);
+    const live = __rt.uploads.filter(u => !u.deleted);
+    const refHash = new Set(live.filter(u => refs.has(u.id)).map(u => u.hash));
+    const unused = live.filter(u => !refs.has(u.id));
+    const deletable = unused.filter(u => !lost || (u.hash && refHash.has(u.hash))).map(u => u.id);
+    return { refs: [...refs], lost, unused: unused.map(u => u.id), deletable };
+  });
 const nFiles = p => p.evaluate(() => __rt.usage().files);
 /* the original ids of these slots ("i.k") */
 const origs = (w, ss) => ss.map(s => w.orig[s]);
@@ -12463,7 +12502,7 @@ async function packs3() {
   await p.close();
 
   // S2: an original another slot still uses (yesterday's, outside the day) stays; the rest of the day's go; while it
-  // packs, photos/packs.busy names this tab, and it's cleared after
+  // packs, refresh/packing names this tab: written once when the work starts, deleted once at the end
   W = spanWorld({
     days: [
       [3, 498],
@@ -12481,7 +12520,7 @@ async function packs3() {
   p = await open(W.seed);
   await until(p, () => ((__rt.get('photos/packs') || {}).list || []).length >= 1, null, 10000);
   await until(p, () => __rt.usage().files <= 3, null, 5000);
-  await until(p, () => (__rt.get('photos/packs') || {}).busy === null, null, 5000);
+  await until(p, () => __rt.writes.some(w => w.p === 'refresh/packing' && w.op === 'delete'), null, 5000);
   list = await packList(p);
   st = await photoState(p);
   live = await liveIds(p);
@@ -12496,10 +12535,23 @@ async function packs3() {
       'it as before) ' +
       JSON.stringify(origs(W, ['498.0', '501.0', '502.0']).map(id => live.includes(id))),
   );
-  const busy = await p.evaluate(() => __rt.writes.filter(w => w.p === 'photos/packs').map(w => w.v.busy || null));
+  const busy = await p.evaluate(() =>
+    __rt.writes.filter(w => w.p === 'refresh/packing').map(w => (w.op === 'delete' ? 'delete' : w.v)),
+  );
+  const packsBusy = await p.evaluate(
+    () => __rt.writes.filter(w => w.p === 'photos/packs' && w.v && 'busy' in w.v).length,
+  );
   ok(
-    busy.some(b => b && typeof b.tab === 'string' && b.tab && b.at) && busy[busy.length - 1] === null,
-    'S2: while it packs, photos/packs.busy {tab, at} names this tab; it is cleared after ' + JSON.stringify(busy),
+    busy.length === 2 &&
+      typeof busy[0].tab === 'string' &&
+      busy[0].tab &&
+      !isNaN(Date.parse(busy[0].at)) &&
+      busy[1] === 'delete' &&
+      packsBusy === 0 &&
+      !(await get(p, 'refresh/packing')),
+    'S2: while it packs, refresh/packing {tab, at} names this tab: one write when the work starts, one delete at the ' +
+      'end, and nothing about it in photos/packs ' +
+      JSON.stringify({ busy, packsBusy }),
   );
   await p.close();
 
@@ -12577,16 +12629,31 @@ async function packs3() {
       JSON.stringify({ gone: gone1.map(id => live.includes(id)), kept: kept1.map(id => live.includes(id)) }),
   );
   R = await reclaimOf(p);
+  let sw = await sweptOf(p);
+  const sw4 = sw[list[2].full] || {};
+  const swMiss = sw['f'.repeat(32)] || {};
   ok(
     R.n === 5 &&
       R.last === list[3].full &&
-      JSON.stringify(R.bad) === JSON.stringify([laDay(6), laDay(4)]) &&
-      JSON.stringify((R.keep || []).slice().sort()) === JSON.stringify(origs(W, ['11.0', '12.0', '12.1']).sort()) &&
+      JSON.stringify(R.swept) === JSON.stringify(['f'.repeat(32), list[2].full]) &&
+      Object.keys(sw).length === 2 &&
+      swMiss.lost === true &&
+      swMiss.bad === 'missing' &&
+      swMiss.day === laDay(6) &&
+      !swMiss.kept.length &&
+      sw4.lost === false &&
+      sw4.bad === 'the photo on #12 changed' &&
+      JSON.stringify(sw4.kept.slice().sort()) ===
+        JSON.stringify(
+          origs(W, ['11.0', '12.0', '12.1'])
+            .map(id => '/_blob/' + id)
+            .sort(),
+        ) &&
       !isNaN(Date.parse(R.at)) &&
       !(await packsDoc(p)).orphans,
-    'R1: photos/packs.reclaim records 5 deleted, the 2 packs that failed (missing; changed) and the originals kept ' +
-      'for them ' +
-      JSON.stringify(R),
+    'R1: photos/packs.reclaim records 5 deleted; a swept document for each pack that failed: the missing one (lost) ' +
+      'and the changed one, which keeps its 3 originals as /_blob/ ids ' +
+      JSON.stringify({ R, sw }),
   );
   const ns = await p.evaluate(() =>
     __rt.writes.filter(w => w.p === 'photos/packs').map(w => ((w.v || {}).reclaim || {}).n || 0),
@@ -12596,13 +12663,25 @@ async function packs3() {
     steps.every(d => d >= 0 && d <= 2) && steps.filter(d => d > 0).length >= 3,
     'R1: in batches of at most sweepMax (2) deletions ' + JSON.stringify(ns),
   );
+  await until(p, () => __rt.writes.some(w => w.p === 'refresh/packing' && w.op === 'delete'), null, 5000);
+  const busy1 = await p.evaluate(() => __rt.writes.filter(w => w.p === 'refresh/packing').map(w => w.op));
+  ok(
+    busy1.join() === 'set,delete',
+    'R1: the whole sweep (several batches) writes refresh/packing once and deletes it once ' + JSON.stringify(busy1),
+  );
   st = await packSt(p);
   ok(
     /5 original files left over after packing were removed \(last \w{3}, \w{3} \d+[^)]*\d:\d\d [AP]M\)\./.test(st) &&
       st.includes(
-        'The packs for ' +
-          (await p.evaluate(ds => ds.map(dayTitle).join(', '), [laDay(6), laDay(4)])) +
-          " didn't pass a check, so the original files they hold are kept (3 files).",
+        'The pack for ' +
+          (await p.evaluate(d => dayTitle(d), laDay(4))) +
+          " didn't pass a check, so the 3 original files it holds are kept.",
+      ) &&
+      st.includes(
+        'The pack for ' +
+          (await p.evaluate(d => dayTitle(d), laDay(6))) +
+          " is missing or can't be read, so its photos can't show. Cleanup deletes only duplicate files while it's " +
+          'like this.',
       ) &&
       !/still to check|couldn't be deleted/.test(st) &&
       !p.errors.length,
@@ -12646,15 +12725,15 @@ async function packs3() {
   );
   await p.close();
 
-  // R3: the lease held by another open copy that's packing (photos/packs.busy names it, written just now): the box
-  // says so; once that record is 11 minutes old (a closed tab's), it's the lease's own wording again
+  // R3: the lease held by another open copy that's packing (refresh/packing names it, written just now): the box says
+  // so; once that record is 11 minutes old (a closed tab's), it's the lease's own wording again
   W = spanWorld({
     days: [
       [2, 4],
       [0, 2],
     ],
     photos: [[1, 0]],
-    docs: { 'photos/packs': { list: [], busy: { tab: 'zz', at: new Date().toISOString() } } },
+    docs: { 'refresh/packing': { tab: 'zz', at: new Date().toISOString() } },
     opts: { leases: { 'refresh/importLock': { holder: 'zz:pack', exp: Date.now() + 120000 } } },
   });
   p = await open(W.seed);
@@ -12666,7 +12745,7 @@ async function packs3() {
   const st3 = await packSt(p);
   const packed3 = (await packList(p)).length;
   await p.evaluate(() =>
-    __rt.write('photos/packs', { list: [], busy: { tab: 'zz', at: new Date(Date.now() - 11 * 60000).toISOString() } }),
+    __rt.write('refresh/packing', { tab: 'zz', at: new Date(Date.now() - 11 * 60000).toISOString() }),
   );
   const w3b = await until(p, () =>
     /Waiting: another import is running until \d+:\d\d:\d\d [AP]M\./.test(
@@ -12707,10 +12786,21 @@ async function packs3() {
   list = await packList(p);
   R = await reclaimOf(p);
   const reads4 = await p.evaluate(id => __rt.fetches.filter(x => x === id).length, list[0].full);
+  const w4 = await p.evaluate(() => ({
+    packing: __rt.writes.filter(w => w.p === 'refresh/packing').length,
+    packs: __rt.writes.filter(w => w.p === 'photos/packs').length,
+  }));
   ok(
-    R.checked === 1 && R.last === list[0].full && !R.n && reads4 === 0 && !/still to check/.test(await packSt(p)),
-    'R4: with no unused file the old entries are marked checked without reading their packs ' +
-      JSON.stringify({ R, reads4 }),
+    R.checked === 1 &&
+      R.last === list[0].full &&
+      !R.n &&
+      reads4 === 0 &&
+      !/still to check/.test(await packSt(p)) &&
+      w4.packing === 0 &&
+      w4.packs === 1,
+    'R4: with no unused file the old entries are marked checked without reading their packs, in one write to ' +
+      'photos/packs and none to refresh/packing (no work started) ' +
+      JSON.stringify({ R, reads4, w4 }),
   );
   await p.close();
 
@@ -12768,8 +12858,7 @@ async function packs3() {
     origs(W, ['2.0', '4.0', '14.0']).every(id => !live.includes(id)) &&
       (await nFiles(p)) === r5 - 3 &&
       R.n === 3 &&
-      !R.keep.length &&
-      !R.bad.length &&
+      !Object.keys(await sweptOf(p)).length &&
       !pk5.orphans &&
       !pk5.err &&
       dels5.length === 3 &&
@@ -12784,6 +12873,510 @@ async function packs3() {
       ') ' +
       JSON.stringify({ R, dels: dels5.length, errors: p.errors }),
   );
+  await p.close();
+}
+
+/* PR #58's review: what the sweep keeps is never left unprotected, refusals are counted once, it survives a failed
+   listing, broken entries and a runtime that lists in pages, and the box tells each cause apart */
+const tidyDone = (p, n) => until(p, n => ((__rt.get('photos/packs') || {}).reclaim || {}).checked === n, n, 15000);
+async function packs4() {
+  let W, p, R, sw, cv, st, live;
+  const titleOf = (p, back) => p.evaluate(d => dayTitle(d), laDay(back));
+
+  // V1: deletes refused for that file (not_uploader) are recorded once and skipped: 3 refusals with batches of 2
+  // count 3 orphans, each file is tried once, and the sweep moves on (before, it retried them for ever)
+  W = spanWorld({
+    days: [
+      [5, 6],
+      [0, 2],
+    ],
+    photos: [
+      [1, 0],
+      [2, 0],
+      [3, 0],
+    ],
+    inBlocks: true,
+    packTune: { sweepMax: 2 },
+    opts: { up: { delFail: 100, delCode: 'not_uploader' } },
+    tweak: w =>
+      oldPack(w, 5, [
+        [1, 0],
+        [2, 0],
+        [3, 0],
+      ]),
+  });
+  p = await open(W.seed);
+  await tidyDone(p, 1);
+  const pk1 = await packsDoc(p);
+  sw = (await sweptOf(p))[pk1.list[0].full] || {};
+  live = await liveIds(p);
+  cv = await cleanupView(p);
+  const dels1 = await p.evaluate(() => __rt.deletes.slice());
+  const day1 = origs(W, ['1.0', '2.0', '3.0']);
+  ok(
+    pk1.orphans === 3 &&
+      JSON.stringify((sw.refused || []).slice().sort()) === JSON.stringify(day1.slice().sort()) &&
+      !sw.kept.length &&
+      !sw.own.length &&
+      dels1.length === 3 &&
+      day1.every(id => live.includes(id) && cv.deletable.includes(id)) &&
+      /3 original files couldn't be deleted after packing\. Ask Claude to tidy up photo storage/.test(await packSt(p)),
+    'V1: 3 deletes refused for good: orphans 3, each file tried once and recorded (refused, bare, so Cleanup can still ' +
+      'remove them), the entry checked ' +
+      JSON.stringify({ orphans: pk1.orphans, sw, dels: dels1.length }),
+  );
+  await p.close();
+  // ... and a refusal for the whole view (not_granted) counts nothing: the batch stops with an error and is tried later
+  W.seed.__opts.up = { delFail: 100, delCode: 'not_granted' };
+  p = await open(W.seed);
+  const err1 = await until(p, () => (__rt.get('photos/packs') || {}).err, null, 10000);
+  const pk1b = await packsDoc(p);
+  ok(
+    err1 &&
+      err1.code === 'not_granted' &&
+      /this view can't delete files \(not_granted\)/.test(err1.msg) &&
+      !pk1b.orphans &&
+      !Object.keys(await sweptOf(p)).length &&
+      ((pk1b.reclaim || {}).checked || 0) === 0 &&
+      /The last try failed .*this view can't delete files \(not_granted\)\. The originals are kept/.test(
+        await packSt(p),
+      ),
+    "V1: a refusal for the whole view counts no orphan and records nothing; the box says the view can't delete files " +
+      '(' +
+      (await packSt(p)) +
+      ')',
+  );
+  await p.close();
+
+  // V2: packs whose photos can't be read (one missing, one not JSON) keep what can be named (the originals the old
+  // index names), and hold Cleanup to duplicates, so an original only the lost pack knew (stored in a block) is never
+  // deletable; the box says so
+  W = spanWorld({
+    days: [
+      [5, 6],
+      [4, 6],
+      [0, 2],
+    ],
+    photos: [
+      [1, 0],
+      [7, 0],
+    ],
+    tweak: w => {
+      [
+        [2, 0],
+        [8, 0],
+      ].forEach(([i, k]) => {
+        const id = w.file('image/png', phB64(i, k));
+        w.orig[i + '.' + k] = id;
+        w.put(i, k, '/_blob/' + id, true);
+      });
+      oldPack(
+        w,
+        5,
+        [
+          [1, 0],
+          [2, 0],
+        ],
+        { missing: true },
+      );
+      oldPack(
+        w,
+        4,
+        [
+          [7, 0],
+          [8, 0],
+        ],
+        { garbage: true },
+      );
+    },
+  });
+  p = await open(W.seed);
+  await tidyDone(p, 2);
+  const list2 = await packList(p);
+  sw = await sweptOf(p);
+  cv = await cleanupView(p);
+  live = await liveIds(p);
+  const s5 = sw[list2[0].full] || {},
+    s4 = sw[list2[1].full] || {};
+  st = await packSt(p);
+  ok(
+    s5.lost === true &&
+      s5.bad === 'missing' &&
+      JSON.stringify(s5.kept) === JSON.stringify(['/_blob/' + W.orig['1.0']]) &&
+      s4.lost === true &&
+      s4.bad === 'unreadable' &&
+      JSON.stringify(s4.kept) === JSON.stringify(['/_blob/' + W.orig['7.0']]) &&
+      origs(W, ['1.0', '2.0', '7.0', '8.0']).every(id => live.includes(id)) &&
+      cv.lost &&
+      origs(W, ['2.0', '8.0']).every(id => cv.unused.includes(id) && !cv.deletable.includes(id)),
+    'V2: a missing and an unreadable pack are lost: each keeps the original the old index names, and Cleanup may ' +
+      "delete only duplicates, so the originals only those packs knew can't be deleted " +
+      JSON.stringify({ s5, s4, deletable: cv.deletable.length }),
+  );
+  ok(
+    st.includes(
+      'The packs for ' +
+        (await titleOf(p, 5)) +
+        ', ' +
+        (await titleOf(p, 4)) +
+        " are missing or can't be read, so their photos can't show. The page keeps the 2 original files it can name " +
+        "for them, and Cleanup deletes only duplicate files while they're like this.",
+    ) && !p.errors.length,
+    'V2: the box says which packs are lost, what the page keeps, and that Cleanup deletes duplicates only (' + st + ')',
+  );
+  await p.close();
+
+  // V3: nothing kept is ever cut short: a failed pack of 1,001 photos keeps all 1,001 originals in its swept document,
+  // and Cleanup's rule counts every one as in use
+  W = spanWorld({
+    days: [
+      [5, 1002],
+      [0, 2],
+    ],
+    photos: range(1, 1001, i => [i, 0]),
+    inBlocks: true,
+    tweak: w =>
+      oldPack(
+        w,
+        5,
+        range(1, 1001, i => [i, 0]),
+        { mangle: true },
+      ),
+  });
+  p = await open(W.seed);
+  await tidyDone(p, 1);
+  const list3 = await packList(p);
+  sw = (await sweptOf(p))[list3[0].full] || {};
+  cv = await cleanupView(p);
+  const all3 = range(1, 1001, i => W.orig[i + '.0']);
+  ok(
+    (sw.kept || []).length === 1001 &&
+      all3.every(id => cv.refs.includes(id)) &&
+      (await nFiles(p)) === Object.keys(W.files).length,
+    "V3: a failed pack of 1,001 photos keeps all 1,001 originals, in use by Cleanup's rule (kept " +
+      (sw.kept || []).length +
+      ')',
+  );
+  await p.close();
+
+  // V4: a listing that fails (assets.list rejects): the sweep reads each original instead and still removes the 3
+  W = spanWorld({
+    days: [
+      [5, 6],
+      [0, 2],
+    ],
+    photos: [
+      [1, 0],
+      [2, 0],
+      [3, 0],
+    ],
+    opts: { listReject: true },
+    tweak: w =>
+      oldPack(w, 5, [
+        [1, 0],
+        [2, 0],
+        [3, 0],
+      ]),
+  });
+  p = await open(W.seed);
+  await tidyDone(p, 1);
+  live = await liveIds(p);
+  R = await reclaimOf(p);
+  ok(
+    R.n === 3 && origs(W, ['1.0', '2.0', '3.0']).every(id => !live.includes(id)) && !(await packsDoc(p)).err,
+    'V4: with a listing that fails, the sweep reads each original itself and removes the 3, with no error ' +
+      JSON.stringify(R),
+  );
+  await p.close();
+
+  // V5: broken entries in photos/packs (null, and one with no pack id) are recorded as lost and skipped; the entry
+  // after them is swept, and nothing stops
+  W = spanWorld({
+    days: [
+      [5, 6],
+      [0, 2],
+    ],
+    photos: [
+      [1, 0],
+      [2, 0],
+    ],
+    tweak: w => {
+      w.docs['photos/packs'] = { list: [null, { day: laDay(6), part: 1, n: 1 }] };
+      oldPack(w, 5, [
+        [1, 0],
+        [2, 0],
+      ]);
+    },
+  });
+  p = await open(W.seed);
+  await tidyDone(p, 3);
+  sw = await sweptOf(p);
+  live = await liveIds(p);
+  const pk5 = await packsDoc(p);
+  st = await packSt(p);
+  ok(
+    sw.n0 &&
+      sw.n0.lost === true &&
+      sw.n0.full === null &&
+      sw.n1 &&
+      sw.n1.lost === true &&
+      sw.n1.day === laDay(6) &&
+      pk5.reclaim.n === 2 &&
+      origs(W, ['1.0', '2.0']).every(id => !live.includes(id)) &&
+      !pk5.err &&
+      /2 packs \(.*\) are missing or can't be read|The packs for .* are missing or can't be read/.test(st) &&
+      !p.errors.length,
+    "V5: two broken entries are recorded (swept-n0, swept-n1, lost) and skipped; the next entry's 2 leftovers go, no " +
+      'error (' +
+      st +
+      ')',
+  );
+  await p.close();
+
+  // V6: the box counts each cause on its own: a pack that failed its check (2 originals kept) and an original that
+  // doesn't match its packed copy, in a pack that's fine (1 kept; its other leftover goes)
+  W = spanWorld({
+    days: [
+      [5, 6],
+      [4, 6],
+      [0, 2],
+    ],
+    photos: [
+      [1, 0],
+      [2, 0],
+      [7, 0],
+      [8, 0],
+    ],
+    tweak: w => {
+      oldPack(
+        w,
+        5,
+        [
+          [1, 0],
+          [2, 0],
+        ],
+        { mangle: true },
+      );
+      oldPack(w, 4, [
+        [7, 0],
+        [8, 0],
+      ]);
+      const b = phB64(8, 0, 7);
+      w.files[w.orig['8.0']] = { type: 'image/png', b64: b, sha: b64sha(b) };
+    },
+  });
+  p = await open(W.seed);
+  await tidyDone(p, 2);
+  live = await liveIds(p);
+  const list6 = await packList(p);
+  sw = await sweptOf(p);
+  st = await packSt(p);
+  ok(
+    !live.includes(W.orig['7.0']) &&
+      ['1.0', '2.0', '8.0'].every(s => live.includes(W.orig[s])) &&
+      JSON.stringify((sw[list6[1].full] || {}).own) === JSON.stringify(['/_blob/' + W.orig['8.0']]) &&
+      st.includes(
+        'The pack for ' + (await titleOf(p, 5)) + " didn't pass a check, so the 2 original files it holds are kept.",
+      ) &&
+      st.includes("1 original file is kept because it doesn't match its packed copy."),
+    'V6: the box shows the failed pack (2 files) and the mismatched original (1) on lines of their own (' + st + ')',
+  );
+  await p.close();
+
+  // V8: a day in 3 parts reads the whole photos collection once (after the last part), and still deletes every original
+  W = packWorld({
+    backs: [2, 0],
+    pad: 1000,
+    packTune: { partBytes: 2300 },
+    tweak: w => {
+      w.photo(3, 0);
+      w.photo(3, 1);
+    },
+  });
+  p = await open(W.seed);
+  await tidyDone(p, 3);
+  const reads8 = await p.evaluate(() => __rt.colGets.filter(c => c === 'photos').length);
+  live = await liveIds(p);
+  ok(
+    reads8 === 1 &&
+      (await packList(p)).length === 3 &&
+      Object.entries(W.orig)
+        .filter(([s]) => +s.split('.')[0] < 4)
+        .every(([, id]) => !live.includes(id)),
+    'V8: a day of 3 parts reads the photos collection once (' + reads8 + ') and deletes all 5 originals',
+  );
+  await p.close();
+
+  // V13: a runtime whose listing comes in pages of 100, with 150+ photos documents (150 swept documents): the page
+  // reads each document it can name that the listing missed, so a day still packs and deletes its originals and the
+  // sweep still works (before, the read counted as incomplete: nothing deleted, the sweep stopped on an error)
+  const pageWorld = o =>
+    spanWorld({
+      days: [
+        [6, 6],
+        [3, 6],
+        [0, 2],
+      ],
+      photos: [
+        [1, 0],
+        [2, 0],
+        [7, 0],
+        [8, 0],
+      ],
+      inBlocks: true,
+      opts: o,
+      tweak: w => {
+        const fake = n => 'c3' + String(n).padStart(30, '0');
+        const list = range(0, 149, n => ({ full: fake(n), pv: fake(n + 500), day: laDay(9), part: n + 1, n: 1 }));
+        w.docs['photos/packs'] = {
+          list,
+          reclaim: { n: 0, checked: 150, last: fake(149), swept: list.map(e => e.full) },
+        };
+        list.forEach(
+          e =>
+            (w.docs['photos/' + 'swept-' + e.full] = {
+              full: e.full,
+              day: e.day,
+              bad: null,
+              lost: false,
+              kept: [],
+              own: [],
+              refused: ['r' + e.part],
+            }),
+        );
+        oldPack(w, 6, [
+          [1, 0],
+          [2, 0],
+        ]);
+      },
+    });
+  W = pageWorld({ getPage: 100 });
+  p = await open(W.seed);
+  await until(p, () => ((__rt.get('photos/packs') || {}).list || []).length === 152, null, 10000);
+  await tidyDone(p, 152);
+  live = await liveIds(p);
+  const n13 = await p.evaluate(() => [...__rt.store.keys()].filter(k => /^photos\//.test(k)).length);
+  ok(
+    n13 > 150 &&
+      origs(W, ['1.0', '2.0', '7.0', '8.0']).every(id => !live.includes(id)) &&
+      (await reclaimOf(p)).n === 2 &&
+      !(await packsDoc(p)).err,
+    'V13: ' +
+      n13 +
+      ' photos documents, listed 100 at a time: the new day packs and loses its originals, and the sweep removes ' +
+      "the old pack's 2 leftovers, with no error",
+  );
+  await p.close();
+  // ... and when the live listener comes in pages too (here of 2), comparing the two listings can't catch it: a block
+  // neither holds still counts, so the original a slot there shares with the day being packed stays. The day before
+  // yesterday (#498-#503) holds both photos in b0; yesterday's #600 shares #499's in b500, which in id order (b0,
+  // b1000, b1500, b500, index) is past the page of 2
+  W = spanWorld({
+    days: [
+      [3, 498],
+      [2, 6],
+      [1, 1096],
+      [0, 2],
+    ],
+    photos: [
+      [498, 0],
+      [499, 0],
+      [1100, 0],
+      [1550, 0],
+    ],
+    inBlocks: true,
+    opts: { getPage: 2, snapPage: 2 },
+    tweak: w => w.put(600, 0, '/_blob/' + w.orig['499.0'], true),
+  });
+  p = await open(W.seed);
+  await until(p, () => ((__rt.get('photos/packs') || {}).list || []).length === 1, null, 10000);
+  await until(p, () => __rt.writes.some(w => w.p === 'refresh/packing' && w.op === 'delete'), null, 8000);
+  live = await liveIds(p);
+  ok(
+    !live.includes(W.orig['498.0']) && live.includes(W.orig['499.0']),
+    'V13: with both listings paged, the original a slot in another block shares stays, the other goes ' +
+      JSON.stringify(origs(W, ['498.0', '499.0']).map(id => live.includes(id))),
+  );
+  await p.close();
+
+  // V14: while a day packs, the box shows one state: "Packing <day> now…", not also "Last packed day: <day>" from
+  // the parts listed so far (the second part's upload never answers here)
+  W = packWorld({
+    backs: [2, 0],
+    pad: 1000,
+    packTune: { partBytes: 2300, uploadTimeoutMs: 600000 },
+    tweak: w => {
+      w.photo(3, 0);
+      w.photo(3, 1);
+    },
+    opts: { up: { script: { 2: { hang: 1e9 } } } },
+  });
+  p = await open(W.seed);
+  await until(p, () => ((__rt.get('photos/packs') || {}).list || []).length === 1, null, 10000);
+  st = await until(p, () => {
+    const t = document.getElementById('phpack-st').textContent;
+    return /Packing .* now…/.test(t) ? t : null;
+  });
+  ok(
+    !!st && /^No day packed yet\./.test(st) && st.includes('Packing ' + (await titleOf(p, 2)) + ' now…'),
+    'V14: mid-day, the box says "No day packed yet." and "Packing <day> now…", not that day as packed (' + st + ')',
+  );
+  await p.close();
+
+  // V15: "packs still to check" leaves out packs made since that left nothing behind: with an old entry still to
+  // check (the sweep waits while a day keeps failing to pack), a new clean pack isn't counted, and the sweep later
+  // skips it without reading it
+  W = spanWorld({
+    days: [
+      [6, 4],
+      [4, 4],
+      [3, 4],
+      [0, 2],
+    ],
+    photos: [
+      [1, 0],
+      [5, 0],
+      [9, 0],
+    ],
+    inBlocks: true,
+    tweak: w => oldPack(w, 6, [[1, 0]]),
+  });
+  W.seed.__opts.up = { blobFail: [W.orig['9.0']] };
+  p = await open(W.seed);
+  await until(p, () => (((__rt.get('photos/packs') || {}).reclaim || {}).clean || []).length === 1, null, 10000);
+  await until(p, () => (__rt.get('photos/packs') || {}).err, null, 5000);
+  st = await packSt(p);
+  live = await liveIds(p);
+  const clean15 = (await reclaimOf(p)).clean;
+  ok(
+    /Removing original files left over after packing: 1 pack still to check\./.test(st) &&
+      !live.includes(W.orig['5.0']) &&
+      clean15.length === 1,
+    'V15: a new pack that left nothing behind goes in reclaim.clean and isn\'t counted: "1 pack still to check" (' +
+      st +
+      ')',
+  );
+  await setUp(p, {});
+  await tidyDone(p, 3);
+  live = await liveIds(p);
+  const l15 = await packList(p);
+  const reads15 = await p.evaluate(
+    ids => ids.map(id => __rt.fetches.filter(x => x === id).length),
+    [l15[1].full, l15[2].full],
+  );
+  R = await reclaimOf(p);
+  st = await packSt(p);
+  ok(
+    !live.includes(W.orig['1.0']) &&
+      R.n === 1 &&
+      !R.clean.length &&
+      reads15.join() === '1,1' &&
+      !/still to check/.test(st),
+    'V15: once the day packs, the sweep removes the old leftover and passes the clean packs without reading them ' +
+      '(each read once, by its own check) ' +
+      JSON.stringify({ R, reads15 }),
+  );
+  ok(!p.errors.length, 'V1-V15: no page errors (' + p.errors.join('; ') + ')');
   await p.close();
 }
 
@@ -13378,6 +13971,7 @@ const SECTIONS = {
   packs,
   packs2,
   packs3,
+  packs4,
   captions,
   askSearch,
 };
