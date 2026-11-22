@@ -534,6 +534,7 @@ async function open(seed, page = PAGE, ctxOpts) {
   await ctx.route('https://fonts.googleapis.com/**', r => r.abort());
   await ctx.route(URL, r => r.fulfill({ body: page, contentType: 'text/html; charset=utf-8' }));
   await ctx.addInitScript(runtime, seed);
+  await ctx.addInitScript(flashRecorder);
   const p = await ctx.newPage();
   p.errors = [];
   p.on('pageerror', e => p.errors.push(e.message));
@@ -542,6 +543,24 @@ async function open(seed, page = PAGE, ctxOpts) {
   await p.waitForTimeout(200);
   return p;
 }
+/* The page highlights a message it jumps to for 2.2 s (class "flash"). A check that tried to catch the class raced that
+   timer on a busy runner (B40, Nov 22), so every element that gains it is marked data-flashed for good, and checks
+   look for the mark. flashReset clears the marks just before the click under test, so an earlier jump can't pass it. */
+function flashRecorder() {
+  const mark = n => n.nodeType === 1 && n.classList.contains('flash') && n.setAttribute('data-flashed', '');
+  new MutationObserver(rs =>
+    rs.forEach(r => {
+      if (r.type === 'attributes') mark(r.target);
+      else
+        r.addedNodes.forEach(n => {
+          mark(n);
+          if (n.querySelectorAll) n.querySelectorAll('.flash').forEach(mark);
+        });
+    }),
+  ).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+}
+const flashReset = p =>
+  p.evaluate(() => document.querySelectorAll('[data-flashed]').forEach(n => n.removeAttribute('data-flashed')));
 const get = (p, k) => p.evaluate(k => __rt.get(k) ?? null, k);
 /* The stored photo slots, merged here (independently of the page) from photos/index and the photos/b<start> blocks:
    byK[i][k] = "/_blob/<id>" | null (owed) | {e} (given up); stored(i) = message i's stored photos in slot order. */
@@ -1305,11 +1324,12 @@ async function pipeline() {
     (await p.$$eval('#v-summary article.cv[data-conv="packs1"] button.bul', b => b.length)) === 3,
     'summary: packs1 shows its 3 bullets, one per build',
   );
+  await flashReset(p);
   await p.click('#v-summary article.cv[data-conv="packs1"] button.bul');
   ok(
     await until(p, () => {
       const d = document.querySelector('article.cv[data-conv="packs1"] details.thr');
-      return d && d.open && d.querySelector('.msg.flash');
+      return d && d.open && d.querySelector('.msg[data-flashed]');
     }),
     'summary: a bullet opens its thread and highlights its messages',
   );
@@ -1520,9 +1540,10 @@ async function pipeline() {
     await until(p, () => [...__rt.store.keys()].some(k => k.startsWith('qa/'))),
     'ask: question and answer saved to qa',
   );
+  await flashReset(p);
   await p.click('#chat a.cite');
   ok(
-    await until(p, () => location.hash === '#messages' && document.querySelector('.msg.flash')),
+    await until(p, () => location.hash === '#messages' && document.querySelector('.msg[data-flashed]')),
     'ask: a citation jumps to the message',
   );
   await p.evaluate(() => {
@@ -2211,8 +2232,10 @@ const topOf = (p, sel) =>
   }, sel);
 const opacity = (p, sel) => p.$eval(sel, e => getComputedStyle(e).opacity).catch(() => null);
 const txt = (p, sel) => p.$eval(sel, e => e.textContent).catch(() => '');
+/* a click that may not land, reported as true or false, never a crash; it waits as long as until() does, and a
+   case that needs the click asserts it, so a click lost on a busy runner fails as that, not as a wrong result */
 const tryClick = (p, sel) =>
-  p.click(sel, { timeout: 3000 }).then(
+  p.click(sel, { timeout: 10000 }).then(
     () => true,
     () => false,
   );
@@ -2353,10 +2376,11 @@ async function messagesView() {
       JSON.stringify(ob && { i: ob.i, mid: ob.mid }) +
       ')',
   );
-  await tryClick(p, '#m32 a.lk');
+  await flashReset(p);
+  ok(await tryClick(p, '#m32 a.lk'), 'B42: the #31 link on the reply can be clicked');
   ok(
     await until(p, () => {
-      const n = document.querySelector('#m31.flash');
+      const n = document.querySelector('#m31[data-flashed]');
       const r = n && n.getBoundingClientRect();
       return r && r.top >= 0 && r.bottom <= innerHeight;
     }),
@@ -2456,15 +2480,32 @@ async function messagesView() {
     document.querySelector('#msgs details.conv[data-conv="packs"]').open = false;
     document.querySelector('#msgs details.conv[data-conv="lend"]').open = true;
   });
-  await tryClick(p, '#msgs details.conv[data-conv="lend"] > .ctx button.link');
+  await flashReset(p);
   ok(
-    await until(p, () => {
-      const n = document.querySelector('#m30.flash');
-      const r = n && n.getBoundingClientRect();
-      return r && r.height && r.top >= 0 && r.bottom <= innerHeight && n.closest('details').open;
-    }),
-    "B40: the context line's Show #30 jumps to #30 in its own conversation",
+    await tryClick(p, '#msgs details.conv[data-conv="lend"] > .ctx button.link'),
+    "B40: the context line's Show #30 can be clicked",
   );
+  const jumped = await until(p, () => {
+    const n = document.querySelector('#m30[data-flashed]');
+    const r = n && n.getBoundingClientRect();
+    return r && r.height && r.top >= 0 && r.bottom <= innerHeight && n.closest('details').open;
+  });
+  const at30 = await p.evaluate(() => {
+    const n = document.querySelector('#m30');
+    const r = n && n.getBoundingClientRect();
+    return (
+      n && {
+        flashed: n.hasAttribute('data-flashed'),
+        top: Math.round(r.top),
+        bottom: Math.round(r.bottom),
+        vh: innerHeight,
+        open: n.closest('details').open,
+        conv: n.closest('details').dataset.conv,
+        hash: location.hash,
+      }
+    );
+  });
+  ok(jumped, "B40: the context line's Show #30 jumps to #30 in its own conversation (" + JSON.stringify(at30) + ')');
   await p.evaluate(() => {
     location.hash = '#summary';
   });
@@ -2839,8 +2880,8 @@ function hseed(msgs, o = {}) {
   if (o.opts) seed.__opts = o.opts;
   return seed;
 }
-async function hopen(seed, n) {
-  const p = await open(seed);
+async function hopen(seed, n, ctxOpts) {
+  const p = await open(seed, PAGE, ctxOpts);
   HP.push(p);
   await until(p, n => S.msgs.length === n && S.threading, n, 120000);
   return p;
@@ -4368,8 +4409,9 @@ async function byDay() {
   await hcase('BD2', async () => {
     const { p } = await bdOpen();
     await bdShow(p);
+    await flashReset(p);
     await p.click('#days-list article[data-day="2026-10-02"] li a.cite');
-    await until(p, () => document.querySelector('#m101.flash'), null, 5000);
+    await until(p, () => document.querySelector('#m101[data-flashed]'), null, 5000);
     const r = await p.evaluate(() => {
       const n = document.getElementById('m101');
       const b = n && n.getBoundingClientRect();
@@ -4377,7 +4419,7 @@ async function byDay() {
         hash: location.hash,
         older: document.getElementById('msg-all').checked,
         seen: !!b && b.height > 0 && b.top >= 0 && b.bottom <= innerHeight,
-        flash: !!n && n.classList.contains('flash'),
+        flash: !!n && n.hasAttribute('data-flashed'),
       };
     });
     ok(
@@ -4626,8 +4668,9 @@ async function byDayReports() {
       day,
     );
   const rpOpens = async (p, sel, i) => {
+    await flashReset(p);
     await p.click(sel);
-    await until(p, i => document.querySelector('#m' + i + '.flash'), i, 5000);
+    await until(p, i => document.querySelector('#m' + i + '[data-flashed]'), i, 5000);
     return p.evaluate(i => {
       const n = document.getElementById('m' + i);
       const b = n && n.getBoundingClientRect();
@@ -4968,6 +5011,13 @@ async function photos() {
       snap.all['meta/chat'].photosOwed.n === 10,
     'P5: after the tab closed: the 4 photos that landed are indexed, 6 owed, lastImport stuck at uploading',
   );
+  /* the closed tab's lease is held, then lapsed, by setting its end: copying the old tab's real end raced the clock
+     on a busy runner (T7) */
+  const leaseEnd = ms =>
+    p2.evaluate(ms => {
+      __rt.leases.get('refresh/importLock').exp = Date.now() + ms;
+    }, ms);
+  await leaseEnd(60000);
   const w5 = (await writesTo(p2, '^(photos|chunks|meta)/')).length;
   r = await paste(p2, capTen);
   ok(
@@ -4980,7 +5030,7 @@ async function photos() {
       (r && r.msg) +
       ')',
   );
-  await sleep(1600);
+  await leaseEnd(-1);
   r = await paste(p2, capTen);
   up = await uploads(p2);
   st = await photoState(p2);
@@ -7123,12 +7173,13 @@ async function claims() {
       JSON.stringify(sts) +
       ')',
   );
+  await flashReset(p);
   const stClicked = await tryClick(p, '[data-conv="t2"] .callout.deal .lab a.dstat');
   const stOpen =
     stClicked &&
     (await until(p, () => {
       const d = document.querySelector('[data-conv="t2"] details.thr');
-      return d && d.open && location.hash === '#summary' && d.querySelector('.msg[data-i="13"].flash');
+      return d && d.open && location.hash === '#summary' && d.querySelector('.msg[data-i="13"][data-flashed]');
     }));
   ok(
     !!stOpen && !p.errors.length,
@@ -7145,13 +7196,15 @@ async function claims() {
     'claims C6: header chips follow the status (unknown status keeps the tag) (' + JSON.stringify(chipsAt) + ')',
   );
   /* C3: a claim in the card opens its thread at that message; one in another conversation goes to Messages */
+  await flashReset(p);
   const c2 = await tryClick(p, '[data-conv="packs"] .callout.deal .claims a:nth-of-type(2)');
   const inCard =
     c2 &&
     (await until(p, () => {
       const d = document.querySelector('[data-conv="packs"] details.thr');
-      return d && d.open && location.hash === '#summary' && d.querySelector('.msg[data-i="35"].flash');
+      return d && d.open && location.hash === '#summary' && d.querySelector('.msg[data-i="35"][data-flashed]');
     }));
+  await flashReset(p);
   const c4 = await tryClick(p, '[data-conv="packs"] .callout.deal .claims a:nth-of-type(4)');
   const away =
     c4 &&
@@ -7160,7 +7213,7 @@ async function claims() {
       () =>
         location.hash === '#messages' &&
         !document.getElementById('v-messages').hidden &&
-        document.querySelector('#m54.flash'),
+        document.querySelector('#m54[data-flashed]'),
     ));
   ok(
     inCard && away && !p.errors.length,
@@ -7294,7 +7347,7 @@ async function deepPress(p) {
   );
 }
 const DEEP_Q = 'Who sold a stove?';
-async function deepOpen(opts = {}, digests = false) {
+async function deepOpen(opts = {}, digests = false, ctxOpts) {
   const msgs = hmsgs(800, { perDay: 130 });
   const p = await hopen(
     hseed(msgs, {
@@ -7304,6 +7357,7 @@ async function deepOpen(opts = {}, digests = false) {
       opts: Object.assign({ promptMax: 32768, answer: 'From a summary: Ana sold the stove early on [#5].' }, opts),
     }),
     800,
+    ctxOpts,
   );
   const r = await hask(p, DEEP_Q, true);
   const rawLo = +((r.note.match(/^Read #(\d+)–#799/) || [])[1] ?? NaN);
@@ -8701,10 +8755,11 @@ async function crossReply() {
       JSON.stringify(lend) +
       ')',
   );
-  await tryClick(p, '#m45 > .xr');
+  await flashReset(p);
+  ok(await tryClick(p, '#m45 > .xr'), 'F23: the line on #45 can be clicked');
   ok(
     await until(p, () => {
-      const n = document.querySelector('#m34.flash');
+      const n = document.querySelector('#m34[data-flashed]');
       const r = n && n.getBoundingClientRect();
       return r && r.height && r.top >= 0 && r.bottom <= innerHeight && n.closest('details').dataset.conv === 'packs';
     }),
@@ -8784,6 +8839,7 @@ async function crossReply() {
     }, t);
     await until(p, i => document.querySelector('#m' + i + ' > .xr'), i, 5000);
     const before = await p.evaluate(t => !!document.getElementById('m' + t), t);
+    await flashReset(p);
     await p.evaluate(i => {
       const r = document.getElementById('m' + i);
       r.closest('details').open = true;
@@ -8793,7 +8849,7 @@ async function crossReply() {
     const shown = await p.evaluate(t => {
       const x = document.getElementById('m' + t);
       const r = x && x.getBoundingClientRect();
-      return !!x && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight && x.classList.contains('flash');
+      return !!x && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight && x.hasAttribute('data-flashed');
     }, t);
     ok(!before && shown, 'F23: the line on #' + i + ' opens #' + t + ' (10 days back, not loaded) by loading its day');
     ok(p.errors.length === 0, 'F23 older: no page errors ' + JSON.stringify(p.errors));
@@ -8802,7 +8858,10 @@ async function crossReply() {
 
 /* ---------- saved questions: Remove, Undo and Clear all on the Ask tab (F26) ---------- */
 const QA_MARKUP = '<img src=x onerror="window.__x=1"><b>Bold?</b>';
-const QA_UNDO = 400;
+/* The undo delay is long and these pages run on Playwright's clock: a case ends the delay by moving the clock with
+   undoPass, never by sleeping past a short real one, which raced the clicks on a busy runner (saved Q3, Nov 22). */
+const QA_UNDO = 60000;
+const undoPass = (p, ms) => p.clock.runFor(ms);
 const QA_DOCS = () => ({
   'qa/q1': { q: 'Who sold a stove?', a: 'Ben did [#1].', at: '2026-11-10T10:00:00.000Z', scope: 'window', toI: 19 },
   'qa/q2': { q: QA_MARKUP, a: 'Ana asked [#2].', at: '2026-11-11T10:00:00.000Z', scope: 'all', toI: 19 },
@@ -8812,7 +8871,7 @@ const QA_DOCS = () => ({
 let qaDialogs = 0;
 async function qopen(ctx, docs = QA_DOCS()) {
   const seed = hseed(hmsgs(20), { meta: { markerMode: null }, docs, opts: { undoMs: QA_UNDO } });
-  const p = await open(seed, PAGE, ctx);
+  const p = await open(seed, PAGE, Object.assign({ clockAt: Date.now() }, ctx));
   HP.push(p);
   p.on('dialog', d => {
     qaDialogs++;
@@ -8870,7 +8929,7 @@ async function savedQuestions() {
         JSON.stringify({ a11y, now, focus }) +
         ')',
     );
-    await sleep(QA_UNDO + 300);
+    await undoPass(p, QA_UNDO + 300);
     const later = await qstate(p);
     ok(
       later.list.join() === 'q3,q2' && later.stored.join() === 'q2,q3' && later.dels.join() === 'qa/q1' && !later.undo,
@@ -8889,7 +8948,7 @@ async function savedQuestions() {
     await sleep(50);
     const back = await qstate(p);
     const focus = await p.evaluate(() => document.activeElement.closest('.item.qa')?.dataset.id ?? null);
-    await sleep(QA_UNDO + 300);
+    await undoPass(p, QA_UNDO + 300);
     const later = await qstate(p);
     ok(
       back.list.join() === 'q3,q2,q1' &&
@@ -8912,7 +8971,7 @@ async function savedQuestions() {
     await sleep(50);
     const two = await qstate(p);
     await qundo(p, 0); /* q1's line */
-    await sleep(QA_UNDO + 300);
+    await undoPass(p, QA_UNDO + 300);
     const later = await qstate(p);
     ok(
       two.list.join() === 'q2' &&
@@ -8937,10 +8996,10 @@ async function savedQuestions() {
     await sleep(50);
     const cleared = await qstate(p);
     await qundo(p);
-    await sleep(QA_UNDO + 300);
+    await undoPass(p, QA_UNDO + 300);
     const undone = await qstate(p);
     await p.click('#qa-clear', { timeout: 2000 });
-    await sleep(QA_UNDO + 400);
+    await undoPass(p, QA_UNDO + 400);
     const gone = await qstate(p);
     ok(
       before.clear &&
@@ -8978,7 +9037,7 @@ async function savedQuestions() {
     const p = await qopen();
     await p.evaluate(() => __rt.fails.push({ p: 'qa/q1', op: 'delete' }));
     await qclick(p, 'q1');
-    await sleep(QA_UNDO + 300);
+    await undoPass(p, QA_UNDO + 300);
     const s = await qstate(p);
     ok(
       s.list.join() === 'q3,q2,q1' &&
@@ -8996,7 +9055,7 @@ async function savedQuestions() {
       document.querySelectorAll('#qa-undo p').forEach(x => x.remove());
     });
     await p.click('#qa-clear', { timeout: 2000 });
-    await sleep(QA_UNDO + 400);
+    await undoPass(p, QA_UNDO + 400);
     const c = await qstate(p);
     ok(
       c.list.join() === 'q2' &&
@@ -9040,7 +9099,7 @@ async function savedQuestions() {
 
   /* Q7: Look deeper on an answer still works after a saved question is removed */
   await hcase('Q7', async () => {
-    const { p } = await deepOpen({ undoMs: QA_UNDO });
+    const { p } = await deepOpen({ undoMs: QA_UNDO }, false, { clockAt: Date.now() });
     await until(p, () => document.querySelectorAll('#qa-list .item.qa').length === 1);
     await p.evaluate(() =>
       __rt.write('qa/z1', {
@@ -9053,7 +9112,7 @@ async function savedQuestions() {
     await until(p, () => document.querySelectorAll('#qa-list .item.qa').length === 2);
     const kept = await p.evaluate(() => document.querySelector('#qa-list .item.qa').dataset.id);
     await qclick(p, 'z1');
-    await sleep(QA_UNDO + 300);
+    await undoPass(p, QA_UNDO + 300);
     await scriptJson(p, [{ stretches: [{ from: 100, to: 160, focus: 130, why: 'the stove sale' }] }]);
     const d = await deepPress(p);
     await sleep(200);
@@ -9126,7 +9185,7 @@ async function savedQuestions() {
       const now = n();
       return Promise.resolve().then(() => ({ before, now, tick: n() }));
     });
-    await sleep(QA_UNDO + 300);
+    await undoPass(p, QA_UNDO + 300);
     const s = await qstate(p);
     ok(
       sync.before === 0 &&
@@ -9155,7 +9214,7 @@ async function savedQuestions() {
       document.dispatchEvent(new Event('visibilitychange'));
       return { before, visible, hidden, again: n().length };
     });
-    await sleep(QA_UNDO + 300);
+    await undoPass(p2, QA_UNDO + 300);
     const s2 = await qstate(p2);
     ok(
       vis.before === 0 &&
@@ -9181,7 +9240,7 @@ async function savedQuestions() {
     await qclick(p, 'q1');
     await qundo(p);
     await p.click('#qa-clear', { timeout: 2000 });
-    await sleep(QA_UNDO + 400);
+    await undoPass(p, QA_UNDO + 400);
     const s = await qstate(p);
     const dlg = await p.evaluate(() => __dlg);
     ok(
@@ -9198,7 +9257,7 @@ async function savedQuestions() {
    Nov 12, plus a method idea and a note from Claude. vjson scripts Claude's view replies (a delay, a failure); vmore
    stores newer messages as an import does (the chunk, then meta/chat). The automatic update's waits are shortened with
    __mcViewAutoMs. */
-const VW_UNDO = 400;
+const VW_UNDO = 60000; /* as QA_UNDO: ended with undoPass */
 const VW_DOCS = (o = {}) => ({
   'views/v1': Object.assign(
     {
@@ -9237,7 +9296,7 @@ async function vopen(o = {}) {
     docs: o.docs || VW_DOCS(o),
     opts: Object.assign({ undoMs: VW_UNDO }, o.opts),
   });
-  const p = await open(seed, PAGE, o.ctx);
+  const p = await open(seed, PAGE, Object.assign({ clockAt: Date.now() }, o.ctx));
   HP.push(p);
   p.on('dialog', d => {
     vwDialogs++;
@@ -9541,10 +9600,10 @@ async function viewsTab() {
     await p.keyboard.press('Enter'); /* focus is on Undo */
     await sleep(60);
     const back = await vstate(p);
-    await sleep(VW_UNDO + 200);
+    await undoPass(p, VW_UNDO + 200);
     const still = await vstate(p);
     await vclick(p, 'v1', '[data-f="rm:v1"]');
-    await sleep(VW_UNDO + 300);
+    await undoPass(p, VW_UNDO + 300);
     const later = await vstate(p);
     ok(
       label === 'Remove the view “By person”' &&
@@ -9587,7 +9646,7 @@ async function viewsTab() {
     await p.evaluate(() => __rt.fails.push({ p: 'views/v2', op: 'delete' }));
     await vtoggle(p, 'v2');
     await vclick(p, 'v2', '[data-f="rm:v2"]');
-    await sleep(VW_UNDO + 300);
+    await undoPass(p, VW_UNDO + 300);
     const s = await vstate(p);
     ok(
       s.list.join() === 'v2,v1' &&
@@ -10983,7 +11042,7 @@ const stAtMsg = (p, i) =>
       const n = document.getElementById('m' + i);
       const d = n && n.closest('details');
       const shown = location.hash === '#messages' && !document.getElementById('v-messages').hidden;
-      return shown && n && n.classList.contains('flash') && { flash: true, inConv: !!d && d.open };
+      return shown && n && n.hasAttribute('data-flashed') && { flash: true, inConv: !!d && d.open };
     },
     i,
     3000,
@@ -11057,6 +11116,7 @@ async function stats2() {
         JSON.stringify([d.lists, ana.lists, anaAll.tiles, anaAll.lists]),
     );
     await stBack(p);
+    await flashReset(p);
     await stRow(p, 'convs', 'busiest', 0);
     const at = await stAtMsg(p, 9);
     ok(
@@ -11122,6 +11182,7 @@ async function stats2() {
       head === 'Ana' && stSame(f, ['sellers', 'FAna Alvarez']),
       "F31 ST18: a seller's name opens their chart; Back focuses it again " + JSON.stringify([head, f]),
     );
+    await flashReset(p);
     await p.click('#st-body > [data-sec="deals"] [data-list="deals"] > li:nth-child(2) button');
     const at = await stAtMsg(p, 5);
     ok(at && at.flash, 'F31 ST18: a click on a deal opens its first message (#5) in Messages ' + JSON.stringify(at));
@@ -11187,6 +11248,7 @@ async function stats2() {
     );
     await stBack(p);
     await stPerson(p, 'Dee');
+    await flashReset(p);
     await p.click('#st-body > [data-sec="people"] p.note a:nth-of-type(2)');
     const at = await stAtMsg(p, 25);
     ok(at && at.flash, 'F31 ST19: "#25" opens her last message in Messages ' + JSON.stringify(at));
@@ -11318,6 +11380,7 @@ async function stats2() {
         JSON.stringify([rows[28], head, day.bars, day.say]),
     );
     const h = await stBar(p, 'words', 10);
+    await flashReset(p);
     await p.mouse.click(h.x, h.y);
     const at = await stAtMsg(p, 13);
     ok(at && at.flash, 'F31 ST21: a click on 10 AM opens its first mention (#13) in Messages ' + JSON.stringify(at));

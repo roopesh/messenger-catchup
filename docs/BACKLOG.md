@@ -19,7 +19,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R13 | P2 | risk | A page holds at most 5,000 photo files and 1 GiB: day packs (v1.30.0) end the file problem; archive pages for the 1 GiB are left |
 | R19 | P3 | risk | Claude's own maintenance writes (link cleanup, digest backfill) hold the refresh lock while the user's approval waits, often past the lock's 20 minutes |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
-| T7 | P3 | test | Page test P5 (an import lease lapsing after a tab closes) failed twice in one full parallel run on Nov 22 and passed alone 3 times: timing under load |
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (builds on the refresh reports from F27, v1.29.0; notes in [design/day-summaries.md](design/day-summaries.md)) |
@@ -68,10 +67,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### R19 · P3 · Claude's maintenance writes hold the refresh lock through slow approvals
 - **Found (Nov 14, live):** the cross-conversation link cleanup and the F16 digest backfill take the `refresh/status` lock, then write, and each write waits for the user's approval in the UI. Approvals took from minutes to 5.5 hours. Once the lock is 20 minutes old, scheduled refreshes treat it as stale and take over. Pinned writes kept the database whole: the cleanup was refused twice (`version_mismatch`) and landed on the third try, and the backfill's digest write landed, but its lock release was refused because a refresh had already replaced the status.
 - **Options:** writes that only touch documents refreshes never write (the backfill's `digests/m…` while refreshes run an older skill; a refresh on v1.25+ does write them) could skip the lock and rely on the pin; or the lock, the write and its release go in one batch, so there's one approval and no stale window; or `references/digests.md` and the cleanup procedure say to re-read and re-pin after a slow approval instead of assuming the lock held.
-
-### T7 · P3 · P5 is timing-sensitive under load
-- **Found (Nov 22, v1.31.0 work):** in one full `npm test` (36 sections, 10 at a time), both P5 checks in `photos` failed ("Nothing new … 6 photos stored" where "Another import is running" was expected): the closed tab's lease seems to have lapsed before the second paste. The section passed alone 3 times, and the next full run passed.
-- **Fix:** make the case independent of wall-clock time (move the stand-in's clock, or lengthen the lease the test sets) rather than retrying.
 
 ## Features and opportunities
 

@@ -2,6 +2,17 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.31.2] - 2026-11-22
+**No release on a red or re-run `main`, and the page tests that raced timers are deterministic** (closes BACKLOG T7). PATCH: tests and tooling. Page and helper unchanged (3.8, 2.1).
+
+### Fixed
+- **v1.31.1 was released while `main`'s CI was still running, and that run failed** (B40, "the context line's Show #30 jumps to #30"); its re-run failed too. The code it released passed the same test on its PR, but the release should never have gone out on a red build.
+- **`tools/release.sh` now refuses** unless `main`'s CI run for that exact commit finished green on its **first attempt** (`tools/ci-green.sh`, run before anything is tagged). A re-run that goes green doesn't count: the failure gets fixed in a new PR, or raised with the owner. CLAUDE.md says so and adds "A failing test is never ignored".
+- **Page tests no longer try to catch the 2.2 s highlight.** Every check that waited for a message's `flash` class (B40, B42, the summary and Ask citations, By day, claims, F23, Stats) could miss it on a slow runner. The stand-in now marks every element that gains the class (`data-flashed`, kept), each check clears the marks just before its click, and B40 says what it saw when it fails.
+- **The Undo tests no longer race a shortened timer.** Saved questions and Views shortened the 6 s Undo delay to 0.4 s and then raced it with real clicks; under load, saved Q3's first removal was deleted before its second click (found by running the released tests three at a time). Those pages now run on Playwright's clock with a 60 s delay that a case ends by moving the clock (`undoPass`), in all 14 places.
+- **P5 no longer races the clock (T7).** It copied the closed tab's import lease with its real end and then did several slow steps before the paste that should find it held; on a busy runner the lease lapsed first. The test now sets the lease's end itself: held for the first paste, lapsed for the second.
+- Tests: `TestReleaseScript` checks release.sh runs the guard before tagging, and runs `ci-green.sh` against a fake `gh` for every case (no run, running, failed, failed on a re-run, green only on a re-run, green first time).
+
 ## [1.31.1] - 2026-11-22
 **No false "older copy of the skill" notice when one run writes its start and finish times.** PATCH: a fix. Page **`PAGE_VERSION` 3.8** (from 3.7); helper unchanged (2.1).
 

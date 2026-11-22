@@ -8,8 +8,11 @@ The owner's standing rule. No exceptions for "small" changes, docs or tests.
 2. **Version it in the same PR:** bump `VERSION`, set the same version in `package.json` (`npm version X.Y.Z --no-git-tag-version`) and in `plugin/.claude-plugin/plugin.json`, and add a `CHANGELOG.md` entry dated today (`## [X.Y.Z] - YYYY-MM-DD`). `npm test` fails if they disagree. Installed plugins update only when the plugin's version changes.
 3. **`npm test` must pass** before opening the PR. Say in the PR what you ran and what it printed. Run `npm run setup` once per clone: it installs Chromium, the `pre-push` hook that blocks direct pushes to `main`, and a `.venv` with the pinned Ruff.
 4. **Open the PR** with `gh pr create`. The template's checklist must be filled in honestly.
-5. **Wait for CI** (`gh pr checks --watch`): `test` and `version-bump` must pass. Then **merge** with `gh pr merge --squash --delete-branch` and `git switch main && git pull`. After the merge, `pr-only` runs on `main` and should pass too.
-6. **Tag and release** the merge commit: `tools/release.sh` on an up-to-date `main` (it tags `vX.Y.Z`, builds the plugin ZIP from the tag, checks its version, and publishes the GitHub release with the changelog entry and the userscript). Marketplace installs pick up the merge on `main` itself; the release serves the userscript's self-update and ZIP uploads.
+5. **Wait for CI** (`gh pr checks --watch`): `test` and `version-bump` must pass. Then **merge** with `gh pr merge --squash --delete-branch` and `git switch main && git pull`. After the merge, `main`'s own CI run (`test` and `pr-only`) must pass too, on its first attempt: watch it (`gh run list --branch main --limit 1`, then `gh run watch <id>`).
+6. **Tag and release** the merge commit: `tools/release.sh` on an up-to-date `main` (it first refuses unless `main`'s CI for that commit passed on its first attempt, `tools/ci-green.sh`; then it tags `vX.Y.Z`, builds the plugin ZIP from the tag, checks its version, and publishes the GitHub release with the changelog entry and the userscript). Marketplace installs pick up the merge on `main` itself; the release serves the userscript's self-update and ZIP uploads.
+
+## A failing test is never ignored
+A red test, locally or in CI (a PR or `main`), is fixed at its cause or raised with the owner before anything else moves. Never re-run it until it goes green, call it a flake and carry on, or file it for later. A test that depends on timing is a bug in the test: make it deterministic, and fix every test built the same way. Say in the PR what failed and what you did about it.
 
 ## Versioning (semver for the skill as a whole)
 - **MAJOR:** users must redo setup, or the database layout changes incompatibly.
