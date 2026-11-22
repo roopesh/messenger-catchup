@@ -2367,7 +2367,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.7";
+  const PAGE_VERSION = "3.8";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -9706,7 +9706,15 @@
     const c1 = vcmp(V.page, M) === -1;
     /* compared without a leading weekday: a refresh that copied an example without one isn't an older skill (#43) */
     const noDay = x => String(x).replace(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun),? /, "");
-    const c2 = !!V.refresh && !!meta.lastRefresh && noDay(meta.lastRefresh) !== noDay(V.refresh);
+    /* and within 45 minutes: a run that wrote its start time in one and its finish time in the other is the same run */
+    const mins = x => {
+      const m = /^([A-Z][a-z]{2}) (\d{1,2}),? (\d{1,2}):(\d{2}) ?([AP]M)$/i.exec(noDay(x).trim());
+      const mo = m ? "janfebmaraprmayjunjulaugsepoctnovdec".indexOf(m[1].toLowerCase()) : -1;
+      if (mo < 0) return NaN;
+      return ((mo / 3) * 31 + +m[2]) * 1440 + ((+m[3] % 12) + (/p/i.test(m[5]) ? 12 : 0)) * 60 + +m[4];
+    };
+    const sameRun = (a, b) => noDay(a) === noDay(b) || Math.abs(mins(a) - mins(b)) < 45;
+    const c2 = !!V.refresh && !!meta.lastRefresh && !sameRun(meta.lastRefresh, V.refresh);
     if ((c1 || c2) && !running)
       add("C:" + (M || P), [
         "The last refresh ran an older copy of the Messenger Catch-up skill than this page was made for. Until it's updated, new photos may not be stored or shown. Update the plugin wherever Claude runs your refreshes (claude.ai or Claude Desktop: Customize › Plugins; Claude Code: /plugin), and remove any copy of the skill you uploaded yourself. ",
