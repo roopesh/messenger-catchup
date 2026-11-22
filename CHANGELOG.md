@@ -2,6 +2,13 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.31.1] - 2026-11-22
+**No false "older copy of the skill" notice when one run writes its start and finish times.** PATCH: a fix. Page **`PAGE_VERSION` 3.8** (from 3.7); helper unchanged (2.1).
+
+### Fixed
+- The page compared `meta/chat.versions.refresh` with `lastRefresh` exactly, and showed "The last refresh ran an older copy of the Messenger Catch-up skill" when they differed. Scheduled run 599 put its start time (9:09 AM) in one and its finish time (9:16 AM) in the other, so the owner's page showed the notice although the current skill had run. Times less than 45 minutes apart now count as the same run; a run an hour or more apart still shows it. `references/database.md` says so.
+- Test: notices U26 (7 minutes apart, 25 minutes across midnight: nothing; an hour apart: still the notice).
+
 ## [1.31.0] - 2026-11-22
 **Ask and Views cover the whole history and search every message and photo** (BACKLOG F32, decided on the owner's decision board). MINOR: page behavior users notice. Page **`PAGE_VERSION` 3.7** (from 3.6); helper unchanged (2.1).
 

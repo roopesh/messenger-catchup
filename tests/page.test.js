@@ -6606,6 +6606,22 @@ async function notices() {
     'notices U25: a different refresh, both with weekdays, is still C (' + JSON.stringify(n) + ')',
   );
   await p.close();
+  /* U26: one run that wrote its start time in versions.refresh and its finish time in lastRefresh (run 599) */
+  await none(
+    withMeta(metaWith({ lastRefresh: 'Sun Nov 22, 9:16 AM', versions: vers({ refresh: 'Sun Nov 22, 9:09 AM' }) })),
+    'U26: versions.refresh 7 minutes before lastRefresh is the same run: nothing',
+  );
+  await none(
+    withMeta(metaWith({ lastRefresh: 'Nov 22, 12:20 AM', versions: vers({ refresh: 'Nov 21, 11:55 PM' }) })),
+    'U26: 25 minutes apart across midnight is the same run: nothing',
+  );
+  p = await open(withMeta(metaWith({ versions: vers({ refresh: 'Nov 20, 8:04 AM' }) })));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && /older copy of the Messenger Catch-up skill/.test(n[0]),
+    'notices U26: an hour apart is a different refresh: still C (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
   /* U19: no database in this view (signed out, a preview): nothing to compare, nothing shown */
   await none(Object.assign(all(), { __opts: { noDb: true } }), 'U19: no database: no notices, no errors');
   /* U20: a page from before the notices ignores versions */
