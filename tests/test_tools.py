@@ -220,7 +220,7 @@ class TestSkillReferences(unittest.TestCase):
         """The page saves what each answer and view read (F6); a later Claude reading qa/* has to know an answer rested
         on summaries, so the field and its parts are documented on their own line."""
         page, db = in_skill("assets", "page.html"), in_skill("references", "database.md")
-        self.assertIn("row.sent = sent", page)
+        self.assertIn("row.sent = Object.assign({}, sent, sr)", page)
         self.assertIn("v.sent = sent", page)
         line = re.search(r"^- `sent` on `qa/\*` and `views/\*`.*$", db, re.M)
         self.assertTrue(line, "database.md has no line for sent")
@@ -231,6 +231,10 @@ class TestSkillReferences(unittest.TestCase):
         self.assertIn("stretches:", page)
         self.assertIn("wanted:", page)
         for part in ('scope:"deeper"', "{from, to, stretches, wanted}", "outer bounds, not all read"):
+            self.assertIn(part, line.group(0))
+        # F32: with search tools, what Claude searched and read with them
+        self.assertIn("searches: rec.searches.map", page)
+        for part in ("`searches`", "`reads`", "[{q, n, from?, to?, sender?}]"):
             self.assertIn(part, line.group(0))
 
     def test_every_meta_chat_field_the_page_writes_is_documented(self):

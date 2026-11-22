@@ -335,9 +335,44 @@ function runtime(seed) {
     sampleLog.push({ bytes: b, code: over ? 'prompt_too_large' : null });
     if (over) throw Object.assign(new Error('prompt too large: ' + b + ' bytes'), { code: 'prompt_too_large' });
   };
+  /* F32: opts.tools makes limits() report page tools; a call that passes tools then plays window.__toolPlan, rounds of
+     {say, calls: [{name, input}]}, the way the real runtime does: each round's text joins the answer after a blank
+     line (onText sees it grow), its calls run concurrently, and what each returned or threw is logged in
+     __rt.toolLog. opts.toolsUnavailable rejects such a call tools_unavailable, as a view without tools does. */
+  const toolLog = [];
+  async function playTools(o) {
+    if (opts.toolsUnavailable) throw { code: 'tools_unavailable', message: 'this view cannot run page tools' };
+    let text = '';
+    for (const r of window.__toolPlan || []) {
+      if (r.say) {
+        text += (text ? '\n\n' : '') + r.say;
+        if (o.onText) o.onText({ text, delta: r.say });
+        await new Promise(res => setTimeout(res, 0));
+      }
+      if (r.calls)
+        await Promise.all(
+          r.calls.map(async c => {
+            const t = o.tools.find(x => x.name === c.name);
+            try {
+              const out = await t.execute(c.input, { signal: new AbortController().signal });
+              toolLog.push({ name: c.name, input: c.input, out: typeof out === 'string' ? out : JSON.stringify(out) });
+            } catch (e) {
+              toolLog.push({ name: c.name, input: c.input, err: String((e && e.message) || e) });
+            }
+          }),
+        );
+    }
+    return text;
+  }
   async function sample(msgs, o) {
     samples.push(msgs);
     capCheck(msgs);
+    if (o && o.tools) {
+      if (o.cache !== false && o.cache !== undefined)
+        throw { code: 'invalid_request', message: 'cache passed with tools' };
+      const text = await playTools(o);
+      return { text, truncated: false };
+    }
     const text = opts.answer || 'Ben offered one [#1]. Ana asked [#0, #2].';
     if (o && o.onText) o.onText({ text });
     return { text };
@@ -346,11 +381,20 @@ function runtime(seed) {
     sample.limits = async () => {
       if (opts.limitsHang) return new Promise(() => {});
       if (opts.limitsReject) throw Object.assign(new Error('limits unavailable'), { code: 'unavailable' });
-      return { maxPromptBytes: opts.limitsBogus ? 'x' : PROMPT_MAX };
+      return Object.assign(
+        { maxPromptBytes: opts.limitsBogus ? 'x' : PROMPT_MAX },
+        opts.tools ? { tools: { maxCount: 16 } } : {},
+      );
     };
-  sample.json = async prompt => {
+  sample.json = async (prompt, o) => {
     samples.push(prompt);
     capCheck(prompt);
+    /* with tools, the final round's text is the JSON (narration in earlier rounds is ignored, as the runtime does) */
+    if (o && o.tools) {
+      const text = await playTools(o);
+      const plan = window.__toolPlan || [];
+      return JSON.parse(plan[plan.length - 1].say);
+    }
     if (opts.viewJson) return JSON.parse(JSON.stringify(opts.viewJson));
     return {
       title: 'By person',
@@ -388,6 +432,7 @@ function runtime(seed) {
     });
   }
   window.__rt = {
+    toolLog,
     store,
     writes,
     uploads,
@@ -2801,13 +2846,13 @@ async function hopen(seed, n) {
   return p;
 }
 const lastSample = p => p.evaluate(() => __rt.samples[__rt.samples.length - 1]);
-/* Ask one question; returns the calls it made ({bytes, code} each), the turns of the last one and the notes */
+/* Ask one question; returns the calls it made ({bytes, code} each), the turns of the last one and the notes. F32:
+   Ask always takes the whole history, so `all` (once the "include older" box) changes nothing. */
 async function hask(p, q, all = false) {
   const n0 = await p.evaluate(() => __rt.sampleLog.length);
   await p.evaluate(
     ([q, all]) => {
       location.hash = '#ask';
-      document.getElementById('ask-all').checked = all;
       document.getElementById('ask-in').value = q;
       document.getElementById('ask-go').click();
     },
@@ -3063,8 +3108,8 @@ async function history() {
       r.calls.length === 1 &&
         r.prompt.endsWith('MESSAGES (oldest first):\n' + lines) &&
         !/OLDER HISTORY/.test(r.prompt) &&
-        /- MESSAGES: every message in the catch-up window, #0 to #19, word for word/.test(r.prompt),
-      'H4: a window that fits is sent whole: every line in order, no summaries, "What you have" names #0 to #19',
+        /- MESSAGES: every stored message, #0 to #19, word for word/.test(r.prompt),
+      'H4: a history that fits is sent whole: every line in order, no summaries, "What you have" names #0 to #19',
     );
     ok(r.note === 'Read #0–#19 word for word.', 'H4: the note under the answer: "' + r.note + '"');
     await p.close();
@@ -3168,7 +3213,8 @@ async function history() {
     await p.close();
   });
 
-  /* H6, H14: window-only Ask and Views on a window over the budget */
+  /* H6, H14: Ask and Views on a history over the budget. F32: both always take the whole history (they took only the
+     window before), so the summaries reach back to #0 */
   await hcase('H6, H14', async () => {
     const msgs = hmsgs(800, { perDay: 100 });
     const p = await hopen(
@@ -3206,32 +3252,24 @@ async function history() {
           X.raw[n - 1] === 799 &&
           contiguous(X.raw) &&
           X.dig.length > 0 &&
-          X.dig.every(([a]) => a >= 100) &&
-          note.startsWith(
-            'Your window has 700 messages: read the newest ' +
-              n +
-              ' word for word (#' +
-              X.raw[0] +
-              '–#799), the rest as summaries',
-          ),
+          X.dig.some(([a]) => a < 100) &&
+          note.startsWith((what === 'Ask' ? 'Read #' : 'Built from #') + X.raw[0] + '–#799 word for word') &&
+          /Older than #\d+: summaries only\./.test(note),
         'H6: ' +
           what +
-          ' on a 700-message window: within the cap (' +
+          ' on an 800-message history: within the cap (' +
           bytes +
           '), the newest ' +
           n +
-          ' word for word, summaries only from the window ("' +
+          ' word for word, summaries back past the window ("' +
           note +
           '")',
       );
     }
-    ok(
-      /the rest of the window, #100 to #/.test(vp),
-      'H6: the Views prompt says the summaries are the rest of the window',
-    );
+    ok(/- OLDER HISTORY: #0 to #/.test(vp), 'H6: the Views prompt carries summaries from #0 on');
     const view = await until(p, () => Object.values(Object.fromEntries(__rt.store)).find(v => v && v.kind === 'view'));
     ok(
-      view && view.sent && view.sent.to === 799 && view.sent.sumFrom === 100,
+      view && view.sent && view.sent.to === 799 && view.sent.sumFrom === 0,
       'H14: a built view saves sent too (' + JSON.stringify(view && view.sent) + ')',
     );
     ok(p.errors.length === 0, 'H6: no page errors ' + JSON.stringify(p.errors));
@@ -12356,6 +12394,304 @@ async function captions() {
   ok(p0.errors.length === 0, 'R13: no captions: no page errors ' + JSON.stringify(p0.errors));
   await p0.context().close();
 }
+/* ---------- askSearch: Ask and Views over the whole history, with the page's search tools (F32) ---------- */
+const CAP42 = 'navy backpack, front flap open showing red tartan lining';
+/* 1,200 messages over 12 days: #42 a photo whose caption says tartan, #43 a reply about the lining, #1150 a backpack
+   for sale; opts as the stand-in takes them (tools: true for a view that runs page tools) */
+function asSeed(opts = { tools: true }, n = 1200) {
+  const body = i =>
+    ({ 42: 'finally came in', 43: 'that lining is gorgeous', 1150: 'anyone want a backpack? selling mine' })[i] ||
+    'message ' + i + ' about the ridge trail and spare tent poles';
+  const msgs = hmsgs(n, { perDay: 100, body });
+  msgs[42].p = ['https://example.invalid/42.jpg'];
+  return hseed(msgs, {
+    threads: true,
+    meta: { markerMode: 'time', markerFrom: '2026-10-12T00:00', markerTo: null },
+    docs: { 'captions/b0': { start: 0, byK: { 42: { 0: CAP42 } } } },
+    opts,
+  });
+}
+const AS_PLAN = [
+  { say: 'Let me search for that.', calls: [{ name: 'search_messages', input: { words: 'plaid' } }] },
+  {
+    say: 'Nothing for plaid; trying backpack.',
+    calls: [
+      { name: 'search_messages', input: { words: 'backpack' } },
+      { name: 'read_messages', input: { from: '#38', to: '#46' } },
+    ],
+  },
+  {
+    calls: [
+      { name: 'search_messages', input: { words: 'lining', from: '2026-10-01', to: '2026-10-01', sender: 'Cy' } },
+      { name: 'day_summaries', input: { from: '2026-10-01', to: '2026-10-03' } },
+      { name: 'read_messages', input: { from: 'yesterday' } },
+    ],
+  },
+  { say: 'Ben posted it [#42]; Cy loved the lining [#43].' },
+];
+async function asOpen(seed, plan) {
+  const p = await hopen(seed, 1200);
+  await p.evaluate(pl => (window.__toolPlan = pl), plan || AS_PLAN);
+  return p;
+}
+const asTools = p => p.evaluate(() => __rt.toolLog.map(x => Object.assign({}, x, { out: x.out && JSON.parse(x.out) })));
+async function askSearch() {
+  await hcase('AS1-AS9', async () => {
+    const p = await asOpen(asSeed());
+    ok(
+      !(await p.$('#ask-all')) &&
+        /whole history/.test(await p.$eval('#v-ask .sec-head p', e => e.textContent)) &&
+        (await p.evaluate(() => S.tools)) === true,
+      'AS1: no "include older" box, the header says Claude reads the whole history, and this view has tools',
+    );
+    const r = await hask(p, 'Who posted the backpack with the plaid lining?');
+    const log = await asTools(p);
+    const call = r.calls[0];
+    ok(
+      r.calls.length === 1 &&
+        /\n- SEARCH: three tools over every stored message/.test(r.prompt) &&
+        /- Search before saying something isn't in the chat/.test(r.prompt) &&
+        /read them with read_messages first/.test(r.prompt) &&
+        /- MESSAGES: every message from #\d+ to #1199/.test(r.prompt) &&
+        /- OLDER HISTORY: #0 to #/.test(r.prompt) &&
+        call.bytes <= 98304,
+      'AS2: one call; the prompt is the whole history (newest word for word, summaries from #0) within 96 KiB, with the SEARCH line and its rules (' +
+        call.bytes +
+        ' bytes)',
+    );
+    const [plaid, backpack, read1, lining, days, bad] = [
+      log.find(x => x.input.words === 'plaid'),
+      log.find(x => x.input.words === 'backpack'),
+      log.find(x => x.name === 'read_messages' && x.input.from === '#38'),
+      log.find(x => x.input.words === 'lining'),
+      log.find(x => x.name === 'day_summaries'),
+      log.find(x => x.name === 'read_messages' && x.input.from === 'yesterday'),
+    ];
+    ok(
+      plaid.out.total === 0 &&
+        backpack.out.total === 2 &&
+        backpack.out.newestFirst &&
+        /^#1150 /.test(backpack.out.matches[0]) &&
+        /^#42 .*\[photo: navy backpack, front flap open showing red tartan lining\]/.test(backpack.out.matches[1]),
+      'AS3: search_messages covers the whole history and photo captions: "plaid" 0, "backpack" 2, newest first, #42 by its caption ' +
+        JSON.stringify(backpack.out),
+    );
+    ok(
+      read1.out.from === 38 &&
+        read1.out.to === 46 &&
+        read1.out.lines.length === 9 &&
+        /^#42 /.test(read1.out.lines[4]) &&
+        !read1.out.next,
+      'AS4: read_messages gives #38–#46 word for word ' + JSON.stringify([read1.out.from, read1.out.to]),
+    );
+    ok(
+      lining.out.total === 1 && /^#43 /.test(lining.out.matches[0]),
+      'AS5: a date range and a sender narrow a search ("lining" by Cy on Oct 1: #43 only, not #42) ' +
+        JSON.stringify(lining.out),
+    );
+    ok(
+      days.out.days.length === 3 &&
+        /^\[#0–#99, Oct 1\]/.test(days.out.days[0]) &&
+        bad.err &&
+        /from must be/.test(bad.err),
+      'AS6: day_summaries gives a line per day; an unreadable bound comes back as an error Claude reads ' +
+        JSON.stringify([days.out.days[0], bad.err]),
+    );
+    const turn = await p.evaluate(() => {
+      const t = [...document.querySelectorAll('#chat .turn.assistant')].pop();
+      const mb = t.querySelector('.matches');
+      return {
+        txt: t.querySelector('.txt').textContent,
+        cites: [...t.querySelectorAll('.txt a.cite')].map(a => a.textContent),
+        chips: mb
+          ? [...mb.querySelectorAll('.seg button')].map(b => [b.textContent, b.getAttribute('aria-pressed')])
+          : null,
+        rows: mb ? [...mb.querySelectorAll('li.snip')].map(li => li.textContent) : null,
+      };
+    });
+    ok(
+      turn.txt === 'Ben posted it #42; Cy loved the lining #43.' && turn.cites.join() === '#42,#43',
+      'AS7: the answer is only the last round: no "Let me search" or remarks between searches, citations linked "' +
+        turn.txt +
+        '"',
+    );
+    ok(
+      r.note.includes('Searched “plaid” (0), “backpack” (2), “lining” by Cy (2026-10-01 to 2026-10-01) (1).') &&
+        r.note.includes('Read #38–#46.') &&
+        r.note.includes('Read day summaries.') &&
+        /^Read #\d+–#1199 word for word/.test(r.note),
+      'AS8: the note says what was read word for word, what Claude searched (with counts) and read: "' + r.note + '"',
+    );
+    ok(
+      JSON.stringify(turn.chips) ===
+        JSON.stringify([
+          ['“plaid” · 0', 'false'],
+          ['“backpack” · 2', 'true'],
+          ['“lining” by Cy (2026-10-01 to 2026-10-01) · 1', 'false'],
+        ]) &&
+        turn.rows.length === 2 &&
+        /^#1150 · /.test(turn.rows[0]) &&
+        /^#42 · .*finally came in📷 navy backpack/.test(turn.rows[1]),
+      'AS9: under the answer, each search with its count; the first with matches is open, newest first, with the caption ' +
+        JSON.stringify(turn),
+    );
+    await p.close();
+  });
+
+  await hcase('AS10-AS13', async () => {
+    const p = await asOpen(asSeed());
+    await hask(p, 'Who posted the backpack with the plaid lining?');
+    /* a row opens its message in Messages */
+    await p.evaluate(() => [...document.querySelectorAll('#chat .matches li.snip')].pop().click());
+    await until(p, () => location.hash === '#messages' && document.getElementById('m42'));
+    ok(true, 'AS10: a matching row opens its message on the Messages tab');
+    const row = await until(p, () =>
+      Object.values(Object.fromEntries(__rt.store)).find(v => v && v.q && /plaid lining/.test(v.q)),
+    );
+    ok(
+      row.scope === 'all' &&
+        JSON.stringify(row.sent.searches) ===
+          JSON.stringify([
+            { q: 'plaid', n: 0 },
+            { q: 'backpack', n: 2 },
+            { q: 'lining', n: 1, from: '2026-10-01', to: '2026-10-01', sender: 'Cy' },
+          ]) &&
+        JSON.stringify(row.sent.reads) === '[[38,46]]' &&
+        row.sent.to === 1199 &&
+        row.a === 'Ben posted it [#42]; Cy loved the lining [#43].',
+      'AS11: the saved question keeps the answer, scope "all", what was read and every search with its count ' +
+        JSON.stringify(row),
+    );
+    await p.evaluate(() => (location.hash = '#ask'));
+    const listed = await until(p, () => {
+      const q = document.querySelector('#qa-list .item.qa');
+      return q && q.textContent;
+    });
+    ok(
+      /searched “plaid” \(0\), “backpack” \(2\)/.test(listed),
+      'AS12: Earlier questions says what each one searched "' + listed.slice(0, 200) + '"',
+    );
+    /* the page's own matches for the question's words, when there are some */
+    await p.evaluate(() => (window.__toolPlan = [{ say: 'Ana offered one [#1150].' }]));
+    await hask(p, 'Is anyone selling a backpack?');
+    const chips = await p.evaluate(() =>
+      [...[...document.querySelectorAll('#chat .turn.assistant')].pop().querySelectorAll('.matches .seg button')].map(
+        b => b.textContent,
+      ),
+    );
+    ok(
+      JSON.stringify(chips) === JSON.stringify(['Your words · 1']),
+      'AS13: with no search by Claude, the page still lists the messages holding all the question\'s words ("selling backpack") ' +
+        JSON.stringify(chips),
+    );
+    const st = await p.evaluate(() =>
+      [1, 3].map(n => recStatus({ searches: [{ q: 'pouch', ms: Array(n).fill(0) }], reads: [], lastKind: 'search' })),
+    );
+    ok(
+      st.join('|') === 'Searched “pouch”: 1 match. Thinking…|Searched “pouch”: 3 matches. Thinking…',
+      'AS13b: the live status counts matches in plain English ' + JSON.stringify(st),
+    );
+    ok(p.errors.length === 0, 'AS10-13: no page errors ' + JSON.stringify(p.errors));
+    await p.close();
+  });
+
+  await hcase('AS14', async () => {
+    /* a small cap: the prompt takes 60%, and results past what's left are refused, so the call stays within the cap */
+    const p = await asOpen(asSeed({ tools: true, promptMax: 40000 }), [
+      {
+        calls: [
+          { name: 'read_messages', input: { from: '#0', to: '#1199' } },
+          { name: 'search_messages', input: { words: 'ridge' } },
+        ],
+      },
+      { say: 'Partly checked [#5].' },
+    ]);
+    const r = await hask(p, 'Everything about the ridge?');
+    const log = await asTools(p);
+    const refused = log.filter(x => x.err && /budget/.test(x.err));
+    ok(
+      r.calls[0].bytes <= 24000 &&
+        refused.length >= 1 &&
+        log.every(x => !x.out || JSON.stringify(x.out).length <= 16384),
+      'AS14: at a 40,000-byte cap the prompt keeps to 60% (' +
+        r.calls[0].bytes +
+        ') and a result past the reading budget is refused, so Claude answers ' +
+        JSON.stringify(log.map(x => [x.name, x.err || 'ok'])),
+    );
+    await p.close();
+  });
+
+  await hcase('AS15', async () => {
+    /* a view that doesn't run page tools: one more call without them, and the page stops offering them */
+    const p = await asOpen(asSeed({ tools: true, toolsUnavailable: true }));
+    const r = await hask(p, 'What happened?');
+    const st = await p.evaluate(() => [S.tools, __rt.samples.length]);
+    ok(
+      r.answer === 'Ben offered one #1. Ana asked #0 #2.' &&
+        st[0] === false &&
+        !/- SEARCH:/.test(r.prompt) &&
+        /- MESSAGES: every stored message, #0 to #1199, word for word/.test(r.prompt) &&
+        r.calls.length === 2,
+      'AS15: tools_unavailable: asked again without tools, over the whole history at the full cap, and the page stops offering them ' +
+        JSON.stringify({ st, calls: r.calls, answer: r.answer }),
+    );
+    await p.close();
+  });
+
+  await hcase('AS16', async () => {
+    /* without tools (the stand-in's default) nothing changes but the scope: the whole history, no SEARCH line */
+    const p = await hopen(asSeed({}), 1200);
+    const r = await hask(p, 'What happened?');
+    ok(
+      (await p.evaluate(() => S.tools)) === false &&
+        !/- SEARCH:/.test(r.prompt) &&
+        /- MESSAGES: every stored message, #0 to #1199, word for word/.test(r.prompt) &&
+        !/OLDER HISTORY/.test(r.prompt),
+      'AS16: without tools the whole history goes in at the full cap, as "include older" did: all 1,200 word for word here (' +
+        r.calls[0].bytes +
+        ' bytes)',
+    );
+    await p.close();
+  });
+
+  await hcase('AS17', async () => {
+    /* Views search too: the final round is the view; what it searched is saved and shown */
+    const viewJson = {
+      title: 'Backpacks',
+      intro: 'Every backpack in the chat.',
+      sections: [{ heading: 'Ben', summary: 'A tartan-lined one [#42].', refs: [42] }],
+    };
+    const p = await asOpen(asSeed(), [
+      { say: 'Searching.', calls: [{ name: 'search_messages', input: { words: 'backpack' } }] },
+      { say: JSON.stringify(viewJson) },
+    ]);
+    await p.evaluate(() => {
+      location.hash = '#views';
+      document.getElementById('view-in').value = 'every backpack';
+      document.getElementById('view-go').click();
+    });
+    const view = await until(p, () =>
+      Object.values(Object.fromEntries(__rt.store)).find(v => v && v.kind === 'view' && v.title === 'Backpacks'),
+    );
+    const vp = await lastSample(p);
+    const note = await until(p, () => {
+      const e = document.querySelector('#view-out .sent');
+      return e && e.textContent;
+    });
+    ok(
+      /- SEARCH: three tools/.test(vp) &&
+        /Cover the whole history, not only the messages above/.test(vp) &&
+        JSON.stringify(view.sent.searches) === JSON.stringify([{ q: 'backpack', n: 2 }]) &&
+        /Searched “backpack” \(2\)\./.test(note),
+      'AS17: a view gets the search tools and the whole-history task; its searches are saved and in its note "' +
+        note +
+        '"',
+    );
+    ok(p.errors.length === 0, 'AS17: no page errors ' + JSON.stringify(p.errors));
+    await p.close();
+  });
+}
+
 const SECTIONS = {
   importer,
   robustness,
@@ -12392,6 +12728,7 @@ const SECTIONS = {
   packs,
   packs2,
   captions,
+  askSearch,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1
