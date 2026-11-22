@@ -2,6 +2,26 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.31.0] - 2026-11-22
+**Ask and Views cover the whole history and search every message and photo** (BACKLOG F32, decided on the owner's decision board). MINOR: page behavior users notice. Page **`PAGE_VERSION` 3.7** (from 3.6); helper unchanged (2.1).
+
+### Added
+- **Claude searches the chat itself.** Where the viewer can run page tools (`sample.limits().tools`; tested on claude.ai, including the 0.2.92 runtime the owner's page uses), Ask and Views hand Claude three of the page's own functions: `search_messages` (every stored message, however old: the text, the sender's names, link previews, quotes and photo captions; every word must appear; optional dates and sender), `read_messages` (a range or a whole day, word for word) and `day_summaries` (a line per day, with digests). Claude retries with other words when a search finds nothing, reads around a hit before citing it, and answers with [#n] citations. Each result is at most 16 KiB and one question's results stay within what its prompt left of the cap, so a call never outgrows it. While Claude works, the answer's place says what it last searched ("Searched “backpack”: 2 matches"); text written before its last search is dropped from the answer.
+- **Every match under the answer.** A row of searches with their counts ("“plaid” · 0", "“backpack” · 2") and, when the question's own words all appear somewhere, "Your words". The list, newest first, is the page's own complete search (not just what Claude was shown); a row opens its message. The note adds what was searched and read, and the saved question (`qa/*` `sent.searches`, `sent.reads`) and Earlier questions keep it. Views save and show theirs too.
+- Test: page section `askSearch` (AS1–AS17), with the stand-in now playing scripted tool rounds (`window.__toolPlan`, `__rt.toolLog`, `opts.tools`, `opts.toolsUnavailable`).
+
+### Changed
+- **Ask and Views always take the whole history:** the newest messages word for word, older ones as summaries, back to the first message. The "Include messages before the catch-up window" box is gone, and Views are no longer limited to the window. With search tools the up-front prompt keeps to 96 KiB (or 60% of a smaller cap), the rest being for what Claude reads, so most questions send less than "include older" did; without them it goes in at the full cap, as "include older" did.
+- **Look deeper** shows only where search tools aren't available; with them Claude reads what it needs itself.
+- A view where tools turn out unavailable (`tools_unavailable`) asks once more without them, and the page stops offering them.
+- `references/database.md` (and its copies): `qa/*` `scope` is `all`; `sent.searches` and `sent.reads`. Tests: H4, H6 and H14 now expect the whole history.
+- The Messages tab and its filter stay as they are (the owner: "keep it for now"). Range summaries already read every message of their range.
+
+### Fixed
+- **"Summary written undefined."** A summary without a `generatedAt` (seen on a scratch page seeded by hand) showed that on the Summary tab; the clause is now left out.
+
+- **Backlog:** F32 removed (done). Recorded from the decision board: F29 decided (one fuller summary per day, Copy for chat, no links, after F32), F1's answers (designs and test cases before any build), R12 reanalyzed (recommend closing; waits on the owner). L1 gains the photo checks for v1.30.0 and a watch on "Scan didn't start scrolling". T7 filed (page test P5 is timing-sensitive under load).
+
 ## [1.30.0] - 2026-11-21
 **Day packs end the 5,000-file photo limit, and photos are found by what's in them** (BACKLOG R13, decided on the owner's decision board as "E + S"). MINOR: a new page feature behind a switch, and refresh procedure changes. Page **`PAGE_VERSION` 3.6** (from 3.5); helper unchanged (2.1).
 

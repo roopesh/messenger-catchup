@@ -19,11 +19,11 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R13 | P2 | risk | A page holds at most 5,000 photo files and 1 GiB: day packs (v1.30.0) end the file problem; archive pages for the 1 GiB are left |
 | R19 | P3 | risk | Claude's own maintenance writes (link cleanup, digest backfill) hold the refresh lock while the user's approval waits, often past the lock's 20 minutes |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
+| T7 | P3 | test | Page test P5 (an import lease lapsing after a tab closes) failed twice in one full parallel run on Nov 22 and passed alone 3 times: timing under load |
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (builds on the refresh reports from F27, v1.29.0; notes in [design/day-summaries.md](design/day-summaries.md)) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; the schedule for frequent checks is left |
-| F32 | P2 | feature | One Ask box that always covers the whole history: Claude searches every stored message and photo caption, and the page lists every match; replaces the window-only prompt, "include older" and the Messages filter (the owner, Nov 22) |
 
 ---
 
@@ -58,6 +58,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Also:** a claude.ai conversation has a hard length limit. Once a chain's conversation reaches it, follow-ups can't be delivered and the chain stops (a refresh the user asks for then finds it stopped).
 - **Corrected (Nov 14):** a note here said a chain seems to keep the skill version it started with. The real cause was an older copy of the skill uploaded to the owner's account (Customize › Skills), which refreshes used instead of the 1.25.0 plugin; a refresh the owner started by hand ran it too. Nothing on the page could flag it, since that copy wrote a matching `versions.page`.
 - **Fix:** measure a chain's cost per run after a week or two; if it climbs, or the conversation nears its limit, have a run move the chain to a fresh conversation now and then (setup's Stop or change, then arm from the new one).
+- **Reanalyzed (Nov 22):** a fresh session per run (Desktop scheduled tasks) didn't work right for the owner, and R10/R11 are closed, so the chain stays. What's left: runs slowly cost more, and at the length limit the chain stops; the page flags a stopped chain (v1.24.0) and the refresh phrase in a new chat restarts it in a fresh conversation. Recommended on the board: close R12 and keep a live check for the first stop (L1). Waits on the owner.
 
 ### R18 · P3 · A run older than the lock's 20 minutes when the next one fires
 - **What:** since R14, a chain run arms as it starts, so the next run fires `every` minus 3 minutes after this one started, not after it ended. If this run is still going then (a large backlog, a long photo wait, a slow outbox) and `every` is 23 minutes or more, its `refresh/status` lock is more than 20 minutes old, and the next run treats it as stale and takes over. That run scans in the same Messenger tab. Pinned writes keep the database whole: a run whose write is refused while the other's `running` is in `refresh/status` stops (writing-the-build.md › Refused writes). But the two can disturb each other's scan, and the first to finish marks the status done while the other is still going. Before R14 this could only happen with a refresh the user asked for. `references/scheduling.md` › A scheduled run, Overlap, describes it.
@@ -68,10 +69,15 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Found (Nov 14, live):** the cross-conversation link cleanup and the F16 digest backfill take the `refresh/status` lock, then write, and each write waits for the user's approval in the UI. Approvals took from minutes to 5.5 hours. Once the lock is 20 minutes old, scheduled refreshes treat it as stale and take over. Pinned writes kept the database whole: the cleanup was refused twice (`version_mismatch`) and landed on the third try, and the backfill's digest write landed, but its lock release was refused because a refresh had already replaced the status.
 - **Options:** writes that only touch documents refreshes never write (the backfill's `digests/m…` while refreshes run an older skill; a refresh on v1.25+ does write them) could skip the lock and rely on the pin; or the lock, the write and its release go in one batch, so there's one approval and no stale window; or `references/digests.md` and the cleanup procedure say to re-read and re-pin after a slow approval instead of assuming the lock held.
 
+### T7 · P3 · P5 is timing-sensitive under load
+- **Found (Nov 22, v1.31.0 work):** in one full `npm test` (36 sections, 10 at a time), both P5 checks in `photos` failed ("Nothing new … 6 photos stored" where "Another import is running" was expected): the closed tab's lease seems to have lapsed before the second paste. The section passed alone 3 times, and the next full run passed.
+- **Fix:** make the case independent of wall-clock time (move the stand-in's clock, or lengthen the lease the test sets) rather than retrying.
+
 ## Features and opportunities
 
 ### F1 · P3 · Several chats
 - One page and one loop per chat today (LEARNINGS.md › Open issues). Simplest path: one page per chat, keyed by `meta/chat.thread`, and a loop that walks them.
+- **Owner's answers (Nov 22, board):** chats to start with: two more groups, more later (count unknown); one Ask across chats with results clearly labeled by chat, and filters by chat ("if search is cheap, focus on result filters"); the same schedule for all, parallel if possible. Leans to option A (chats inside this page). **Before any build:** designs or prototypes and written test cases, reviewed by the owner.
 - **Not on the decision board until Nov 22**, so it had no options or questions for the owner. To design: one page per chat or several chats on one page (tabs, a picker); one scheduled loop for all chats or one per chat, and what that does to cost and R12; how setup adds a second chat; whether search (F32) and Stats span chats. Related: F25 (a Facebook group on the same page).
 
 ### F25 · P2 · Catch up with Facebook group posts
@@ -91,12 +97,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - Sharing by "Copy for chat" and/or a shared link, the owner's call.
 - **Everything discussed:** options, the owner's decisions, Claude's proposed shape and the open questions are in [design/day-summaries.md](design/day-summaries.md).
 - **Builds on F27 (v1.29.0):** merge each day's saved refresh reports into its fuller summary at the day's end.
-
-### F32 · P2 · One Ask box over the whole history
-- **The owner (Nov 22):** Ask should always cover the entire history, with no "include older" choice and no catch-up window limit, and there should be no separate Messages filter: "I want you to find what I'm looking for."
-- **Today:** Ask sends the catch-up window word for word (with "include older", the newest messages that fit, about 256 KB, and the rest as one line per day, which drops their photo captions and detail). The Messages filter is a separate exact word search over every stored message and caption, with no Claude.
-- **Direction:** one box. The page gives Claude tools through `sample` (`search_messages` over every stored message and caption, `read_around(#n)` for the conversation around a hit); Claude searches as often as it needs and answers with [#n] citations. Under the answer the page lists every exact match itself (instant, free, complete, and there when Claude isn't). The "include older" box and the Messages filter go.
-- **To check first:** whether `sample` tools work in claude.ai's viewer (a scratch page), their latency and cost per search round, and how Views and range summaries use the same search. Fallback if tools don't work: Claude turns the question into search terms, the page searches everything, Claude answers from the hits.
+- **Owner decided (Nov 22, board option A):** one fuller summary per day instead of two levels, since Ask now searches the whole history (F32, v1.31.0) and no longer needs the short digest as its index. Kept current by each refresh, with one rewrite after the day ends. Sharing by "Copy for chat" only: no links ("I'm not opening up the artifact"). Today's summary in progress can be copied too. No length limit for now. Backfill past days once the owner likes the output of a few. Next to build.
 
 ### F30 · P2 · Send queued replies without a full refresh
 - **Ask (owner, Nov 16):** be able to send replies queued on the page without a full refresh, if possible.

@@ -1318,6 +1318,27 @@
   .turn .deeper .note {
     font-size: 0.78rem;
   }
+  /* F32: under an answer, every message each search matched */
+  .turn .matches {
+    display: grid;
+    gap: 8px;
+    margin-top: 4px;
+    min-width: 0;
+  }
+  .turn .matches .note {
+    font-size: 0.78rem;
+  }
+  .turn .matches .seg button {
+    font-size: 0.8rem;
+    padding: 4px 10px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .turn .matches .link {
+    justify-self: start;
+  }
   .turn.user .txt {
     background: var(--accent-soft);
     padding: 8px 12px;
@@ -2062,8 +2083,8 @@
       <div class="sec-head">
         <h2>Ask about the chat</h2>
         <p>
-          Claude reads the catch-up window, as much as fits in one request (newest first, older parts as summaries), and
-          cites messages as [#n].
+          Claude reads your whole history: the newest messages word for word, older ones as summaries, and it searches
+          every message and photo caption for the details. It cites messages as [#n].
         </p>
       </div>
       <div class="chat" id="chat"></div>
@@ -2076,10 +2097,6 @@
         <div class="btns">
           <button class="primary" id="ask-go">Ask</button>
           <button class="secondary" id="ask-stop" hidden>Stop</button>
-          <label class="note"
-            ><input type="checkbox" id="ask-all" /> Include messages before the catch-up window
-            <small>(newest word for word, older as summaries)</small></label
-          >
           <span class="note" id="ask-note"></span>
         </div>
       </div>
@@ -2350,7 +2367,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.6";
+  const PAGE_VERSION = "3.7";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -4181,7 +4198,7 @@
       mode === "time"
         ? "Showing " + fmtTs(mt.markerFrom) + (mt.markerTo ? " to " + fmtTs(mt.markerTo) : " through the newest")
         : "Showing everything after " + MK[mode].toLowerCase() + (wsm ? " (" + wsm.t + ", #" + ws + ")" : "");
-    top.append(el("span", "note", what + ". Summary written " + sm.generatedAt + "."), cu);
+    top.append(el("span", "note", what + "." + (sm.generatedAt ? " Summary written " + sm.generatedAt + "." : "")), cu);
     v.append(top);
     if (!S.msgs.some(inWindow)) {
       v.append(
@@ -5765,6 +5782,8 @@
       const v = l && l.maxPromptBytes;
       /* a cap larger than the contract's is never trusted: if limits() overstates it, every call would fail */
       if (Number.isFinite(v) && v > 8192) S.promptCap = Math.min(v, PROMPT_CAP);
+      /* F32: this view can hand Claude the page's search tools (three of them) */
+      S.tools = !!(l && l.tools && l.tools.maxCount >= 3);
     } catch (e) {}
   }
   /* s cut to at most n UTF-8 bytes, ending "… [cut]" */
@@ -6284,10 +6303,13 @@
     if (P.dropped != null) L.push("- Nothing before #" + P.dropped + " is included.");
     return L.join("\n");
   }
-  function rulesText(P) {
+  function rulesText(P, tools) {
     return (
       (P.hasBefore || P.hasAfter
-        ? "- Answer only from what's here. If it doesn't contain the answer, say so plainly.\n- Cite every claim with message numbers in square brackets, like [#123] or [#12, #15]. You may cite numbers from the summary lines; say when a point comes from a summary rather than the messages.\n- If the answer probably depends on messages you only see summarized, say so and give the numbers to open.\n"
+        ? "- Answer only from what's here. If it doesn't contain the answer, say so plainly.\n- Cite every claim with message numbers in square brackets, like [#123] or [#12, #15]. You may cite numbers from the summary lines; say when a point comes from a summary rather than the messages.\n" +
+          (tools
+            ? "- If the answer depends on messages you only see summarized, read them with read_messages first.\n"
+            : "- If the answer probably depends on messages you only see summarized, say so and give the numbers to open.\n")
         : "- Answer only from these messages. If they don't contain the answer, say so plainly.\n- Cite every claim with message numbers in square brackets, like [#123] or [#12, #15].\n") +
       "- When asked whether something needs a reply, check later messages for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble."
     );
@@ -6389,7 +6411,17 @@
           P.digests ? { digests: P.digests } : {},
         )
       : null;
-  const sentShort = x =>
+  /* F32: what an answer or view searched, from its sent.searches */
+  const sentSearches = x =>
+    x && x.sent && Array.isArray(x.sent.searches) && x.sent.searches.length
+      ? "searched " +
+        x.sent.searches
+          .slice(0, 6)
+          .map(s => searchLabel(s) + " (" + (Number.isInteger(s.n) ? s.n : "?") + ")")
+          .join(", ")
+      : "";
+  const sentShort = x => [sentRead(x), sentSearches(x)].filter(Boolean).join("; ");
+  const sentRead = x =>
     x && x.sent && Array.isArray(x.sent.stretches) && x.sent.stretches.length
       ? x.sent.stretches.map(([a, b]) => "#" + a + (b !== a ? "–#" + b : "")).join(", ") + " word for word"
       : x && x.sent && x.sent.from != null
@@ -6403,6 +6435,328 @@
           (x.sent.digests && x.sent.digests.n ? ", day digests #" + x.sent.digests.from + "–#" + x.sent.digests.to : "")
         : "";
 
+  /* ---------- search tools (F32) ----------
+     Ask and Views always cover the whole history. Where sample.limits() reports tools (S.tools), the prompt is kept to
+     ASK_TOOLS_CAP (or 60% of a smaller cap) and Claude gets three page functions over every stored message: search_messages (all words, in the
+     text, the sender's names, link previews, quotes and photo captions), read_messages (word for word, a range or a
+     day) and day_summaries (the day lines, digests where there are some). Each result is at most TOOL_BYTES; together
+     they stay within what the prompt left of the cap, after which a tool refuses and Claude answers. Every search and
+     read is recorded (newRec) for the live status, the note under the answer, the saved row's sent and the match
+     lists. Without tools, the same prompt goes in at the full cap, as before. */
+  const TOOL_BYTES = 16384;
+  const ASK_TOOLS_CAP = 98304;
+  const TOOL_SPARE = 8192; /* of the cap, for Claude's own words between rounds and the platform's framing */
+  const SEARCH_HAVE =
+    "\n- SEARCH: three tools over every stored message, photo captions included: search_messages (by words, dates, sender), read_messages (word for word: a range of numbers or a whole day) and day_summaries (a line per day, with digests). Use them for whatever the lines above don't settle: details of older messages, things only in photos, exact wording.";
+  const SEARCH_RULES =
+    "\n- Search before saying something isn't in the chat. When a search finds nothing, try other words, a synonym or a broader word. Read around a hit before you cite it.\n- Write nothing until your final answer: no remarks before or between searches.";
+  /* What a search matches in: the message, who sent it, its link preview, the message it quotes and its photos */
+  function hayOf(m) {
+    return (
+      m.f +
+      " " +
+      (fullOf(m) || "") +
+      " " +
+      (m.b || "") +
+      " " +
+      (m.a || "") +
+      " " +
+      (m.r || "") +
+      " " +
+      (m.q || "") +
+      " " +
+      capsOf(m.i).join(" ")
+    ).toLowerCase();
+  }
+  const dOf = m => m.d || (m.ts || "").slice(0, 10);
+  /* A search or read bound: "#123" or "123", or a date (YYYY-MM-DD: the day's first message as a start, its last as an
+     end); null when absent or unreadable */
+  function boundOf(v, end) {
+    const s = String(v == null ? "" : v).trim();
+    if (!s) return null;
+    const n = /^#?(\d+)$/.exec(s);
+    if (n) return +n[1];
+    if (!/^\d{4}-\d\d-\d\d$/.test(s)) return null;
+    if (!end) {
+      const m = S.msgs.find(x => dOf(x) >= s);
+      return m ? m.i : Infinity;
+    }
+    for (let j = S.msgs.length - 1; j >= 0; j--) if (dOf(S.msgs[j]) && dOf(S.msgs[j]) <= s) return S.msgs[j].i;
+    return -1;
+  }
+  /* Every stored message holding all the words (lower case, anywhere: "pouch" finds "pouches"), oldest first */
+  function searchMsgs(q, o = {}) {
+    const words = String(q || "")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    const who = String(o.sender || "")
+      .trim()
+      .toLowerCase();
+    if (!words.length && !who) return [];
+    const lo = boundOf(o.from, false),
+      hi = boundOf(o.to, true);
+    return S.msgs.filter(
+      m =>
+        (lo == null || m.i >= lo) &&
+        (hi == null || m.i <= hi) &&
+        (!who || (m.f + " " + (fullOf(m) || "")).toLowerCase().includes(who)) &&
+        (!words.length || words.every(w => hayOf(m).includes(w))),
+    );
+  }
+  /* The question's own words worth matching, for the page's list under the answer */
+  const STOPW = new Set(
+    "a about all an and any anyone anything are as at be been but by can could did do does ever for from get got had has have he her him his how i if in is it its just know me my of on or our over said say she so some that the their them then there they this to us was we were what when where which who why will with would you your".split(
+      " ",
+    ),
+  );
+  const sigWords = q =>
+    String(q || "")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}#'\s-]+/gu, " ")
+      .split(/\s+/)
+      .filter(w => w.length > 1 && !STOPW.has(w))
+      .slice(0, 6);
+  /* A record of one request's searches and reads; on() runs after each */
+  function newRec(on) {
+    return { searches: [], reads: [], text: "", cut: 0, bytes: 0, on: on || (() => {}) };
+  }
+  /* The tools for one request, within budget bytes of results in all */
+  function toolSet(rec, budget) {
+    let left = Math.max(0, budget);
+    const give = s => {
+      const b = u8(s);
+      if (b > left)
+        throw new Error(
+          "Reading budget for this question is used up: answer from what you have, and say what you couldn't check.",
+        );
+      left -= b;
+      rec.bytes += b;
+      return s;
+    };
+    const fit = (ms, cap) => {
+      const out = [];
+      let n = 0;
+      for (const m of ms) {
+        const s = clipBytes(lineFor(m), 2048);
+        const b = u8(s) + 1;
+        if (n + b > cap) break;
+        out.push(s);
+        n += b;
+      }
+      return out;
+    };
+    /* where the text so far ends: anything before the last tool call is narration, not the answer */
+    const mark = () => {
+      rec.cut = rec.text.length;
+      rec.shown = false;
+    };
+    const range = {
+      from: { type: "string", description: "#number or YYYY-MM-DD" },
+      to: { type: "string", description: "#number or YYYY-MM-DD" },
+    };
+    return [
+      {
+        name: "search_messages",
+        description:
+          "Search every stored message in the chat, however old: text, sender names, link previews, quoted messages and photo captions. All words must appear (case-insensitive; part of a word counts, so 'pouch' finds 'pouches'). Optional from/to (#number or YYYY-MM-DD) and sender. Returns the total and the newest matches as message lines.",
+        inputSchema: {
+          type: "object",
+          properties: Object.assign({ words: { type: "string", description: "words that must all appear" } }, range, {
+            sender: { type: "string", description: "a name or part of one" },
+          }),
+        },
+        execute: input => {
+          mark();
+          const q = String(input.words == null ? "" : input.words).trim();
+          const o = { from: input.from, to: input.to, sender: input.sender };
+          const ms = searchMsgs(q, o);
+          const r = { q, ms };
+          ["from", "to", "sender"].forEach(k => {
+            if (o[k] != null && String(o[k]).trim()) r[k] = String(o[k]).trim();
+          });
+          rec.searches.push(r);
+          rec.lastKind = "search";
+          rec.on();
+          if (!q && !r.sender) throw new Error("Give some words, a sender, or both.");
+          const shown = fit(ms.slice().reverse(), TOOL_BYTES - 256);
+          const out = { total: ms.length, shown: shown.length, newestFirst: true, matches: shown };
+          if (ms.length > shown.length) out.more = "Narrow it with from/to, a sender or more words to see the rest.";
+          return give(JSON.stringify(out));
+        },
+      },
+      {
+        name: "read_messages",
+        description:
+          "Read stored messages word for word, oldest first, from one #number or date (YYYY-MM-DD: the whole day) to another. Use it to read around a search hit (say from #n-10 to #n+15) or a whole day. Returns as many lines as fit and where to continue.",
+        inputSchema: { type: "object", properties: range, required: ["from"] },
+        execute: input => {
+          mark();
+          const a = boundOf(input.from, false);
+          if (a == null) throw new Error("from must be a #number or a date (YYYY-MM-DD).");
+          let b = boundOf(input.to == null || input.to === "" ? input.from : input.to, true);
+          if (b == null || (b === a && /^#?\d+$/.test(String(input.from).trim()))) b = Math.max(b ?? a, a + 30);
+          const ms = S.msgs.slice(idxOf(a), idxOf(b + 1));
+          if (!ms.length) throw new Error("No stored messages in that range.");
+          const ls = fit(ms, TOOL_BYTES - 256);
+          rec.reads.push([ms[0].i, ms[Math.max(0, ls.length - 1)].i]);
+          rec.lastKind = "read";
+          rec.on();
+          const out = { from: ms[0].i, to: ms[Math.max(0, ls.length - 1)].i, lines: ls };
+          if (ls.length < ms.length) out.next = "#" + ms[ls.length].i;
+          return give(JSON.stringify(out));
+        },
+      },
+      {
+        name: "day_summaries",
+        description:
+          "One line per day between two dates (YYYY-MM-DD) or message numbers: its message numbers, how many messages, the busiest topics, and a few digest bullets where the day has them. For an overview of a long stretch before searching or reading it.",
+        inputSchema: { type: "object", properties: range, required: ["from"] },
+        execute: input => {
+          mark();
+          const a = boundOf(input.from, false),
+            b = boundOf(input.to == null || input.to === "" ? input.from : input.to, true);
+          if (a == null || b == null) throw new Error("from and to must be dates (YYYY-MM-DD) or #numbers.");
+          const ls = [];
+          let n = 0;
+          for (const x of dayLines(a, b)) {
+            if (n + x.bytes > TOOL_BYTES - 256) break;
+            ls.push(x.text);
+            n += x.bytes;
+          }
+          if (!ls.length) throw new Error("No stored messages in that range.");
+          rec.reads.push(["days", String(input.from), String(input.to || input.from)]);
+          rec.lastKind = "read";
+          rec.on();
+          return give(JSON.stringify({ days: ls }));
+        },
+      },
+    ];
+  }
+  /* The answer without what Claude wrote before its last tool call */
+  const answerOf = (text, rec) => (rec && rec.cut && text.slice(rec.cut).trim()) || text;
+  const searchLabel = s =>
+    "“" +
+    (s.q || "") +
+    "”" +
+    (s.sender ? " by " + s.sender : "") +
+    (s.from || s.to ? " (" + (s.from || "…") + " to " + (s.to || "…") + ")" : "");
+  /* While Claude searches: what it did last */
+  function recStatus(rec) {
+    const s = rec.searches[rec.searches.length - 1],
+      r = rec.reads[rec.reads.length - 1];
+    const lastIsRead = r && (!s || rec.lastKind === "read");
+    if (lastIsRead) return r[0] === "days" ? "Reading day summaries…" : "Reading #" + r[0] + "–#" + r[1] + "…";
+    return s
+      ? "Searched " +
+          searchLabel(s) +
+          ": " +
+          (s.ms.length === 1 ? "1 match" : s.ms.length.toLocaleString("en-US") + " matches") +
+          ". Thinking…"
+      : "Thinking…";
+  }
+  /* The line under an answer: what Claude searched and read */
+  function searchNote(rec) {
+    if (!rec || (!rec.searches.length && !rec.reads.length)) return "";
+    const ss = rec.searches.map(s => searchLabel(s) + " (" + s.ms.length + ")");
+    const rs = rec.reads.filter(r => r[0] !== "days").map(([a, b]) => "#" + a + (b !== a ? "–#" + b : ""));
+    const ds = rec.reads.some(r => r[0] === "days");
+    return (
+      (ss.length ? "Searched " + ss.join(", ") + "." : "") +
+      (rs.length ? " Read " + rs.join(", ") + "." : "") +
+      (ds ? " Read day summaries." : "")
+    ).trim();
+  }
+  /* Saved with the answer (qa sent) and a view: the searches (words, filters, count) and the stretches read */
+  const recSent = rec =>
+    rec && (rec.searches.length || rec.reads.length)
+      ? {
+          searches: rec.searches.map(s => {
+            const o = { q: s.q, n: s.ms.length };
+            ["from", "to", "sender"].forEach(k => s[k] && (o[k] = s[k]));
+            return o;
+          }),
+          reads: rec.reads.filter(r => r[0] !== "days"),
+        }
+      : null;
+  /* Under an answer: every message each search matched, found by the page itself (complete, not just what Claude was
+     shown), and the messages holding all of the question's own words; one list at a time, 20 rows and "Show more" */
+  const MATCH_ROWS = 20;
+  function matchBox(q, rec) {
+    const lists = [];
+    const seen = new Set();
+    const ws = sigWords(q);
+    if (ws.length) {
+      const ms = searchMsgs(ws.join(" "));
+      if (ms.length) lists.push({ label: "Your words", title: ws.join(" "), ms });
+    }
+    (rec ? rec.searches : []).forEach(s => {
+      const k = JSON.stringify([s.q, s.from, s.to, s.sender]);
+      if (seen.has(k) || (!s.q && !s.sender)) return;
+      seen.add(k);
+      lists.push({ label: searchLabel(s), title: "Claude searched " + searchLabel(s), ms: s.ms });
+    });
+    if (!lists.length) return null;
+    const box = el("div", "matches");
+    const head = el("div", "seg filt");
+    head.setAttribute("role", "group");
+    head.setAttribute("aria-label", "Matching messages");
+    const list = el("ul", "snips");
+    const more = el("button", "link", "");
+    more.type = "button";
+    let cur = null,
+      shown = 0;
+    const row = m => {
+      const li = el("li", "snip");
+      li.tabIndex = 0;
+      li.setAttribute("role", "button");
+      const tx = el("span", "tx");
+      tx.append(el("span", "meta", "#" + m.i + " · " + m.t + " · " + nameOf(m)));
+      tx.append(document.createTextNode(trunc((m.b || "").replace(/\s+/g, " "), 220) || (m.p ? "[photo]" : "")));
+      const cs = capsOf(m.i);
+      if (cs.length) tx.append(el("span", "meta", "📷 " + trunc(cs.join(" · "), 200)));
+      li.append(tx);
+      const open = () => goMsg(m.i);
+      li.onclick = open;
+      li.onkeydown = e => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      };
+      return li;
+    };
+    const fill = () => {
+      const ms = cur.ms.slice().reverse();
+      ms.slice(shown, shown + MATCH_ROWS).forEach(m => list.append(row(m)));
+      shown = Math.min(ms.length, shown + MATCH_ROWS);
+      more.hidden = shown >= ms.length;
+      more.textContent = "Show " + Math.min(MATCH_ROWS, ms.length - shown) + " more of " + ms.length;
+      if (!ms.length) list.append(el("li", "note", "No messages matched."));
+    };
+    const pick = (x, b) => {
+      cur = x;
+      shown = 0;
+      list.textContent = "";
+      head.querySelectorAll("button").forEach(y => y.setAttribute("aria-pressed", String(y === b)));
+      fill();
+    };
+    lists.forEach((x, k) => {
+      const b = el("button", null, x.label + " · " + x.ms.length);
+      b.type = "button";
+      b.title = x.title;
+      b.onclick = () => pick(x, b);
+      head.append(b);
+      if (!k) cur = x;
+    });
+    more.onclick = fill;
+    box.append(el("div", "note", "Matching messages, newest first (found by the page, so every match is listed):"));
+    box.append(head, list, more);
+    const first = lists.findIndex(x => x.ms.length);
+    pick(lists[Math.max(0, first)], head.querySelectorAll("button")[Math.max(0, first)]);
+    return box;
+  }
+
   /* ---------- ask ---------- */
   let turns = [],
     ctl = null;
@@ -6414,23 +6768,40 @@
     const hi = Math.min(W.hi, last);
     return useAll ? { lo: S.msgs[0].i, hi: last, fHi: hi, win: false } : { lo: W.lo + 1, hi, fHi: hi, win: true };
   }
-  function askPrompt(useAll, hist, cap) {
+  /* F32: Ask and Views always take the whole history; with tools, the prompt stops at ASK_TOOLS_CAP and the rest of
+     the cap is for what Claude searches and reads */
+  const upfront = (cap, tools) => (tools ? Math.min(Math.floor(cap * 0.6), ASK_TOOLS_CAP) : cap);
+  function askPrompt(useAll, hist, cap, tools) {
     const extra = hist.reduce((n, t) => n + u8(t.content), 0);
-    const build = P => intro() + haveText(P) + "\n\nRules:\n" + rulesText(P) + "\n\n" + sections(P);
-    return fitPrompt(askScope(useAll), build, extra, useAll ? 0.35 : 0.2, cap);
-  }
-  function viewPrompt(p, cap) {
     const build = P =>
       intro() +
       haveText(P) +
+      (tools ? SEARCH_HAVE : "") +
+      "\n\nRules:\n" +
+      rulesText(P, tools) +
+      (tools ? SEARCH_RULES : "") +
+      "\n\n" +
+      sections(P);
+    return fitPrompt(askScope(useAll), build, extra, useAll ? 0.35 : 0.2, upfront(cap, tools));
+  }
+  function viewPrompt(p, cap, tools) {
+    const build = P =>
+      intro() +
+      haveText(P) +
+      (tools ? SEARCH_HAVE : "") +
       '\n\nTask: reorganize these messages as the reader asks: "' +
       p +
-      '".\n\nRules:\n' +
-      rulesText(P) +
+      '".' +
+      (tools
+        ? " Cover the whole history, not only the messages above: search for everything relevant and read what you cite."
+        : "") +
+      "\n\nRules:\n" +
+      rulesText(P, tools) +
+      (tools ? SEARCH_RULES : "") +
       "\n\n" +
       sections(P) +
       '\n\nReply with only JSON: {"title": short name, "intro": one or two sentences, "sections": [{"heading": string, "tag": optional short status like "open" or "answered", "summary": 1-3 sentences citing [#n], "refs": [message numbers]}]}. Cover everything relevant; keep each summary short.';
-    return fitPrompt(askScope(false), build, 0, 0.2, cap);
+    return fitPrompt(askScope(true), build, 0, 0.35, upfront(cap, tools));
   }
   /* The earlier chat turns sent with a question: at most the last 9 (starting and ending on a question), the oldest
      pairs dropped while they take more than a quarter of the cap */
@@ -6494,7 +6865,6 @@
       $("#ask-note").textContent = "That question is too long to send. Shorten it.";
       return;
     }
-    const useAll = $("#ask-all").checked;
     addTurn("user", q);
     $("#ask-in").value = "";
     const out = addTurn("assistant", "Thinking…");
@@ -6503,26 +6873,58 @@
     $("#ask-go").disabled = true;
     $("#ask-stop").hidden = false;
     $("#ask-note").textContent = "";
-    try {
+    /* F32: always the whole history; with tools Claude also searches every message, and tells the page what it did */
+    const send = tools => {
+      const rec = newRec(() => {
+        if (!rec.shown) out.textContent = recStatus(rec);
+      });
       const sig = ctl.signal;
-      const { res, P, retried } = await sendFitted(
+      return sendFitted(
         cap => {
           const hist = chatTurns(cap);
-          return Object.assign(askPrompt(useAll, hist, cap), { hist });
+          return Object.assign(askPrompt(true, hist, cap, tools), { hist, cap });
         },
         m =>
-          S.sample([{ role: "user", content: m.text }, ...m.hist], {
-            cache: false,
-            signal: sig,
-            onText: ({ text }) => renderCites(out, text),
-          }),
-      );
-      const text = res.text;
+          S.sample(
+            [{ role: "user", content: m.text }, ...m.hist],
+            Object.assign(
+              {
+                cache: false,
+                signal: sig,
+                onText: ({ text }) => {
+                  rec.text = text;
+                  const a = answerOf(text, rec);
+                  /* text written before a tool call is narration: it shows only once Claude stops searching */
+                  if (rec.cut && a === text && rec.cut >= text.length) return;
+                  rec.shown = true;
+                  renderCites(out, a);
+                },
+              },
+              tools ? { tools: toolSet(rec, m.cap - MARGIN - m.bytes - TOOL_SPARE) } : {},
+            ),
+          ),
+      ).then(r => Object.assign(r, { rec, tools }));
+    };
+    try {
+      let r;
+      try {
+        r = await send(!!S.tools);
+      } catch (e) {
+        /* this view turned out not to run page tools: once more without them */
+        if (!(e && e.code === "tools_unavailable") || !S.tools) throw e;
+        S.tools = false;
+        out.textContent = "Thinking…";
+        r = await send(false);
+      }
+      const { res, P, retried, rec, tools } = r;
+      const text = answerOf(res.text, rec);
       renderCites(out, text);
-      const note = sentNote(P, false, retried);
+      const note = [sentNote(P, false, retried), searchNote(rec)].filter(Boolean).join(" ");
       if (note) out.parentNode.append(el("div", "note sent", note));
-      /* F17: part of the history went in only as summary lines */
-      if (P.hasBefore || P.hasAfter) out.parentNode.append(deeperRow(q, text, P));
+      const mb = matchBox(q, rec);
+      if (mb) out.parentNode.append(mb);
+      /* F17: without search, part of the history went in only as summary lines */
+      if (!tools && (P.hasBefore || P.hasAfter)) out.parentNode.append(deeperRow(q, text, P));
       turns.push({ role: "assistant", content: text });
       if (S.db) {
         try {
@@ -6530,11 +6932,12 @@
             q,
             a: text,
             at: new Date().toISOString(),
-            scope: useAll ? "all" : "window",
+            scope: "all",
             toI: S.msgs[S.msgs.length - 1]?.i ?? null,
           };
-          const sent = sentOf(P);
-          if (sent) row.sent = sent;
+          const sent = sentOf(P),
+            sr = recSent(rec);
+          if (sent || sr) row.sent = Object.assign({}, sent, sr);
           await S.db.collection("qa").add(row);
         } catch (e) {
           $("#ask-note").textContent = "Answer shown but not saved.";
@@ -7099,6 +7502,34 @@
       sections: Array.isArray(r.sections) ? r.sections : [],
     };
   }
+  /* F32: a view's request, over the whole history, with the search tools where this view has them (once more
+     without them if they turn out unavailable); on(rec) runs after each search or read */
+  async function viewSend(p, on) {
+    const go = tools => {
+      const rec = newRec(() => on && on(rec));
+      return sendFitted(
+        cap => Object.assign(viewPrompt(p, cap, tools), { cap }),
+        m =>
+          S.sample.json(
+            m.text,
+            tools ? { cache: false, tools: toolSet(rec, m.cap - MARGIN - m.bytes - TOOL_SPARE) } : undefined,
+          ),
+      ).then(r => Object.assign(r, { rec }));
+    };
+    try {
+      return await go(!!S.tools);
+    } catch (e) {
+      if (!(e && e.code === "tools_unavailable") || !S.tools) throw e;
+      S.tools = false;
+      return go(false);
+    }
+  }
+  const viewNote = (P, retried, rec) => [sentNote(P, true, retried), searchNote(rec)].filter(Boolean).join(" ");
+  const viewSent = (P, rec) => {
+    const a = sentOf(P),
+      b = recSent(rec);
+    return a || b ? Object.assign({}, a, b) : null;
+  };
   $("#view-go").onclick = async () => {
     const p = $("#view-in").value.trim();
     if (!p || vwBusy) return;
@@ -7116,15 +7547,14 @@
         return;
       }
       const n0 = vwNewest();
-      const { res, P, retried } = await sendFitted(
-        cap => viewPrompt(p, cap),
-        m => S.sample.json(m.text),
-      );
+      const { res, P, retried, rec } = await viewSend(p, r => {
+        $("#view-note").textContent = recStatus(r).replace("Thinking…", "Building…");
+      });
       const at = new Date().toISOString();
       const v = Object.assign(vwContent(res), { prompt: p, at, made: at, toI: n0 >= 0 ? n0 : null, auto: false });
-      const sent = sentOf(P);
+      const sent = viewSent(P, rec);
       if (sent) v.sent = sent;
-      const note = sentNote(P, true, retried);
+      const note = viewNote(P, retried, rec);
       $("#view-note").textContent = "";
       let id = null;
       if (S.db) {
@@ -7473,10 +7903,7 @@
         await ref.update({ autoBusy: { tab: TAB, at: new Date().toISOString() } });
       }
       await capWait();
-      const { res, P, retried } = await sendFitted(
-        cap => viewPrompt(v.prompt, cap),
-        m => S.sample.json(m.text),
-      );
+      const { res, P, retried, rec } = await viewSend(v.prompt);
       const c = vwContent(res);
       const f = await ref.get();
       if (!f.exists || vwGone.has(id)) return;
@@ -7491,7 +7918,7 @@
         toI: n0 >= 0 ? n0 : null,
       });
       ["sent", "autoAt", "autoAfter", "autoErr", "autoBusy"].forEach(k => delete next[k]);
-      const sent = sentOf(P);
+      const sent = viewSent(P, rec);
       if (sent) next.sent = sent;
       if (auto) {
         next.autoAt = at;
@@ -7502,7 +7929,7 @@
       }
       next.kind = "view";
       await ref.set(next);
-      vwNotes.set(id, sentNote(P, true, retried));
+      vwNotes.set(id, viewNote(P, retried, rec));
     } catch (e) {
       const code = (e && e.code) || null;
       if (auto)
