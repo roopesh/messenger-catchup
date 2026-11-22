@@ -23,6 +23,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (builds on the refresh reports from F27, v1.29.0; notes in [design/day-summaries.md](design/day-summaries.md)) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; the schedule for frequent checks is left |
+| F32 | P2 | feature | One Ask box that always covers the whole history: Claude searches every stored message and photo caption, and the page lists every match; replaces the window-only prompt, "include older" and the Messages filter (the owner, Nov 22) |
 
 ---
 
@@ -71,6 +72,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 ### F1 · P3 · Several chats
 - One page and one loop per chat today (LEARNINGS.md › Open issues). Simplest path: one page per chat, keyed by `meta/chat.thread`, and a loop that walks them.
+- **Not on the decision board until Nov 22**, so it had no options or questions for the owner. To design: one page per chat or several chats on one page (tabs, a picker); one scheduled loop for all chats or one per chat, and what that does to cost and R12; how setup adds a second chat; whether search (F32) and Stats span chats. Related: F25 (a Facebook group on the same page).
 
 ### F25 · P2 · Catch up with Facebook group posts
 - **Ask (owner, Nov 14):** besides a Messenger group chat, catch up with the posts in a Facebook group.
@@ -89,6 +91,12 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
   - Sharing by "Copy for chat" and/or a shared link, the owner's call.
 - **Everything discussed:** options, the owner's decisions, Claude's proposed shape and the open questions are in [design/day-summaries.md](design/day-summaries.md).
 - **Builds on F27 (v1.29.0):** merge each day's saved refresh reports into its fuller summary at the day's end.
+
+### F32 · P2 · One Ask box over the whole history
+- **The owner (Nov 22):** Ask should always cover the entire history, with no "include older" choice and no catch-up window limit, and there should be no separate Messages filter: "I want you to find what I'm looking for."
+- **Today:** Ask sends the catch-up window word for word (with "include older", the newest messages that fit, about 256 KB, and the rest as one line per day, which drops their photo captions and detail). The Messages filter is a separate exact word search over every stored message and caption, with no Claude.
+- **Direction:** one box. The page gives Claude tools through `sample` (`search_messages` over every stored message and caption, `read_around(#n)` for the conversation around a hit); Claude searches as often as it needs and answers with [#n] citations. Under the answer the page lists every exact match itself (instant, free, complete, and there when Claude isn't). The "include older" box and the Messages filter go.
+- **To check first:** whether `sample` tools work in claude.ai's viewer (a scratch page), their latency and cost per search round, and how Views and range summaries use the same search. Fallback if tools don't work: Claude turns the question into search terms, the page searches everything, Claude answers from the hits.
 
 ### F30 · P2 · Send queued replies without a full refresh
 - **Ask (owner, Nov 16):** be able to send replies queued on the page without a full refresh, if possible.
@@ -112,3 +120,5 @@ Gathered from finished items when they were removed (Nov 14). The item each came
 - **Replies across conversations (F23):** on the owner's page, the 27 mid-conversation Messenger replies whose parent sits in another conversation each show "↩ replying to …" above the bubble, and a few of them open their parent, one on a day Show older hasn't loaded.
 - **Helper (B41, B49, F13):** whether Messenger puts a run's avatar on its last message or its first (either works if each run shows one); whether its loading indicator is a `[role="progressbar"]` at the top of the list; whether it accepts the helper's synthetic Enter and shift+Enter for `post`.
 - **Plugin updates (F7):** settled on Nov 14. The owner's account showed the custom-marketplace plugin at 1.25.0 within hours of the merge. The skills stayed old because of an uploaded copy of the skill, not the chain (see R12).
+- **Photos and captions (R13, v1.30.0):** the owner's page reached page 3.6 on Nov 22. Still to check there: captions on hover and in the photo viewer, caption search, the Photo storage box; after the owner turns packing on, `photos/packs` growing and `assetUsage.files` falling.
+- **Scan start (Nov 21):** one scheduled refresh failed with "Scan didn't start scrolling…"; the next runs were fine. If it happens again, file it as a bug with the run's report.
