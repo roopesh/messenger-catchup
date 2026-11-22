@@ -8955,8 +8955,10 @@ const qstate = p =>
     dels: __rt.writes.filter(w => w.op === 'delete').map(w => w.p),
     empty: /No questions yet/.test(document.getElementById('qa-list').textContent),
   }));
-const qclick = (p, id) => p.click('#qa-list .item.qa[data-id="' + id + '"] .qa-rm', { timeout: 2000 });
-const qundo = (p, k = 0) => p.click('#qa-undo p:nth-child(' + (k + 1) + ') button', { timeout: 2000 });
+/* clicks a case depends on wait as long as tryClick and until do (10 s): with 2 s, views V7's click on New view timed
+   out with the page suite run three at a time (Nov 22) */
+const qclick = (p, id) => p.click('#qa-list .item.qa[data-id="' + id + '"] .qa-rm', { timeout: 10000 });
+const qundo = (p, k = 0) => p.click('#qa-undo p:nth-child(' + (k + 1) + ') button', { timeout: 10000 });
 async function savedQuestions() {
   /* Q1: Remove (from the keyboard) hides it at once, shows "Removed … · Undo" in a live region, then deletes qa/<id> */
   await hcase('Q1', async () => {
@@ -9053,13 +9055,13 @@ async function savedQuestions() {
     const p = await qopen();
     const label = await p.evaluate(() => document.getElementById('qa-clear').getAttribute('aria-label'));
     const before = await qstate(p);
-    await p.click('#qa-clear', { timeout: 2000 });
+    await p.click('#qa-clear', { timeout: 10000 });
     await sleep(50);
     const cleared = await qstate(p);
     await qundo(p);
     await undoPass(p, QA_UNDO + 300);
     const undone = await qstate(p);
-    await p.click('#qa-clear', { timeout: 2000 });
+    await p.click('#qa-clear', { timeout: 10000 });
     await undoPass(p, QA_UNDO + 400);
     const gone = await qstate(p);
     ok(
@@ -9115,7 +9117,7 @@ async function savedQuestions() {
       __rt.fails.push({ p: 'qa/q2', op: 'delete' });
       document.querySelectorAll('#qa-undo p').forEach(x => x.remove());
     });
-    await p.click('#qa-clear', { timeout: 2000 });
+    await p.click('#qa-clear', { timeout: 10000 });
     await undoPass(p, QA_UNDO + 400);
     const c = await qstate(p);
     ok(
@@ -9237,7 +9239,7 @@ async function savedQuestions() {
      flushes too, and a removal never commits twice */
   await hcase('Q10', async () => {
     const p = await qopen();
-    await p.click('#qa-clear', { timeout: 2000 });
+    await p.click('#qa-clear', { timeout: 10000 });
     await sleep(50);
     const sync = await p.evaluate(() => {
       const n = () => __rt.writes.filter(w => w.op === 'delete').length;
@@ -9300,7 +9302,7 @@ async function savedQuestions() {
     });
     await qclick(p, 'q1');
     await qundo(p);
-    await p.click('#qa-clear', { timeout: 2000 });
+    await p.click('#qa-clear', { timeout: 10000 });
     await undoPass(p, QA_UNDO + 400);
     const s = await qstate(p);
     const dlg = await p.evaluate(() => __dlg);
@@ -9402,7 +9404,7 @@ const vstate = p =>
       focus: a && a !== document.body ? a.dataset.f || a.id || a.textContent : null,
     };
   });
-const vclick = (p, id, sel) => p.click('#views-list .vw[data-id="' + id + '"] ' + sel, { timeout: 2000 });
+const vclick = (p, id, sel) => p.click('#views-list .vw[data-id="' + id + '"] ' + sel, { timeout: 10000 });
 const vtoggle = async (p, id) => {
   await vclick(p, id, '> summary');
   await sleep(100);
@@ -9553,7 +9555,7 @@ async function viewsTab() {
     await p.evaluate(() => __rt.fails.push({ p: 'views/v1', op: 'update' }));
     await vclick(p, 'v1', '[data-f="ren:v1"]');
     await p.keyboard.type('Folks');
-    await p.click('#views-list .vw-ren button.secondary', { timeout: 2000 });
+    await p.click('#views-list .vw-ren button.secondary', { timeout: 10000 });
     await sleep(200);
     const c = await vstate(p);
     ok(
@@ -9720,11 +9722,11 @@ async function viewsTab() {
   /* V7: New view opens the build box; a built view is saved, opened, and the box closes; Cancel; no views: box open */
   await hcase('V7', async () => {
     let p = await vopen();
-    await p.click('#view-new', { timeout: 2000 });
+    await p.click('#view-new', { timeout: 10000 });
     await sleep(60);
     const opened = await vstate(p);
     await p.keyboard.type('group by person');
-    await p.click('#view-go', { timeout: 2000 });
+    await p.click('#view-go', { timeout: 10000 });
     await until(
       p,
       () => !document.getElementById('view-go').disabled && document.querySelectorAll('#views-list .vw').length === 3,
@@ -9754,8 +9756,8 @@ async function viewsTab() {
         JSON.stringify({ doc, s }) +
         ')',
     );
-    await p.click('#view-new', { timeout: 2000 });
-    await p.click('#view-cancel', { timeout: 2000 });
+    await p.click('#view-new', { timeout: 10000 });
+    await p.click('#view-cancel', { timeout: 10000 });
     await sleep(60);
     const c = await vstate(p);
     ok(
@@ -9973,7 +9975,7 @@ async function viewsTab() {
     await vclick(p, 'v2', '[data-f="rm:v2"]');
     await sleep(60);
     await vtoggle(p, 'v1');
-    await p.click('#view-new', { timeout: 2000 });
+    await p.click('#view-new', { timeout: 10000 });
     const fit = s =>
       p.evaluate(s => {
         document.getElementById('vw-ideas').open = true;
