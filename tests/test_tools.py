@@ -654,6 +654,28 @@ class TestPhotos(unittest.TestCase):
             self.assertIn(s, cleanup)
         self.assertIn("offer Cleanup", storage)
 
+    def test_one_pack_check_and_one_asset_id_rule(self):
+        """PR #58's review: packing and the leftover sweep check a full pack with the same function, and the asset-id
+        pattern is written once for an id (isAssetId) and once for a "/_blob/" string (blobOf)."""
+        self.assertEqual(self.page.count("async function fullPackBad("), 1)
+        self.assertIn("await fullPackBad(fb, day, part.length,", self.page, "packCheck uses it")
+        self.assertIn("await fullPackBad(fb, e.day,", self.page, "the sweep uses it")
+        self.assertNotIn("reclaimCheck", self.page)
+        self.assertEqual(self.page.count("[^#?\\s/]"), 2, "the asset-id pattern, once in isAssetId and once in blobOf")
+
+    def test_cleanup_honours_what_the_sweep_keeps(self):
+        """PR #58's review: what the page's leftover sweep keeps is in use for Cleanup ("/_blob/" ids in
+        photos/swept-<pack>), and while a pack is lost (missing or unreadable: its originals can't be named, and one
+        may be the only copy) Cleanup deletes only duplicates."""
+        cleanup = self.section("Cleanup")
+        self.assertIn("`photos/swept-<pack>`", cleanup)
+        self.assertIn("`lost: true`", cleanup)
+        self.assertIn("delete only duplicates", cleanup)
+        self.assertIn("never offer the other unused files", cleanup)
+        db = in_skill("references", "database.md")
+        for s in ("- `photos/swept-<key>`", "`refresh/packing`", "`reclaim`"):
+            self.assertIn(s, db)
+
     def test_database_md_documents_the_photo_documents(self):
         db = in_skill("references", "database.md")
         for s in (
