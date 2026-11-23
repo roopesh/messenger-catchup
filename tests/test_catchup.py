@@ -5360,23 +5360,23 @@ class TestChats(unittest.TestCase):
         self.assertEqual(got, [[catchup.key_from(s), catchup.tag_from(s)] for s in names])
 
 
-def plan_out(meta, skipped, done=(), started=None, d=None, stop=False):
+def plan_out(meta, skipped, done=(), started=None, d=None, stop=False, scheduled=False):
     """`catchup.py run-plan` on meta/chat and refresh/skipped, as a run calls it before each chat (catchup.NOW is the
-    clock)."""
+    clock; scheduled: --scheduled)."""
     w(os.path.join(d, "chat.json"), meta)
     w(os.path.join(d, "skipped.json"), skipped)
-    return json.loads(
-        quiet(catchup.run_plan_cmd, os.path.join(d, "chat.json"), os.path.join(d, "skipped.json"), done, started, stop)
-    )
+    args = (os.path.join(d, "chat.json"), os.path.join(d, "skipped.json"), done, started, stop, scheduled)
+    return json.loads(quiet(catchup.run_plan_cmd, *args))
 
 
 class TestRunPlan(unittest.TestCase):
     """F1 stage B: one scheduled run refreshes every chat, one after another (one Messenger tab), under the one lock.
     `catchup.py run-plan` says which chat is next: the first chat, then the chats the last run left (`refresh/skipped`,
     in the order they were left), then the other active chats by `order`, then pending chats; paused, hidden and
-    deleted ones never. Between chats it checks the time: from 15 minutes on, no new chat starts and the rest are
-    written to `refresh/skipped` for the next run (a document only a run's end writes, so the lock's writes never lose
-    it). These cases simulate whole runs on a fake clock (catchup.NOW), as Claude calls the command."""
+    deleted ones never. Between chats of a scheduled run (--scheduled) it checks the time: from 15 minutes on, no new
+    chat starts and the rest are written to `refresh/skipped` for the next run (a document only a run's end writes, so
+    the lock's writes never lose it). A run the user asked for has no limit: it refreshes every chat to the end. These
+    cases simulate whole runs on a fake clock (catchup.NOW), as Claude calls the command."""
 
     T0 = "2026-11-23T17:00:00"
 
@@ -5401,21 +5401,22 @@ class TestRunPlan(unittest.TestCase):
         catchup.NOW = utc(self.T0) + catchup.datetime.timedelta(minutes=minutes)
         return catchup._now_iso()
 
-    def plan(self, skipped, done=(), started=None, stop=False):
-        return plan_out(self.meta, skipped, done, started, self.t.name, stop)
+    def plan(self, skipped, done=(), started=None, stop=False, scheduled=True):
+        return plan_out(self.meta, skipped, done, started, self.t.name, stop, scheduled)
 
-    def run_all(self, skipped, ends):
-        """One scheduled run: the plan before each chat; chat n ends at minute ends[n]. Returns the chats refreshed
-        and the last plan (its skippedDoc is what the run's end writes to refresh/skipped)."""
+    def run_all(self, skipped, ends, scheduled=True):
+        """One run (scheduled unless told otherwise): the plan before each chat; chat n ends at minute ends[n].
+        Returns the chats refreshed and the last plan (its skippedDoc is what the run's end writes to
+        refresh/skipped)."""
         self.at(0)
-        p = self.plan(skipped)
+        p = self.plan(skipped, scheduled=scheduled)
         start, done = p["runAt"], []
         for end in ends:
             if not p["next"]:
                 break
             done.append(p["next"])
             self.at(end)
-            p = self.plan(skipped, done, start)
+            p = self.plan(skipped, done, start, scheduled=scheduled)
         return done, p
 
     def test_order_first_chat_then_by_order_pending_last_never_paused_hidden_or_deleted(self):
@@ -5470,6 +5471,45 @@ class TestRunPlan(unittest.TestCase):
         # exactly 15 minutes is over the limit too
         self.at(15)
         self.assertEqual(self.plan({}, ["trail"], start)["skipped"], ["book", "cam", "chess"])
+
+    def test_a_run_the_user_asked_for_has_no_time_limit(self):
+        # "refresh my catch-up": past 15 minutes the next chat still starts, and every chat runs to the end
+        self.at(0)
+        start = self.plan({}, scheduled=False)["runAt"]
+        now = self.at(16)
+        p = self.plan({}, ["trail"], start, scheduled=False)
+        self.assertEqual((p["next"], p["chatArg"], p["skipped"], p["skippedDoc"]), ("book", "--chat=book", [], None))
+        self.assertEqual(p["status"], {"state": "running", "startedAt": now, "step": "scan", "by": "refresh book"})
+        done, p = self.run_all({"keys": ["cam"]}, [10, 20, 30, 40], scheduled=False)
+        self.assertEqual(done, ["trail", "cam", "book", "chess"])
+        end = self.at(40)
+        self.assertEqual(p["status"], {"state": "done", "finishedAt": end})
+        self.assertEqual(p["skippedDoc"], {"keys": [], "at": end, "run": self.at(0)})
+        # the same run, scheduled, stops at the limit as before
+        done, p = self.run_all({"keys": ["cam"]}, [10, 20, 30, 40])
+        self.assertEqual(done, ["trail", "cam"])
+        self.assertEqual(
+            p["skippedDoc"], {"keys": ["book", "chess"], "why": "time", "at": self.at(20), "run": self.at(0)}
+        )
+
+    def test_a_stopping_failure_still_leaves_chats_in_a_run_the_user_asked_for(self):
+        self.at(0)
+        start = self.plan({}, scheduled=False)["runAt"]
+        end = self.at(30)
+        p = self.plan({}, ["trail"], start, stop=True, scheduled=False)
+        self.assertEqual(p["skippedDoc"], {"keys": ["book", "cam", "chess"], "why": "stopped", "at": end, "run": start})
+
+    def test_the_cli_takes_scheduled(self):
+        import subprocess
+
+        w(os.path.join(self.t.name, "chat.json"), self.meta)
+        w(os.path.join(self.t.name, "skipped.json"), {})
+        cmd = [sys.executable, os.path.join(ROOT, "plugin", "skills", "refresh", "scripts", "catchup.py"), "run-plan"]
+        cmd += [os.path.join(self.t.name, "chat.json"), os.path.join(self.t.name, "skipped.json"), "--done=trail"]
+        started = "--started=2000-01-01T00:00:00Z"
+        for flag, nxt in (([], "book"), (["--scheduled"], None)):
+            out = subprocess.run(cmd + [started] + flag, capture_output=True, text=True, check=True).stdout
+            self.assertEqual(json.loads(out)["next"], nxt, flag)
 
     def test_the_next_runs_start_with_the_skipped_chats_so_none_starves(self):
         # each run has room for the first chat and one more: the others take turns, none left out twice in a row
@@ -5539,6 +5579,14 @@ class TestRunPlan(unittest.TestCase):
         self.assertIn("## A run over every chat", chats)
         self.assertIn("python3 catchup.py run-plan META.json SKIPPED.json", chats)
         self.assertIn("15 minutes", chats)
+        # only a scheduled run has the limit (the owner's answer): it passes --scheduled, an asked-for run never does
+        self.assertIn("**Only a scheduled run** (scheduling.md › A scheduled run) **has a 15-minute limit:**", chats)
+        self.assertIn("passes `--scheduled` to every `run-plan`", chats)
+        self.assertIn("never passes `--scheduled`: it refreshes every chat to the end", chats)
+        self.assertNotIn("with a 15-minute limit: no new chat starts", chats)
+        self.assertIn("A run over every chat (`run-plan --scheduled`)", sched)
+        self.assertIn("a scheduled run's 15-minute limit", db)
+        self.assertIn("[--scheduled]", catchup.__doc__)
         self.assertIn("skip Before each run's lock check", chats)
         self.assertIn("--stop", chats)
         self.assertNotIn("Added chats aren't in the schedule yet", chats)

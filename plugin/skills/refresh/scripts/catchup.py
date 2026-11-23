@@ -65,11 +65,11 @@
                                      to a page from before F1 ({} when it has it). With KEY: where that chat's documents
                                      live, its --chat argument, whether its replies go out without asking, and for a
                                      pending chat the meta/chat-KEY to seed. references/chats.md.
-  catchup.py run-plan META.json SKIPPED.json [--done=KEY,KEY] [--started=ISO] [--stop]
+  catchup.py run-plan META.json SKIPPED.json [--done=KEY,KEY] [--started=ISO] [--stop] [--scheduled]
                                      A run over every chat (F1): the next chat (the first chat, then those the last run
-                                     left in refresh/skipped, the others by order, pending ones last), none once 15
-                                     minutes have passed since --started or with --stop, the refresh/status write for
-                                     that point, and at the end the refresh/skipped write.
+                                     left in refresh/skipped, the others by order, pending ones last), none with --stop
+                                     or, in a scheduled run (--scheduled), once 15 minutes have passed since --started,
+                                     the refresh/status write for that point, and at the end the refresh/skipped write.
                                      references/chats.md › A run over every chat.
   catchup.py versions [TZ]           `versions.page` and `versions.helper` for meta/chat (references/database.md ›
                                      Versions), read from this skill's assets/page.html and assets/helper.user.js.
@@ -369,18 +369,19 @@ def chats_cmd(meta_file, key=None):
     print(json.dumps(out, indent=1))
 
 
-RUN_MINUTES = 15  # a run over every chat starts no new chat from this many minutes after it began (F1 stage B)
+RUN_MINUTES = 15  # a scheduled run over every chat starts no new chat from this many minutes on (F1 stage B)
 
 
-def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False):
-    """`catchup.py run-plan META.json SKIPPED.json [--done=K,K] [--started=ISO] [--stop]`: which chat a run over every
-    chat refreshes next. The order: the first chat, then the chats the last run left (SKIPPED.json, refresh/skipped's
-    `keys`, in the order they were left), then the other active chats by `order`, then pending chats by `order`; paused,
-    hidden and deleted chats never. Called first with no --done (next = the first chat; runAt = now, the run's start),
-    then after each chat with the chats done so far and --started=runAt: from RUN_MINUTES on no new chat starts. --stop:
-    a failure stops the run now. `status` is the refresh/status write for that point (step 1's lock, the lock renewed
-    for the next chat, or the run's end); at the end, `skippedDoc` is the refresh/skipped write: the chats not reached
-    and `why` ("time" or "stopped"), [] when every chat was. Only a run's end writes refresh/skipped, so the lock's writes never lose it."""
+def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False, scheduled=False):
+    """`catchup.py run-plan META.json SKIPPED.json [--done=K,K] [--started=ISO] [--stop] [--scheduled]`: which chat a
+    run over every chat refreshes next. The order: the first chat, then the chats the last run left (SKIPPED.json,
+    refresh/skipped's `keys`, in the order they were left), then the other active chats by `order`, then pending chats
+    by `order`; paused, hidden and deleted chats never. Called first with no --done (next = the first chat; runAt = now,
+    the run's start), then after each chat with the chats done so far and --started=runAt. --scheduled (a scheduled run;
+    one the user asked for runs every chat to the end): from RUN_MINUTES on no new chat starts. --stop: a failure stops
+    the run now. `status` is the refresh/status write for that point (step 1's lock, the lock renewed for the next chat,
+    or the run's end); at the end, `skippedDoc` is the refresh/skipped write: the chats not reached and `why` ("time" or
+    "stopped"), [] when every chat was. Only a run's end writes refresh/skipped, so the lock's writes never lose it."""
     meta = _load(meta_file)
     sk = _load(skipped_file)
     keys = sk.get("keys") if isinstance(sk, dict) and isinstance(sk.get("keys"), list) else []
@@ -399,7 +400,7 @@ def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False):
         t0 = t0.replace(tzinfo=datetime.timezone.utc)
     minutes = (now - t0).total_seconds() / 60
     left = [k for k in order if k not in done]
-    nxt = left[0] if left and not stop and (not done or minutes < RUN_MINUTES) else None
+    nxt = left[0] if left and not stop and (not done or not scheduled or minutes < RUN_MINUTES) else None
     run_at = t0.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     out = {
         "order": order,
@@ -3354,7 +3355,10 @@ if __name__ == "__main__":
         sa = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--started=")]
         if len(a) != 2:
             sys.exit(__doc__)
-        run_plan_cmd(a[0], a[1], dn[0].split(",") if dn else (), sa[0] if sa else None, "--stop" in sys.argv[2:])
+        flags = sys.argv[2:]
+        run_plan_cmd(
+            a[0], a[1], dn[0].split(",") if dn else (), sa[0] if sa else None, "--stop" in flags, "--scheduled" in flags
+        )
     elif cmd == "versions":
         versions_cmd(sys.argv[2] if len(sys.argv) > 2 else None)
     elif cmd == "restore-summary":
