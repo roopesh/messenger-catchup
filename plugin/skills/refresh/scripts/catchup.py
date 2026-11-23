@@ -3229,11 +3229,22 @@ def versions_cmd():
     """What this skill ships, for meta/chat.versions: copied from here, never typed from memory or an earlier write
     (v1.35.0 refreshes kept writing helper 2.1 while shipping 2.3, which hid the page's helper notices)."""
     assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
-    with open(os.path.join(assets, "page.html"), encoding="utf-8") as f:
-        page = re.search(r'const PAGE_VERSION\s*=\s*"([^"]+)"', f.read())
-    with open(os.path.join(assets, "helper.user.js"), encoding="utf-8") as f:
-        helper = re.search(r"@version\s+(\S+)", f.read())
-    assert page and helper, "PAGE_VERSION or the helper's @version not found in " + assets
+
+    def find(name, pat):
+        try:
+            with open(os.path.join(assets, name), encoding="utf-8") as f:
+                return re.search(pat, f.read())
+        except OSError:
+            return None
+
+    page = find("page.html", r'const PAGE_VERSION\s*=\s*"([^"]+)"')
+    helper = find("helper.user.js", r"@version\s+(\S+)")
+    if not (page and helper):
+        sys.exit(
+            "catchup.py versions: PAGE_VERSION or the helper's @version not found in "
+            + assets
+            + "; run it from the refresh skill's scripts folder, with its assets beside it"
+        )
     print(json.dumps({"page": page.group(1), "helper": helper.group(1)}))
 
 

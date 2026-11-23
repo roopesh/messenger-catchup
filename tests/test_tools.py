@@ -2325,7 +2325,7 @@ class TestSendReplies(unittest.TestCase):
             "Navigate it to `meta/chat.chatUrl`",
             "`document.visibilityState`",
             '"computer asleep or Messenger tab hidden"',
-            "missing: inject it (`references/helper.md` › Injecting)",
+            "missing, or below 2.3 for an added chat: inject it (`references/helper.md` › Injecting; never `full` then)",
             'Run `selfcheck`: if `ok` is false, stop with "Messenger changed: "',
         ):
             self.assertIn(must, s4)

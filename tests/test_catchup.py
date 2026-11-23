@@ -5135,6 +5135,20 @@ class TestVersionsCmd(unittest.TestCase):
             helper = re.search(r"@version\s+(\S+)", f.read()).group(1)
         self.assertEqual(json.loads(quiet(catchup.versions_cmd)), {"page": page, "helper": helper})
 
+    def test_missing_assets_exit_with_a_message(self):
+        """PR #61 review 7: a copy of catchup.py without the skill's assets beside it says so (no bare assert)."""
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "scripts"))
+        old = catchup.__file__
+        catchup.__file__ = os.path.join(d, "scripts", "catchup.py")
+        try:
+            with self.assertRaises(SystemExit) as e:
+                quiet(catchup.versions_cmd)
+        finally:
+            catchup.__file__ = old
+            shutil.rmtree(d)
+        self.assertRegex(str(e.exception), r"^catchup\.py versions: PAGE_VERSION or the helper's @version not found")
+
     def test_database_md_says_to_copy_them_from_it(self):
         with open(
             os.path.join(ROOT, "plugin", "skills", "refresh", "references", "database.md"), encoding="utf-8"

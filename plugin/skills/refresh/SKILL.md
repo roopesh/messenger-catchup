@@ -54,7 +54,7 @@ document.dispatchEvent(new CustomEvent('mc-cmd',{detail:JSON.stringify({id:'ID',
 let r;for(let k=0;k<50;k++){r=JSON.parse(sessionStorage.getItem('mc_res_ID')||'null');if(r&&!r.running)break;await new Promise(z=>setTimeout(z,500));}JSON.stringify(r)
 ```
 - Before every run, check whether the helper is present: `document.documentElement.dataset.mcHelper` after the tab loads. Present: use it and don't inject. Missing: inject by `references/helper.md` › Injecting. Don't rely on `meta/chat.helper` alone.
-- An installed helper reports its version in `data-mc-helper` (and `ping`). If it's older than `@version` in `assets/helper.user.js` (compare number by number), keep using it and report it by `references/helper.md` › Versions.
+- An installed helper reports its version in `data-mc-helper` (and `ping`). Older than `@version` in `assets/helper.user.js`: keep using it; report it by `references/helper.md` › Versions; below 2.3 for an added chat: `references/chats.md`.
 - Commands (`full`, `selfcheck`, `jump`, `post`: `references/posting-with-helper.md`, and the rest) and their results, `full`'s after its reload included: `references/helper.md` › Commands. Read it before your first command in each conversation.
 
 ## Refresh steps

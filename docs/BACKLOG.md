@@ -43,6 +43,7 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 
 ### R17 · P3 · The helper notice runs ahead of the release
 - **Found:** the review of F5 (PR #42). Marketplace installs pick up a merge on `main` at once, so the next refresh writes the new `versions.helper`. Self-updating helpers fetch from `releases/latest`, which `tools/release.sh` publishes only after the merge. In between, notice E tells the user to check for updates or open the install link, and both still give the old helper; the notice stays until the release is out and the helper has updated.
+- **Wider since v1.35.1:** the page carries the helper version it shipped with (`HELPER_VERSION`) and flags any Chrome behind it, so every page republish between a merge that bumps the helper and its release asks users for a helper `releases/latest` doesn't serve yet (minutes, until `tools/release.sh` runs), not only after a refresh writes the new `versions.helper`.
 - **Options:** run `tools/release.sh` straight after every merge that bumps the helper (today's practice, so the gap is usually minutes); or have the page hold E until a day after `versions.helper` first appears (a `since` the skill keeps), which the owner turned down for F5 ("flagged right away").
 
 ### R5 · P2 · E2EE and messenger.com

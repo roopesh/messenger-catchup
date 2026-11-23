@@ -16027,10 +16027,26 @@ async function multiChat2() {
   );
   await p.evaluate(() => openChat('trail'));
   await p.waitForTimeout(200);
-  r = await mcPaste(p, cap(mcMsgs('trail', 13).slice(12)), 'trail');
+  // PR #61 review 1: one an older helper read from an added chat (its scan stopped at Camera Club's #7, numbered on
+  // from the first chat's #11, as a scan with the first chat's base would) is refused
+  const w2 = await mcNWrites(p);
+  r = await mcPaste(p, Object.assign(cap(mcMsgs('cam', 13).slice(12)), { anchor: 'mid.cam7' }), 'trail');
+  ok(
+    r &&
+      r.ok === false &&
+      /doesn't say which chat.*doesn't continue from Trail Crew's saved messages.*Update the helper/.test(r.msg) &&
+      !(await mcWrites(p, w2)).some(x => /chunks/.test(x)) &&
+      (await get(p, 'meta/chat')).lastI === 11,
+    "PR #61 review 1: in the first chat, a capture without its chat that doesn't continue the first chat's anchors is refused (" +
+      (r && r.msg) +
+      ')',
+  );
+  r = await mcPaste(p, Object.assign(cap(mcMsgs('trail', 13).slice(12)), { anchor: 'mid.trail11' }), 'trail');
   ok(
     r && r.ok && r.fresh === 1 && (await get(p, 'meta/chat')).lastI === 12,
-    'F1 review 7: the first chat takes a capture without its chat, as before F1 (' + (r && r.msg) + ')',
+    'F1 review 7: the first chat takes a capture without its chat that continues its anchors, as before F1 (' +
+      (r && r.msg) +
+      ')',
   );
   ok(p.errors.length === 0, 'F1 review: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
@@ -16042,7 +16058,7 @@ async function multiChat2() {
     book: pend.book,
   };
   p = await open(one, PAGE);
-  r = await mcPaste(p, cap(mcMsgs('trail', 14).slice(12)), 'trail');
+  r = await mcPaste(p, Object.assign(cap(mcMsgs('trail', 14).slice(12)), { anchor: 'mid.trail10' }), 'trail');
   ok(
     r &&
       r.ok &&

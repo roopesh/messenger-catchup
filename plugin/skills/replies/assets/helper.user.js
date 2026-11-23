@@ -13,7 +13,7 @@
   /* One copy runs per page. A copy already there (installed, or injected earlier) that is as new as this one or newer
      keeps the page. An older one gives way: Claude injects this file when the installed helper is too old (several
      chats need 2.3 or later). This copy then sets data-mc-helper to its version and answers the bridge; the older
-     copy's bridge listener stays registered but is stopped before it runs (the bridge, below). */
+     copy's bridge listener stays registered but is stopped before it runs (the bridge, below; owns()). */
   const root = document.documentElement;
   const had = [window.__mcHelper, root.getAttribute('data-mc-helper')].filter(Boolean).map(String);
   const num = v => v.split('.').map(n => +n || 0);
@@ -32,8 +32,9 @@
     return;
   }
   root.setAttribute('data-mc-helper', '2.4');
-  /* still the copy that owns the page: a newer copy injected later takes over the same way */
-  const mine = () => root.getAttribute('data-mc-helper') === V;
+  /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
+     injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
+  const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener(
     'click',
@@ -1276,6 +1277,16 @@
       var mid = decodeURIComponent(h[1]);
       var wantReply = !/noreply/.test(location.hash);
       if (window.__mcJumping === mid) return;
+      /* data-mc-jumping on <html> ("<mid> <ms>"): a jump to this message is running in another copy of the helper,
+         maybe in another JS world, where window.__mcJumping isn't seen (2.4 and later set it) */
+      var de = document.documentElement;
+      var jm = (de.getAttribute('data-mc-jumping') || '').split(' ');
+      if (jm[0] === mid && Date.now() - Number(jm[1]) < 300000) return;
+      de.setAttribute('data-mc-jumping', mid + ' ' + Date.now());
+      var free = function () {
+        window.__mcJumping = null;
+        if ((de.getAttribute('data-mc-jumping') || '').split(' ')[0] === mid) de.removeAttribute('data-mc-jumping');
+      };
       window.__mcJumping = mid;
       window.__mcJumpAt = Date.now();
       window.__mcJumpRes = { mid: mid, state: 'running' };
@@ -1308,7 +1319,7 @@
       if (!log()) {
         say('Jump: chat not loaded.');
         done('noload');
-        window.__mcJumping = null;
+        free();
         return;
       }
       /* The scrolling list: the nearest scrollable ancestor of a message that holds (nearly) all of the log's messages,
@@ -1353,7 +1364,7 @@
       if (!e) {
         say('Jump: couldn’t find that message.');
         done('notfound');
-        window.__mcJumping = null;
+        free();
         setTimeout(function () {
           tip.style.display = 'none';
         }, 6000);
@@ -1434,7 +1445,7 @@
         done('found');
       }
       history.replaceState(null, '', location.pathname + location.search);
-      window.__mcJumping = null;
+      free();
       setTimeout(function () {
         tip.style.display = 'none';
       }, 5000);
@@ -1470,7 +1481,11 @@
       });
     if (window.__rf && !window.__rf.done)
       return out({ err: 'scan-running', stage: 'args', detail: 'a scan is running in this tab' });
-    if (window.__mcJumping && Date.now() - (window.__mcJumpAt || 0) < 300000)
+    const jm = (root.getAttribute('data-mc-jumping') || '').split(' ');
+    if (
+      (window.__mcJumping && Date.now() - (window.__mcJumpAt || 0) < 300000) ||
+      (jm[0] && Date.now() - Number(jm[1]) < 300000)
+    )
       return out({ err: 'jump-running', stage: 'args', detail: 'a jump (a Reply link) is running in this tab' });
     window.__mcPosting = a.mid;
     try {
@@ -1811,7 +1826,7 @@
   addEventListener(
     'mc-cmd',
     async function (e) {
-      if (!mine()) return;
+      if (!owns()) return;
       e.stopImmediatePropagation();
       let d;
       try {
@@ -1837,15 +1852,16 @@
     jump();
   }
   /* Jump links: an older copy's hashchange listener on window runs first and can't be stopped (Chrome runs a window's
-     own listeners in the order they were added), nor its address check. Both copies read the same address, and
+     own listeners in the order they were added), nor its address check. Both copies read the same address:
      window.__mcJumping lets only the first one jump when they share a world (an installed userscript with
-     @grant none and Claude's injected copy both run in the page's). */
+     @grant none and Claude's injected copy both run in the page's), and data-mc-jumping does across worlds between
+     copies from 2.4 on. */
   addEventListener('hashchange', function () {
-    if (mine()) jump();
+    if (owns()) jump();
   });
   var last = location.href;
   setInterval(function () {
-    if (mine() && location.href !== last) {
+    if (owns() && location.href !== last) {
       last = location.href;
       if (/mcjump=/.test(location.hash)) jump();
     }
