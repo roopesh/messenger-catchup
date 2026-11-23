@@ -2091,12 +2091,260 @@
       scroll-behavior: auto !important;
     }
   }
+  /* Several chats (F1): the title is the chat picker, Settings ⚙ is a bottom sheet, All chats shows a card per chat.
+     A chat's colour (--c1 to --c4, readable in both themes) only helps scanning: its tag text carries the meaning. */
+  .titlebar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .titlebar h1 {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  button.picker {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  button.picker::after {
+    content: " ▾";
+    font-size: 0.6em;
+    color: var(--muted);
+  }
+  button.gear {
+    flex: none;
+    font-size: 1.4rem;
+    line-height: 1;
+    min-width: 44px;
+    min-height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--fg);
+    cursor: pointer;
+  }
+  button.picker:focus-visible,
+  button.gear:focus-visible,
+  .picker-list button:focus-visible,
+  .sheet :is(input, select, button):focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .picker-list {
+    display: grid;
+    gap: 2px;
+    max-width: 420px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 6px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  }
+  .picker-list button {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+    min-height: 44px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .picker-list button.on {
+    background: var(--accent-soft);
+  }
+  .picker-list button[disabled] {
+    color: var(--muted);
+    cursor: default;
+  }
+  .picker-list .nm {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .picker-list .cnt {
+    color: var(--warn);
+    font-size: 0.85rem;
+  }
+  .picker-list .flag {
+    flex-basis: 100%;
+    color: var(--muted);
+  }
+  .ctag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    padding: 0 7px;
+    border-radius: 999px;
+    border: 2px solid var(--c1);
+    color: var(--fg);
+    white-space: nowrap;
+  }
+  .ctag.c2 {
+    border-color: var(--c2);
+  }
+  .ctag.c3 {
+    border-color: var(--c3);
+  }
+  .ctag.c4 {
+    border-color: var(--c4);
+  }
+  body.allchats nav.tabs,
+  body.allchats #window,
+  body.allchats #marker,
+  body.allchats #strip {
+    display: none;
+  }
+  .chathead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .chathead h2,
+  .chathead h3 {
+    overflow-wrap: anywhere;
+  }
+  .chatline,
+  .chatnums {
+    overflow-wrap: anywhere;
+  }
+  .chatnums {
+    font-weight: 600;
+  }
+  .chatcard .refs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  .sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    max-height: 85vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 28px rgb(0 0 0 / 0.22);
+    padding: 16px max(16px, env(safe-area-inset-left, 0px)) calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+  .sheet > * {
+    max-width: 760px;
+    margin-inline: auto;
+  }
+  .sheet-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  #set-body {
+    display: grid;
+    gap: 14px;
+  }
+  .chatrow,
+  .addform {
+    display: grid;
+    gap: 8px;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+  }
+  .fields {
+    display: grid;
+    gap: 8px;
+  }
+  .fld {
+    display: grid;
+    gap: 4px;
+  }
+  .fld label {
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .fld input,
+  .fld select {
+    font: inherit;
+    min-height: 40px;
+    max-width: 100%;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  .fld:has(> button) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .fld:has(> button) label {
+    grid-column: 1 / -1;
+  }
+  label.chk {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+  .rmbox {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--warn);
+    border-radius: 10px;
+    background: var(--warn-soft);
+  }
+  .set-st.err {
+    color: var(--warn);
+  }
 </style>
 
 <div class="wrap">
   <header>
     <div class="eyebrow" id="eyebrow">Messenger group</div>
-    <h1 id="h1">Messenger Catch-up</h1>
+    <div class="titlebar">
+      <h1>
+        <button
+          type="button"
+          id="h1"
+          class="picker"
+          aria-haspopup="true"
+          aria-expanded="false"
+          aria-controls="picker-list"
+          title="Switch chats"
+        >
+          Messenger Catch-up
+        </button>
+      </h1>
+      <button
+        type="button"
+        id="settings-open"
+        class="gear"
+        aria-label="Settings: your chats"
+        aria-expanded="false"
+        aria-controls="settings"
+      >
+        ⚙
+      </button>
+    </div>
+    <div class="picker-list" id="picker-list" role="menu" aria-label="Chats" hidden></div>
     <div class="window muted" id="window">Loading the chat…</div>
     <div class="marker" id="marker" role="radiogroup" aria-label="Catch up from"></div>
     <div class="refresh">
@@ -2117,6 +2365,7 @@
     <a href="#stats" data-tab="stats">Stats</a>
   </nav>
 
+  <section class="view" id="v-all" hidden></section>
   <section class="view" id="v-summary"></section>
 
   <section class="view" id="v-ask" hidden>
@@ -2404,13 +2653,21 @@
   </section>
 </div>
 
+<section class="sheet" id="settings" aria-labelledby="settings-h" hidden>
+  <div class="sheet-head">
+    <h2 id="settings-h">Your chats</h2>
+    <button type="button" class="secondary" id="settings-close">Close</button>
+  </div>
+  <div id="set-body"></div>
+</section>
 <script>
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "4.0";
+  const PAGE_VERSION = "4.1";
   const CFG = () => S.meta || {};
-  const RP = () => CFG().refreshPhrase || "refresh my catch-up";
+  /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
+  const RP = () => (!CUR.home ? "refresh " + CUR.name : CFG().refreshPhrase || "refresh my catch-up");
   const OWNER = () => CFG().ownerName || "the page owner";
   const ALIASES = () => (CFG().ownerAliases || []).join(", ") || OWNER();
   const CHATNAME = () => CFG().threadName || "this Messenger group chat";
@@ -2423,16 +2680,22 @@
       CHAT = m.chatUrl || "https://www.facebook.com/messages/t/" + THREAD;
     }
     const nm = m.shortName || m.threadName || "Messenger";
-    document.title = nm + " Catch-up";
+    /* several chats (F1): the title names the chat on screen, or All chats; one chat looks as it always did */
+    const many = multi();
+    const all = many && S.view === "all";
+    document.title = many ? "Messenger Catch-up" : nm + " Catch-up";
     const e = document.getElementById("eyebrow");
-    if (e) e.textContent = (m.threadName || "Messenger") + " · Messenger group";
+    if (e)
+      e.textContent = all
+        ? "Messenger Catch-up · " + S.chats.filter(isLive).length + " chats"
+        : (m.threadName || "Messenger") + " · Messenger group";
     const h = document.getElementById("h1");
-    if (h) h.textContent = nm + " Catch-up";
+    if (h) h.textContent = all ? "All chats" : many || !CUR.home ? CUR.name : nm + " Catch-up";
     document.querySelectorAll("[data-rp]").forEach(x => {
       x.textContent = RP();
     });
     document.querySelectorAll("[data-outbox-mode]").forEach(x => {
-      x.textContent = m.outboxAuto
+      x.textContent = autoFor(CUR)
         ? "Claude posts it in Messenger, as a reply to that exact message, on its next run (or right away when you ask Claude to " +
           RP() +
           ")."
@@ -2514,15 +2777,18 @@
       new Map() /* F29: "YYYY-MM-DD" -> that day's summary (daySummaries/d<YYYY-MM-DD>, written by catchup.py) */,
     digests: new Map() /* "YYYY-MM-DD" -> that day's older digest (digests/m<YYYY-MM>, F16; no longer written) */,
     caps: null /* R13: caps[i][k] = what photo slot k of message i shows (captions/b<start>, written by catchup.py) */,
+    chats: [] /* F1: the page's chats (chatsOf), filled once the module below runs */,
   };
+  let CUR = { key: "chat", name: "", tag: "", home: true }; /* F1: the chat loaded (S.db), under All chats too */
 
   /* ---------- routing ---------- */
   const TABS = ["summary", "ask", "messages", "days", "views", "stats"];
   function route() {
     const h = (location.hash || "").slice(1);
     const tab = TABS.includes(h) ? h : "summary";
+    const allv = S.view === "all"; /* All chats (F1) has no tabs */
     TABS.forEach(t => {
-      $("#v-" + t).hidden = t !== tab;
+      $("#v-" + t).hidden = allv || t !== tab;
       const a = document.querySelector('nav a[data-tab="' + t + '"]');
       if (t === tab) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
@@ -3446,7 +3712,7 @@
         });
         S.composing.delete(m.i);
         delete S.drafts[m.i];
-        st.textContent = CFG().outboxAuto
+        st.textContent = autoFor(CUR)
           ? "Queued. Claude posts it on its next run, or now if you tell Claude “send replies” in a chat."
           : "Queued. Tell Claude “send replies” in a chat (or wait for the next refresh) and confirm it.";
         ta.disabled = true;
@@ -3529,7 +3795,7 @@
       q
         ? q +
           " queued. " +
-          (CFG().outboxAuto
+          (autoFor(CUR)
             ? "Claude posts these on its next run; ask Claude to " + RP() + " to post them now."
             : "On its next run Claude shows them to you in chat and posts each one only after you confirm.")
         : "",
@@ -8793,15 +9059,28 @@
       (f >= b
         ? u.files.toLocaleString("en-US") + " of " + u.maxFiles.toLocaleString("en-US") + " files"
         : fmtBytes(u.bytes) + " of " + fmtBytes(u.maxBytes)) +
-      ")."
+      ")." +
+      biggestChat()
     );
   }
+  /* several chats share the page's storage (F1): which uses most, from meta/chat.assetUsage.byChat */
+  function biggestChat() {
+    const by = ((S.page || {}).assetUsage || {}).byChat;
+    if (!isObj(by)) return "";
+    const top = Object.entries(by)
+      .map(([k, v]) => [S.chats.find(c => c.key === k), v])
+      .filter(([c, v]) => c && isObj(v) && c.state !== "deleted")
+      .sort((a, b) => (b[1].bytes || 0) - (a[1].bytes || 0));
+    return top.length > 1 ? " Most of it is " + top[0][0].name + "'s (" + fmtBytes(top[0][1].bytes || 0) + ")." : "";
+  }
   async function recordUsage(R, P) {
-    let u = null;
+    let u = null,
+      list = null;
     try {
       const a = await claude.use("assets");
       if (!a || typeof a.list !== "function") return;
-      const l = (await a.list()).usage;
+      list = await a.list();
+      const l = list.usage;
       if (!l || typeof l.files !== "number") return;
       u = { files: l.files, bytes: l.bytes, maxFiles: l.maxFiles, maxBytes: l.maxBytes };
     } catch (e) {
@@ -8809,11 +9088,21 @@
     }
     R.usage = u;
     S.assetLive = Object.assign({ at: new Date().toISOString() }, u);
+    /* several chats (F1): this chat's share, from the files its photos documents use and the listing's sizes */
+    let by = null;
+    if (multi()) {
+      const docs = await photoDocs();
+      if (docs) {
+        const size = new Map((list.assets || []).map(x => [x.id, x.sizeBytes || 0]));
+        const ids = [...photoRefs(docs)].filter(id => size.has(id));
+        by = { [CUR.key]: { files: ids.length, bytes: ids.reduce((n, id) => n + size.get(id), 0) } };
+      }
+    }
     renderStorage();
-    const was = P.meta.assetUsage || {};
-    if (["files", "bytes", "maxFiles", "maxBytes"].some(k => was[k] !== u[k]))
+    const was = (S.page || P.meta).assetUsage || {};
+    if (by || ["files", "bytes", "maxFiles", "maxBytes"].some(k => was[k] !== u[k]))
       try {
-        await S.db.doc("meta/chat").update({ assetUsage: S.assetLive });
+        await S.rawDb.doc("meta/chat").update({ assetUsage: Object.assign({}, S.assetLive, by ? { byChat: by } : {}) });
       } catch (e) {}
   }
   function renderStorage() {
@@ -9130,16 +9419,17 @@
      most 1000) and may come back short, so after it every document the page can name is read on its own unless the
      listing held it: the blocks up to the newest message's, the old index, photos/packs, every document the live
      snapshot holds, and the leftover sweep's documents photos/packs.reclaim.swept names. */
-  async function photoDocs() {
+  async function photoDocs(db, known, top) {
+    db = db || S.db; /* another chat's documents (deleting it, F1): its db, and its lastI as top */
     try {
-      const d = collDocs(await S.db.collection("photos").limit(1000).get());
+      const d = collDocs(await db.collection("photos").limit(1000).get());
       const fill = async id => {
         if (id in d) return;
-        const g = await S.db.doc("photos/" + id).get();
+        const g = await db.doc("photos/" + id).get();
         if (g.exists) d[id] = g.data();
       };
-      const top = S.msgs.reduce((a, m) => Math.max(a, m.i), -1);
-      const ids = ["packs", "index"].concat(S.photoIds || []);
+      if (top == null) top = S.msgs.reduce((a, m) => Math.max(a, m.i), -1);
+      const ids = ["packs", "index"].concat(known || S.photoIds || []);
       for (let s = 0; s <= top; s += PHOTO_BLOCK) ids.push("b" + s);
       for (const id of ids) await fill(id);
       const sw = ((d.packs || {}).reclaim || {}).swept;
@@ -9650,9 +9940,9 @@
       S.assetLive = Object.assign({ at: new Date().toISOString() }, u);
       renderStorage();
       renderPack();
-      const was = (S.meta && S.meta.assetUsage) || {};
+      const was = ((S.page || S.meta) && (S.page || S.meta).assetUsage) || {};
       if (save && ["files", "bytes", "maxFiles", "maxBytes"].some(k => was[k] !== u[k]))
-        await S.db.doc("meta/chat").update({ assetUsage: S.assetLive });
+        await S.rawDb.doc("meta/chat").update({ assetUsage: S.assetLive });
     } catch (e) {}
   }
   function packWanted() {
@@ -9913,7 +10203,7 @@
     renderPack();
     const v = { on, at: new Date().toISOString() };
     try {
-      await S.db.doc("meta/chat").update({ photoPack: v });
+      await S.rawDb.doc("meta/chat").update({ photoPack: v });
       if (S.meta) S.meta.photoPack = v;
     } catch (x) {
       cb.checked = !on;
@@ -9954,6 +10244,22 @@
     if (photos.length && (await sha256hex(JSON.stringify(photos))) !== cap.phsha)
       return done("Photo checksum mismatch. Nothing saved.");
     if (!S.db) return done("The page's data isn't loaded yet; try again in a moment.");
+    /* several chats (F1): a capture goes only into the chat it was read from (helper 2.2 and later name it) */
+    if (!cap.thread && (!CUR.home || S.chats.filter(isShown).length > 1))
+      return done(
+        "This capture doesn't say which chat it's from (it was read by helper 2.1 or older), and this page has several chats. Nothing saved. Update the helper, then capture again.",
+      );
+    if (cap.thread && threadOf(CUR) && String(cap.thread) !== threadOf(CUR)) {
+      const from = S.chats.find(c => c.state !== "deleted" && threadOf(c) === String(cap.thread));
+      return done(
+        "This capture is from " +
+          (from ? from.name : "another chat") +
+          ", not " +
+          CUR.name +
+          ". Nothing saved." +
+          (from && isLive(from) ? " Pick " + from.name + " in the title, then paste it again." : ""),
+      );
+    }
     if (!dry) {
       const L = await importLease();
       R.lock = L.lock;
@@ -9965,7 +10271,7 @@
         );
     }
     const mg = await S.db.doc("meta/chat").get();
-    const meta = mg.exists ? mg.data() : null;
+    const meta = mg.exists ? (CUR.home ? mg.data() : Object.assign(pagePart(S.page), mg.data())) : null;
     if (!meta) return done("The page's data isn't loaded yet; try again in a moment.");
     const top = await newestChunk();
     let lastI = meta.lastI;
@@ -10199,7 +10505,8 @@
       R = await importCore(raw, opts);
       const P = R.plan;
       delete R.plan;
-      if (P && !R.dry) {
+      /* a chat added with "Store its photos" off keeps none (F1) */
+      if (P && !R.dry && CUR.photos !== false) {
         let end = null;
         const owed = P.meta.photosOwed && P.meta.photosOwed.n;
         if (P.photos.length || P.gifs.length || P.phfail.length || P.phskip.length || owed)
@@ -10408,7 +10715,9 @@
     const box = $("#upd");
     if (!box) return;
     const inst = $("#us-install");
-    const list = updateNotices(S.meta, S.refresh, Date.now(), inst ? inst.href : "").filter(n => !updDismissed(n.key));
+    const list = updateNotices(S.page || S.meta, S.refresh, Date.now(), inst ? inst.href : "").filter(
+      n => !updDismissed(n.key),
+    );
     /* rebuild only when something changed, so the status region isn't announced again every minute */
     const sig = JSON.stringify(list);
     if (sig === updShown) return;
@@ -10585,7 +10894,13 @@
   function renderSchedule() {
     const box = $("#sched");
     if (!box) return;
-    const v = scheduleView(S.meta, S.sched, S.refresh, Date.now(), RP());
+    const v = scheduleView(
+      S.page || S.meta,
+      S.sched,
+      S.refresh,
+      Date.now(),
+      (S.page || {}).refreshPhrase || "refresh my catch-up",
+    );
     const sig = JSON.stringify(v);
     if (sig === schedShown) return;
     schedShown = sig;
@@ -10892,7 +11207,8 @@
       messages they cite (a refresh over midnight has a run on each day). Read only, into S.reports; the By day tab
       shows them. A listener that fails leaves the summaries as they are. */
   function watchReports(db) {
-    db.collection("reports").onSnapshot(
+    on(
+      db.collection("reports"),
       q => {
         const m = new Map();
         q.docs.forEach(d => {
@@ -13022,6 +13338,1060 @@
   });
   renderStats();
 
+  /* ---------- several chats (F1, stage A) ----------
+     One page holds several Messenger chats. meta/chat.chats maps each chat's fixed key to {name, tag, color, order,
+     state, home?, url?, thread?, start?, photos?, auto?, addedAt, reason?}: a map, not a list, so a page's update to
+     one chat merges and never drops another's. A page without it holds one chat, read from meta/chat. The first chat
+     (home) keeps the page's own documents; an added chat's live in collections named after its key (cam_chunks,
+     cam_summary, …), meta/chat-cam and refresh/lastImport-cam. S.db is the database as the chat on screen sees it
+     (chatDb), so the rest of the page reads and writes one chat as before; S.rawDb is all of it, for page-wide fields.
+     A fresh load opens on All chats once two chats have data, else on the one chat as before. The home chat stays
+     loaded under All chats, so a paste there imports into it, as a scheduled refresh expects. */
+  const CHAT_COLLS = [
+    "chunks",
+    "threading",
+    "summary",
+    "daySummaries",
+    "digests",
+    "reports",
+    "photos",
+    "captions",
+    "people",
+    "outbox",
+    "rangeSummaries",
+  ];
+  const CHATS_FROM = "4.1"; /* the first page, and the skill shipping it, that knows several chats */
+  const PAGE_FIELDS = [
+    "kind",
+    "pageVersion",
+    "ownerName",
+    "ownerAliases",
+    "outboxAuto",
+    "helperPost",
+    "refreshPhrase",
+    "tz",
+    "helper",
+    "schedule",
+    "versions",
+    "assetUsage",
+    "photoPack",
+    "ideasSeenAt",
+    "aliasesAskedAt",
+    "chats",
+  ];
+  const TAG_MAX = 8,
+    KEY_MAX = 6;
+  /* the same rules as catchup.py's key_from and tag_from */
+  const keyFrom = s =>
+    String(s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "")
+      .slice(0, KEY_MAX) || "chat";
+  const tagFrom = s =>
+    (
+      String(s || "")
+        .trim()
+        .split(/\s+/)[0] || "Chat"
+    ).slice(0, TAG_MAX);
+  function freeKey(base, taken) {
+    if (!taken.has(base)) return base;
+    for (let n = 2; ; n++) {
+      const k = base.slice(0, KEY_MAX - String(n).length) + n;
+      if (!taken.has(k)) return k;
+    }
+  }
+  function homeEntry(m) {
+    const nm = m.shortName || m.threadName;
+    return {
+      key: keyFrom(nm),
+      name: m.threadName || m.shortName || "Messenger chat",
+      tag: tagFrom(nm),
+      color: 1,
+      order: 0,
+      state: "active",
+      home: true,
+    };
+  }
+  function chatsOf(m) {
+    m = m || {};
+    const h = homeEntry(m);
+    if (!isObj(m.chats)) return [h];
+    const list = Object.entries(m.chats)
+      .filter(([, v]) => isObj(v))
+      .map(([key, v]) => Object.assign({}, v.home ? h : {}, v, { key }));
+    if (!list.some(c => c.home)) list.unshift(h);
+    return list.sort((a, b) => (a.order || 0) - (b.order || 0) || String(a.addedAt).localeCompare(String(b.addedAt)));
+  }
+  const isLive = c => c.state === "active" || c.state === "paused";
+  const isShown = c => c.state !== "hidden" && c.state !== "deleted";
+  const multi = () => S.chats.filter(isLive).length > 1;
+  const homeChat = () => S.chats.find(c => c.home);
+  const chatOf = r => (r && r.chat) || homeChat().key;
+  const threadOf = c => String((c.home ? (S.page || {}).thread : c.thread) || "");
+  const pagePart = m => Object.fromEntries(PAGE_FIELDS.filter(k => m && k in m).map(k => [k, m[k]]));
+  const autoFor = c => (c && typeof c.auto === "boolean" ? c.auto : !!(S.page || S.meta || {}).outboxAuto);
+  function chatPath(c, p) {
+    if (!c || c.home) return p;
+    if (p === "meta/chat") return "meta/chat-" + c.key;
+    if (p === "refresh/lastImport") return "refresh/lastImport-" + c.key;
+    const seg = p.split("/");
+    if (CHAT_COLLS.includes(seg[0])) seg[0] = c.key + "_" + seg[0];
+    return seg.join("/");
+  }
+  /* qa and views stay shared (stage C asks across chats); an added chat's rows carry its key, the home chat's none */
+  function chatDb(db, c) {
+    if (!db || !c || c.home) return db;
+    const coll = name => {
+      const r = db.collection(chatPath(c, name));
+      if (name !== "qa" && name !== "views") return r;
+      return { add: o => r.add(Object.assign({}, o, { chat: c.key })), doc: id => r.doc(id) };
+    };
+    return { doc: p => db.doc(chatPath(c, p)), collection: coll };
+  }
+  S.chats = [homeEntry({})];
+  S.view = null; /* "all", or the key of the chat on screen */
+  CUR = S.chats[0];
+  let GEN = 0; /* a chat's listeners answer only while it's the one loaded */
+  let chatSubs = [];
+  const LIGHT = new Map(); /* key -> {meta, sum, outbox, unsub}: what All chats and the picker show of each chat */
+  const metaOf = c => (c.home ? S.page : (LIGHT.get(c.key) || {}).meta) || null;
+  const chatLo = m => (m.markerMode === "own" && m.ownLastI != null ? m.ownLastI : (m.caughtUpI ?? -1));
+  /* Needs you for one chat, since its catch-up start, from its summary/current (the recent items) */
+  function needsOf(c) {
+    const v = LIGHT.get(c.key),
+      m = metaOf(c);
+    if (!v || !v.sum || !m) return [];
+    const lo = chatLo(m);
+    return (v.sum.mentions || []).filter(x => (x.refs || []).some(r => (r[0] ?? r) > lo));
+  }
+  const newOf = c => {
+    const m = metaOf(c);
+    return m && typeof m.lastI === "number" ? Math.max(0, m.lastI - chatLo(m)) : 0;
+  };
+  const oldSkill = c =>
+    !c.home &&
+    c.state !== "deleted" &&
+    !!((S.page || {}).versions || {}).page &&
+    vcmp(S.page.versions.page, CHATS_FROM) < 0;
+  function chatLine(c) {
+    if (oldSkill(c)) return c.name + " isn't refreshed: the refresh skill is older than the page. Update the plugin.";
+    if (c.state === "pending")
+      return (
+        (c.reason ? "Couldn't add it yet: " + c.reason + " " : "Waiting for its first refresh. ") +
+        "Ask Claude to “refresh " +
+        c.name +
+        "”."
+      );
+    if (c.state === "paused") return "Paused: refreshes skip it.";
+    if (c.state === "hidden") return "Hidden: nothing of it shows, and refreshes skip it.";
+    const m = metaOf(c) || {};
+    return (
+      (m.lastRefresh ? "Last refreshed " + m.lastRefresh + "." : "Not refreshed yet.") +
+      (c.home
+        ? ""
+        : " Scheduled runs refresh only " + homeChat().name + " for now: ask Claude to “refresh " + c.name + "”.")
+    );
+  }
+  function tagChip(c) {
+    const t = el("span", "ctag c" + ((((c.color || 1) - 1) % 4) + 1), c.tag);
+    t.title = c.name;
+    return t;
+  }
+
+  /* listeners of the chat loaded: the whole chat, as the page always read its one chat */
+  function on(ref, fn, err) {
+    const g = GEN;
+    const u = ref.onSnapshot(
+      x => g === GEN && fn(x),
+      e => g === GEN && err && err(e),
+    );
+    chatSubs.push(typeof u === "function" ? u : () => {});
+  }
+  function resetChat() {
+    Object.assign(S, {
+      meta: null,
+      chatMeta: undefined,
+      chunks: {},
+      msgs: [],
+      byI: new Map(),
+      summary: null,
+      rangeSums: {},
+      digests: new Map(),
+      digestsIn: undefined,
+      daySums: new Map(),
+      daySumsIn: undefined,
+      goAfterLoad: null,
+      reports: null,
+      caps: null,
+      threading: null,
+      photos: null,
+      photoPv: null,
+      photoM: null,
+      photoK: null,
+      photoIds: [],
+      swept: [],
+      packsDoc: null,
+      gifs: new Set(),
+      people: null,
+      outbox: [],
+      older: null,
+      autoOlder: null,
+      focusI: null,
+      convOpen: new Map(),
+      openThr: new Set(),
+      composing: new Map(),
+      drafts: {},
+      daysN: undefined,
+      _layoutSet: false,
+      rangeSaveErr: null,
+      rangeUnsaved: null,
+    });
+    S.stats = Object.assign({}, S.stats, { zoom: null, day: null, person: null, rets: [], focus: null });
+    WR = STB = RF = RJ = null;
+    turns = [];
+    $("#chat").textContent = "";
+    vwOpen = null;
+    THREAD = "";
+    CHAT = "https://www.facebook.com/messages/";
+    layout = "flat";
+    $("#lay-flat").setAttribute("aria-pressed", "true");
+    $("#lay-thread").setAttribute("aria-pressed", "false");
+    missing.threading = missing.summary = 0;
+    PEOPLE = { byShown: new Map(), firsts: new Map() };
+  }
+  function setMeta(m) {
+    keepPlace(() => {
+      S.meta = m;
+      applyCfg();
+      rebuild();
+      packWatch();
+      renderRefresh();
+      renderUpdates();
+      renderSchedule();
+    });
+  }
+  function filterRows() {
+    const k = CUR.key;
+    S.qa = (S.qaAll || []).filter(r => chatOf(r) === k);
+    S.views = (S.viewsAll || []).filter(r => r.kind === "idea" || chatOf(r) === k);
+  }
+  function loadChat(c) {
+    GEN++;
+    chatSubs.forEach(u => {
+      try {
+        u();
+      } catch (e) {}
+    });
+    chatSubs = [];
+    CUR = c;
+    resetChat();
+    S.db = chatDb(S.rawDb, c);
+    filterRows();
+    renderQA();
+    renderViews();
+    rebuild();
+    renderHeader();
+    if (S.db) subscribeChat();
+  }
+  function subscribeChat() {
+    const db = S.db;
+    if (CUR.home) {
+      if (S.page !== undefined) setMeta(S.page);
+    } else
+      on(db.doc("meta/chat"), s => {
+        S.chatMeta = s.exists ? s.data() : null;
+        setMeta(S.chatMeta ? Object.assign(pagePart(S.page), S.chatMeta) : null);
+      });
+    on(db.collection("summary"), q => {
+      S.summary = mergeSummary(collDocs(q));
+      keepPlace(() => {
+        renderHeader();
+        renderSummary();
+      });
+      renderStats();
+    });
+    on(db.collection("chunks"), q => {
+      S.chunks = {};
+      q.docs.forEach(d => (S.chunks[d.id] = d.data()));
+      rebuild();
+    });
+    on(db.collection("outbox"), q => {
+      S.outbox = q.docs.map(d => Object.assign({ id: d.id }, d.data()));
+      outboxChanged();
+    });
+    on(db.collection("rangeSummaries"), q => {
+      S.rangeSums = {};
+      q.docs.forEach(d => (S.rangeSums[d.id] = d.data()));
+      keepPlace(() => {
+        renderHeader();
+        renderSummary();
+      });
+    });
+    /* day summaries (F29): read only, the whole collection, for By day, Ask, Views and the day_summaries tool;
+       Claude's refresh writes them */
+    on(
+      db.collection("daySummaries"),
+      q => {
+        const m = new Map();
+        q.docs.forEach(d => {
+          const k = /^d(\d{4}-\d\d-\d\d)$/.exec(d.id);
+          const v = d.data();
+          if (k && v && typeof v === "object" && Array.isArray(v.sections)) m.set(k[1], v);
+        });
+        S.daySums = m;
+        S.daySumsIn = true;
+        renderDays();
+      },
+      () => {
+        /* summaries already shown stay; only a tab still waiting says it failed */
+        if (S.daySumsIn === true) return;
+        S.daySumsIn = "error";
+        renderDays();
+      },
+    );
+    /* per-day digests (F16, older pages): read only, for days without a summary in By day and Ask's day lines */
+    on(
+      db.collection("digests"),
+      q => {
+        const m = new Map();
+        q.docs.forEach(d => {
+          const days = (d.data() || {}).days;
+          if (days && typeof days === "object") Object.entries(days).forEach(([k, v]) => v && m.set(k, v));
+        });
+        S.digests = m;
+        S.digestsIn = true;
+        renderDays();
+      },
+      () => {
+        /* digests already shown stay; only a tab still waiting says it failed */
+        if (S.digestsIn === true) return;
+        S.digestsIn = "error";
+        renderDays();
+      },
+    );
+    watchReports(db);
+    on(db.doc("people/index"), s => {
+      S.people = s.exists ? s.data() : null;
+      indexPeople();
+      keepPlace(rerenderAll);
+    });
+    /* photos/index (pages up to 2.6) and the photos/b<start> blocks, merged */
+    on(db.collection("photos"), q => {
+      const D = collDocs(q);
+      S.photoIds = Object.keys(D); /* photoDocs reads each of these if its listing doesn't hold it */
+      S.swept = Object.keys(D)
+        .filter(id => /^swept-/.test(id))
+        .map(id => D[id] || {}); /* what the leftover sweep kept (renderPack) */
+      const M = q.docs.length ? mergePhotos(D) : null;
+      S.photos = M ? M.byI : null;
+      S.photoPv = M ? M.pvI : null;
+      S.photoM = M; /* day packs (R13): what's left to pack */
+      S.packsDoc = D.packs || null;
+      renderPack();
+      S.photoK = M ? M.byK : null; /* R13: which slot each stored photo is, for its caption */
+      S.gifs = M ? M.gifs : new Set();
+      /* the summary shows photos too: in snippets and in context blocks */
+      keepPlace(() => {
+        renderMessages();
+        renderSummary();
+      });
+      renderStats();
+    });
+    /* R13: photo captions (captions/b<start>, written by Claude's refresh): searched with the text, shown on the photo */
+    on(db.collection("captions"), q => {
+      S.caps = mergeCaps(collDocs(q));
+      keepPlace(() => {
+        renderMessages();
+        renderSummary();
+      });
+    });
+    on(db.collection("threading"), q => {
+      S.threading = mergeThreading(collDocs(q));
+      if (S.threading && !S._layoutSet) {
+        S._layoutSet = true;
+        layout = "thread";
+        $("#lay-thread").setAttribute("aria-pressed", "true");
+        $("#lay-flat").setAttribute("aria-pressed", "false");
+      }
+      keepPlace(() => {
+        renderMessages();
+        renderSummary();
+      });
+      renderStats();
+    });
+  }
+  /* All chats and the picker: each live chat's meta, summary/current and outbox, only while there are two or more */
+  function lightSubs() {
+    const want = multi() ? S.chats.filter(isLive) : [];
+    for (const [k, v] of LIGHT)
+      if (!want.some(c => c.key === k)) {
+        v.unsub.forEach(u => typeof u === "function" && u());
+        LIGHT.delete(k);
+      }
+    want.forEach(c => {
+      if (LIGHT.has(c.key)) return;
+      const v = { meta: null, sum: null, outbox: [], unsub: [] };
+      LIGHT.set(c.key, v);
+      const db = chatDb(S.rawDb, c);
+      const sub = (ref, fn) => v.unsub.push(ref.onSnapshot(fn, () => {}));
+      if (!c.home)
+        sub(db.doc("meta/chat"), s => {
+          v.meta = s.exists ? s.data() : null;
+          renderChats();
+        });
+      sub(db.doc("summary/current"), s => {
+        v.sum = s.exists ? s.data() : null;
+        renderChats();
+      });
+      sub(db.collection("outbox"), q => {
+        v.outbox = q.docs.map(d => Object.assign({ id: d.id }, d.data()));
+        renderChats();
+      });
+    });
+  }
+  /* meta/chat changed: the chat list, and the chat on screen if it was removed */
+  function chatsChanged() {
+    S.chats = chatsOf(S.page);
+    const same = S.chats.find(c => (CUR.home ? c.home : c.key === CUR.key));
+    if (same && isShown(same)) CUR = same;
+    else loadChat(homeChat());
+    if (S.view === null) S.view = multi() ? "all" : CUR.key;
+    else if (S.view !== "all" || !multi()) S.view = CUR.key;
+    lightSubs();
+    showView();
+  }
+  function showView() {
+    const all = S.view === "all";
+    document.body.classList.toggle("allchats", all);
+    $("#v-all").hidden = !all;
+    route();
+    applyCfg();
+    renderChats();
+  }
+  /* opens a chat (and its message i) from the picker, All chats or a citation */
+  /* this tab's import, photo storing and packing write through S.db, so the chat can't change under them */
+  const switchBusy = () => !!(S.importing || PK.busy);
+  function openChat(key, i) {
+    const c = S.chats.find(x => x.key === key);
+    if (!c || !isShown(c) || (CUR.key !== key && switchBusy())) return;
+    S.view = key;
+    if (CUR.key !== key) loadChat(c);
+    showView();
+    if (i != null) {
+      if (S.byI.has(i)) goMsg(i);
+      else S.goAfterLoad = i;
+    }
+  }
+  function renderChats() {
+    renderPicker();
+    renderAll();
+    renderSettings();
+  }
+
+  /* the title is the picker */
+  function pickerItems() {
+    const out = [];
+    if (multi())
+      out.push({
+        key: "all",
+        label: "All chats",
+        n: S.chats.filter(isLive).reduce((a, c) => a + needsOf(c).length, 0),
+      });
+    S.chats
+      .filter(isShown)
+      .forEach(c => out.push({ key: c.key, c, label: c.name, n: isLive(c) && multi() ? needsOf(c).length : 0 }));
+    out.push({ key: "add", label: "Add a chat" });
+    return out;
+  }
+  function renderPicker() {
+    const box = $("#picker-list");
+    if (!box || box.hidden) return;
+    box.textContent = "";
+    if (switchBusy())
+      box.append(
+        el("p", "note", "Storing photos or packing in this chat: switch chats once it's done (keep this tab open)."),
+      );
+    pickerItems().forEach(it => {
+      const b = el("button", "pick" + (it.key === S.view ? " on" : ""));
+      b.type = "button";
+      b.setAttribute("role", "menuitem");
+      b.dataset.key = it.key;
+      if (it.c) b.append(tagChip(it.c));
+      b.append(el("span", "nm", it.label));
+      if (it.n) b.append(el("span", "cnt", it.n + " need" + (it.n === 1 ? "s" : "") + " you"));
+      if (it.c && (it.c.state !== "active" || oldSkill(it.c))) b.append(el("small", "flag", chatLine(it.c)));
+      if (it.c && it.c.key !== CUR.key && switchBusy()) b.disabled = true;
+      if (it.key === S.view) b.setAttribute("aria-current", "true");
+      b.onclick = () => {
+        closePicker();
+        if (it.key === "add") openSettings(true);
+        else if (it.key === "all") {
+          S.view = "all";
+          showView();
+        } else openChat(it.key);
+      };
+      box.append(b);
+    });
+  }
+  function closePicker(focus = true) {
+    const box = $("#picker-list");
+    if (box.hidden) return;
+    box.hidden = true;
+    $("#h1").setAttribute("aria-expanded", "false");
+    if (focus) $("#h1").focus();
+  }
+  $("#h1").onclick = () => {
+    const box = $("#picker-list");
+    if (!box.hidden) return closePicker();
+    box.hidden = false;
+    $("#h1").setAttribute("aria-expanded", "true");
+    renderPicker();
+    const first = box.querySelector("button:not([disabled])");
+    if (first) first.focus();
+  };
+  $("#picker-list").addEventListener("keydown", e => {
+    const bs = [...$("#picker-list").querySelectorAll("button:not([disabled])")];
+    const k = bs.indexOf(document.activeElement);
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closePicker();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const n = bs.length;
+      (bs[(k + (e.key === "ArrowDown" ? 1 : n - 1)) % n] || bs[0]).focus();
+    }
+  });
+  document.addEventListener("pointerdown", e => {
+    if (!e.target.closest || !e.target.closest("#picker-list, #h1")) closePicker(false);
+  });
+
+  /* All chats: each chat's new messages, Needs you and queued replies, and Mark all caught up */
+  function renderAll() {
+    const v = $("#v-all");
+    if (!v || v.hidden) return;
+    v.textContent = "";
+    const top = block(
+      "All chats",
+      "What's new in each chat since you last caught up there. Pick a chat in the title for its messages, By day, Stats, Views and Ask.",
+    );
+    const bt = el("div", "btns");
+    const b = el("button", "secondary", "Mark all caught up");
+    b.id = "caught-all";
+    b.onclick = markAllCaughtUp;
+    const st = el("span", "note", S.allNote || "");
+    st.id = "caught-all-st";
+    st.setAttribute("role", "status");
+    bt.append(b, st);
+    top.append(bt);
+    v.append(top);
+    S.chats.filter(isShown).forEach(c => {
+      const card = el("div", "block chatcard");
+      card.dataset.chat = c.key;
+      const h = el("div", "sec-head chathead");
+      const nm = el("h2", null, c.name);
+      h.append(tagChip(c), nm);
+      if (isLive(c)) {
+        const go = el("button", "link", "Open");
+        go.onclick = () => openChat(c.key);
+        go.setAttribute("aria-label", "Open " + c.name);
+        h.append(go);
+      }
+      card.append(h, el("p", "note chatline", chatLine(c)));
+      if (isLive(c)) {
+        const ns = needsOf(c);
+        const L = LIGHT.get(c.key) || {};
+        card.append(
+          el("p", "chatnums", newOf(c) + " new · " + ns.length + " need" + (ns.length === 1 ? "s" : "") + " you"),
+        );
+        if (ns.length) {
+          const ln = el("div", "list");
+          ns.forEach(x => {
+            const d = el("div", "item mention");
+            if (x.note) d.append(el("p", null, x.note));
+            const refs = el("p", "refs");
+            (x.refs || []).forEach(r => {
+              const i = r[0] ?? r;
+              const a = el("button", "link cite", c.tag + " #" + i);
+              a.onclick = () => openChat(c.key, i);
+              refs.append(a, " ");
+            });
+            d.append(refs);
+            ln.append(d);
+          });
+          card.append(ln);
+        }
+        const q = (L.outbox || []).filter(o => o.state === "queued" || o.state === "sending");
+        if (q.length) {
+          const ul = el("ul", "obq");
+          q.forEach(o =>
+            ul.append(el("li", null, c.tag + " #" + o.i + " · to " + (o.to || "?") + ": " + trunc(o.text || "", 80))),
+          );
+          card.append(
+            el("p", "note", q.length + " repl" + (q.length === 1 ? "y" : "ies") + " waiting to be posted:"),
+            ul,
+          );
+        }
+      }
+      v.append(card);
+    });
+  }
+  async function markAllCaughtUp() {
+    const bad = [],
+      at = new Date().toISOString();
+    for (const c of S.chats.filter(isLive)) {
+      const m = metaOf(c);
+      if (!m || typeof m.lastI !== "number" || m.lastI < 0) continue;
+      try {
+        await chatDb(S.rawDb, c).doc("meta/chat").update({ caughtUpI: m.lastI, caughtUpAt: at, markerMode: "caught" });
+      } catch (e) {
+        bad.push(c.name);
+      }
+    }
+    S.allNote = bad.length
+      ? "Couldn't save it for " + bad.join(", ") + ". The others are caught up."
+      : "All caught up.";
+    renderAll();
+  }
+
+  /* ---------- Settings: Your chats ----------
+     Everything here works without Claude: the page writes meta/chat.chats (and outboxAuto), and the next refresh of a
+     chat does the rest (an added chat's first capture, a removed one's skip). Page writes can't be pinned, so each
+     write names one chat's fields and merges. */
+  const LINK_RE =
+    /^https?:\/\/(?:www\.|web\.)?(?:facebook\.com\/messages|messenger\.com)\/(e2ee\/)?t\/(\d+)\/?(?:[?#].*)?$/;
+  const HISTORY = [
+    [300, "The last 300 messages"],
+    [1000, "The last 1,000"],
+    [3000, "The last 3,000"],
+  ];
+  S.canWrite = null; /* false: a viewer who can't write shared data (the controls aren't shown) */
+  S.rmOpen = null; /* the chat whose Remove confirm is open */
+  S.setNotes = {}; /* key (or "add") -> the line under its controls */
+  async function saveChats(patch) {
+    const upd = {};
+    if (!isObj((S.page || {}).chats)) {
+      const h = Object.assign({}, homeChat());
+      upd[h.key] = h;
+    }
+    Object.entries(patch).forEach(([k, v]) => (upd[k] = Object.assign(upd[k] || {}, v)));
+    Object.values(upd).forEach(v => delete v.key);
+    await S.rawDb.doc("meta/chat").update({ chats: upd });
+  }
+  function openSettings(add) {
+    $("#settings").hidden = false;
+    $("#settings-open").setAttribute("aria-expanded", "true");
+    renderSettings();
+    const f = add ? $("#add-link") : $("#settings-close");
+    if (f) {
+      f.focus();
+      if (add) f.scrollIntoView({ block: "center" });
+    }
+  }
+  function closeSettings() {
+    $("#settings").hidden = true;
+    $("#settings-open").setAttribute("aria-expanded", "false");
+    $("#settings-open").focus();
+  }
+  $("#settings-open").onclick = () => ($("#settings").hidden ? openSettings(false) : closeSettings());
+  $("#settings-close").onclick = closeSettings;
+  $("#settings").addEventListener("keydown", e => {
+    if (e.key === "Escape") closeSettings();
+  });
+  function setNote(k, t, err) {
+    S.setNotes[k] = { t, err: !!err };
+    const p = document.getElementById("set-st-" + k);
+    if (!p) return renderSettings();
+    p.textContent = t;
+    p.classList.toggle("err", !!err);
+  }
+  function field(id, label, input) {
+    input.id = id;
+    const w = el("div", "fld");
+    const l = el("label", null, label);
+    l.htmlFor = id;
+    w.append(l, input);
+    return w;
+  }
+  function autoSelect(id, val) {
+    const s = el("select");
+    [
+      ["", "Use the page default (" + (autoFor(null) ? "send on their own" : "wait for my yes") + ")"],
+      ["on", "Send on their own"],
+      ["off", "Wait for my yes in chat"],
+    ].forEach(([v, t]) => {
+      const o = el("option", null, t);
+      o.value = v;
+      s.append(o);
+    });
+    s.value = val === true ? "on" : val === false ? "off" : "";
+    s.id = id;
+    return s;
+  }
+  const autoVal = v => (v === "on" ? true : v === "off" ? false : null);
+  function renderSettings() {
+    const box = $("#set-body");
+    if (!box || $("#settings").hidden) return;
+    const ae = document.activeElement;
+    if (ae && box.contains(ae) && (ae.tagName === "INPUT" || ae.tagName === "SELECT") && ae.type !== "radio") return;
+    box.textContent = "";
+    if (S.canWrite === false) {
+      box.append(el("p", "note", "Only people who can edit this page can add, remove or change its chats."));
+      return;
+    }
+    if (!S.rawDb) {
+      box.append(el("p", "note", "The page's data isn't loaded in this view."));
+      return;
+    }
+    const note = k => {
+      const n = S.setNotes[k];
+      const p = el("p", "note set-st" + (n && n.err ? " err" : ""), n ? n.t : "");
+      p.setAttribute("role", "status");
+      p.id = "set-st-" + k;
+      return p;
+    };
+    /* the page default for replies */
+    const dl = el("label", "chk");
+    const dc = el("input");
+    dc.type = "checkbox";
+    dc.id = "set-auto";
+    dc.checked = autoFor(null);
+    dc.onchange = async () => {
+      try {
+        await S.rawDb.doc("meta/chat").update({ outboxAuto: dc.checked });
+        setNote(
+          "page",
+          dc.checked
+            ? "Replies you queue now go out on their own, except in chats set otherwise."
+            : "Claude now asks you before posting a reply, except in chats set otherwise.",
+        );
+      } catch (e) {
+        setNote("page", "Couldn't save that. Try again.", true);
+      }
+    };
+    dl.append(dc, " Replies you queue go out on their own (the page default; each chat can differ)");
+    box.append(dl, note("page"));
+    S.chats
+      .filter(c => c.state !== "deleted")
+      .forEach(c => {
+        const row = el("div", "chatrow");
+        row.dataset.chat = c.key;
+        const h = el("div", "chathead");
+        h.append(tagChip(c), el("h3", null, c.name));
+        row.append(h, el("p", "note chatline", chatLine(c)));
+        const ctl = el("div", "fields");
+        const ti = el("input");
+        ti.type = "text";
+        ti.maxLength = TAG_MAX;
+        ti.value = c.tag;
+        const ts = el("button", "secondary", "Save tag");
+        ts.onclick = () => saveTag(c, ti.value);
+        ti.addEventListener("keydown", e => e.key === "Enter" && saveTag(c, ti.value));
+        const tw = field("tag-" + c.key, "Tag (up to " + TAG_MAX + " letters, shown in citations)", ti);
+        tw.append(ts);
+        const as = autoSelect("auto-" + c.key, c.auto);
+        as.onchange = async () => {
+          try {
+            await saveChats({ [c.key]: { auto: autoVal(as.value) } });
+            setNote(c.key, "Saved.");
+          } catch (e) {
+            setNote(c.key, "Couldn't save that. Try again.", true);
+          }
+        };
+        ctl.append(tw, field("auto-" + c.key, "Replies queued in this chat", as));
+        row.append(ctl);
+        const acts = el("div", "btns");
+        const act = (t, fn) => {
+          const b = el("button", "secondary", t);
+          b.onclick = fn;
+          acts.append(b);
+          return b;
+        };
+        if (c.state === "active") act("Pause", () => setState(c, "paused"));
+        if (c.state === "paused") act("Resume", () => setState(c, "active"));
+        if (c.state === "hidden") act("Bring back", () => setState(c, c.was || "active"));
+        if (!c.home && c.state !== "hidden") {
+          const rb = act("Remove…", () => {
+            S.rmOpen = S.rmOpen === c.key ? null : c.key;
+            renderSettings();
+            if (S.rmOpen) rmFree(c);
+          });
+          rb.setAttribute("aria-expanded", String(S.rmOpen === c.key));
+        }
+        row.append(acts);
+        if (S.rmOpen === c.key) row.append(rmBox(c));
+        row.append(note(c.key));
+        box.append(row);
+      });
+    box.append(addForm(note));
+  }
+  async function saveTag(c, raw) {
+    const t = String(raw || "").trim();
+    if (!t) return setNote(c.key, "A tag can't be empty.", true);
+    if (t.length > TAG_MAX) return setNote(c.key, "A tag has at most " + TAG_MAX + " characters.", true);
+    const dup = S.chats.find(x => x.key !== c.key && x.state !== "deleted" && x.tag.toLowerCase() === t.toLowerCase());
+    if (dup) return setNote(c.key, "“" + t + "” is already " + dup.name + "'s tag.", true);
+    if (t === c.tag) return;
+    try {
+      await saveChats({ [c.key]: { tag: t } });
+      setNote(c.key, "Tag saved.");
+    } catch (e) {
+      setNote(c.key, "Couldn't save the tag. Try again.", true);
+    }
+  }
+  async function setState(c, state) {
+    try {
+      /* hiding remembers the state to bring back (a chat removed while pending comes back pending) */
+      await saveChats({ [c.key]: state === "hidden" ? { state, was: c.state } : { state } });
+      setNote(
+        c.key,
+        { paused: "Paused.", active: "Back in your chats.", pending: "Back in your chats." }[state] || "Saved.",
+      );
+    } catch (e) {
+      setNote(c.key, "Couldn't save that. Try again.", true);
+    }
+  }
+  /* what deleting a chat frees: the files its photos documents use, with their sizes from the asset listing */
+  async function chatFiles(c) {
+    const db = chatDb(S.rawDb, c);
+    const mg = await db.doc("meta/chat").get();
+    const docs = await photoDocs(db, [], mg.exists ? mg.data().lastI : -1);
+    if (!docs) throw new Error("its photos couldn't be read");
+    const refs = photoRefs(docs);
+    let size = new Map();
+    try {
+      const a = await claude.use("assets");
+      const l = a && typeof a.list === "function" ? await a.list() : null;
+      size = new Map(((l && l.assets) || []).map(x => [x.id, x.sizeBytes || 0]));
+    } catch (e) {}
+    const ids = [...refs].filter(id => !size.size || size.has(id));
+    return { ids, bytes: ids.reduce((n, id) => n + (size.get(id) || 0), 0), docs };
+  }
+  async function rmFree(c) {
+    try {
+      const f = await chatFiles(c);
+      S.rmFree = {
+        key: c.key,
+        text: "frees " + f.ids.length + " file" + (f.ids.length === 1 ? "" : "s") + ", " + fmtBytes(f.bytes),
+      };
+    } catch (e) {
+      S.rmFree = { key: c.key, text: "frees its files" };
+    }
+    const sm = document.getElementById("rm-free-" + c.key);
+    if (sm) sm.textContent = " (" + S.rmFree.text + "; this can't be undone)";
+  }
+  function rmBox(c) {
+    const w = el("div", "rmbox");
+    w.setAttribute("role", "group");
+    w.setAttribute("aria-label", "Remove " + c.name);
+    const opt = (v, t, small, checked) => {
+      const l = el("label", "chk");
+      const r = el("input");
+      r.type = "radio";
+      r.name = "rm-" + c.key;
+      r.value = v;
+      r.id = "rm-" + v + "-" + c.key;
+      r.checked = checked;
+      l.append(r, " " + t);
+      if (small) {
+        const s = el("small", null, " (" + small + ")");
+        s.id = "rm-free-" + c.key;
+        if (v === "delete") l.append(s);
+        else l.append(el("small", null, " (" + small + ")"));
+      }
+      return l;
+    };
+    const fr = S.rmFree && S.rmFree.key === c.key ? S.rmFree.text : "counting what it frees…";
+    w.append(
+      opt("delete", "Delete its messages and photos", fr + "; this can't be undone", true),
+      opt("hide", "Keep it hidden", "nothing is deleted; you can bring it back", false),
+    );
+    const b = el("div", "btns");
+    const go = el("button", "primary", "Remove " + c.name);
+    go.id = "rm-go-" + c.key;
+    go.onclick = () => {
+      const v = (w.querySelector("input:checked") || {}).value;
+      if (v === "hide") setState(c, "hidden").then(() => (S.rmOpen = null)); /* setState keeps what it was */
+      else deleteChat(c);
+    };
+    const no = el("button", "secondary", "Cancel");
+    no.onclick = () => {
+      S.rmOpen = null;
+      renderSettings();
+    };
+    b.append(go, no);
+    w.append(b);
+    return w;
+  }
+  /* Deletes an added chat for good: its files one at a time (as packing does), then every document of its
+     collections, its meta and last import, then marks it deleted (the key is never used again). */
+  async function deleteChat(c) {
+    const rr = S.refresh;
+    if (rr && rr.state === "running" && (Date.now() - Date.parse(rr.startedAt || 0)) / 60000 < 25)
+      return setNote(c.key, "A refresh is running: remove it once that's done.", true);
+    if (S.importing) return setNote(c.key, "This tab is still importing: remove it once that's done.", true);
+    /* under the import lease, as packing does: no paste or pack in any open copy of the page meanwhile */
+    const L = await importLease();
+    if (!L.ok)
+      return setNote(c.key, "Another open copy of the page is importing or packing: try again in a minute.", true);
+    S.importing = true;
+    S.rmOpen = null;
+    setNote(c.key, "Deleting " + c.name + "… keep this page open.");
+    try {
+      if (CUR.key === c.key) {
+        S.view = "all";
+        loadChat(homeChat());
+      }
+      await saveChats({ [c.key]: { state: "hidden" } });
+      const db = chatDb(S.rawDb, c);
+      const f = await chatFiles(c);
+      const a = await claude.use("assets");
+      let gone = 0;
+      for (const id of f.ids) {
+        if (gone % 25 === 24) await importLease(); /* renewed as it goes */
+        try {
+          if (a) await a.delete(id);
+          gone++;
+        } catch (e) {}
+      }
+      for (const id of Object.keys(f.docs)) await db.doc("photos/" + id).delete();
+      for (const name of CHAT_COLLS) {
+        if (name === "photos") continue;
+        const q = await db.collection(name).limit(1000).get();
+        for (const d of q.docs) await db.doc(name + "/" + d.id).delete();
+      }
+      /* its saved questions and views go too */
+      for (const name of ["qa", "views"]) {
+        const q = await S.rawDb.collection(name).get();
+        for (const d of q.docs) if ((d.data() || {}).chat === c.key) await S.rawDb.doc(name + "/" + d.id).delete();
+      }
+      await db.doc("meta/chat").delete();
+      await db.doc("refresh/lastImport").delete();
+      await saveChats({ [c.key]: { state: "deleted", deletedAt: new Date().toISOString() } });
+      setNote(c.key, "");
+      S.setNotes.add = {
+        t: c.name + " is deleted: " + gone + " file" + (gone === 1 ? "" : "s") + " removed.",
+        err: false,
+      };
+      renderSettings();
+    } catch (e) {
+      setNote(c.key, "Deleting stopped: " + ((e && e.message) || e) + ". It stays hidden; try Remove again.", true);
+    } finally {
+      S.importing = false;
+      try {
+        await S.rawDb.doc("refresh/importLock").acquire({ holder: TAB, ttlMs: 1000 });
+      } catch (e) {}
+    }
+  }
+  function addForm(note) {
+    const f = el("form", "addform");
+    f.append(el("h3", null, "Add a chat"));
+    f.append(
+      el(
+        "p",
+        "note",
+        "Paste the chat's link from Messenger (it looks like facebook.com/messages/t/1234…). You don't need Claude for this: the page saves it, and Claude reads the chat the next time you ask it to refresh it (say “refresh” and the chat's name). Scheduled runs refresh only " +
+          homeChat().name +
+          " for now.",
+      ),
+    );
+    const link = el("input");
+    link.type = "url";
+    link.placeholder = "https://www.facebook.com/messages/t/…";
+    const nm = el("input");
+    nm.type = "text";
+    nm.maxLength = 60;
+    const tg = el("input");
+    tg.type = "text";
+    tg.maxLength = TAG_MAX;
+    const hs = el("select");
+    HISTORY.forEach(([n, t]) => {
+      const o = el("option", null, t);
+      o.value = String(n);
+      hs.append(o);
+    });
+    const ph = el("input");
+    ph.type = "checkbox";
+    ph.checked = true;
+    ph.id = "add-photos";
+    const pl = el("label", "chk");
+    pl.append(ph, " Store its photos");
+    f.append(
+      field("add-link", "Messenger link", link),
+      field("add-name", "Name (optional; Claude reads it from Messenger)", nm),
+      field("add-tag", "Tag (optional, up to " + TAG_MAX + " letters)", tg),
+      field("add-start", "How much history to read first", hs),
+      pl,
+      field("add-auto", "Replies queued in it", autoSelect("add-auto", null)),
+    );
+    const go = el("button", "primary", "Add chat");
+    go.type = "submit";
+    go.id = "add-go";
+    f.append(go, note("add"));
+    f.onsubmit = e => {
+      e.preventDefault();
+      addChat({
+        link: link.value,
+        name: nm.value,
+        tag: tg.value,
+        start: +hs.value,
+        photos: ph.checked,
+        auto: autoVal(f.querySelector("#add-auto").value),
+      });
+    };
+    return f;
+  }
+  async function addChat(o) {
+    const m = LINK_RE.exec(String(o.link || "").trim());
+    if (!m)
+      return setNote(
+        "add",
+        "That isn't a Messenger chat link. Open the chat in Messenger and copy its address: it looks like https://www.facebook.com/messages/t/1234567890.",
+        true,
+      );
+    const thread = m[2];
+    const dup = S.chats.find(c => c.state !== "deleted" && threadOf(c) === thread);
+    if (dup)
+      return setNote(
+        "add",
+        "That chat is already on the page: " +
+          dup.name +
+          (dup.state === "hidden" ? " (hidden; bring it back above)." : "."),
+        true,
+      );
+    const name = String(o.name || "").trim() || "New chat";
+    let tag = String(o.tag || "").trim() || tagFrom(name === "New chat" ? "Chat" : name);
+    if (tag.length > TAG_MAX) return setNote("add", "A tag has at most " + TAG_MAX + " characters.", true);
+    const tags = new Set(S.chats.filter(c => c.state !== "deleted").map(c => c.tag.toLowerCase()));
+    if (o.tag && tags.has(tag.toLowerCase()))
+      return setNote("add", "“" + tag + "” is already another chat's tag.", true);
+    for (let n = 2; tags.has(tag.toLowerCase()); n++) tag = tag.slice(0, TAG_MAX - String(n).length) + n;
+    const key = freeKey(keyFrom(o.tag || (name === "New chat" ? "chat" : name)), new Set(S.chats.map(c => c.key)));
+    const e = {
+      name,
+      tag,
+      color: (S.chats.length % 4) + 1,
+      order: S.chats.reduce((a, c) => Math.max(a, c.order || 0), 0) + 1,
+      state: "pending",
+      url: "https://www.facebook.com/messages/" + (m[1] || "") + "t/" + thread,
+      thread,
+      start: o.start || 300,
+      photos: o.photos !== false,
+      addedAt: new Date().toISOString(),
+    };
+    if (typeof o.auto === "boolean") e.auto = o.auto;
+    try {
+      await saveChats({ [key]: e });
+      S.setNotes.add = {
+        t: name + " is added. Ask Claude to “refresh " + name + "” to read it for the first time.",
+        err: false,
+      };
+      $("#set-body").querySelector("form") && $("#set-body").querySelector("form").reset();
+      renderSettings();
+    } catch (err) {
+      setNote("add", "Couldn't add it. Try again.", true);
+    }
+  }
+
   /* ---------- boot ---------- */
   function rebuild() {
     const all = [];
@@ -13040,12 +14410,18 @@
     });
     renderDays();
     renderStats();
+    if (S.goAfterLoad != null && S.byI.has(S.goAfterLoad)) {
+      const i = S.goAfterLoad;
+      S.goAfterLoad = null;
+      setTimeout(() => goMsg(i), 0);
+    }
   }
   renderSummary();
   renderQA();
   renderViews();
   (async () => {
     const [db, sample] = await Promise.all([claude.use("db"), claude.use("sample")]);
+    S.rawDb = db;
     S.db = db;
     S.sample = sample;
     /* limits() is local and free; until it answers, the contract's cap is used */
@@ -13066,6 +14442,15 @@
         }
       })
       .catch(() => {});
+    /* a viewer who can't write shared data gets no chat controls (refused writes decide when it's unknown) */
+    claude
+      .use("user")
+      .then(u => (u && typeof u.can === "function" ? u.can("data.write") : null))
+      .then(v => {
+        S.canWrite = v;
+        renderSettings();
+      })
+      .catch(() => {});
     if (!sample) {
       $("#ask-go").disabled = true;
       $("#view-go").disabled = true;
@@ -13078,49 +14463,29 @@
       renderStats();
       return;
     }
+    S.page = undefined;
     db.doc("meta/chat").onSnapshot(
       s => {
-        keepPlace(() => {
-          S.meta = s.exists ? s.data() : null;
-          applyCfg();
-          rebuild();
-          packWatch();
-          renderRefresh();
-          renderUpdates();
-          renderSchedule();
-        });
-      },
-      () => {},
-    );
-    db.collection("summary").onSnapshot(
-      q => {
-        S.summary = mergeSummary(collDocs(q));
-        keepPlace(() => {
-          renderHeader();
-          renderSummary();
-        });
-        renderStats();
-      },
-      () => {},
-    );
-    db.collection("chunks").onSnapshot(
-      q => {
-        S.chunks = {};
-        q.docs.forEach(d => (S.chunks[d.id] = d.data()));
-        rebuild();
+        S.page = s.exists ? s.data() : null;
+        chatsChanged();
+        if (CUR.home) setMeta(S.page);
+        else if (S.chatMeta !== undefined) setMeta(S.chatMeta ? Object.assign(pagePart(S.page), S.chatMeta) : null);
+        filterRows();
       },
       () => {},
     );
     db.collection("qa").onSnapshot(
       q => {
-        S.qa = q.docs.map(d => Object.assign({}, d.data(), { _id: d.id }));
+        S.qaAll = q.docs.map(d => Object.assign({}, d.data(), { _id: d.id }));
+        filterRows();
         renderQA();
       },
       () => {},
     );
     db.collection("views").onSnapshot(
       q => {
-        S.views = q.docs.map(d => Object.assign({}, d.data(), { _id: d.id }));
+        S.viewsAll = q.docs.map(d => Object.assign({}, d.data(), { _id: d.id }));
+        filterRows();
         S.viewsIn = true;
         renderViews();
       },
@@ -13129,13 +14494,6 @@
     db.collection("notes").onSnapshot(
       q => {
         renderNotes(q.docs.map(d => d.data()));
-      },
-      () => {},
-    );
-    db.collection("outbox").onSnapshot(
-      q => {
-        S.outbox = q.docs.map(d => Object.assign({ id: d.id }, d.data()));
-        outboxChanged();
       },
       () => {},
     );
@@ -13155,119 +14513,7 @@
       },
       () => {},
     );
-    db.collection("rangeSummaries").onSnapshot(
-      q => {
-        S.rangeSums = {};
-        q.docs.forEach(d => (S.rangeSums[d.id] = d.data()));
-        keepPlace(() => {
-          renderHeader();
-          renderSummary();
-        });
-      },
-      () => {},
-    );
-    /* day summaries (F29): read only, the whole collection, for By day, Ask, Views and the day_summaries tool;
-       Claude's refresh writes them */
-    db.collection("daySummaries").onSnapshot(
-      q => {
-        const m = new Map();
-        q.docs.forEach(d => {
-          const k = /^d(\d{4}-\d\d-\d\d)$/.exec(d.id);
-          const v = d.data();
-          if (k && v && typeof v === "object" && Array.isArray(v.sections)) m.set(k[1], v);
-        });
-        S.daySums = m;
-        S.daySumsIn = true;
-        renderDays();
-      },
-      () => {
-        /* summaries already shown stay; only a tab still waiting says it failed */
-        if (S.daySumsIn === true) return;
-        S.daySumsIn = "error";
-        renderDays();
-      },
-    );
-    /* per-day digests (F16, older pages): read only, for days without a summary in By day and Ask's day lines */
-    db.collection("digests").onSnapshot(
-      q => {
-        const m = new Map();
-        q.docs.forEach(d => {
-          const days = (d.data() || {}).days;
-          if (days && typeof days === "object") Object.entries(days).forEach(([k, v]) => v && m.set(k, v));
-        });
-        S.digests = m;
-        S.digestsIn = true;
-        renderDays();
-      },
-      () => {
-        /* digests already shown stay; only a tab still waiting says it failed */
-        if (S.digestsIn === true) return;
-        S.digestsIn = "error";
-        renderDays();
-      },
-    );
-    watchReports(db);
-    db.doc("people/index").onSnapshot(
-      s => {
-        S.people = s.exists ? s.data() : null;
-        indexPeople();
-        keepPlace(rerenderAll);
-      },
-      () => {},
-    );
-    /* photos/index (pages up to 2.6) and the photos/b<start> blocks, merged */
-    db.collection("photos").onSnapshot(
-      q => {
-        const D = collDocs(q);
-        S.photoIds = Object.keys(D); /* photoDocs reads each of these if its listing doesn't hold it */
-        S.swept = Object.keys(D)
-          .filter(id => /^swept-/.test(id))
-          .map(id => D[id] || {}); /* what the leftover sweep kept (renderPack) */
-        const M = q.docs.length ? mergePhotos(D) : null;
-        S.photos = M ? M.byI : null;
-        S.photoPv = M ? M.pvI : null;
-        S.photoM = M; /* day packs (R13): what's left to pack */
-        S.packsDoc = D.packs || null;
-        renderPack();
-        S.photoK = M ? M.byK : null; /* R13: which slot each stored photo is, for its caption */
-        S.gifs = M ? M.gifs : new Set();
-        /* the summary shows photos too: in snippets and in context blocks */
-        keepPlace(() => {
-          renderMessages();
-          renderSummary();
-        });
-        renderStats();
-      },
-      () => {},
-    );
-    /* R13: photo captions (captions/b<start>, written by Claude's refresh): searched with the text, shown on the photo */
-    db.collection("captions").onSnapshot(
-      q => {
-        S.caps = mergeCaps(collDocs(q));
-        keepPlace(() => {
-          renderMessages();
-          renderSummary();
-        });
-      },
-      () => {},
-    );
-    db.collection("threading").onSnapshot(
-      q => {
-        S.threading = mergeThreading(collDocs(q));
-        if (S.threading && !S._layoutSet) {
-          S._layoutSet = true;
-          layout = "thread";
-          $("#lay-thread").setAttribute("aria-pressed", "true");
-          $("#lay-flat").setAttribute("aria-pressed", "false");
-        }
-        keepPlace(() => {
-          renderMessages();
-          renderSummary();
-        });
-        renderStats();
-      },
-      () => {},
-    );
+    subscribeChat();
   })();
 
   /* jump helper setup buttons */

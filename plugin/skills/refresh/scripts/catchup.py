@@ -61,6 +61,13 @@
                                      With SPEC {"captions": {...}} alone, each slot a stored photo: writes
                                      RUNDIR/out/manifest.json; WORK doesn't move. references/photos.md › Captions for
                                      older photos.
+  catchup.py chats META.json [KEY]   Several chats on one page (F1). Without KEY: the one write that adds meta/chat.chats
+                                     to a page from before F1 ({} when it has it). With KEY: where that chat's documents
+                                     live, its --chat argument, whether its replies go out without asking, and for a
+                                     pending chat the meta/chat-KEY to seed. references/chats.md.
+  --chat=KEY (any command above)     Work on the added chat KEY: out_dirs hold its documents under their own names
+                                     (cam_chunks/, meta/chat-cam.json), manifests name its collections, and a WORK
+                                     belongs to one chat. Without it, the page's first chat, as before.
 LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summary are collections of documents:
   threading/current {layout:2, block, blocks:[ids], to, note, builtAt, rev, summaryRev?, convs:[conversations with no
                    messages yet]}
@@ -230,6 +237,128 @@ BATCH_DOCS = 48  # documents per batch: the tool takes 50 writes, and the last b
 BATCH_BYTES = 900 * 1024  # the tool takes 1 MiB per batch
 LAYOUT_KEYS = ("layout", "block", "blocks", "activeFrom")
 BLOCK_ID = re.compile(r"^b\d{6,}-[0-9a-f]{8}$")
+# Several chats on one page (F1): with --chat=KEY a command works on that added chat. Its documents live in collections
+# named KEY_<collection> (cam_chunks, cam_summary, ...), meta/chat-KEY and refresh/lastImport-KEY, and an out_dir holds
+# them under those names (RUN/cam_chunks/, RUN/meta/chat-cam.json). Without it, the page's first chat: the original
+# names, so a page with one chat works exactly as before.
+CHAT = None
+CHAT_COLLS = ("chunks", "threading", "summary", "daySummaries", "digests", "reports", "photos", "captions", "people")
+CHAT_COLLS += ("outbox", "rangeSummaries")
+KEY_MAX, TAG_MAX = 6, 8
+
+
+def set_chat(key):
+    global CHAT
+    assert key is None or re.fullmatch(r"[a-z0-9]{1,%d}" % KEY_MAX, key), (
+        "--chat takes a chat's key: 1-%d lowercase letters and digits (meta/chat.chats)" % KEY_MAX
+    )
+    CHAT = key
+
+
+def coll(name):  # a collection's name for the chat this run is for
+    return CHAT + "_" + name if CHAT and name in CHAT_COLLS else name
+
+
+def doc_path(p):  # a document path ("meta/chat", "chunks/c0000") for the chat this run is for
+    if CHAT and p in ("meta/chat", "refresh/lastImport"):
+        return p + "-" + CHAT
+    head, _, rest = p.partition("/")
+    return coll(head) + ("/" + rest if rest else "")
+
+
+def _in(base, rel):  # where an out_dir holds a collection folder or meta/chat.json for this chat
+    return os.path.join(base, doc_path(rel[:-5]) + ".json" if rel.endswith(".json") else coll(rel))
+
+
+def _same_chat(st, what):
+    have = st.get("chat")
+    assert have == CHAT, "%s is for %s, not %s: use a separate WORK for each chat, and run with %s" % (
+        what,
+        "chat " + have if have else "the page's first chat",
+        "chat " + CHAT if CHAT else "the page's first chat",
+        "--chat=" + have if have else "no --chat",
+    )
+
+
+def key_from(s):  # the same rules as the page's keyFrom and tagFrom
+    return re.sub(r"[^a-z0-9]", "", str(s or "").lower())[:KEY_MAX] or "chat"
+
+
+def tag_from(s):
+    return ((str(s or "").split() or ["Chat"])[0])[:TAG_MAX]
+
+
+def home_entry(meta):
+    nm = meta.get("shortName") or meta.get("threadName")
+    return {
+        "name": meta.get("threadName") or meta.get("shortName") or "Messenger chat",
+        "tag": tag_from(nm),
+        "color": 1,
+        "order": 0,
+        "state": "active",
+        "home": True,
+    }, key_from(nm)
+
+
+def chats_of(meta):
+    """{key: entry} with the home chat always in it: a page without meta/chat.chats holds one chat."""
+    h, hk = home_entry(meta)
+    got = {k: v for k, v in (meta.get("chats") or {}).items() if isinstance(v, dict)}
+    if not any(v.get("home") for v in got.values()):
+        got[hk] = h
+    return {k: dict(h, **v) if v.get("home") else v for k, v in got.items()}
+
+
+def auto_for(meta, key):
+    """Whether a reply queued in chat KEY goes out without asking: the chat's own setting, else the page default."""
+    a = (chats_of(meta).get(key) or {}).get("auto")
+    return a if isinstance(a, bool) else bool(meta.get("outboxAuto"))
+
+
+def chats_cmd(meta_file, key=None):
+    """`catchup.py chats META.json`: the write that adds meta/chat.chats to a page from before F1 ({} when it has it;
+    write it as one pinned meta/chat update). `catchup.py chats META.json KEY`: where that chat's documents live, whether
+    its replies go out without asking, and for a pending chat the meta/chat-KEY to seed."""
+    meta = _load(meta_file)
+    if key is None:
+        h, hk = home_entry(meta)
+        print(json.dumps({} if isinstance(meta.get("chats"), dict) else {"chats": {hk: h}}))
+        return
+    cs = chats_of(meta)
+    assert key in cs, "no chat %r on this page (its keys: %s)" % (key, ", ".join(sorted(cs)))
+    c = cs[key]
+    was = CHAT
+    set_chat(None if c.get("home") else key)
+    out = {
+        "key": key,
+        "name": c.get("name"),
+        "tag": c.get("tag"),
+        "state": c.get("state"),
+        "home": bool(c.get("home")),
+        "chatArg": "" if c.get("home") else "--chat=" + key,
+        "auto": auto_for(meta, key),
+        "meta": doc_path("meta/chat"),
+        "lastImport": doc_path("refresh/lastImport"),
+        "collections": {n: coll(n) for n in CHAT_COLLS},
+    }
+    set_chat(was)
+    if c.get("state") == "pending" and not c.get("home"):
+        out["seed"] = {
+            "kind": "messenger-catchup",
+            "key": key,
+            "thread": c.get("thread"),
+            "chatUrl": c.get("url"),
+            "threadName": c.get("name"),
+            "shortName": c.get("tag"),
+            "firstCount": c.get("start") or 300,
+            "chunkSize": 82,
+            "lastI": -1,
+            "anchorMids": [],
+            "markerMode": None,
+        }
+    print(json.dumps(out, indent=1))
+
+
 FIXED_IDS = ("daySummaries", "reports", "captions")  # collections whose documents keep their ids (a day, a block)
 NEWEST_FIRST = ("convs", "open", "answered", "mentions")  # summary lists kept newest first; deals are oldest first
 SUMMARY_LISTS = NEWEST_FIRST + ("deals",)
@@ -287,7 +416,7 @@ def _named(docs):  # the block ids a collection's `current` names ([] in the old
 
 def _listing(run, c):
     """Step 5's read of a collection in RUN, which must be the whole collection: every block `current` names."""
-    docs = _docs(run + "/" + c)
+    docs = _docs(_in(run, c))
     assert "current" in docs, "RUN has no %s/current.json: list the whole %s collection into RUN (list, limit 1000)" % (
         c,
         c,
@@ -536,7 +665,7 @@ def _write_out(out, docs, batches, cleanup, merged, pins=None):
         if os.path.exists(os.path.join(out, x)):
             os.remove(os.path.join(out, x))
     entry = lambda p: dict(
-        {"op": "set", "collection": p.split("/")[0], "doc_id": p.split("/")[1]},
+        {"op": "set", "collection": coll(p.split("/")[0]), "doc_id": p.split("/")[1]},
         file_path=os.path.abspath(os.path.join(out, p + ".json")),
         **({"pin": True} if p in pins else {}),
     )
@@ -548,7 +677,7 @@ def _write_out(out, docs, batches, cleanup, merged, pins=None):
     man = {
         "batches": [[entry(p) for p in bt] for bt in batches],
         "cleanup": [
-            [{"op": "delete", "collection": p.split("/")[0], "doc_id": p.split("/")[1], "pin": True} for p in g]
+            [{"op": "delete", "collection": coll(p.split("/")[0]), "doc_id": p.split("/")[1], "pin": True} for p in g]
             for g in cleanup
         ],
         "sizes": {p: _size(docs[p]) for bt in batches for p in bt},
@@ -1332,6 +1461,7 @@ def relink(work, run, specp):
             "newconvs %s: no move in this spec puts a message in it, so it would stay empty" % nc.get("id")
         )
     st = _load(work + "/state.json")
+    _same_chat(st, "WORK")
     TZ = st.get("tz") or TZ
     both = sp.get("move") or edits or lay.get("repair")  # the summary changes too: write both documents
     colls = ("threading", "summary") if both else ("threading",)
@@ -1422,9 +1552,11 @@ def _rollback(th, toi):  # threading back to #toi: later links and memberships c
 
 def _chunk_names(lo, hi, chunks, cs):  # the chunk documents holding #lo-#hi: chunks start where imports landed
     if not chunks:  # a WORK bootstrapped before 1.17.1 has no chunk list
-        return sorted({"chunks/c%04d" % (x // cs * cs) for x in range(lo, hi + 1)})
+        return sorted({coll("chunks") + "/c%04d" % (x // cs * cs) for x in range(lo, hi + 1)})
     starts = sorted(chunks)
-    return sorted({"chunks/c%04d" % max([s for s in starts if s <= x] or [starts[0]]) for x in range(lo, hi + 1)})
+    return sorted(
+        {coll("chunks") + "/c%04d" % max([s for s in starts if s <= x] or [starts[0]]) for x in range(lo, hi + 1)}
+    )
 
 
 def _dedupe_convs(th):  # earlier sessions could create two conversations with one id; the block layout keys by id
@@ -1443,7 +1575,7 @@ def _dedupe_convs(th):  # earlier sessions could create two conversations with o
 def bootstrap(work, db, rollback=False):
     shutil.rmtree(work + "/prev", ignore_errors=True)  # a fresh WORK has nothing to undo
     ms, chunks = [], []
-    for f in sorted(glob.glob(db + "/chunks/*.json")):
+    for f in sorted(glob.glob(_in(db, "chunks") + "/*.json")):
         ch = _load(f)
         ms += ch["msgs"]
         if ch["msgs"]:
@@ -1453,7 +1585,7 @@ def bootstrap(work, db, rollback=False):
         byi[m["i"]] = m
     al = [byi[i] for i in sorted(byi)]
     assert [m["i"] for m in al] == list(range(len(al))), "gap in stored messages"
-    mt = _load(db + "/meta/chat.json")
+    mt = _load(_in(db, "meta/chat.json"))
     stored = al[-1]["i"] if al else -1
     assert mt["lastI"] <= stored, (
         "meta/chat.lastI (#%d) is ahead of the newest saved message (#%d): fix meta/chat first (SKILL.md Troubleshooting)"
@@ -1461,7 +1593,7 @@ def bootstrap(work, db, rollback=False):
     )
     last = mt["lastI"]
     ahead = stored - last  # chunks past lastI: an import that stopped before meta/chat; the next paste repairs them
-    tdocs, sdocs = _docs(db + "/threading"), _docs(db + "/summary")
+    tdocs, sdocs = _docs(_in(db, "threading")), _docs(_in(db, "summary"))
     for c, d in (("threading", tdocs), ("summary", sdocs)):
         need = "%s/%s/current.json is missing: fetch the whole %s collection into DBDIR (list, limit 1000)"
         assert "current" in d, need % (db, c, c)
@@ -1542,6 +1674,8 @@ def bootstrap(work, db, rollback=False):
         "tz": mt.get("tz") or "America/Los_Angeles",
         "chunks": chunks,
     }
+    if CHAT:  # F1: this WORK belongs to one chat
+        st["chat"] = CHAT
     _dump(st, work + "/state.json")
     strays = {c: _strays(d) for c, d in docs.items()}
     past = max(
@@ -1595,11 +1729,12 @@ def build(work, run, specp):
     global TZ
     sp = _load(specp)
     st = _load(work + "/state.json")
+    _same_chat(st, "WORK")
     base = st["base"]
     TZ = st.get("tz") or TZ
     lay = _layout(work)
     ms, starts = [], set()
-    for f in sorted(glob.glob(run + "/chunks/*.json")):
+    for f in sorted(glob.glob(_in(run, "chunks") + "/*.json")):
         ch = _load(f)
         ms += ch["msgs"]
         if ch["msgs"]:
@@ -1623,7 +1758,8 @@ def build(work, run, specp):
             % base
         )
     ids = [m["i"] for m in new]
-    mt = _load(run + "/meta/chat.json")
+    mt = _load(_in(run, "meta/chat.json"))
+    _same_chat({"chat": mt.get("key")}, "RUN's meta/chat")
     hi = (ids[0] - 1) if ids else mt.get("lastI", base)
     if hi > base:  # messages after WORK's base that RUN doesn't carry (it may carry no chunks at all)
         need = _chunk_names(base + 1, hi, st.get("chunks"), mt.get("chunkSize") or 82)
@@ -1792,6 +1928,8 @@ def build(work, run, specp):
     _dump(_record(lay, docs), work + "/base/layout.json")
     chunks = st.get("chunks")  # a WORK from before 1.17.1 has none; a partial list would name the wrong chunk
     st = {"base": ids[-1], "stops": a[::-1], "tz": TZ}
+    if CHAT:
+        st["chat"] = CHAT
     if chunks is not None:
         st["chunks"] = sorted(set(chunks) | starts)
     _dump(st, work + "/state.json")
@@ -1864,12 +2002,12 @@ def _finished_before(days):
     return max(list(days) + ([t] if t else []))
 
 
-def _per_day(run, coll, how, whole=False):
+def _per_day(run, coll, how, whole=False, mapped=True):
     """A per-day collection read into RUN/<coll>/ (out_dir files named d<YYYY-MM-DD>.json): {day: document}. how: how
     the folder gets there, for the message when it's missing. whole: it must be the whole collection, listed a page at a
     time until a page came back with no next_cursor, which the WHOLE file says: a list stops at PAGE documents, and a
-    day missing from a cut-off listing looks like a day with none."""
-    d = os.path.join(run, coll)
+    day missing from a cut-off listing looks like a day with none. mapped: RUN holds the chat's own names (--chat)."""
+    d = _in(run, coll) if mapped else os.path.join(run, coll)
     assert os.path.isdir(d), (
         "%s has no %s/ folder: %s. If the collection is empty and that leaves no folder, create an empty %s folder"
         % (run, coll, how, d)
@@ -1891,7 +2029,7 @@ def _query_reach(run, coll, listed):
     """The oldest day a query of the newest documents certainly reached, or None when it holds the whole collection:
     a WHOLE listing, or fewer documents than the query's limit (LIMIT, else DAY_QUERY) came back. A day older than
     this may have a document the query didn't return."""
-    d = os.path.join(run, coll)
+    d = _in(run, coll)
     if os.path.exists(os.path.join(d, WHOLE)):
         return None
     lim = DAY_QUERY
@@ -1935,7 +2073,7 @@ def _sum_needs(e, ids, fin, later):
 
 
 def _with_digest(run):  # the days an older digest covers (digests/m<YYYY-MM>, F16), when RUN holds `list digests`
-    d = os.path.join(run, "digests")
+    d = _in(run, "digests")
     if not os.path.isdir(d):
         return set()
     return {day for v in _docs(d).values() if isinstance(v, dict) for day in (v.get("days") or {})}
@@ -1982,7 +2120,7 @@ def _day_line(m):  # one message as Claude reads it to write a day's summary
 
 def _pool(work, run):  # WORK's messages and this run's import (stored, not built yet)
     msgs = {m["i"]: m for m in _load(work + "/all.json")}
-    for f in sorted(glob.glob(run + "/chunks/*.json")):
+    for f in sorted(glob.glob(_in(run, "chunks") + "/*.json")):
         for m in _load(f)["msgs"]:
             msgs.setdefault(m["i"], m)
     return msgs
@@ -2139,7 +2277,7 @@ def _sum_spec(sp, pool, run, docs, listing):
         "digests: refreshes no longer write per-day digests (v1.32.0): put the day's summary in daySummaries instead "
         "(catchup.py days, references/day-summaries.md)"
     )
-    if not sp.get("daySummaries") and not os.path.isdir(run + "/daySummaries"):
+    if not sp.get("daySummaries") and not os.path.isdir(_in(run, "daySummaries")):
         return (
             "0 day summaries; RUN has no daySummaries/ folder, so what's due is unknown (step 5 queries daySummaries)"
         )
@@ -2177,6 +2315,7 @@ def days_cmd(work, run, backfill=False, most=None):
     """`catchup.py days WORK RUN [--backfill] [--max=N]`: the day summaries to write, each day's file in
     RUN/out/days/<day>.txt: its summary so far and the messages after it (the day in progress), or all its messages."""
     global TZ
+    _same_chat(_load(work + "/state.json"), "WORK")
     TZ = _load(work + "/state.json").get("tz") or TZ
     pool = _pool(work, run)
     have = _sum_listing(run, whole=backfill)
@@ -2245,6 +2384,7 @@ def day_summaries_cmd(work, run, specp):
     assert set(sp) == {
         "daySummaries"
     }, 'day-summaries SPEC takes only "daySummaries" (a refresh puts them in the build spec)'
+    _same_chat(_load(work + "/state.json"), "WORK")
     TZ = _load(work + "/state.json").get("tz") or TZ
     pool = _pool(work, run)
     listed = _sum_listing(run, whole=True)
@@ -2300,12 +2440,13 @@ def check_day_summaries(work, run, after):
     daySummaries`. Every day the listing held is still there (a final one unchanged; a refresh may have updated
     another), and every day written is there as written (or made final since by a refresh)."""
     global TZ
+    _same_chat(_load(work + "/state.json"), "WORK")
     TZ = _load(work + "/state.json").get("tz") or TZ
     out = os.path.join(run, "out")
     assert os.path.exists(out + "/backup/days.json"), "RUN/out has no backup: run catchup.py day-summaries first"
     rec = _load(out + "/backup/days.json")
     now = _sum_listing(after, whole=True)
-    wrote = _per_day(out, "daySummaries", "run catchup.py day-summaries first")
+    wrote = _per_day(out, "daySummaries", "run catchup.py day-summaries first", mapped=False)
     lost = [
         d
         for d, h in sorted(rec["had"].items())
@@ -2442,7 +2583,7 @@ def _report_spec(sp, pool, ids, base, run, docs, listing):
     """A build's `report`: checked, split by day, its day documents added to docs and listing. -> a line on what it
     saved. Required when step 5 queried the reports (RUN/reports), except on the first build (setup reports it)."""
     if "report" not in sp:
-        assert base < 0 or not os.path.isdir(run + "/reports"), (
+        assert base < 0 or not os.path.isdir(_in(run, "reports")), (
             'report: add this run\'s report to the spec, [["text", [refs]], ...] citing the messages this build adds, '
             "or [] when nothing stands out (references/reports.md)"
         )
@@ -2487,12 +2628,12 @@ CAPTION_ID = re.compile(r"^b\d+$")
 
 
 def _caption_listing(run):  # RUN's `list captions`: {doc id: document}
-    assert os.path.isdir(run + "/captions"), (
+    assert os.path.isdir(_in(run, "captions")), (
         "%s has no captions/ folder: list the captions collection into it (list, limit 1000). If the collection is "
         "empty and the list leaves no folder, create an empty %s/captions folder (references/photos.md › Looking)"
         % (run, run)
     )
-    return {k: v for k, v in _docs(run + "/captions").items() if CAPTION_ID.match(k)}
+    return {k: v for k, v in _docs(_in(run, "captions")).items() if CAPTION_ID.match(k)}
 
 
 def _caption_have(listed):  # the slots that already have a caption: {(i, k)}
@@ -2583,10 +2724,10 @@ def _photo_slots(run):
     """RUN's `list photos`: the stored photo slots, {(i, k): (value, preview)}. value "/_blob/<id>" (an asset of its
     own) or "/_blob/<pack>#<n>" (item n of a pack), preview the block's pv[i][k] or None. The old photos/index is
     read under the blocks, as the page does."""
-    assert os.path.isdir(run + "/photos"), (
+    assert os.path.isdir(_in(run, "photos")), (
         "%s has no photos/ folder: list the photos collection into it (list, limit 1000)" % run
     )
-    docs = _docs(run + "/photos")
+    docs = _docs(_in(run, "photos"))
     got = {}
     idx = docs.get("index") or {}
     ik = idx.get("byK") or {}
@@ -2652,6 +2793,7 @@ def captions_cmd(work, run, specp=None, most=CAPTION_BATCH):
     captions-todo.txt. With SPEC {"captions": {...}}: checked against the stored photos, merged into their blocks, and
     RUN/out/manifest.json written; WORK doesn't move."""
     global TZ
+    _same_chat(_load(work + "/state.json"), "WORK")
     TZ = _load(work + "/state.json").get("tz") or TZ
     slots = _photo_slots(run)
     listed = _caption_listing(run)
@@ -3006,6 +3148,7 @@ def _restore_open(t, al, todo, name):  # RUN/out/restore-open.json: each questio
 def restore_summary(work, run, bdir, decp=None, dry=False, name=None):
     global TZ
     st = _load(work + "/state.json")
+    _same_chat(st, "WORK")
     TZ = st.get("tz") or TZ
     lay = _layout(work)
     listing = {
@@ -3081,6 +3224,9 @@ def restore_summary(work, run, bdir, decp=None, dry=False, name=None):
 
 
 if __name__ == "__main__":
+    _chat = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--chat=")]
+    sys.argv = [x for x in sys.argv if not x.startswith("--chat=")]
+    set_chat(_chat[0] if _chat else None)
     cmd = sys.argv[1]
     if cmd == "bootstrap":
         bootstrap(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), "--rollback" in sys.argv[4:])
@@ -3106,6 +3252,10 @@ if __name__ == "__main__":
         captions_cmd(a[0].rstrip("/"), a[1].rstrip("/"), a[2] if len(a) == 3 else None, mx[0] if mx else CAPTION_BATCH)
     elif cmd == "check-day-summaries":
         check_day_summaries(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4].rstrip("/"))
+    elif cmd == "chats":
+        if len(sys.argv) not in (3, 4):
+            sys.exit(__doc__)
+        chats_cmd(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None)
     elif cmd == "restore-summary":
         a = [x for x in sys.argv[2:] if not x.startswith("--")]
         bk = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--backup=")]

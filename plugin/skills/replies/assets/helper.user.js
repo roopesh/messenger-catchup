@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      2.1
+// @version      2.3
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -11,8 +11,8 @@
 // ==/UserScript==
 (function () {
   if (window.__mcHelper || document.documentElement.hasAttribute('data-mc-helper')) return;
-  window.__mcHelper = '2.1';
-  document.documentElement.setAttribute('data-mc-helper', '2.1');
+  window.__mcHelper = '2.3';
+  document.documentElement.setAttribute('data-mc-helper', '2.3');
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener(
     'click',
@@ -1202,6 +1202,7 @@
         phskip,
       };
       if (OPT && typeof OPT.run === 'string' && OPT.run) cap.run = OPT.run.slice(0, 64);
+      if (threadId()) cap.thread = threadId(); /* the page imports it only into this chat (F1) */
       const text = JSON.stringify(cap);
       window.__capText = text;
       document.body.innerHTML = '';
@@ -1696,12 +1697,16 @@
     var k = ids.indexOf(anchor);
     return { vis: document.visibilityState, n: ids.length, found: k >= 0, after: k >= 0 ? ids.length - k - 1 : null };
   }
+  /* Which chat the tab shows (F1): the thread id in Messenger's address (null on a page without one). A scan's state
+     must be for the same thread after its reload; a reload that only changes the path (/t/<id> to /e2ee/t/<id>) or the
+     query is the same chat. One Messenger tab moves between a page's chats. */
+  const threadId = () => (location.pathname.match(/\/t\/(\d+)/) || [])[1] || null;
   /* Full refresh pipeline: scan, reload, verify after the reload, then capture. State rides in sessionStorage across the reload. */
   async function full(a) {
     sessionStorage.removeItem('mc_result');
     const r = await mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs, topMs: a.topMs });
     if (r.err || !r.win) {
-      const o = Object.assign({ stage: 'scan', run: a.run || null }, r);
+      const o = Object.assign({ stage: 'scan', run: a.run || null, thread: threadId() }, r);
       sessionStorage.setItem('mc_result', JSON.stringify(o));
       return o;
     }
@@ -1715,6 +1720,7 @@
         topMs: a.topMs,
         skip: a.skip || null,
         t0: Date.now(),
+        thread: threadId(),
       }),
     );
     setTimeout(function () {
@@ -1726,7 +1732,22 @@
     const p = JSON.parse(sessionStorage.getItem('mc_pipe') || 'null');
     if (!p) return;
     sessionStorage.removeItem('mc_pipe');
-    let out = { stage: 'verify', run: p.run || null, scan: p.scan, warn: (p.scan && p.scan.warn) || [] };
+    let out = {
+      stage: 'verify',
+      run: p.run || null,
+      thread: threadId(),
+      scan: p.scan,
+      warn: (p.scan && p.scan.warn) || [],
+    };
+    /* the tab was moved to another chat before the reload: this scan's state isn't for the chat it shows now */
+    if (p.thread && threadId() !== p.thread) {
+      out.stage = 'wrong-thread';
+      out.err = 'wrong-thread';
+      out.ms = Date.now() - p.t0;
+      sessionStorage.removeItem('__mcsave');
+      sessionStorage.setItem('mc_result', JSON.stringify(out));
+      return;
+    }
     try {
       await new Promise(function (r) {
         setTimeout(r, 5000);
@@ -1761,7 +1782,7 @@
       return { started: true };
     },
     post: (a, id) => mcPost(a, id),
-    ping: () => ({ v: '2.1' }),
+    ping: () => ({ v: '2.3' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
   document.addEventListener('mc-cmd', async function (e) {

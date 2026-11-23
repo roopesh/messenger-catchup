@@ -18,6 +18,7 @@ Files that ship with this skill, relative to its folder `${CLAUDE_SKILL_DIR}` (i
 - **No page yet for this chat**, or "set up messenger catch-up": the First run below.
 - **Change or stop the schedule:** find the page (step 2's lookup only; never reseed it), then Scheduling › Stop or change.
 - **What a refresh needs:** Requirements.
+- **Another chat, for someone who already has a page:** never a second page. The owner adds it on their page (the title ▾ › Add a chat), and it's read the next time they ask Claude to refresh it by name. If they ask you to add it, update `meta/chat` (pinned) with the one entry the page would write (`references/database.md` › Several chats), with a key no entry uses.
 
 ## Requirements: an online computer (tell the user this up front)
 

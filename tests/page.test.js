@@ -101,22 +101,27 @@ function runtime(seed) {
     return out;
   };
   const bump = p => vers.set(p, (vers.get(p) || 0) + 1);
+  /* returns the unsubscribe function, as the real onSnapshot does (F1 tests count the live listeners) */
   const sub = (k, cb) => {
     if (!subs.has(k)) subs.set(k, []);
     subs.get(k).push(cb);
+    return () => {
+      const l = subs.get(k) || [];
+      if (l.indexOf(cb) >= 0) l.splice(l.indexOf(cb), 1);
+    };
   };
   const docSnap = p => {
     const v = store.get(p);
     return { exists: v !== undefined, id: p.split('/').pop(), data: () => clone(v) };
   };
-  /* opts.getPage n: a get() of the photos collection (with or without limit) holds at most n documents, in id order,
+  /* opts.getPage n: a get() of a photos collection (photos, or an added chat's KEY_photos) holds at most n documents, in id order,
      as a runtime that lists in pages would; opts.snapPage n: so does its listener's snapshot (other collections are
      listed whole) */
   const collSnap = (c, cap) => ({
     docs: [...store.keys()]
       .filter(k => k.split('/')[0] === c && k.split('/').length === 2)
       .sort()
-      .slice(0, (c === 'photos' && cap) || Infinity)
+      .slice(0, (/(^|_)photos$/.test(c) && cap) || Infinity)
       .map(k => ({ id: k.split('/')[1], data: () => clone(store.get(k)) })),
   });
   const colGets = []; /* each collection get(), by collection */
@@ -180,9 +185,9 @@ function runtime(seed) {
       },
       onSnapshot: (cb, err) => {
         if (snapFail('d:' + p, err)) return () => {};
-        sub('d:' + p, cb);
+        const un = sub('d:' + p, cb);
         setTimeout(() => cb(docSnap(p)), 0);
-        return () => {};
+        return un;
       },
     };
     if (opts.noAcquire) delete ref.acquire; /* an older runtime contract */
@@ -206,9 +211,9 @@ function runtime(seed) {
     },
     onSnapshot: (cb, err) => {
       if (snapFail('c:' + c, err)) return () => {};
-      sub('c:' + c, cb);
+      const un = sub('c:' + c, cb);
       setTimeout(() => cb(collSnap(c, opts.snapPage)), 0);
-      return () => {};
+      return un;
     },
   });
   const collection = c =>
@@ -500,7 +505,11 @@ function runtime(seed) {
       return btoa(s);
     },
     blobText: async id => (blobs.has(id) ? blobs.get(id).text() : null),
+    /* the live listeners, by 'c:<collection>' or 'd:<path>' (F1) */
+    listeners: () => Object.fromEntries([...subs].filter(([, l]) => l.length).map(([k, l]) => [k, l.length])),
   };
+  /* user.can("data.write") (user.d.ts): opts.canWrite true/false, or null (not told) by default (F1) */
+  const user = { can: async n => (n === 'data.write' ? (opts.canWrite ?? null) : null) };
   /* Like claude.ai's artifact viewer, a same-page #hash link doesn't navigate the page (the viewer takes the hash onto its
      own address), so no hashchange reaches it: every test runs with this unless opts.hashLinks (v1.26.1). */
   if (!opts.hashLinks)
@@ -514,7 +523,7 @@ function runtime(seed) {
     );
   window.claude = {
     use: async n =>
-      ({ db: opts.noDb ? null : { doc, collection }, assets: opts.noAssets ? null : assets, sample })[n] || null,
+      ({ db: opts.noDb ? null : { doc, collection }, assets: opts.noAssets ? null : assets, sample, user })[n] || null,
   };
 }
 const META = {
@@ -15127,8 +15136,908 @@ async function askSearch() {
   });
 }
 
+/* ---------- several chats (F1 stage A) ----------
+   The mock page holds Trail Crew (its first chat, key trail, the page's own documents) plus Camera Club (cam) and Tea
+   Room (tea), each in collections under its key. Every chat has #0-#n, so the same number exists in each. */
+const MC_THREAD = { cam: '5151', tea: '6161' };
+const MC_NAME = { trail: 'Trail Crew', cam: 'Camera Club', tea: 'Tea Room' };
+const MC_URL = k => 'https://www.facebook.com/messages/t/' + MC_THREAD[k];
+const mcMsgs = (k, n) => range(0, n - 1, i => mk(i, { b: k + ' message ' + i, m: 'mid.' + k + i }));
+function mcSeed(o = {}) {
+  const s = SEED();
+  const n = { trail: 12, cam: 8, tea: 6 };
+  const msgs = { trail: mcMsgs('trail', 12), cam: mcMsgs('cam', 8), tea: mcMsgs('tea', 6) };
+  const sum = (k, ment) => ({
+    version: 2,
+    convs: [],
+    open: [],
+    answered: [],
+    deals: [],
+    mentions: [{ note: MC_NAME[k] + ': someone asked you', refs: [[ment]] }],
+    toI: n[k] - 1,
+  });
+  const meta = k =>
+    Object.assign(
+      {
+        lastI: n[k] - 1,
+        anchorMids: msgs[k].slice(-3).map(m => m.m),
+        caughtUpI: 1,
+        markerMode: 'caught',
+        lastRefresh: 'Fri 9:10 AM',
+      },
+      k === 'trail'
+        ? {}
+        : {
+            key: k,
+            thread: MC_THREAD[k],
+            chatUrl: MC_URL(k),
+            threadName: MC_NAME[k],
+            shortName: MC_NAME[k].split(' ')[0],
+            chunkSize: 82,
+          },
+    );
+  s['meta/chat'] = Object.assign({}, META, { pageVersion: '4.1', versions: { page: '4.1' } }, meta('trail'));
+  s['chunks/c0000'] = { start: 0, msgs: msgs.trail };
+  s['summary/current'] = sum('trail', 8);
+  s['threading/current'] = { convs: [], links: {}, to: 11, note: '' };
+  if (o.one) return s;
+  s['meta/chat'].chats = {
+    trail: { name: 'Trail Crew', tag: 'Trail', color: 1, order: 0, state: 'active', home: true },
+    cam: { name: 'Camera Club', tag: 'Cam', color: 2, order: 1, state: 'active', thread: '5151', url: MC_URL('cam') },
+    tea: { name: 'Tea Room', tag: 'Tea', color: 3, order: 2, state: 'active', thread: '6161', url: MC_URL('tea') },
+  };
+  ['cam', 'tea'].forEach(k => {
+    s['meta/chat-' + k] = meta(k);
+    s[k + '_chunks/c0000'] = { start: 0, msgs: msgs[k] };
+    s[k + '_summary/current'] = sum(k, k === 'cam' ? 6 : 3);
+    s[k + '_threading/current'] = { convs: [], links: {}, to: n[k] - 1, note: '' };
+  });
+  Object.assign(s['meta/chat'].chats, o.chats || {});
+  return Object.assign(s, o.extra || {});
+}
+const mcOpen = (o, ctx) => open(Object.assign(mcSeed(o), o && o.opts ? { __opts: o.opts } : {}), PAGE, ctx);
+const mcText = (p, sel) => p.evaluate(s => (document.querySelector(s) || {}).textContent || '', sel);
+async function mcPick(p, key) {
+  await p.click('#h1');
+  await p.click('#picker-list button[data-key="' + key + '"]');
+  await p.waitForTimeout(300);
+}
+const mcWrites = (p, from = 0) => p.evaluate(n => __rt.writes.slice(n).map(w => w.p), from);
+const mcNWrites = p => p.evaluate(() => __rt.writes.length);
+/* paste() for a chat: its import record is refresh/lastImport-<key> (the first chat's is refresh/lastImport) */
+async function mcPaste(p, c, key) {
+  const doc = key === 'trail' ? 'refresh/lastImport' : 'refresh/lastImport-' + key;
+  const before = JSON.stringify(await get(p, doc));
+  await p.evaluate(t => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, JSON.stringify(c));
+  return until(
+    p,
+    ([d, b]) => {
+      const v = __rt.get(d);
+      return v && JSON.stringify(v) !== b && v.state !== 'uploading' ? v : null;
+    },
+    [doc, before],
+  );
+}
+async function mcSettings(p) {
+  await p.click('#settings-open');
+  await p.waitForTimeout(150);
+}
+async function multiChat() {
+  // MIG5, PG1: a page from before F1 (no chats) is one chat and looks as it did, opening on that chat
+  let p = await mcOpen({ one: true });
+  ok(
+    (await mcText(p, '#h1')) === 'Trail Catch-up' &&
+      !(await p.evaluate(() => document.body.classList.contains('allchats'))) &&
+      (await p.isVisible('#v-summary')) &&
+      (await p.isHidden('#v-all')),
+    'F1 MIG5/PG1: a page with no chats list opens on its one chat, titled as before',
+  );
+  ok((await mcText(p, '#v-summary')).includes('Trail Crew: someone asked you'), 'F1 MIG5: its Needs you shows');
+  await p.click('#h1');
+  let items = await p.$$eval('#picker-list button', bs =>
+    bs.map(b => b.dataset.key + ':' + b.querySelector('.nm').textContent),
+  );
+  ok(
+    JSON.stringify(items) === JSON.stringify(['trail:Trail Crew', 'add:Add a chat']),
+    'F1 MIG5: the picker offers only the chat and Add a chat (' + items + ')',
+  );
+  // PH2: Escape closes it, focus back on the title
+  await p.keyboard.press('Escape');
+  ok(
+    (await p.isHidden('#picker-list')) && (await p.evaluate(() => document.activeElement.id)) === 'h1',
+    'F1 PH2: Escape closes the picker and keeps focus on the title',
+  );
+  await p.click('#h1');
+  await p.mouse.click(5, 880);
+  ok(await p.isHidden('#picker-list'), 'F1 PH2: a tap outside closes the picker');
+  const oneText = {
+    summary: await mcText(p, '#v-summary'),
+    strip: await mcText(p, '#strip'),
+    window: await mcText(p, '#window'),
+    msgs: await mcText(p, '#msgs'),
+  };
+  ok(p.errors.length === 0, 'F1: one chat, no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  // MIG4: the last release draws the same tabs from the same one-chat database
+  const last = (() => {
+    try {
+      const t = execFileSync('git', ['tag', '--list', 'v*', '--sort=-v:refname'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+      }).split(/\s+/)[0];
+      const src = execFileSync('git', ['show', t + ':plugin/skills/refresh/assets/page.html'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      return /^<!doctype/i.test(src) ? src : SKELETON + src + '</body></html>';
+    } catch (e) {
+      return null;
+    }
+  })();
+  if (!last) console.log('NOTE F1 MIG4: no release tag in this clone; the comparison with the last release is skipped');
+  else {
+    p = await open(mcSeed({ one: true }), last);
+    const was = {
+      summary: await mcText(p, '#v-summary'),
+      strip: await mcText(p, '#strip'),
+      window: await mcText(p, '#window'),
+      msgs: await mcText(p, '#msgs'),
+    };
+    const diff = Object.keys(was).filter(k => was[k] !== oneText[k]);
+    ok(
+      !diff.length,
+      'F1 MIG4: Summary, the counts, the window and Messages read the same as the last release (' + diff + ')',
+    );
+    await p.context().close();
+  }
+
+  // PG1: several chats open on All chats; a chat's tabs once picked; a fresh load is All chats again
+  p = await mcOpen();
+  ok(
+    (await mcText(p, '#h1')) === 'All chats' &&
+      (await p.evaluate(() => document.body.classList.contains('allchats'))) &&
+      (await p.isVisible('#v-all')) &&
+      (await p.isHidden('nav.tabs')) &&
+      (await p.isHidden('#v-summary')),
+    'F1 PG1: with several chats the page opens on All chats, without tabs',
+  );
+  // PG3: every live chat's Needs you, tagged; the picker's counts add up to All chats'
+  const cards = await p.$$eval('#v-all .chatcard', cs => cs.map(c => c.dataset.chat + '|' + c.textContent));
+  ok(
+    cards.length === 3 &&
+      cards[0].startsWith('trail|') &&
+      cards[1].includes('Camera Club: someone asked you') &&
+      cards[1].includes('Cam #6') &&
+      cards[2].includes('Tea #3') &&
+      cards[0].includes('10 new · 1 needs you'),
+    'F1 PG3: All chats has a card per chat with its new count and tagged Needs you (' +
+      cards.map(c => c.slice(0, 60)) +
+      ')',
+  );
+  await p.click('#h1');
+  const counts = await p.$$eval('#picker-list button', bs =>
+    bs.map(b => [b.dataset.key, +((b.querySelector('.cnt') || {}).textContent || '0').split(' ')[0]]),
+  );
+  const tot = counts.find(c => c[0] === 'all')[1];
+  ok(
+    tot === 3 && counts.filter(c => !['all', 'add'].includes(c[0])).reduce((a, c) => a + c[1], 0) === tot,
+    'F1 PG3: the picker counts each chat and they add up to All chats (' + JSON.stringify(counts) + ')',
+  );
+  await p.keyboard.press('Escape');
+  // DM9: under All chats, the first chat is loaded (its chunks), the others only by meta, summary/current and outbox
+  let L = await p.evaluate(() => __rt.listeners());
+  ok(
+    L['c:chunks'] &&
+      !L['c:cam_chunks'] &&
+      !L['c:tea_chunks'] &&
+      L['d:meta/chat-cam'] &&
+      L['d:cam_summary/current'] &&
+      L['c:cam_outbox'],
+    'F1 DM9: All chats listens to the first chat in full and to the others lightly (' + Object.keys(L).join(' ') + ')',
+  );
+  // PG2: in Tea Room only Tea's items, nothing of the others
+  await mcPick(p, 'tea');
+  const teaSum = await mcText(p, '#v-summary');
+  ok(
+    (await mcText(p, '#h1')) === 'Tea Room' &&
+      (await p.isVisible('nav.tabs')) &&
+      teaSum.includes('Tea Room: someone asked you') &&
+      !/Trail|Camera|Cam #/.test(teaSum),
+    "F1 PG2: Tea Room's Needs you holds its items only and names no other chat",
+  );
+  L = await p.evaluate(() => __rt.listeners());
+  ok(
+    L['c:tea_chunks'] === 1 && !L['c:chunks'] && !L['c:cam_chunks'],
+    "F1 DM9: switching chats drops the old chat's listeners (" + Object.keys(L).filter(k => /chunks/.test(k)) + ')',
+  );
+  // SD1/SD6: Stats count only this chat's messages; switching redraws
+  await p.click('nav a[data-tab="messages"]');
+  await p.waitForTimeout(200);
+  const teaMsgs = await mcText(p, '#msgs');
+  await mcPick(p, 'cam');
+  await p.click('nav a[data-tab="messages"]');
+  await p.waitForTimeout(300);
+  const camMsgs = await mcText(p, '#msgs');
+  ok(
+    teaMsgs.includes('tea message 5') &&
+      !teaMsgs.includes('cam message') &&
+      camMsgs.includes('cam message 7') &&
+      !camMsgs.includes('tea message'),
+    'F1: Messages shows only the chat on screen, and switching redraws it',
+  );
+  // CT5: no two elements share an id after switching back and forth
+  await mcPick(p, 'tea');
+  await mcPick(p, 'cam');
+  const dupIds = await p.evaluate(() => {
+    const seen = new Map();
+    document.querySelectorAll('[id]').forEach(e => seen.set(e.id, (seen.get(e.id) || 0) + 1));
+    return [...seen].filter(([, n]) => n > 1).map(([k]) => k);
+  });
+  ok(!dupIds.length, 'F1 CT5: element ids stay unique after switching chats (' + dupIds + ')');
+  // HP7: links from Camera Club point at its own thread
+  const camLink = await p.evaluate(() => jumpHref(S.byI.get(3)));
+  ok(
+    camLink.includes('5151') && !camLink.includes('4242'),
+    "F1 HP7: a chat's reply links open its own thread (" + camLink.slice(0, 80) + ')',
+  );
+  // CT4: the same number in two chats never cross-links: All chats › Tea #3 opens Tea's #3
+  await p.click('#h1');
+  await p.click('#picker-list button[data-key="all"]');
+  await p.waitForTimeout(200);
+  await flashReset(p);
+  await p.click('#v-all .chatcard[data-chat="tea"] button.cite');
+  await until(p, () => document.querySelector('#m3[data-flashed]'), null, 3000);
+  ok(
+    (await mcText(p, '#h1')) === 'Tea Room' &&
+      (await p.isVisible('#v-messages')) &&
+      (await mcText(p, '#m3')).includes('tea message 3'),
+    "F1 CT4: All chats › Tea #3 switches to Tea Room and opens its #3, not another chat's",
+  );
+  // DM10, PG4: in Tea Room, Mark caught up writes only meta/chat-tea; other chats' windows stay
+  await p.click('nav a[data-tab="summary"]');
+  let w0 = await mcNWrites(p);
+  await p.click('#caught');
+  await until(p, () => __rt.get('meta/chat-tea').caughtUpI === 5);
+  ok(
+    JSON.stringify(await mcWrites(p, w0)) === JSON.stringify(['meta/chat-tea']) &&
+      (await get(p, 'meta/chat')).caughtUpI === 1 &&
+      (await get(p, 'meta/chat-cam')).caughtUpI === 1,
+    "F1 PG4/DM10: Mark caught up in Tea Room moves only Tea's window, one write to meta/chat-tea",
+  );
+  // DM10, OB1: Reply here in Tea Room queues tea_outbox/r<ms> with Tea's i and mid
+  await p.click('nav a[data-tab="messages"]');
+  await p.click('#lay-flat');
+  await p.check('#msg-all'); /* #4 is before the window Mark caught up just moved */
+  await p.waitForTimeout(200);
+  w0 = await mcNWrites(p);
+  await p.hover('#m4 .who');
+  await p.click('#m4 button.rh');
+  await p.fill('#m4 .compose textarea', 'see you there');
+  await p.click('#m4 .compose button.primary');
+  const ob = await until(p, () => {
+    const k = [...__rt.store.keys()].find(k => /outbox\//.test(k));
+    return k ? Object.assign({ k }, __rt.get(k)) : null;
+  });
+  ok(
+    ob &&
+      /^tea_outbox\/r\d+$/.test(ob.k) &&
+      ob.i === 4 &&
+      ob.mid === 'mid.tea4' &&
+      (await mcWrites(p, w0)).every(x => x.startsWith('tea_outbox/')),
+    "F1 OB1/DM10: Reply here in Tea Room writes tea_outbox/r<ms> with Tea's message (" +
+      JSON.stringify(ob && ob.k) +
+      ')',
+  );
+  // HP3: a capture from Camera Club is refused in Tea Room, nothing written
+  w0 = await mcNWrites(p);
+  let r = await mcPaste(p, Object.assign(cap(mcMsgs('cam', 9).slice(8)), { thread: '5151' }), 'tea');
+  ok(
+    r &&
+      r.ok === false &&
+      /This capture is from Camera Club, not Tea Room/.test(r.msg) &&
+      !(await mcWrites(p, w0)).some(x => /chunks|meta\/chat/.test(x)),
+    'F1 HP3: a capture from another chat is refused, naming both, nothing saved (' + (r && r.msg) + ')',
+  );
+  // DM10: Tea's own capture lands in Tea's documents only
+  w0 = await mcNWrites(p);
+  r = await mcPaste(p, Object.assign(cap(mcMsgs('tea', 8).slice(6)), { thread: '6161' }), 'tea');
+  /* the page-wide storage figures (meta/chat.assetUsage) are the one shared write an import makes */
+  const tw = await p.evaluate(
+    n =>
+      __rt.writes
+        .slice(n)
+        .filter(w => !(w.p === 'meta/chat' && Object.keys(w.v).join() === 'assetUsage'))
+        .map(w => w.p),
+    w0,
+  );
+  ok(
+    r &&
+      r.ok &&
+      (await get(p, 'meta/chat-tea')).lastI === 7 &&
+      tw.every(x => /^(tea_|meta\/chat-tea$|refresh\/lastImport-tea$)/.test(x)),
+    "F1 DM10: Tea Room's capture writes only tea_chunks, meta/chat-tea and refresh/lastImport-tea (" +
+      [...new Set(tw)] +
+      ')',
+  );
+  // MIG6: saved answers stay with their chat: a row with no chat is the first chat's
+  await p.evaluate(() => {
+    __rt.write('qa/old1', { q: 'Who has the stove?', a: 'Ana [#5]', at: '2026-11-01T10:00:00Z', scope: 'all' });
+    __rt.write('qa/tea1', {
+      q: 'Any tea tins left?',
+      a: 'Ben [#2]',
+      at: '2026-11-02T10:00:00Z',
+      scope: 'all',
+      chat: 'tea',
+    });
+  });
+  await p.click('nav a[data-tab="ask"]');
+  await until(p, () => /Any tea tins/.test(document.getElementById('qa-list').textContent));
+  const teaQa = await mcText(p, '#qa-list');
+  await mcPick(p, 'trail');
+  await until(p, () => /Who has the stove/.test(document.getElementById('qa-list').textContent));
+  const trailQa = await mcText(p, '#qa-list');
+  ok(
+    teaQa.includes('Any tea tins') &&
+      !teaQa.includes('stove') &&
+      trailQa.includes('stove') &&
+      !trailQa.includes('tea tins'),
+    "F1 MIG6: saved answers show in their own chat; an old one with no chat is the first chat's",
+  );
+  ok(p.errors.length === 0, 'F1: several chats, no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // On All chats a paste imports into the first chat, as a scheduled refresh expects
+  p = await mcOpen();
+  r = await mcPaste(p, Object.assign(cap(mcMsgs('trail', 13).slice(12)), { thread: '4242' }), 'trail');
+  ok(
+    r && r.ok && (await get(p, 'meta/chat')).lastI === 12 && (await get(p, 'meta/chat-tea')).lastI === 5,
+    'F1: a paste on All chats imports into the first chat, as a scheduled refresh expects',
+  );
+  // PG5: Mark all caught up moves every live chat's window; a refused write is named; hidden chats untouched
+  await p.evaluate(() => __rt.fails.push({ p: 'meta/chat-cam', op: 'update' }));
+  await p.click('#caught-all');
+  await until(p, () => /Couldn't/.test((document.getElementById('caught-all-st') || {}).textContent || ''));
+  ok(
+    (await mcText(p, '#caught-all-st')).includes('Camera Club') &&
+      (await get(p, 'meta/chat')).caughtUpI === 12 &&
+      (await get(p, 'meta/chat-tea')).caughtUpI === 5 &&
+      (await get(p, 'meta/chat-cam')).caughtUpI === 1,
+    "F1 PG5: Mark all caught up moves each chat's window and names the one it couldn't save (" +
+      (await mcText(p, '#caught-all-st')) +
+      ')',
+  );
+  // OB2: All chats lists queued replies tagged with their chat
+  await p.evaluate(() =>
+    __rt.write('tea_outbox/r1', {
+      i: 2,
+      mid: 'mid.tea2',
+      to: 'You',
+      snip: 'x',
+      text: 'on it',
+      state: 'queued',
+      queuedAt: new Date().toISOString(),
+    }),
+  );
+  await until(p, () => /Tea #2 · to You: on it/.test(document.getElementById('v-all').textContent));
+  ok(
+    /Tea #2 · to You: on it/.test(await mcText(p, '#v-all')),
+    "F1 OB2: All chats lists every chat's queued replies, tagged",
+  );
+  await p.context().close();
+
+  // CMP1: a refresh skill older than the page leaves added chats unrefreshed, and the page says so
+  p = await mcOpen({ extra: {} });
+  await p.evaluate(() => __rt.write('meta/chat', Object.assign(__rt.get('meta/chat'), { versions: { page: '3.9' } })));
+  await until(p, () =>
+    /isn't refreshed: the refresh skill is older/.test(document.getElementById('v-all').textContent),
+  );
+  ok(
+    /Camera Club isn't refreshed: the refresh skill is older than the page/.test(await mcText(p, '#v-all')) &&
+      !/Trail Crew isn't refreshed/.test(await mcText(p, '#v-all')),
+    "F1 CMP1: with an older refresh skill, each added chat says it isn't refreshed",
+  );
+  await p.context().close();
+
+  // Settings: Your chats (the owner manages chats without Claude)
+  p = await mcOpen({ chats: { book: { name: 'Book Swap', tag: 'Book', color: 4, order: 3, state: 'deleted' } } });
+  const s0 = await p.evaluate(() => __rt.samples.length);
+  await mcSettings(p);
+  const unlabeled = await p.$$eval('#set-body input:not([type=radio]):not([type=checkbox]), #set-body select', xs =>
+    xs.filter(x => !x.id || !document.querySelector('label[for="' + x.id + '"]')).map(x => x.outerHTML.slice(0, 60)),
+  );
+  ok(!unlabeled.length, 'F1 PH3: every field in Settings has an id and a label (' + unlabeled + ')');
+  ok(
+    (await p.evaluate(() => getComputedStyle(document.getElementById('settings')).overflowY)) === 'auto',
+    'F1 PH3: Settings is a sheet that scrolls inside itself',
+  );
+  // SET1: not a Messenger link
+  for (const bad of ['', 'hello', 'https://www.facebook.com/groups/12345']) {
+    w0 = await mcNWrites(p);
+    await p.fill('#add-link', bad);
+    await p.click('#add-go');
+    await p.waitForTimeout(100);
+    ok(
+      /isn't a Messenger chat link/.test(await mcText(p, '#set-st-add')) && (await mcNWrites(p)) === w0,
+      'F1 SET1: "' + bad + '" is refused inline and writes nothing',
+    );
+  }
+  // SET2: a chat already on the page
+  w0 = await mcNWrites(p);
+  await p.fill('#add-link', 'https://www.facebook.com/messages/t/6161/');
+  await p.click('#add-go');
+  await p.waitForTimeout(100);
+  ok(
+    /already on the page: Tea Room/.test(await mcText(p, '#set-st-add')) && (await mcNWrites(p)) === w0,
+    'F1 SET2: a link already on the page is refused, naming the chat',
+  );
+  // SET3, DM5: one entry, pending; a deleted chat's key isn't reused
+  w0 = await mcNWrites(p);
+  await p.fill('#add-link', 'https://www.facebook.com/messages/e2ee/t/7171');
+  await p.fill('#add-name', 'Book Club');
+  await p.fill('#add-tag', 'Book');
+  await p.selectOption('#add-start', '1000');
+  await p.click('#add-go');
+  await until(p, () => __rt.get('meta/chat').chats.book2);
+  const ws = await p.evaluate(n => __rt.writes.slice(n), w0);
+  const e = (await get(p, 'meta/chat')).chats.book2;
+  ok(
+    ws.length === 1 &&
+      ws[0].p === 'meta/chat' &&
+      JSON.stringify(Object.keys(ws[0].v)) === '["chats"]' &&
+      JSON.stringify(Object.keys(ws[0].v.chats)) === '["book2"]' &&
+      JSON.stringify(Object.keys(e).sort()) ===
+        JSON.stringify(
+          ['addedAt', 'color', 'name', 'order', 'photos', 'start', 'state', 'tag', 'thread', 'url'].sort(),
+        ) &&
+      e.state === 'pending' &&
+      e.start === 1000 &&
+      e.thread === '7171' &&
+      e.url === 'https://www.facebook.com/messages/e2ee/t/7171' &&
+      (await get(p, 'meta/chat')).chats.book.state === 'deleted',
+    'F1 SET3/DM5: Add a chat writes one pending entry (no auto unless chosen) under a key never used before (' +
+      JSON.stringify(e) +
+      ')',
+  );
+  await until(p, () => document.querySelector('.chatrow[data-chat="book2"]'));
+  ok(
+    /Waiting for its first refresh. Ask Claude to “refresh Book Club”/.test(await mcText(p, '#set-body')),
+    'F1 SET4: a pending chat says to ask Claude to refresh it',
+  );
+  // SET12, DM4, CT7: renaming a tag: empty, too long and duplicate refused; a good one shows at once, nothing else written
+  for (const [t, why] of [
+    ['', /can't be empty/],
+    ['Cam', /already Camera Club's tag/],
+  ]) {
+    w0 = await mcNWrites(p);
+    await p.fill('#tag-tea', t);
+    await p.click('.chatrow[data-chat="tea"] .fld button');
+    await p.waitForTimeout(100);
+    ok(
+      why.test(await mcText(p, '#set-st-tea')) && (await mcNWrites(p)) === w0,
+      'F1 SET12: the tag "' + t + '" is refused (' + (await mcText(p, '#set-st-tea')) + ')',
+    );
+  }
+  w0 = await mcNWrites(p);
+  await p.fill('#tag-tea', 'Brew');
+  await p.click('.chatrow[data-chat="tea"] .fld button');
+  await until(p, () => __rt.get('meta/chat').chats.tea.tag === 'Brew');
+  const keys0 = await p.evaluate(() =>
+    [...__rt.store.keys()]
+      .filter(k => /^tea_/.test(k))
+      .sort()
+      .join(),
+  );
+  ok(
+    JSON.stringify(await mcWrites(p, w0)) === '["meta/chat"]' && keys0.includes('tea_chunks/c0000'),
+    "F1 SET12/DM4: a new tag is one meta/chat write; the chat's collections keep their names",
+  );
+  await p.click('#settings-close');
+  await until(p, () => /Brew #3/.test(document.getElementById('v-all').textContent));
+  ok(/Brew #3/.test(await mcText(p, '#v-all')), 'F1 CT7: the new tag shows at once in citations');
+  // OB4, OB8: the page default and a chat's own setting
+  await mcSettings(p);
+  w0 = await mcNWrites(p);
+  await p.check('#set-auto');
+  await until(p, () => __rt.get('meta/chat').outboxAuto === true);
+  await p.selectOption('#auto-cam', 'off');
+  await until(p, () => __rt.get('meta/chat').chats.cam.auto === false);
+  await p.selectOption('#auto-cam', '');
+  await until(p, () => __rt.get('meta/chat').chats.cam.auto === null);
+  ok(
+    JSON.stringify(await mcWrites(p, w0)) === '["meta/chat","meta/chat","meta/chat"]',
+    "F1 OB8: each reply setting is one meta/chat write (page default, a chat's own, cleared)",
+  );
+  // SET6: pause and resume
+  await p.click('.chatrow[data-chat="cam"] .btns button:text("Pause")');
+  await until(p, () => __rt.get('meta/chat').chats.cam.state === 'paused');
+  await until(p, () =>
+    /Paused: refreshes skip it/.test(document.querySelector('.chatrow[data-chat="cam"]').textContent),
+  );
+  ok(true, 'F1 SET6: Pause marks the chat paused and its line says so');
+  await p.click('.chatrow[data-chat="cam"] .btns button:text("Resume")');
+  await until(p, () => __rt.get('meta/chat').chats.cam.state === 'active');
+  // SET7: Remove: delete chosen by default; Cancel writes nothing; Keep it hidden keeps every document
+  await p.click('.chatrow[data-chat="tea"] .btns button:text("Remove…")');
+  ok(await p.isChecked('#rm-delete-tea'), 'F1 SET7: Remove opens with "Delete its messages and photos" chosen');
+  w0 = await mcNWrites(p);
+  await p.click('.chatrow[data-chat="tea"] .rmbox button:text("Cancel")');
+  ok((await mcNWrites(p)) === w0 && !(await p.$('.rmbox')), 'F1 SET7: Cancel writes nothing');
+  await p.click('.chatrow[data-chat="tea"] .btns button:text("Remove…")');
+  await p.check('#rm-hide-tea');
+  await p.click('#rm-go-tea');
+  await until(p, () => __rt.get('meta/chat').chats.tea.state === 'hidden');
+  ok(
+    (await p.evaluate(() => [...__rt.store.keys()].filter(k => /^tea_|chat-tea/.test(k)).length)) >= 4,
+    'F1 SET7: Keep it hidden deletes nothing',
+  );
+  await p.click('#settings-close');
+  await until(p, () => !document.querySelector('#v-all .chatcard[data-chat="tea"]'));
+  ok(true, 'F1 PG3: a hidden chat leaves All chats');
+  ok(s0 === (await p.evaluate(() => __rt.samples.length)), 'F1 SET13: managing chats asks Claude nothing');
+  ok(p.errors.length === 0, 'F1: settings, no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // SET7, STO6: deleting a chat removes its files, then its documents, and marks it deleted for good
+  const camBlob = 'b10b' + '9'.repeat(28);
+  p = await mcOpen({
+    extra: { 'cam_photos/b0': { start: 0, byK: { 2: { 0: '/_blob/' + camBlob } }, gifs: [] } },
+    opts: { blobs: { [camBlob]: { type: 'image/png', b64: PNG } } },
+  });
+  await mcSettings(p);
+  await p.click('.chatrow[data-chat="cam"] .btns button:text("Remove…")');
+  await until(p, () => /frees 1 file/.test((document.getElementById('rm-free-cam') || {}).textContent || ''));
+  ok(
+    /frees 1 file/.test(await mcText(p, '#rm-free-cam')),
+    'F1 STO6: Remove says what deleting frees (' + (await mcText(p, '#rm-free-cam')) + ')',
+  );
+  await p.click('#rm-go-cam');
+  await until(p, () => __rt.get('meta/chat').chats.cam.state === 'deleted', null, 8000);
+  const left = await p.evaluate(() => [...__rt.store.keys()].filter(k => /^cam_|chat-cam|lastImport-cam/.test(k)));
+  ok(
+    !left.length &&
+      (await p.evaluate(b => __rt.deletes.includes(b), camBlob)) &&
+      (await get(p, 'chunks/c0000')) &&
+      (await get(p, 'tea_chunks/c0000')),
+    "F1 STO6: Delete removes the chat's files and documents, and only its (" + left + ')',
+  );
+  ok(p.errors.length === 0, 'F1: delete, no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // SET11: a viewer who can't write sees no chat controls
+  p = await mcOpen({ opts: { canWrite: false } });
+  await mcSettings(p);
+  ok(
+    /Only people who can edit this page/.test(await mcText(p, '#set-body')) && !(await p.$('#add-link')),
+    'F1 SET11: a viewer without write access gets no controls',
+  );
+  await p.context().close();
+
+  // SET3 on a page from before F1: the first write adds the first chat too
+  p = await mcOpen({ one: true });
+  await mcSettings(p);
+  await p.fill('#add-link', 'https://www.messenger.com/t/8181');
+  await p.fill('#add-name', 'Tea Room');
+  await p.click('#add-go');
+  await until(p, () => __rt.get('meta/chat').chats);
+  let cs = (await get(p, 'meta/chat')).chats;
+  ok(
+    JSON.stringify(Object.keys(cs).sort()) === '["tearoo","trail"]' &&
+      cs.trail.home === true &&
+      cs.trail.tag === 'Trail' &&
+      cs.tearoo.tag === 'Tea',
+    'F1 SET3/MIG: adding a chat to a one-chat page writes its first chat too (' + Object.keys(cs) + ')',
+  );
+  ok((await mcText(p, '#h1')) === 'Trail Catch-up', "F1: a pending chat doesn't switch the page to All chats");
+  await p.context().close();
+
+  // STO2: the 80% warning names the chat that uses most; STO5: a chat with photos off stores none
+  p = await mcOpen({
+    chats: {
+      tea: { name: 'Tea Room', tag: 'Tea', color: 3, order: 2, state: 'active', thread: '6161', photos: false },
+    },
+    extra: {},
+  });
+  await p.evaluate(() => {
+    const m = __rt.get('meta/chat');
+    m.assetUsage = {
+      files: 100,
+      bytes: 0.85 * (1 << 30),
+      maxFiles: 5000,
+      maxBytes: 1 << 30,
+      at: new Date(Date.now() + 864e5).toISOString(),
+      byChat: { trail: { files: 30, bytes: 1e8 }, cam: { files: 70, bytes: 8e8 } },
+    };
+    __rt.write('meta/chat', m);
+  });
+  await until(p, () => /Most of it is Camera Club's/.test(document.getElementById('storage-st').textContent));
+  ok(
+    /Most of it is Camera Club's/.test(await mcText(p, '#storage-st')),
+    'F1 STO2: the storage warning names the chat that uses most',
+  );
+  await mcPick(p, 'tea');
+  const up0 = await p.evaluate(() => __rt.uploads.length);
+  r = await mcPaste(
+    p,
+    Object.assign(cap(mcMsgs('tea', 7).slice(6), { photos: [{ i: 6, k: 0, type: 'image/png', b64: PNG }] }), {
+      thread: '6161',
+    }),
+    'tea',
+  );
+  ok(
+    r && r.ok && (await p.evaluate(() => __rt.uploads.length)) === up0,
+    'F1 STO5: a chat set not to store photos stores none',
+  );
+  // STO1: an import in a chat records that chat's share of the page's files
+  await mcPick(p, 'cam');
+  r = await mcPaste(
+    p,
+    Object.assign(cap(mcMsgs('cam', 9).slice(8), { photos: [{ i: 8, k: 0, type: 'image/png', b64: PNG }] }), {
+      thread: '5151',
+    }),
+    'cam',
+  );
+  await until(p, () => ((__rt.get('meta/chat').assetUsage || {}).byChat || {}).cam?.files === 1, null, 8000);
+  const au = (await get(p, 'meta/chat')).assetUsage;
+  ok(
+    au.byChat.cam.files === 1 &&
+      au.byChat.cam.bytes > 0 &&
+      au.byChat.trail.files === 30 &&
+      !(await get(p, 'meta/chat-cam')).assetUsage,
+    "F1 STO1: an import records its chat's share in meta/chat.assetUsage.byChat (" + JSON.stringify(au.byChat) + ')',
+  );
+  ok(p.errors.length === 0, 'F1: storage, no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // PH1, PH4: at 390 px, a long chat name and a long status line fit with no sideways scroll
+  for (const vp of [
+    { width: 390, height: 844 },
+    { width: 360, height: 740 },
+  ]) {
+    p = await mcOpen(
+      {
+        chats: {
+          cam: {
+            name: 'Camera Club and Friends of the Lens',
+            tag: 'Cam',
+            color: 2,
+            order: 1,
+            state: 'active',
+            thread: '5151',
+          },
+          tea: {
+            name: 'Tea Room',
+            tag: 'Tea',
+            color: 3,
+            order: 2,
+            state: 'pending',
+            thread: '6161',
+            reason:
+              'Messenger said the chat isn’t available, which can happen when the link is for a chat you left long ago.',
+          },
+        },
+      },
+      { viewport: vp },
+    );
+    const fit = async () =>
+      p.evaluate(() => [
+        document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+        (q => !q || q.scrollWidth <= q.clientWidth + 1)(document.querySelector('nav.tabs')),
+      ]);
+    const a1 = await fit();
+    await mcPick(p, 'cam');
+    const a2 = await fit();
+    await mcSettings(p);
+    const a3 = await fit();
+    ok(
+      [a1, a2, a3].every(x => x[0] && x[1]),
+      'F1 PH1/PH4: ' +
+        vp.width +
+        ' px, All chats, a long-named chat and Settings fit with no sideways scroll (' +
+        JSON.stringify([a1, a2, a3]) +
+        ')',
+    );
+    await p.context().close();
+  }
+  // PH6: dark mode: the chat tags keep their text
+  p = await mcOpen({}, { colorScheme: 'dark' });
+  const tags = await p.$$eval('#v-all .ctag', ts =>
+    ts.map(t => t.textContent + ':' + getComputedStyle(t).borderTopColor),
+  );
+  ok(
+    tags.length === 3 && tags[0].startsWith('Trail:') && new Set(tags.map(t => t.split(':')[1])).size === 3,
+    'F1 PH6: in dark mode each tag shows its text and its own colour (' + tags + ')',
+  );
+  await p.context().close();
+
+  // DM6: twelve chats with long names keep meta/chat small
+  p = await mcOpen({ one: true });
+  for (let k = 0; k < 12; k++)
+    await p.evaluate(
+      k =>
+        addChat({
+          link: 'https://www.facebook.com/messages/t/9' + k + '000',
+          name: 'A rather long chat name number ' + k,
+          start: 300,
+          photos: true,
+          auto: null,
+        }),
+      k,
+    );
+  await until(p, () => Object.keys(__rt.get('meta/chat').chats || {}).length === 13);
+  const sz = await p.evaluate(() => new TextEncoder().encode(JSON.stringify(__rt.get('meta/chat').chats)).length);
+  const ks = Object.keys((await get(p, 'meta/chat')).chats);
+  ok(
+    sz < 8192 && new Set(ks).size === 13 && ks.every(k => /^[a-z0-9]{1,6}$/.test(k)),
+    'F1 DM5/DM6: 13 chats, unique short keys, the list ' + sz + ' bytes (under 8 KiB)',
+  );
+  await p.context().close();
+}
+
+/* F1 stage A, review of PR #60: each check failed on the code before its fix */
+async function multiChat2() {
+  const pend = {
+    book: {
+      name: 'Book Club',
+      tag: 'Book',
+      color: 4,
+      order: 3,
+      state: 'pending',
+      thread: '7171',
+      url: 'https://www.facebook.com/messages/t/7171',
+      start: 300,
+    },
+  };
+  const seeded = {
+    'meta/chat-book': {
+      key: 'book',
+      thread: '7171',
+      chatUrl: 'https://www.facebook.com/messages/t/7171',
+      threadName: 'Book Club',
+      shortName: 'Book',
+      chunkSize: 82,
+      lastI: -1,
+      anchorMids: [],
+      markerMode: null,
+    },
+  };
+  // 1: a pending chat opens for its first paste, which the guard accepts
+  let p = await mcOpen({ chats: pend, extra: seeded });
+  await p.evaluate(() => openChat('book'));
+  await p.waitForTimeout(300);
+  ok(
+    (await mcText(p, '#h1')) === 'Book Club' && (await mcText(p, '#window')).includes('refresh Book Club'),
+    'F1 review 1: a pending chat opens, saying it waits for its first refresh (' + (await mcText(p, '#h1')) + ')',
+  );
+  let r = await mcPaste(p, Object.assign(cap(mcMsgs('book', 3)), { thread: '7171' }), 'book');
+  ok(
+    r && r.ok && (await get(p, 'meta/chat-book')).lastI === 2 && (await get(p, 'book_chunks/c0000')),
+    'F1 review 1: its first capture imports into its own documents (' + (r && r.msg) + ')',
+  );
+  // 9: a jump waiting for a message that never loaded doesn't follow the page into another chat
+  await p.evaluate(() => openChat('tea', 7)); /* Tea Room has #0-#5 only */
+  await p.waitForTimeout(300);
+  await flashReset(p);
+  await p.evaluate(() => openChat('cam'));
+  await p.waitForTimeout(500);
+  ok(
+    (await p.evaluate(() => S.goAfterLoad == null)) && !(await p.$('#m7[data-flashed]')),
+    'F1 review 9: a pending jump is dropped when another chat opens',
+  );
+  // 2: no chat switch while this tab imports, stores photos or packs
+  for (const busy of ['S.importing = true', 'PK.busy = true']) {
+    await p.evaluate(b => {
+      openChat('trail');
+      eval(b);
+    }, busy);
+    await p.evaluate(() => openChat('cam'));
+    await p.waitForTimeout(200);
+    await p.click('#h1');
+    const dis = await p.$eval('#picker-list button[data-key="cam"]', b => b.disabled);
+    const note = await mcText(p, '#picker-list');
+    await p.keyboard.press('Escape');
+    ok(
+      (await p.evaluate(() => CUR.key)) === 'trail' && dis && /switch chats once/.test(note),
+      'F1 review 2: with ' + busy + " the chat can't change and the picker says why (" + note.slice(-80) + ')',
+    );
+    await p.evaluate(() => {
+      S.importing = false;
+      PK.busy = false;
+    });
+  }
+  // 10: the schedule line names the first chat's phrase, whichever chat is open
+  await p.evaluate(() => {
+    const m = __rt.get('meta/chat');
+    delete m.refreshPhrase;
+    m.schedule = { mode: 'chain', every: 60, tz: 'America/Los_Angeles' };
+    __rt.write('meta/chat', m);
+    __rt.write('refresh/schedule', { armId: 'a1', tool: 'send_later', problem: 'chain stopped', nextAt: null });
+  });
+  await p.evaluate(() => openChat('cam'));
+  await p.waitForTimeout(400);
+  const sched = await mcText(p, '#sched');
+  ok(
+    !/refresh Camera Club/.test(sched),
+    "F1 review 10: the schedule line in an added chat doesn't name it (" + sched + ')',
+  );
+  // 7: with several chats a capture that doesn't name its chat (helper 2.1 or older) is refused
+  await p.evaluate(() => openChat('trail'));
+  await p.waitForTimeout(200);
+  const w0 = await mcNWrites(p);
+  r = await mcPaste(p, cap(mcMsgs('trail', 13).slice(12)), 'trail');
+  ok(
+    r && r.ok === false && /doesn't say which chat/.test(r.msg) && !(await mcWrites(p, w0)).some(x => /chunks/.test(x)),
+    'F1 review 7: a capture without its chat is refused on a page with several chats (' + (r && r.msg) + ')',
+  );
+  ok(p.errors.length === 0, 'F1 review: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  // 5: Bring back puts a chat removed while pending back to pending
+  p = await mcOpen({ chats: pend });
+  await mcSettings(p);
+  await p.click('.chatrow[data-chat="book"] .btns button:text("Remove…")');
+  await p.check('#rm-hide-book');
+  await p.click('#rm-go-book');
+  await until(p, () => __rt.get('meta/chat').chats.book.state === 'hidden');
+  await until(p, () => document.querySelector('.chatrow[data-chat="book"] .btns button'));
+  await p.click('.chatrow[data-chat="book"] .btns button:text("Bring back")');
+  await until(p, () => __rt.get('meta/chat').chats.book.state !== 'hidden');
+  ok(
+    (await get(p, 'meta/chat')).chats.book.state === 'pending',
+    'F1 review 5: Bring back restores a pending chat to pending (' + (await get(p, 'meta/chat')).chats.book.state + ')',
+  );
+  await p.context().close();
+  // 8: deleting reads every photos block (a listing in pages), holds the import lease, and waits for a running refresh
+  const b1 = 'b10b' + '7'.repeat(28),
+    b2 = 'b10b' + '8'.repeat(28);
+  const del = () =>
+    mcOpen({
+      extra: {
+        'cam_photos/b0': { start: 0, byK: { 2: { 0: '/_blob/' + b1 } }, gifs: [] },
+        'cam_photos/b500': { start: 500, byK: { 520: { 0: '/_blob/' + b2 } }, gifs: [] },
+        'meta/chat-cam': Object.assign(mcSeed()['meta/chat-cam'], { lastI: 600 }),
+      },
+      opts: { getPage: 1, blobs: { [b1]: { type: 'image/png', b64: PNG }, [b2]: { type: 'image/png', b64: PNG } } },
+    });
+  p = await del();
+  await p.evaluate(() =>
+    __rt.write('refresh/status', { state: 'running', startedAt: new Date().toISOString(), step: 'scan' }),
+  );
+  await mcSettings(p);
+  await p.click('.chatrow[data-chat="cam"] .btns button:text("Remove…")');
+  await p.click('#rm-go-cam');
+  await p.waitForTimeout(500);
+  ok(
+    (await get(p, 'meta/chat')).chats.cam.state === 'active' &&
+      (await get(p, 'cam_chunks/c0000')) &&
+      /refresh is running/.test(await mcText(p, '#set-st-cam')),
+    'F1 review 8: Delete waits while a refresh holds the run lock (' + (await mcText(p, '#set-st-cam')) + ')',
+  );
+  await p.context().close();
+  p = await del();
+  await mcSettings(p);
+  await p.click('.chatrow[data-chat="cam"] .btns button:text("Remove…")');
+  await p.click('#rm-go-cam');
+  await until(p, () => __rt.get('meta/chat').chats.cam.state === 'deleted', null, 8000);
+  const left = await p.evaluate(() => [...__rt.store.keys()].filter(k => /^cam_/.test(k)));
+  const gone = await p.evaluate(([x, y]) => [__rt.deletes.includes(x), __rt.deletes.includes(y)], [b1, b2]);
+  const leased = await p.evaluate(() => __rt.leases.has('refresh/importLock'));
+  ok(
+    !left.length && gone.every(Boolean) && leased,
+    'F1 review 8: Delete reads every block, takes the import lease and leaves nothing (' +
+      JSON.stringify([left, gone, leased]) +
+      ')',
+  );
+  await p.context().close();
+}
+
 const SECTIONS = {
   importer,
+  multiChat,
+  multiChat2,
   robustness,
   pipeline,
   variants,

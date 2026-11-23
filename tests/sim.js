@@ -323,6 +323,44 @@ sim('A: people scan', { s: 40 }, async b => {
   );
   await ctx.close();
 });
+/* F1 review 6: the chat is the thread id in the address, so a reload that only changes the path (/t/<id> to
+   /e2ee/t/<id>, or a query) is still the same chat; another id isn't */
+sim('HP1: the chat check compares thread ids', { s: 12 }, async b => {
+  const { ctx, p } = await fresh(b);
+  const base = URL.replace(/messenger\.html$/, '');
+  const resume = async (pipeAt, thread, to) => {
+    await p.goto(base + pipeAt);
+    await p.evaluate(
+      x => {
+        sessionStorage.removeItem('mc_result');
+        sessionStorage.setItem('mc_pipe', JSON.stringify(x));
+      },
+      { base: 56, run: 'runT', scan: { win: 1, warn: [] }, t0: Date.now(), at: '/mock/' + pipeAt, thread },
+    );
+    await p.goto(base + to);
+    return pollResult(p);
+  };
+  let res = await resume('t/111', '111', 'e2ee/t/111');
+  ok(
+    res && res.stage !== 'wrong-thread' && res.thread === '111',
+    'HP1: /t/111 reloaded as /e2ee/t/111 is the same chat (' + (res && res.stage) + ')',
+  );
+  res = await resume('t/111', '111', 't/222');
+  const left = await p.evaluate(() => [sessionStorage.getItem('mc_pipe'), sessionStorage.getItem('__mcsave')]);
+  ok(
+    res &&
+      res.stage === 'wrong-thread' &&
+      res.err === 'wrong-thread' &&
+      res.thread === '222' &&
+      !res.verify &&
+      !res.capture &&
+      left.every(x => x === null),
+    'HP1: thread 111 resumed on thread 222 is refused: no verify or capture, the scan state cleared (' +
+      (res && res.stage) +
+      ')',
+  );
+  await ctx.close();
+});
 sim('A3, A5: stale result, message deleted mid-run', { s: 20, after: ['A1, A2: first run, incremental'] }, async b => {
   const { ctx, p } = await fresh(b);
   await seedStorage(p, ...SHARED.afterA2);
