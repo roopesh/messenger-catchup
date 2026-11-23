@@ -2668,7 +2668,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "4.1";
+  const PAGE_VERSION = "4.2";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -10249,10 +10249,14 @@
     if (photos.length && (await sha256hex(JSON.stringify(photos))) !== cap.phsha)
       return done("Photo checksum mismatch. Nothing saved.");
     if (!S.db) return done("The page's data isn't loaded yet; try again in a moment.");
-    /* several chats (F1): a capture goes only into the chat it was read from (helper 2.2 and later name it) */
-    if (!cap.thread && (!CUR.home || S.chats.filter(isShown).length > 1))
+    /* several chats (F1): a capture goes only into the chat it was read from (helper 2.3 and later name it). One that
+       doesn't name it (an older helper) goes into the first chat, as before F1: scheduled refreshes read only that one.
+       An added chat takes only captures that name it. */
+    if (!cap.thread && !CUR.home)
       return done(
-        "This capture doesn't say which chat it's from (it was read by helper 2.1 or older), and this page has several chats. Nothing saved. Update the helper, then capture again.",
+        "This capture doesn't say which chat it's from (it was read by helper 2.2 or older), and " +
+          CUR.name +
+          " is an added chat. Nothing saved. Update the helper, then capture again.",
       );
     if (cap.thread && threadOf(CUR) && String(cap.thread) !== threadOf(CUR)) {
       const from = S.chats.find(c => c.state !== "deleted" && threadOf(c) === String(cap.thread));

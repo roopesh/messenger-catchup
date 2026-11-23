@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      2.3
+// @version      2.4
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -10,9 +10,30 @@
 // @downloadURL  https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js
 // ==/UserScript==
 (function () {
-  if (window.__mcHelper || document.documentElement.hasAttribute('data-mc-helper')) return;
-  window.__mcHelper = '2.3';
-  document.documentElement.setAttribute('data-mc-helper', '2.3');
+  /* One copy runs per page. A copy already there (installed, or injected earlier) that is as new as this one or newer
+     keeps the page. An older one gives way: Claude injects this file when the installed helper is too old (several
+     chats need 2.3 or later). This copy then sets data-mc-helper to its version and answers the bridge; the older
+     copy's bridge listener stays registered but is stopped before it runs (the bridge, below). */
+  const root = document.documentElement;
+  const had = [window.__mcHelper, root.getAttribute('data-mc-helper')].filter(Boolean).map(String);
+  const num = v => v.split('.').map(n => +n || 0);
+  const below = (a, b) => {
+    const x = num(a),
+      y = num(b);
+    for (let k = 0; k < Math.max(x.length, y.length); k++)
+      if ((x[k] || 0) !== (y[k] || 0)) return (x[k] || 0) < (y[k] || 0);
+    return false;
+  };
+  const prev = window.__mcHelper;
+  window.__mcHelper = '2.4';
+  const V = window.__mcHelper;
+  if (had.some(h => !below(h, V))) {
+    window.__mcHelper = prev;
+    return;
+  }
+  root.setAttribute('data-mc-helper', '2.4');
+  /* still the copy that owns the page: a newer copy injected later takes over the same way */
+  const mine = () => root.getAttribute('data-mc-helper') === V;
   /* While a scan runs, clicks on links are swallowed so scrolling can't navigate away. Registered once per page load. */
   document.addEventListener(
     'click',
@@ -1782,32 +1803,49 @@
       return { started: true };
     },
     post: (a, id) => mcPost(a, id),
-    ping: () => ({ v: '2.3' }),
+    ping: () => ({ v: '2.4' }),
   };
-  /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world. */
-  document.addEventListener('mc-cmd', async function (e) {
-    let d;
-    try {
-      d = JSON.parse(e.detail);
-    } catch (x) {
-      return;
-    }
-    if (!CMDS[d.cmd]) return;
-    sessionStorage.setItem('mc_res_' + d.id, JSON.stringify({ running: true }));
-    let res;
-    try {
-      res = await CMDS[d.cmd](d.args || {}, d.id);
-    } catch (x) {
-      res = { err: String((x && x.stack) || x) };
-    }
-    sessionStorage.setItem('mc_res_' + d.id, JSON.stringify(res));
+  /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
+     Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
+     it stops; a copy that has given way to a newer one lets the event through to it. */
+  addEventListener(
+    'mc-cmd',
+    async function (e) {
+      if (!mine()) return;
+      e.stopImmediatePropagation();
+      let d;
+      try {
+        d = JSON.parse(e.detail);
+      } catch (x) {
+        return;
+      }
+      if (!CMDS[d.cmd]) return;
+      sessionStorage.setItem('mc_res_' + d.id, JSON.stringify({ running: true }));
+      let res;
+      try {
+        res = await CMDS[d.cmd](d.args || {}, d.id);
+      } catch (x) {
+        res = { err: String((x && x.stack) || x) };
+      }
+      sessionStorage.setItem('mc_res_' + d.id, JSON.stringify(res));
+    },
+    true,
+  );
+  /* Taking over from an older copy: that copy already handled this page load (a pending pipeline, a jump in the address) */
+  if (!had.length) {
+    resumePipe();
+    jump();
+  }
+  /* Jump links: an older copy's hashchange listener on window runs first and can't be stopped (Chrome runs a window's
+     own listeners in the order they were added), nor its address check. Both copies read the same address, and
+     window.__mcJumping lets only the first one jump when they share a world (an installed userscript with
+     @grant none and Claude's injected copy both run in the page's). */
+  addEventListener('hashchange', function () {
+    if (mine()) jump();
   });
-  resumePipe();
-  jump();
-  addEventListener('hashchange', jump);
   var last = location.href;
   setInterval(function () {
-    if (location.href !== last) {
+    if (mine() && location.href !== last) {
       last = location.href;
       if (/mcjump=/.test(location.hash)) jump();
     }

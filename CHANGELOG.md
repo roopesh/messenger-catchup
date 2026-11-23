@@ -2,6 +2,18 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.35.1] - 2026-11-23
+**Scheduled refreshes work again with an older helper once a chat is added; the injected helper takes over from an older installed one.** PATCH: two fixes to v1.35.0, found on the owner's setup (two Chromes still on helper 2.1). Page **`PAGE_VERSION` 4.2** (from 4.1); helper **2.4** (from 2.3).
+
+### Fixed
+- **The first chat takes a capture that doesn't name its chat again.** v1.35.0 refused any capture without `thread` (helper 2.2 or older) once the page listed a second chat, a pending one included, so adding a chat made every scheduled refresh of the first chat fail for anyone whose helper hadn't updated yet. Now such a capture goes into the first chat, as before several chats, and only an added chat refuses it ("… Camera Club is an added chat. Nothing saved. Update the helper, then capture again."). A capture that names another chat is still refused.
+- **An injected helper takes over from an older installed one** (helper 2.4). `references/chats.md` said to inject the current helper when the installed one is too old for an added chat, but every helper left at once when it found another copy on the page, so the installed one kept answering. A copy now gives way only to one as new or newer: an older copy already there is replaced (the bridge answers from the newer copy, which also sets `data-mc-helper` and `window.__mcHelper` to its version; the older copy's bridge listener is stopped before it runs), and a copy as new or newer keeps the page. The bridge now listens on `window` while capturing, so a later, newer copy can take over from 2.4 the same way. Jump links: an older copy's own `hashchange` listener can't be stopped (Chrome runs a window's listeners in the order they were added); `window.__mcJumping` lets only the first copy jump when both run in the page's world.
+- `references/chats.md`: an added chat needs helper 2.3 or later: with an older one, inject the current helper for that chat's steps and tell the user to update it; the first chat works with any helper. `references/helper.md` › Injecting says the same.
+- Tests: page `multiChat2`: with the first chat and one pending chat (no `meta/chat-<key>` yet), a capture without `thread` imports into the first chat and the pending chat refuses one; the review finding 7 test now checks the new rule (refused in Camera Club, imported into the first chat). Sim `HP2`: a 2.1-style helper installed and 2.4 injected (2.4 alone answers the bridge, and runs `selfcheck`); 2.4 injected over 2.4 registers nothing and answers once; a newer copy injected over 2.4 answers alone; 2.4 injected under a newer copy stays out. The import and take-over checks failed on v1.35.0's page and helper.
+
+### Changed
+- **Backlog:** L1's day summaries check removed (F29: checked on the owner's page on Nov 23, the final rewrite and the next day's summary).
+
 ## [1.35.0] - 2026-11-22
 **Several chats in one page, stage A** (BACKLOG F1, option A as the owner decided on Nov 22). MINOR: new page features and refresh procedure changes; a one-chat page and its documents are unchanged. Page **`PAGE_VERSION` 4.1** (from 4.0); helper **2.3** (from 2.1).
 

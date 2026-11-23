@@ -361,6 +361,108 @@ sim('HP1: the chat check compares thread ids', { s: 12 }, async b => {
   );
   await ctx.close();
 });
+/* v1.35.1: Claude injects the current helper when the installed one is too old (an added chat takes only captures
+   that name it). An older copy already on the page gives way to the injected one; an equal or newer one keeps it. */
+const OLD_HELPER = `(function () {
+  if (window.__mcHelper || document.documentElement.hasAttribute('data-mc-helper')) return;
+  window.__mcHelper = '2.1';
+  document.documentElement.setAttribute('data-mc-helper', '2.1');
+  document.addEventListener('mc-cmd', async function (e) {
+    const d = JSON.parse(e.detail);
+    window.__oldHeard = (window.__oldHeard || 0) + 1;
+    sessionStorage.setItem('mc_res_' + d.id, JSON.stringify({ running: true }));
+    await new Promise(r => setTimeout(r, 300));
+    sessionStorage.setItem('mc_res_' + d.id, JSON.stringify({ v: '2.1' }));
+  });
+})();`;
+/* counts what a copy registers while it's injected, and every bridge answer written */
+const countRegs = p =>
+  p.evaluate(() => {
+    window.__regs = [];
+    window.__resWrites = 0;
+    const add = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function (t, ...a) {
+      if (t === 'mc-cmd' || t === 'hashchange') window.__regs.push(t);
+      return add.call(this, t, ...a);
+    };
+    const si = window.setInterval;
+    window.setInterval = function (...a) {
+      window.__regs.push('interval');
+      return si.apply(this, a);
+    };
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      if (/^mc_res_/.test(k)) window.__resWrites++;
+      return set.call(this, k, v);
+    };
+  });
+sim('HP2: an injected helper takes over from an older one', { s: 12 }, async b => {
+  // a 2.1-style copy installed, the current file injected: the current one answers, the old one never runs
+  let ctx = await b.newContext({ viewport: { width: 900, height: 800 } });
+  await ctx.clock.install({ time: NOW });
+  await ctx.addInitScript('document.addEventListener("DOMContentLoaded",function(){' + OLD_HELPER + '\n});');
+  let p = await ctx.newPage();
+  await p.goto(URL);
+  await p.waitForTimeout(600);
+  ok((await p.evaluate(() => document.documentElement.dataset.mcHelper)) === '2.1', 'HP2: the old helper is running');
+  await p.evaluate(HELPER);
+  let r = await bridge(p, 'ping', {});
+  await p.waitForTimeout(700);
+  const after = await p.evaluate(() => [
+    document.documentElement.dataset.mcHelper,
+    window.__mcHelper,
+    window.__oldHeard || 0,
+    Object.keys(sessionStorage)
+      .filter(k => /^mc_res_/.test(k))
+      .map(k => JSON.parse(sessionStorage.getItem(k)).v),
+  ]);
+  ok(
+    r && r.v === HV && after[0] === HV && after[1] === HV && after[2] === 0 && after[3].join() === HV,
+    'HP2: injected ' + HV + ' over 2.1 answers the bridge alone (' + JSON.stringify([r, after]) + ')',
+  );
+  r = await bridge(p, 'selfcheck', {});
+  ok(r && r.ok === true, 'HP2: the injected copy runs commands (selfcheck ok: ' + (r && r.ok) + ')');
+  await ctx.close();
+  // the current file installed and injected again: nothing registers twice, one answer per command
+  ({ ctx, p } = await fresh(b));
+  await p.goto(URL);
+  await p.waitForTimeout(600);
+  await countRegs(p);
+  await p.evaluate(HELPER);
+  r = await bridge(p, 'ping', {});
+  await p.waitForTimeout(300);
+  let st = await p.evaluate(() => [window.__regs, window.__resWrites, document.documentElement.dataset.mcHelper]);
+  ok(
+    r && r.v === HV && st[0].length === 0 && st[1] === 2 && st[2] === HV,
+    'HP2: ' + HV + ' injected over ' + HV + ' installs nothing (' + JSON.stringify([r, st]) + ')',
+  );
+  // a newer copy injected over this one (as this one is over 2.1): the newer answers, this one gives way
+  const NEXT = HELPER.replace(/@version\s+\S+/, '@version 9.9')
+    .split("'" + HV + "'")
+    .join("'9.9'");
+  await p.evaluate(NEXT);
+  r = await bridge(p, 'ping', {});
+  await p.waitForTimeout(300);
+  st = await p.evaluate(() => [window.__resWrites, document.documentElement.dataset.mcHelper]);
+  ok(
+    r && r.v === '9.9' && st[0] === 4 && st[1] === '9.9',
+    'HP2: a newer copy injected over ' + HV + ' answers alone (' + JSON.stringify([r, st]) + ')',
+  );
+  await ctx.close();
+  // a newer copy already there: injecting this one changes nothing
+  ({ ctx, p } = await fresh(b, false));
+  await p.goto(URL);
+  await p.waitForTimeout(400);
+  await p.evaluate(() => document.documentElement.setAttribute('data-mc-helper', '9.9'));
+  await countRegs(p);
+  await p.evaluate(HELPER);
+  st = await p.evaluate(() => [window.__regs, document.documentElement.dataset.mcHelper, window.__mcHelper || null]);
+  ok(
+    st[0].length === 0 && st[1] === '9.9' && st[2] === null,
+    'HP2: ' + HV + ' injected under a newer copy stays out (' + JSON.stringify(st) + ')',
+  );
+  await ctx.close();
+});
 sim('A3, A5: stale result, message deleted mid-run', { s: 20, after: ['A1, A2: first run, incremental'] }, async b => {
   const { ctx, p } = await fresh(b);
   await seedStorage(p, ...SHARED.afterA2);

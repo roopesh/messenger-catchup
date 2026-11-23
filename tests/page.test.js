@@ -15972,16 +15972,56 @@ async function multiChat2() {
   await p.waitForTimeout(200);
   const rpAll = await p.evaluate(() => RP());
   ok(!/Camera Club/.test(rpAll), "F1 check B: All chats doesn't use the last chat's phrase (" + rpAll + ')');
-  // 7: with several chats a capture that doesn't name its chat (helper 2.1 or older) is refused
-  await p.evaluate(() => openChat('trail'));
+  // 7 (v1.35.1): a capture that doesn't name its chat (helper 2.2 or older) is refused in an added chat only
+  await p.evaluate(() => openChat('cam'));
   await p.waitForTimeout(200);
   const w0 = await mcNWrites(p);
+  r = await mcPaste(p, cap(mcMsgs('cam', 9).slice(8)), 'cam');
+  ok(
+    r &&
+      r.ok === false &&
+      /doesn't say which chat.*Camera Club is an added chat.*Update the helper/.test(r.msg) &&
+      !(await mcWrites(p, w0)).some(x => /chunks/.test(x)),
+    'F1 review 7: a capture without its chat is refused in an added chat (' + (r && r.msg) + ')',
+  );
+  await p.evaluate(() => openChat('trail'));
+  await p.waitForTimeout(200);
   r = await mcPaste(p, cap(mcMsgs('trail', 13).slice(12)), 'trail');
   ok(
-    r && r.ok === false && /doesn't say which chat/.test(r.msg) && !(await mcWrites(p, w0)).some(x => /chunks/.test(x)),
-    'F1 review 7: a capture without its chat is refused on a page with several chats (' + (r && r.msg) + ')',
+    r && r.ok && r.fresh === 1 && (await get(p, 'meta/chat')).lastI === 12,
+    'F1 review 7: the first chat takes a capture without its chat, as before F1 (' + (r && r.msg) + ')',
   );
   ok(p.errors.length === 0, 'F1 review: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  // v1.35.1: a page with its first chat and one pending chat (no meta/chat-book yet) still takes the first chat's
+  // capture from an older helper (no thread), as scheduled refreshes paste it; the pending chat refuses one
+  const one = mcSeed({ one: true });
+  one['meta/chat'].chats = {
+    trail: { name: 'Trail Crew', tag: 'Trail', color: 1, order: 0, state: 'active', home: true },
+    book: pend.book,
+  };
+  p = await open(one, PAGE);
+  r = await mcPaste(p, cap(mcMsgs('trail', 14).slice(12)), 'trail');
+  ok(
+    r &&
+      r.ok &&
+      r.fresh === 2 &&
+      (await get(p, 'meta/chat')).lastI === 13 &&
+      (await get(p, 'chunks/c0000')).msgs.length === 14,
+    'v1.35.1: with a pending chat added, the first chat imports a capture without its chat (' + (r && r.msg) + ')',
+  );
+  await p.evaluate(() => openChat('book'));
+  await p.waitForTimeout(300);
+  const w1 = await mcNWrites(p);
+  r = await mcPaste(p, cap(mcMsgs('book', 3)), 'book');
+  ok(
+    r &&
+      r.ok === false &&
+      /doesn't say which chat.*Book Club is an added chat/.test(r.msg) &&
+      !(await mcWrites(p, w1)).some(x => /chunks/.test(x)),
+    'v1.35.1: the pending chat refuses a capture without its chat (' + (r && r.msg) + ')',
+  );
+  ok(p.errors.length === 0, 'v1.35.1: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
   // 5: Bring back puts a chat removed while pending back to pending
   p = await mcOpen({ chats: pend });
