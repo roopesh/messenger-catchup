@@ -11,6 +11,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 | ID | P | Type | Title |
 |---|---|---|---|
+| B53 | P2 | bug | A first scan with a count can stop at a false "top of chat" and store a short history as the whole chat |
+| B55 | P3 | bug | Chrome names ("Browser 1", "Browser 2") swap when the extension reconnects, so helper notices can name the wrong Chrome |
+| B56 | P3 | bug | Several-chats page oddities: a pending chat shows the first chat's stats; All chats' "need you" count disagrees with the rows |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -20,9 +23,24 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | F1 | P3 | feature | Several chats per page: stage A shipped (v1.35.0); B (one schedule) and C (across chats) left |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
-| F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; option C step 1 (the `reply-check` skill) in v1.34.0; left: measure an empty check, then its schedule with the owner |
-| F34 | P2 | feature | Add a chat by name, with suggestions: type a name in Settings › Add a chat (or tell Claude "add <name>") and pick from matching chats, instead of pasting the Messenger link (the owner's request, Nov 23; to design) |
+| F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; option C step 1 (the `reply-check` skill) in v1.34.0; measured (0.2% of a 5-hour session per check); left: schedule it every 10 minutes 5 AM–10 PM, then make the interval changeable in the page |
+| F34 | P2 | feature | Add a chat by name, with suggestions: type a name in Settings › Add a chat (or tell Claude "add <name>") and pick from matching chats, instead of pasting the Messenger link, and history chosen in days rather than messages (the owner's requests, Nov 23; to design) |
 | F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
+
+## Bugs
+
+### B53 · P2 · False "top of chat" on a first scan
+- **Seen (Nov 23, the owner's test chat's first refresh):** a `full` scan with `first:{count:400}` returned `top:true` with 90 messages, although a 200-message scan minutes earlier had read further back. The retry was fine.
+- **Why it matters:** `helper.md` says `top:true` on a first run means the chat is shorter than asked, so a refresh following it would store 90 messages as the chat's whole history.
+- **Likely cause:** the helper takes a short pause at the top (no new messages, no spinner) as the chat's start when the scan asks for a count. Fix: confirm the top (the chat's start marker, or a second longer wait) before reporting `top:true`; add a sim case with a slow load at the top.
+
+### B55 · P3 · Chrome names swap on reconnect
+- **Seen (Nov 23):** when the Claude in Chrome extension reconnected, the Chrome named "Browser 1" became "Browser 2" and the other took "Browser 1". `versions.browsers` is keyed by these names, so the page's helper notices can name the wrong Chrome.
+- **To do:** key by something stable (the extension's device id, with the display name alongside) or tell the user the names can change.
+
+### B56 · P3 · Several-chats page oddities
+- **Seen (Nov 23, owner's page 4.2):** while the owner's test chat was pending its view showed the first chat's stat row; one load after activation opened on the first chat instead of All chats (a reload fixed it); All chats in the picker said "6 need you" while the rows said 5 and 3.
+- **To do:** reproduce each in the page tests (pending chat view, opening view, picker total) and fix.
 
 ---
 
@@ -64,7 +82,7 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Decided Nov 22 (option A):** one page, Messenger Catch-up, holds several chats; the title is the picker and a fresh load opens on All chats; each chat has a fixed key and a tag the owner can rename; people stay separate per chat; the owner manages chats on the page. The prototype, the decisions and the 130-case test plan were reviewed by the owner before the build.
 - **Stage A shipped in v1.35.0:** chats in one page with the first chat's documents untouched, added chats in collections under their key, the picker, All chats, each chat's tabs, Needs you and Mark caught up per chat plus Mark all caught up, Settings › Your chats (add, tag, pause, remove with delete or keep hidden, replies per chat), the paste guard and helper 2.3's chat check, `catchup.py --chat`. Not automated from stage A's cases: the claude.ai spikes and checks (SPK1's characters were settled from the runtime contract: letters, digits and `_ - . ~ : @ +`, so `cam_chunks` is valid; SPK3's tab move is covered by sim HP1 only; SPK4: the contract's `assets.list()` gives `sizeBytes`), MIG7 and the end-to-end add (SET4, SET13: a test chat on a scratch page), HP4–HP6 and HP8–HP10 (Claude's own steps in the real Messenger; the sim has one thread), RF8/RF9/OB3/OB5/OB6/LK7 (Claude's steps, in `references/chats.md`, checked live), CT8 and SET10 (nothing across chats shows saved answers until stage C; setup's add is documented to write the page's entry), STO3/STO4/STO7 (packing and quota run per chat on the chat open on the page, as before; no estimate exists yet), PH7 (the phone on claude.ai).
 - **Stage B, one schedule across chats:** one scheduled run refreshes every chat one after another in the order dragged in Settings › Schedule, with the 15-minute cap and its "Not refreshed this run — time limit" flag, failures kept to their chat (`refresh/status.chats.<key>`, a beat-based lock), "How often" per chat, and photo packing for every chat (stage A packs the chat open on the page; under All chats, the first chat). Also `reply-check`'s one query covers the first chat's `outbox` only: add each chat's `KEY_outbox` with the schedule. Page 4.2. Tests RF (but RF8, RF9, RF11, RF12), LK, SET8, SET9, SPK5.
-- **Stage C, across chats:** one Ask over every chat with keyed citations (`[tea#412]`) and the match list (newest first or by chat, a chip per chat), full names across chats, Stats comparing the chats, By day on All chats and the summary across chats (`allchats/summary`). Tests SR, SD, CT2, CT3, PH5, SPK2.
+- **Stage C, across chats:** one Ask over every chat with keyed citations (`[book#412]`) and the match list (newest first or by chat, a chip per chat), full names across chats, Stats comparing the chats, By day on All chats and the summary across chats (`allchats/summary`). Tests SR, SD, CT2, CT3, PH5, SPK2.
 - Related: F25 (a Facebook group on the same page).
 - **Polish noticed in stage A's claude.ai check (Nov 22), for stage B:** a pending chat's kicker shows no chat name and an empty "Show messages" box; on wide screens a chat's name on its All chats card sits centred rather than beside its tag; removing a chat with no documents says "frees 0 files, 1 KB"; the URL keeps the last tab's hash on All chats; Settings' "Saved." notes linger after reopening.
 
@@ -108,11 +126,15 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Part 1 in v1.27.0 (Nov 19):** the `replies` skill ("send replies" posts queued replies with no refresh) and replies first in every refresh. Left: measure what an empty reply run costs, then set C's interval with the owner (or not); option F (Send now opens the message in Messenger with the reply ready) if the owner wants it; a live check of the routing and a reply run end to end (L1). A reply run skips outbox.md's stored-message check (it would read a chunk); call 1 and `post` still check the live "Replying to" bar.
 - **Option C, step 1 in v1.34.0 (Nov 22; the owner chose C and "measure first"):** the `reply-check` skill ("check replies", "reply check", or a message starting "Scheduled reply check"): one `ArtifactData query outbox` for a `queued` row (`limit` 1); none: one line and stop; one: it hands over to `messenger-catchup:replies`, which checks approval and the lock and posts. Rows in `sending` don't count (replies leaves them for the next refresh). Nothing schedules it yet. **Step 2, with the owner:** measure what an empty check costs on the owner's account (tokens and time per run), then choose the schedule: every 5, 10 or 15 minutes, 5 AM–10 PM like refreshes (`meta/chat.schedule.hours`), and how it's armed (`references/scheduling.md`; its "A scheduled run" rule must not take a "Scheduled reply check" message for a refresh). Also to weigh then: with `outboxAuto` off, a queued row makes each check hand over and replies lists it for a yes, so an unapproved reply is listed at every check until answered.
 
+- **Owner's choice (Nov 23, after the measurement):** every 10 minutes, only 5 AM–10 PM. Measured: about 16 s and 0.2% of a 5-hour session per empty check (10 checks moved the session meter 30% → 32%, the week not at all).
+- **Later (owner, Nov 23): change the interval and hours in the page,** picked up at the next check with no re-arming. A fixed recurring task can't change its own cron, and a check that reads its settings costs a second read on every run, so this needs a design: for example a chain (each check arms the next from `meta/chat`), or a recurring task at the shortest interval offered whose checks skip cheaply when not due. Measure the skip's cost first.
+
 ### F34 · P2 · Add a chat by name, with suggestions
 - **Asked (owner, Nov 23):** type a chat's name and have it found, or similar matches recommended: the owner remembered a chat by an old name. "The UI should be able to search my chats and find similar ones and suggest them as options. Getting the link is a shitty user experience."
 - **Today:** Settings › Your chats › Add a chat needs the chat's Messenger link (v1.35.0, F1 stage A).
 - **The constraint:** the page can't read Messenger (separate origins), so the search has to run where Messenger is: through the helper in the Messenger tab, or through Claude (Claude in Chrome).
 - **Likely flow, to design:** the owner types a name in Settings › Add a chat → the page saves a find request → the next Claude run (or a Claude chat "add <name>") searches the owner's Messenger chat list and search for exact and similar names (old names, partial matches) and writes candidates back (name, member count, last activity, link) → the page shows them as options; picking one adds the chat as today. For example, "Camera" offers Camera Club and Camera Swap. Claude in chat accepts "add <name>" with the same suggestions.
+- **History as days, not messages (owner, Nov 23):** Add a chat asks how far back to read as a number of days (for example 1, 7, 30, everything), not a message count. Today the helper's first scan stops at `first:{count}`; add a date bound (stop at the first message older than the cutoff, or the top of the chat) and store `start` as days. The owner's test chat's first refresh (1 day) used a count picked to cover 24 hours as a stopgap.
 - **Open questions for the owner (later):** how fast suggestions should appear (at the next refresh, or on demand), and how many to show.
 
 ### L1 · P3 · Live checks still to do

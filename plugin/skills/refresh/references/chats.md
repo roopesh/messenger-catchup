@@ -1,6 +1,6 @@
 # Several chats on one page
 
-Read this when `meta/chat.chats` lists more than one chat, when the user names a chat ("refresh Tea Room", "refresh tea"), or when `meta/chat` has no `chats` yet (the upgrade below, once).
+Read this when `meta/chat.chats` lists more than one chat, when the user names a chat ("refresh Book Club", "refresh book"), or when `meta/chat` has no `chats` yet (the upgrade below, once).
 
 The owner manages their chats on the page (title ▾ › Add a chat, and Settings ⚙ › Your chats): adding, tags, pausing, removing and each chat's reply setting all work without Claude. Don't add, remove, pause or retag a chat yourself unless the user asks; the page writes what they choose and the next refresh of that chat does the rest.
 
@@ -27,7 +27,7 @@ Follow SKILL.md's Refresh steps with these changes. Everything not named here is
 - **The scan (step 3).** The helper's results carry `thread` (helper 2.3 and later): accept a result only when it equals the chat's `thread`. An added chat refuses a capture without it, so with an older installed helper (`data-mc-helper` 2.2 or lower) inject the current one for that chat's steps (`references/helper.md` › Injecting: it takes over from the installed copy until the tab reloads, so never run `full` then; run the injected steps one at a time), and tell the user to update the helper (`references/helper.md` › Versions). The first chat takes a capture without `thread`, as before several chats, so its refreshes (scheduled ones too) work with any helper. `full` returning `stage:"wrong-thread"` means the tab was moved to another chat mid-scan: navigate back to `chatUrl` and start again with a fresh `run` id.
 - **The paste (step 4).** The page opens on All chats, with the first chat loaded under it. Before pasting, click the title (it reads "All chats") and pick the chat (a pending chat opens too, saying it waits for its first refresh), then paste. The picker doesn't switch while the page tab is still storing photos or packing: wait, as photos.md › Waiting says. The page refuses a capture from another chat ("This capture is from …, not …"): pick the right chat and paste again. A chat whose `photos` is false stores no photos: skip the photo steps.
 - **Writes (step 7).** `lastRefresh` and `coverage` go to `meta/chat-KEY` (pinned). `versions` belongs to the first chat (the page compares it with `meta/chat.lastRefresh`): don't write it for an added chat. **Nothing new:** only `meta/chat-KEY`'s `lastRefresh`, and `refresh/status`.
-- **Report:** name the chat in the first bullet ("Tea Room: 12 new messages").
+- **Report:** name the chat in the first bullet ("Book Club: 12 new messages").
 
 ## A pending chat's first refresh
 1. `python3 catchup.py chats META.json KEY` for its seed. Take the lock as step 1 does.

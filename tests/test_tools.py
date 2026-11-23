@@ -800,7 +800,15 @@ class TestUpdateNotice(unittest.TestCase):
         self.assertGreaterEqual(found["SKILL.md"], 2, "the nothing-new path and step 7")
         self.assertGreaterEqual(sum(found.values()), 5)
         step7 = re.search(r"^7\. .*$", skill, re.M).group(0)
-        self.assertIn("{lastRefresh, coverage, versions}` (`references/database.md` › Versions)", step7)
+        self.assertIn(
+            "{lastRefresh, coverage, versions}` (`references/database.md` › Versions: start from `catchup.py versions TZ`)",
+            step7,
+        )
+        # B54: database.md gives lastRefresh's format and the command that prints it with versions, ready-made
+        self.assertIn("**Start from `python3 catchup.py versions TZ`**", self.versions)
+        self.assertIn(
+            '`lastRefresh`: the time in `meta/chat.tz` as `Ddd Mon D, H:MM AM` ("Fri Nov 20, 9:04 AM")', self.versions
+        )
         self.assertIn("{lastRefresh, coverage, versions:{page, helper, refresh, browsers:", self.versions)
 
     def test_page_version_check_goes_both_ways(self):

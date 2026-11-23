@@ -7975,6 +7975,53 @@ async function notices() {
     'notices U26: an hour apart is a different refresh: still C (' + JSON.stringify(n) + ')',
   );
   await p.close();
+  /* U27 (B54): a scheduled run wrote lastRefresh as an ISO time and versions.refresh as the display string. The page
+     reads either form, compares them as times in meta/chat.tz (the same 45 minutes) and shows the ISO one formatted. */
+  const B54 = '2026-11-23T17:04:30Z';
+  const lastShown = p => p.evaluate(() => document.getElementById('refresh-st').textContent);
+  p = await open(withMeta(metaWith({ lastRefresh: B54, versions: vers({ refresh: 'Mon Nov 23, 9:00 AM' }) })));
+  n = await noticeTexts(p);
+  let st = await lastShown(p);
+  ok(
+    n && n.length === 0 && !p.errors.length,
+    'notices U27: ISO lastRefresh 4 minutes after a display versions.refresh is the same run: nothing (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  ok(
+    /Last refreshed Mon Nov 23, 9:04 AM\./.test(st) && !/2026-11-23T/.test(st),
+    'U27: an ISO lastRefresh shows as "Mon Nov 23, 9:04 AM" in the chat\'s zone (' + JSON.stringify(st) + ')',
+  );
+  await p.close();
+  p = await open(
+    withMeta(
+      metaWith({ tz: 'America/New_York', lastRefresh: B54, versions: vers({ refresh: 'Mon Nov 23, 12:04 PM' }) }),
+    ),
+  );
+  n = await noticeTexts(p);
+  st = await lastShown(p);
+  ok(
+    n && n.length === 0 && /Last refreshed Mon Nov 23, 12:04 PM\./.test(st),
+    'U27: in meta/chat.tz America/New_York the same time is 12:04 PM, and matches (' + JSON.stringify([n, st]) + ')',
+  );
+  await p.close();
+  await none(
+    withMeta(metaWith({ lastRefresh: 'Mon Nov 23, 9:10 AM', versions: vers({ refresh: B54 }) })),
+    'U27: an ISO versions.refresh 6 minutes before a display lastRefresh: nothing',
+  );
+  await none(
+    withMeta(metaWith({ lastRefresh: B54, versions: vers({ refresh: '2026-11-23T16:40:00Z' }) })),
+    'U27: both ISO, 25 minutes apart: nothing',
+  );
+  p = await open(withMeta(metaWith({ lastRefresh: B54, versions: vers({ refresh: 'Mon Nov 23, 8:00 AM' }) })));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && /older copy of the Messenger Catch-up skill/.test(n[0]),
+    'notices U27: an ISO lastRefresh over an hour after versions.refresh is a different refresh: still C (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  await p.close();
   /* U19: no database in this view (signed out, a preview): nothing to compare, nothing shown */
   await none(Object.assign(all(), { __opts: { noDb: true } }), 'U19: no database: no notices, no errors');
   /* U20: a page from before the notices ignores versions */
@@ -15178,16 +15225,16 @@ async function askSearch() {
 }
 
 /* ---------- several chats (F1 stage A) ----------
-   The mock page holds Trail Crew (its first chat, key trail, the page's own documents) plus Camera Club (cam) and Tea
-   Room (tea), each in collections under its key. Every chat has #0-#n, so the same number exists in each. */
-const MC_THREAD = { cam: '5151', tea: '6161' };
-const MC_NAME = { trail: 'Trail Crew', cam: 'Camera Club', tea: 'Tea Room' };
+   The mock page holds Trail Crew (its first chat, key trail, the page's own documents) plus Camera Club (cam) and Book
+   Room (book), each in collections under its key. Every chat has #0-#n, so the same number exists in each. */
+const MC_THREAD = { cam: '5151', book: '6161' };
+const MC_NAME = { trail: 'Trail Crew', cam: 'Camera Club', book: 'Book Club' };
 const MC_URL = k => 'https://www.facebook.com/messages/t/' + MC_THREAD[k];
 const mcMsgs = (k, n) => range(0, n - 1, i => mk(i, { b: k + ' message ' + i, m: 'mid.' + k + i }));
 function mcSeed(o = {}) {
   const s = SEED();
-  const n = { trail: 12, cam: 8, tea: 6 };
-  const msgs = { trail: mcMsgs('trail', 12), cam: mcMsgs('cam', 8), tea: mcMsgs('tea', 6) };
+  const n = { trail: 12, cam: 8, book: 6 };
+  const msgs = { trail: mcMsgs('trail', 12), cam: mcMsgs('cam', 8), book: mcMsgs('book', 6) };
   const sum = (k, ment) => ({
     version: 2,
     convs: [],
@@ -15225,9 +15272,9 @@ function mcSeed(o = {}) {
   s['meta/chat'].chats = {
     trail: { name: 'Trail Crew', tag: 'Trail', color: 1, order: 0, state: 'active', home: true },
     cam: { name: 'Camera Club', tag: 'Cam', color: 2, order: 1, state: 'active', thread: '5151', url: MC_URL('cam') },
-    tea: { name: 'Tea Room', tag: 'Tea', color: 3, order: 2, state: 'active', thread: '6161', url: MC_URL('tea') },
+    book: { name: 'Book Club', tag: 'Book', color: 3, order: 2, state: 'active', thread: '6161', url: MC_URL('book') },
   };
-  ['cam', 'tea'].forEach(k => {
+  ['cam', 'book'].forEach(k => {
     s['meta/chat-' + k] = meta(k);
     s[k + '_chunks/c0000'] = { start: 0, msgs: msgs[k] };
     s[k + '_summary/current'] = sum(k, k === 'cam' ? 6 : 3);
@@ -15354,7 +15401,7 @@ async function multiChat() {
       cards[0].startsWith('trail|') &&
       cards[1].includes('Camera Club: someone asked you') &&
       cards[1].includes('Cam #6') &&
-      cards[2].includes('Tea #3') &&
+      cards[2].includes('Book #3') &&
       cards[0].includes('10 new · 1 needs you'),
     'F1 PG3: All chats has a card per chat with its new count and tagged Needs you (' +
       cards.map(c => c.slice(0, 60)) +
@@ -15375,44 +15422,44 @@ async function multiChat() {
   ok(
     L['c:chunks'] &&
       !L['c:cam_chunks'] &&
-      !L['c:tea_chunks'] &&
+      !L['c:book_chunks'] &&
       L['d:meta/chat-cam'] &&
       L['d:cam_summary/current'] &&
       L['c:cam_outbox'],
     'F1 DM9: All chats listens to the first chat in full and to the others lightly (' + Object.keys(L).join(' ') + ')',
   );
-  // PG2: in Tea Room only Tea's items, nothing of the others
-  await mcPick(p, 'tea');
-  const teaSum = await mcText(p, '#v-summary');
+  // PG2: in Book Club only Book's items, nothing of the others
+  await mcPick(p, 'book');
+  const bookSum = await mcText(p, '#v-summary');
   ok(
-    (await mcText(p, '#h1')) === 'Tea Room' &&
+    (await mcText(p, '#h1')) === 'Book Club' &&
       (await p.isVisible('nav.tabs')) &&
-      teaSum.includes('Tea Room: someone asked you') &&
-      !/Trail|Camera|Cam #/.test(teaSum),
-    "F1 PG2: Tea Room's Needs you holds its items only and names no other chat",
+      bookSum.includes('Book Club: someone asked you') &&
+      !/Trail|Camera|Cam #/.test(bookSum),
+    "F1 PG2: Book Club's Needs you holds its items only and names no other chat",
   );
   L = await p.evaluate(() => __rt.listeners());
   ok(
-    L['c:tea_chunks'] === 1 && !L['c:chunks'] && !L['c:cam_chunks'],
+    L['c:book_chunks'] === 1 && !L['c:chunks'] && !L['c:cam_chunks'],
     "F1 DM9: switching chats drops the old chat's listeners (" + Object.keys(L).filter(k => /chunks/.test(k)) + ')',
   );
   // SD1/SD6: Stats count only this chat's messages; switching redraws
   await p.click('nav a[data-tab="messages"]');
   await p.waitForTimeout(200);
-  const teaMsgs = await mcText(p, '#msgs');
+  const bookMsgs = await mcText(p, '#msgs');
   await mcPick(p, 'cam');
   await p.click('nav a[data-tab="messages"]');
   await p.waitForTimeout(300);
   const camMsgs = await mcText(p, '#msgs');
   ok(
-    teaMsgs.includes('tea message 5') &&
-      !teaMsgs.includes('cam message') &&
+    bookMsgs.includes('book message 5') &&
+      !bookMsgs.includes('cam message') &&
       camMsgs.includes('cam message 7') &&
-      !camMsgs.includes('tea message'),
+      !camMsgs.includes('book message'),
     'F1: Messages shows only the chat on screen, and switching redraws it',
   );
   // CT5: no two elements share an id after switching back and forth
-  await mcPick(p, 'tea');
+  await mcPick(p, 'book');
   await mcPick(p, 'cam');
   const dupIds = await p.evaluate(() => {
     const seen = new Map();
@@ -15426,31 +15473,31 @@ async function multiChat() {
     camLink.includes('5151') && !camLink.includes('4242'),
     "F1 HP7: a chat's reply links open its own thread (" + camLink.slice(0, 80) + ')',
   );
-  // CT4: the same number in two chats never cross-links: All chats › Tea #3 opens Tea's #3
+  // CT4: the same number in two chats never cross-links: All chats › Book #3 opens Book's #3
   await p.click('#h1');
   await p.click('#picker-list button[data-key="all"]');
   await p.waitForTimeout(200);
   await flashReset(p);
-  await p.click('#v-all .chatcard[data-chat="tea"] button.cite');
+  await p.click('#v-all .chatcard[data-chat="book"] button.cite');
   await until(p, () => document.querySelector('#m3[data-flashed]'), null, 3000);
   ok(
-    (await mcText(p, '#h1')) === 'Tea Room' &&
+    (await mcText(p, '#h1')) === 'Book Club' &&
       (await p.isVisible('#v-messages')) &&
-      (await mcText(p, '#m3')).includes('tea message 3'),
-    "F1 CT4: All chats › Tea #3 switches to Tea Room and opens its #3, not another chat's",
+      (await mcText(p, '#m3')).includes('book message 3'),
+    "F1 CT4: All chats › Book #3 switches to Book Club and opens its #3, not another chat's",
   );
-  // DM10, PG4: in Tea Room, Mark caught up writes only meta/chat-tea; other chats' windows stay
+  // DM10, PG4: in Book Club, Mark caught up writes only meta/chat-book; other chats' windows stay
   await p.click('nav a[data-tab="summary"]');
   let w0 = await mcNWrites(p);
   await p.click('#caught');
-  await until(p, () => __rt.get('meta/chat-tea').caughtUpI === 5);
+  await until(p, () => __rt.get('meta/chat-book').caughtUpI === 5);
   ok(
-    JSON.stringify(await mcWrites(p, w0)) === JSON.stringify(['meta/chat-tea']) &&
+    JSON.stringify(await mcWrites(p, w0)) === JSON.stringify(['meta/chat-book']) &&
       (await get(p, 'meta/chat')).caughtUpI === 1 &&
       (await get(p, 'meta/chat-cam')).caughtUpI === 1,
-    "F1 PG4/DM10: Mark caught up in Tea Room moves only Tea's window, one write to meta/chat-tea",
+    "F1 PG4/DM10: Mark caught up in Book Club moves only Book's window, one write to meta/chat-book",
   );
-  // DM10, OB1: Reply here in Tea Room queues tea_outbox/r<ms> with Tea's i and mid
+  // DM10, OB1: Reply here in Book Club queues book_outbox/r<ms> with Book's i and mid
   await p.click('nav a[data-tab="messages"]');
   await p.click('#lay-flat');
   await p.check('#msg-all'); /* #4 is before the window Mark caught up just moved */
@@ -15466,27 +15513,27 @@ async function multiChat() {
   });
   ok(
     ob &&
-      /^tea_outbox\/r\d+$/.test(ob.k) &&
+      /^book_outbox\/r\d+$/.test(ob.k) &&
       ob.i === 4 &&
-      ob.mid === 'mid.tea4' &&
-      (await mcWrites(p, w0)).every(x => x.startsWith('tea_outbox/')),
-    "F1 OB1/DM10: Reply here in Tea Room writes tea_outbox/r<ms> with Tea's message (" +
+      ob.mid === 'mid.book4' &&
+      (await mcWrites(p, w0)).every(x => x.startsWith('book_outbox/')),
+    "F1 OB1/DM10: Reply here in Book Club writes book_outbox/r<ms> with Book's message (" +
       JSON.stringify(ob && ob.k) +
       ')',
   );
-  // HP3: a capture from Camera Club is refused in Tea Room, nothing written
+  // HP3: a capture from Camera Club is refused in Book Club, nothing written
   w0 = await mcNWrites(p);
-  let r = await mcPaste(p, Object.assign(cap(mcMsgs('cam', 9).slice(8)), { thread: '5151' }), 'tea');
+  let r = await mcPaste(p, Object.assign(cap(mcMsgs('cam', 9).slice(8)), { thread: '5151' }), 'book');
   ok(
     r &&
       r.ok === false &&
-      /This capture is from Camera Club, not Tea Room/.test(r.msg) &&
+      /This capture is from Camera Club, not Book Club/.test(r.msg) &&
       !(await mcWrites(p, w0)).some(x => /chunks|meta\/chat/.test(x)),
     'F1 HP3: a capture from another chat is refused, naming both, nothing saved (' + (r && r.msg) + ')',
   );
-  // DM10: Tea's own capture lands in Tea's documents only
+  // DM10: Book's own capture lands in Book's documents only
   w0 = await mcNWrites(p);
-  r = await mcPaste(p, Object.assign(cap(mcMsgs('tea', 8).slice(6)), { thread: '6161' }), 'tea');
+  r = await mcPaste(p, Object.assign(cap(mcMsgs('book', 8).slice(6)), { thread: '6161' }), 'book');
   /* the page-wide storage figures (meta/chat.assetUsage) are the one shared write an import makes */
   const tw = await p.evaluate(
     n =>
@@ -15499,34 +15546,34 @@ async function multiChat() {
   ok(
     r &&
       r.ok &&
-      (await get(p, 'meta/chat-tea')).lastI === 7 &&
-      tw.every(x => /^(tea_|meta\/chat-tea$|refresh\/lastImport-tea$)/.test(x)),
-    "F1 DM10: Tea Room's capture writes only tea_chunks, meta/chat-tea and refresh/lastImport-tea (" +
+      (await get(p, 'meta/chat-book')).lastI === 7 &&
+      tw.every(x => /^(book_|meta\/chat-book$|refresh\/lastImport-book$)/.test(x)),
+    "F1 DM10: Book Club's capture writes only book_chunks, meta/chat-book and refresh/lastImport-book (" +
       [...new Set(tw)] +
       ')',
   );
   // MIG6: saved answers stay with their chat: a row with no chat is the first chat's
   await p.evaluate(() => {
     __rt.write('qa/old1', { q: 'Who has the stove?', a: 'Ana [#5]', at: '2026-11-01T10:00:00Z', scope: 'all' });
-    __rt.write('qa/tea1', {
-      q: 'Any tea tins left?',
+    __rt.write('qa/book1', {
+      q: 'Any book tips left?',
       a: 'Ben [#2]',
       at: '2026-11-02T10:00:00Z',
       scope: 'all',
-      chat: 'tea',
+      chat: 'book',
     });
   });
   await p.click('nav a[data-tab="ask"]');
-  await until(p, () => /Any tea tins/.test(document.getElementById('qa-list').textContent));
-  const teaQa = await mcText(p, '#qa-list');
+  await until(p, () => /Any book tips/.test(document.getElementById('qa-list').textContent));
+  const bookQa = await mcText(p, '#qa-list');
   await mcPick(p, 'trail');
   await until(p, () => /Who has the stove/.test(document.getElementById('qa-list').textContent));
   const trailQa = await mcText(p, '#qa-list');
   ok(
-    teaQa.includes('Any tea tins') &&
-      !teaQa.includes('stove') &&
+    bookQa.includes('Any book tips') &&
+      !bookQa.includes('stove') &&
       trailQa.includes('stove') &&
-      !trailQa.includes('tea tins'),
+      !trailQa.includes('book tips'),
     "F1 MIG6: saved answers show in their own chat; an old one with no chat is the first chat's",
   );
   ok(p.errors.length === 0, 'F1: several chats, no page errors ' + JSON.stringify(p.errors));
@@ -15536,7 +15583,7 @@ async function multiChat() {
   p = await mcOpen();
   r = await mcPaste(p, Object.assign(cap(mcMsgs('trail', 13).slice(12)), { thread: '4242' }), 'trail');
   ok(
-    r && r.ok && (await get(p, 'meta/chat')).lastI === 12 && (await get(p, 'meta/chat-tea')).lastI === 5,
+    r && r.ok && (await get(p, 'meta/chat')).lastI === 12 && (await get(p, 'meta/chat-book')).lastI === 5,
     'F1: a paste on All chats imports into the first chat, as a scheduled refresh expects',
   );
   // PG5: Mark all caught up moves every live chat's window; a refused write is named; hidden chats untouched
@@ -15546,7 +15593,7 @@ async function multiChat() {
   ok(
     (await mcText(p, '#caught-all-st')).includes('Camera Club') &&
       (await get(p, 'meta/chat')).caughtUpI === 12 &&
-      (await get(p, 'meta/chat-tea')).caughtUpI === 5 &&
+      (await get(p, 'meta/chat-book')).caughtUpI === 5 &&
       (await get(p, 'meta/chat-cam')).caughtUpI === 1,
     "F1 PG5: Mark all caught up moves each chat's window and names the one it couldn't save (" +
       (await mcText(p, '#caught-all-st')) +
@@ -15554,9 +15601,9 @@ async function multiChat() {
   );
   // OB2: All chats lists queued replies tagged with their chat
   await p.evaluate(() =>
-    __rt.write('tea_outbox/r1', {
+    __rt.write('book_outbox/r1', {
       i: 2,
-      mid: 'mid.tea2',
+      mid: 'mid.book2',
       to: 'You',
       snip: 'x',
       text: 'on it',
@@ -15564,9 +15611,9 @@ async function multiChat() {
       queuedAt: new Date().toISOString(),
     }),
   );
-  await until(p, () => /Tea #2 · to You: on it/.test(document.getElementById('v-all').textContent));
+  await until(p, () => /Book #2 · to You: on it/.test(document.getElementById('v-all').textContent));
   ok(
-    /Tea #2 · to You: on it/.test(await mcText(p, '#v-all')),
+    /Book #2 · to You: on it/.test(await mcText(p, '#v-all')),
     "F1 OB2: All chats lists every chat's queued replies, tagged",
   );
   await p.context().close();
@@ -15585,7 +15632,7 @@ async function multiChat() {
   await p.context().close();
 
   // Settings: Your chats (the owner manages chats without Claude)
-  p = await mcOpen({ chats: { book: { name: 'Book Swap', tag: 'Book', color: 4, order: 3, state: 'deleted' } } });
+  p = await mcOpen({ chats: { chess: { name: 'Chess Swap', tag: 'Chess', color: 4, order: 3, state: 'deleted' } } });
   const s0 = await p.evaluate(() => __rt.samples.length);
   await mcSettings(p);
   const unlabeled = await p.$$eval('#set-body input:not([type=radio]):not([type=checkbox]), #set-body select', xs =>
@@ -15613,24 +15660,24 @@ async function multiChat() {
   await p.click('#add-go');
   await p.waitForTimeout(100);
   ok(
-    /already on the page: Tea Room/.test(await mcText(p, '#set-st-add')) && (await mcNWrites(p)) === w0,
+    /already on the page: Book Club/.test(await mcText(p, '#set-st-add')) && (await mcNWrites(p)) === w0,
     'F1 SET2: a link already on the page is refused, naming the chat',
   );
   // SET3, DM5: one entry, pending; a deleted chat's key isn't reused
   w0 = await mcNWrites(p);
   await p.fill('#add-link', 'https://www.facebook.com/messages/e2ee/t/7171');
-  await p.fill('#add-name', 'Book Club');
-  await p.fill('#add-tag', 'Book');
+  await p.fill('#add-name', 'Chess Club');
+  await p.fill('#add-tag', 'Chess');
   await p.selectOption('#add-start', '1000');
   await p.click('#add-go');
-  await until(p, () => __rt.get('meta/chat').chats.book2);
+  await until(p, () => __rt.get('meta/chat').chats.chess2);
   const ws = await p.evaluate(n => __rt.writes.slice(n), w0);
-  const e = (await get(p, 'meta/chat')).chats.book2;
+  const e = (await get(p, 'meta/chat')).chats.chess2;
   ok(
     ws.length === 1 &&
       ws[0].p === 'meta/chat' &&
       JSON.stringify(Object.keys(ws[0].v)) === '["chats"]' &&
-      JSON.stringify(Object.keys(ws[0].v.chats)) === '["book2"]' &&
+      JSON.stringify(Object.keys(ws[0].v.chats)) === '["chess2"]' &&
       JSON.stringify(Object.keys(e).sort()) ===
         JSON.stringify(
           ['addedAt', 'color', 'name', 'order', 'photos', 'start', 'state', 'tag', 'thread', 'url'].sort(),
@@ -15639,14 +15686,14 @@ async function multiChat() {
       e.start === 1000 &&
       e.thread === '7171' &&
       e.url === 'https://www.facebook.com/messages/e2ee/t/7171' &&
-      (await get(p, 'meta/chat')).chats.book.state === 'deleted',
+      (await get(p, 'meta/chat')).chats.chess.state === 'deleted',
     'F1 SET3/DM5: Add a chat writes one pending entry (no auto unless chosen) under a key never used before (' +
       JSON.stringify(e) +
       ')',
   );
-  await until(p, () => document.querySelector('.chatrow[data-chat="book2"]'));
+  await until(p, () => document.querySelector('.chatrow[data-chat="chess2"]'));
   ok(
-    /Waiting for its first refresh. Ask Claude to “refresh Book Club”/.test(await mcText(p, '#set-body')),
+    /Waiting for its first refresh. Ask Claude to “refresh Chess Club”/.test(await mcText(p, '#set-body')),
     'F1 SET4: a pending chat says to ask Claude to refresh it',
   );
   // SET12, DM4, CT7: renaming a tag: empty, too long and duplicate refused; a good one shows at once, nothing else written
@@ -15655,26 +15702,26 @@ async function multiChat() {
     ['Cam', /already Camera Club's tag/],
   ]) {
     w0 = await mcNWrites(p);
-    await p.fill('#tag-tea', t);
-    await p.click('.chatrow[data-chat="tea"] .fld button');
+    await p.fill('#tag-book', t);
+    await p.click('.chatrow[data-chat="book"] .fld button');
     await p.waitForTimeout(100);
     ok(
-      why.test(await mcText(p, '#set-st-tea')) && (await mcNWrites(p)) === w0,
-      'F1 SET12: the tag "' + t + '" is refused (' + (await mcText(p, '#set-st-tea')) + ')',
+      why.test(await mcText(p, '#set-st-book')) && (await mcNWrites(p)) === w0,
+      'F1 SET12: the tag "' + t + '" is refused (' + (await mcText(p, '#set-st-book')) + ')',
     );
   }
   w0 = await mcNWrites(p);
-  await p.fill('#tag-tea', 'Brew');
-  await p.click('.chatrow[data-chat="tea"] .fld button');
-  await until(p, () => __rt.get('meta/chat').chats.tea.tag === 'Brew');
+  await p.fill('#tag-book', 'Brew');
+  await p.click('.chatrow[data-chat="book"] .fld button');
+  await until(p, () => __rt.get('meta/chat').chats.book.tag === 'Brew');
   const keys0 = await p.evaluate(() =>
     [...__rt.store.keys()]
-      .filter(k => /^tea_/.test(k))
+      .filter(k => /^book_/.test(k))
       .sort()
       .join(),
   );
   ok(
-    JSON.stringify(await mcWrites(p, w0)) === '["meta/chat"]' && keys0.includes('tea_chunks/c0000'),
+    JSON.stringify(await mcWrites(p, w0)) === '["meta/chat"]' && keys0.includes('book_chunks/c0000'),
     "F1 SET12/DM4: a new tag is one meta/chat write; the chat's collections keep their names",
   );
   await p.click('#settings-close');
@@ -15703,21 +15750,21 @@ async function multiChat() {
   await p.click('.chatrow[data-chat="cam"] .btns button:text("Resume")');
   await until(p, () => __rt.get('meta/chat').chats.cam.state === 'active');
   // SET7: Remove: delete chosen by default; Cancel writes nothing; Keep it hidden keeps every document
-  await p.click('.chatrow[data-chat="tea"] .btns button:text("Remove…")');
-  ok(await p.isChecked('#rm-delete-tea'), 'F1 SET7: Remove opens with "Delete its messages and photos" chosen');
+  await p.click('.chatrow[data-chat="book"] .btns button:text("Remove…")');
+  ok(await p.isChecked('#rm-delete-book'), 'F1 SET7: Remove opens with "Delete its messages and photos" chosen');
   w0 = await mcNWrites(p);
-  await p.click('.chatrow[data-chat="tea"] .rmbox button:text("Cancel")');
+  await p.click('.chatrow[data-chat="book"] .rmbox button:text("Cancel")');
   ok((await mcNWrites(p)) === w0 && !(await p.$('.rmbox')), 'F1 SET7: Cancel writes nothing');
-  await p.click('.chatrow[data-chat="tea"] .btns button:text("Remove…")');
-  await p.check('#rm-hide-tea');
-  await p.click('#rm-go-tea');
-  await until(p, () => __rt.get('meta/chat').chats.tea.state === 'hidden');
+  await p.click('.chatrow[data-chat="book"] .btns button:text("Remove…")');
+  await p.check('#rm-hide-book');
+  await p.click('#rm-go-book');
+  await until(p, () => __rt.get('meta/chat').chats.book.state === 'hidden');
   ok(
-    (await p.evaluate(() => [...__rt.store.keys()].filter(k => /^tea_|chat-tea/.test(k)).length)) >= 4,
+    (await p.evaluate(() => [...__rt.store.keys()].filter(k => /^book_|chat-book/.test(k)).length)) >= 4,
     'F1 SET7: Keep it hidden deletes nothing',
   );
   await p.click('#settings-close');
-  await until(p, () => !document.querySelector('#v-all .chatcard[data-chat="tea"]'));
+  await until(p, () => !document.querySelector('#v-all .chatcard[data-chat="book"]'));
   ok(true, 'F1 PG3: a hidden chat leaves All chats');
   ok(s0 === (await p.evaluate(() => __rt.samples.length)), 'F1 SET13: managing chats asks Claude nothing');
   ok(p.errors.length === 0, 'F1: settings, no page errors ' + JSON.stringify(p.errors));
@@ -15743,7 +15790,7 @@ async function multiChat() {
     !left.length &&
       (await p.evaluate(b => __rt.deletes.includes(b), camBlob)) &&
       (await get(p, 'chunks/c0000')) &&
-      (await get(p, 'tea_chunks/c0000')),
+      (await get(p, 'book_chunks/c0000')),
     "F1 STO6: Delete removes the chat's files and documents, and only its (" + left + ')',
   );
   ok(p.errors.length === 0, 'F1: delete, no page errors ' + JSON.stringify(p.errors));
@@ -15762,15 +15809,15 @@ async function multiChat() {
   p = await mcOpen({ one: true });
   await mcSettings(p);
   await p.fill('#add-link', 'https://www.messenger.com/t/8181');
-  await p.fill('#add-name', 'Tea Room');
+  await p.fill('#add-name', 'Book Club');
   await p.click('#add-go');
   await until(p, () => __rt.get('meta/chat').chats);
   let cs = (await get(p, 'meta/chat')).chats;
   ok(
-    JSON.stringify(Object.keys(cs).sort()) === '["tearoo","trail"]' &&
+    JSON.stringify(Object.keys(cs).sort()) === '["bookcl","trail"]' &&
       cs.trail.home === true &&
       cs.trail.tag === 'Trail' &&
-      cs.tearoo.tag === 'Tea',
+      cs.bookcl.tag === 'Book',
     'F1 SET3/MIG: adding a chat to a one-chat page writes its first chat too (' + Object.keys(cs) + ')',
   );
   ok((await mcText(p, '#h1')) === 'Trail Catch-up', "F1: a pending chat doesn't switch the page to All chats");
@@ -15779,7 +15826,7 @@ async function multiChat() {
   // STO2: the 80% warning names the chat that uses most; STO5: a chat with photos off stores none
   p = await mcOpen({
     chats: {
-      tea: { name: 'Tea Room', tag: 'Tea', color: 3, order: 2, state: 'active', thread: '6161', photos: false },
+      book: { name: 'Book Club', tag: 'Book', color: 3, order: 2, state: 'active', thread: '6161', photos: false },
     },
     extra: {},
   });
@@ -15800,14 +15847,14 @@ async function multiChat() {
     /Most of it is Camera Club's/.test(await mcText(p, '#storage-st')),
     'F1 STO2: the storage warning names the chat that uses most',
   );
-  await mcPick(p, 'tea');
+  await mcPick(p, 'book');
   const up0 = await p.evaluate(() => __rt.uploads.length);
   r = await mcPaste(
     p,
-    Object.assign(cap(mcMsgs('tea', 7).slice(6), { photos: [{ i: 6, k: 0, type: 'image/png', b64: PNG }] }), {
+    Object.assign(cap(mcMsgs('book', 7).slice(6), { photos: [{ i: 6, k: 0, type: 'image/png', b64: PNG }] }), {
       thread: '6161',
     }),
-    'tea',
+    'book',
   );
   ok(
     r && r.ok && (await p.evaluate(() => __rt.uploads.length)) === up0,
@@ -15850,9 +15897,9 @@ async function multiChat() {
             state: 'active',
             thread: '5151',
           },
-          tea: {
-            name: 'Tea Room',
-            tag: 'Tea',
+          book: {
+            name: 'Book Club',
+            tag: 'Book',
             color: 3,
             order: 2,
             state: 'pending',
@@ -15922,9 +15969,9 @@ async function multiChat() {
 /* F1 stage A, review of PR #60: each check failed on the code before its fix */
 async function multiChat2() {
   const pend = {
-    book: {
-      name: 'Book Club',
-      tag: 'Book',
+    chess: {
+      name: 'Chess Club',
+      tag: 'Chess',
       color: 4,
       order: 3,
       state: 'pending',
@@ -15934,12 +15981,12 @@ async function multiChat2() {
     },
   };
   const seeded = {
-    'meta/chat-book': {
-      key: 'book',
+    'meta/chat-chess': {
+      key: 'chess',
       thread: '7171',
       chatUrl: 'https://www.facebook.com/messages/t/7171',
-      threadName: 'Book Club',
-      shortName: 'Book',
+      threadName: 'Chess Club',
+      shortName: 'Chess',
       chunkSize: 82,
       lastI: -1,
       anchorMids: [],
@@ -15948,19 +15995,19 @@ async function multiChat2() {
   };
   // 1: a pending chat opens for its first paste, which the guard accepts
   let p = await mcOpen({ chats: pend, extra: seeded });
-  await p.evaluate(() => openChat('book'));
+  await p.evaluate(() => openChat('chess'));
   await p.waitForTimeout(300);
   ok(
-    (await mcText(p, '#h1')) === 'Book Club' && (await mcText(p, '#window')).includes('refresh Book Club'),
+    (await mcText(p, '#h1')) === 'Chess Club' && (await mcText(p, '#window')).includes('refresh Chess Club'),
     'F1 review 1: a pending chat opens, saying it waits for its first refresh (' + (await mcText(p, '#h1')) + ')',
   );
-  let r = await mcPaste(p, Object.assign(cap(mcMsgs('book', 3)), { thread: '7171' }), 'book');
+  let r = await mcPaste(p, Object.assign(cap(mcMsgs('chess', 3)), { thread: '7171' }), 'chess');
   ok(
-    r && r.ok && (await get(p, 'meta/chat-book')).lastI === 2 && (await get(p, 'book_chunks/c0000')),
+    r && r.ok && (await get(p, 'meta/chat-chess')).lastI === 2 && (await get(p, 'chess_chunks/c0000')),
     'F1 review 1: its first capture imports into its own documents (' + (r && r.msg) + ')',
   );
   // 9: a jump waiting for a message that never loaded doesn't follow the page into another chat
-  await p.evaluate(() => openChat('tea', 7)); /* Tea Room has #0-#5 only */
+  await p.evaluate(() => openChat('book', 7)); /* Book Club has #0-#5 only */
   await p.waitForTimeout(300);
   await flashReset(p);
   await p.evaluate(() => openChat('cam'));
@@ -16050,12 +16097,12 @@ async function multiChat2() {
   );
   ok(p.errors.length === 0, 'F1 review: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
-  // v1.35.1: a page with its first chat and one pending chat (no meta/chat-book yet) still takes the first chat's
+  // v1.35.1: a page with its first chat and one pending chat (no meta/chat-chess yet) still takes the first chat's
   // capture from an older helper (no thread), as scheduled refreshes paste it; the pending chat refuses one
   const one = mcSeed({ one: true });
   one['meta/chat'].chats = {
     trail: { name: 'Trail Crew', tag: 'Trail', color: 1, order: 0, state: 'active', home: true },
-    book: pend.book,
+    chess: pend.chess,
   };
   p = await open(one, PAGE);
   r = await mcPaste(p, Object.assign(cap(mcMsgs('trail', 14).slice(12)), { anchor: 'mid.trail10' }), 'trail');
@@ -16067,14 +16114,14 @@ async function multiChat2() {
       (await get(p, 'chunks/c0000')).msgs.length === 14,
     'v1.35.1: with a pending chat added, the first chat imports a capture without its chat (' + (r && r.msg) + ')',
   );
-  await p.evaluate(() => openChat('book'));
+  await p.evaluate(() => openChat('chess'));
   await p.waitForTimeout(300);
   const w1 = await mcNWrites(p);
-  r = await mcPaste(p, cap(mcMsgs('book', 3)), 'book');
+  r = await mcPaste(p, cap(mcMsgs('chess', 3)), 'chess');
   ok(
     r &&
       r.ok === false &&
-      /doesn't say which chat.*Book Club is an added chat/.test(r.msg) &&
+      /doesn't say which chat.*Chess Club is an added chat/.test(r.msg) &&
       !(await mcWrites(p, w1)).some(x => /chunks/.test(x)),
     'v1.35.1: the pending chat refuses a capture without its chat (' + (r && r.msg) + ')',
   );
@@ -16083,16 +16130,18 @@ async function multiChat2() {
   // 5: Bring back puts a chat removed while pending back to pending
   p = await mcOpen({ chats: pend });
   await mcSettings(p);
-  await p.click('.chatrow[data-chat="book"] .btns button:text("Remove…")');
-  await p.check('#rm-hide-book');
-  await p.click('#rm-go-book');
-  await until(p, () => __rt.get('meta/chat').chats.book.state === 'hidden');
-  await until(p, () => document.querySelector('.chatrow[data-chat="book"] .btns button'));
-  await p.click('.chatrow[data-chat="book"] .btns button:text("Bring back")');
-  await until(p, () => __rt.get('meta/chat').chats.book.state !== 'hidden');
+  await p.click('.chatrow[data-chat="chess"] .btns button:text("Remove…")');
+  await p.check('#rm-hide-chess');
+  await p.click('#rm-go-chess');
+  await until(p, () => __rt.get('meta/chat').chats.chess.state === 'hidden');
+  await until(p, () => document.querySelector('.chatrow[data-chat="chess"] .btns button'));
+  await p.click('.chatrow[data-chat="chess"] .btns button:text("Bring back")');
+  await until(p, () => __rt.get('meta/chat').chats.chess.state !== 'hidden');
   ok(
-    (await get(p, 'meta/chat')).chats.book.state === 'pending',
-    'F1 review 5: Bring back restores a pending chat to pending (' + (await get(p, 'meta/chat')).chats.book.state + ')',
+    (await get(p, 'meta/chat')).chats.chess.state === 'pending',
+    'F1 review 5: Bring back restores a pending chat to pending (' +
+      (await get(p, 'meta/chat')).chats.chess.state +
+      ')',
   );
   await p.context().close();
   // 8: deleting reads every photos block (a listing in pages), holds the import lease, and waits for a running refresh
@@ -16136,6 +16185,57 @@ async function multiChat2() {
       JSON.stringify([left, gone, leased]) +
       ')',
   );
+  await p.context().close();
+  // B54: an ISO lastRefresh (the first chat's, as a scheduled run wrote it) shows in the display form everywhere: each
+  // All chats card and each Settings row; an added chat's line says it isn't in scheduled refreshes yet
+  const s54 = mcSeed();
+  s54['meta/chat'].lastRefresh = '2026-11-23T17:04:30Z';
+  s54['meta/chat-cam'].lastRefresh = '2026-11-23T16:34:00Z';
+  p = await open(s54);
+  const cards54 = await p.$$eval('#v-all .chatcard', cs => cs.map(c => c.dataset.chat + '|' + c.textContent));
+  await mcSettings(p);
+  const rows54 = await p.$$eval('.chatrow', rs => rs.map(r => r.dataset.chat + '|' + r.textContent));
+  const both = cards54.concat(rows54);
+  const trail54 = both.filter(t => t.startsWith('trail|'));
+  const cam54 = both.filter(t => t.startsWith('cam|'));
+  ok(
+    trail54.length === 2 &&
+      cam54.length === 2 &&
+      trail54.every(t => t.includes('Last refreshed Mon Nov 23, 9:04 AM.')) &&
+      cam54.every(t => t.includes('Last refreshed Mon Nov 23, 8:34 AM.')) &&
+      !both.some(t => /2026-11-23T/.test(t)),
+    'B54: an ISO lastRefresh shows as "Mon Nov 23, 9:04 AM" on the All chats card and the Settings row (' +
+      JSON.stringify(both.map(t => t.slice(0, 160))) +
+      ')',
+  );
+  ok(
+    cam54.every(t =>
+      t.includes(
+        'Not in scheduled refreshes yet (only Trail Crew is). To refresh it, ask Claude to “refresh Camera Club”.',
+      ),
+    ) && !both.some(t => /Scheduled runs refresh only/.test(t)),
+    "B54: an added chat's line says it isn't in scheduled refreshes yet, the first chat's name in brackets",
+  );
+  ok(
+    (await mcText(p, '#set-body')).includes(
+      'Send queued replies automatically (all chats, unless a chat below says otherwise)',
+    ),
+    'Settings: the page default for replies reads "Send queued replies automatically (…)"',
+  );
+  const opts54 = await p.$$eval('#auto-cam option', os => os.map(o => o.value + '=' + o.textContent));
+  const camRow = rows54.find(t => t.startsWith('cam|')) || '';
+  ok(
+    JSON.stringify(opts54) ===
+      JSON.stringify(['=Same as all chats (wait for my OK)', 'on=Send automatically', 'off=Wait for my OK']) &&
+      camRow.includes("Short tag (up to 8 letters), shown beside this chat's messages and citations") &&
+      camRow.includes('Queued replies in this chat') &&
+      camRow.includes('Pause this chat') &&
+      camRow.includes('Pausing stops refreshes of this chat until you resume it. Its messages stay on the page.'),
+    "Settings: a chat row's tag, reply and Pause wording, each option keeping its value (" +
+      JSON.stringify([opts54, camRow.slice(0, 400)]) +
+      ')',
+  );
+  ok(!p.errors.length, 'B54: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 }
 

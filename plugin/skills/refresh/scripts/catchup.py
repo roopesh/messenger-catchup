@@ -65,8 +65,10 @@
                                      to a page from before F1 ({} when it has it). With KEY: where that chat's documents
                                      live, its --chat argument, whether its replies go out without asking, and for a
                                      pending chat the meta/chat-KEY to seed. references/chats.md.
-  catchup.py versions                `versions.page` and `versions.helper` for meta/chat (references/database.md ›
+  catchup.py versions [TZ]           `versions.page` and `versions.helper` for meta/chat (references/database.md ›
                                      Versions), read from this skill's assets/page.html and assets/helper.user.js.
+                                     With TZ (meta/chat.tz): {lastRefresh, versions:{page, helper, refresh}}, lastRefresh
+                                     now in TZ ("Mon Nov 23, 9:04 AM") and refresh the same string, ready for step 7.
   --chat=KEY (any command above)     Work on the added chat KEY: out_dirs hold its documents under their own names
                                      (cam_chunks/, meta/chat-cam.json), manifests name its collections, and a WORK
                                      belongs to one chat. Without it, the page's first chat, as before.
@@ -211,11 +213,11 @@ def _dump(o, p):
 TZ = "America/Los_Angeles"
 
 
-def _ts():  # "Fri Nov 6, 8:41 PM" in the chat's time zone
+def _ts(tz=None):  # "Fri Nov 6, 8:41 PM" in the chat's time zone (or tz)
     try:
         import zoneinfo
 
-        d = datetime.datetime.now(zoneinfo.ZoneInfo(TZ))
+        d = datetime.datetime.now(zoneinfo.ZoneInfo(tz or TZ))
     except Exception:  # no tz database here: fall back to the system clock's zone
         d = datetime.datetime.now().astimezone()
     return "%s %d, %d:%02d %s" % (
@@ -3225,9 +3227,11 @@ def restore_summary(work, run, bdir, decp=None, dry=False, name=None):
     print("write: " + told)
 
 
-def versions_cmd():
+def versions_cmd(tz=None):
     """What this skill ships, for meta/chat.versions: copied from here, never typed from memory or an earlier write
-    (v1.35.0 refreshes kept writing helper 2.1 while shipping 2.3, which hid the page's helper notices)."""
+    (v1.35.0 refreshes kept writing helper 2.1 while shipping 2.3, which hid the page's helper notices). With the chat's
+    time zone, the ready-made fields for a refresh's meta/chat update: lastRefresh as now in that zone, and versions with
+    refresh the same string (B54: a scheduled run wrote an ISO lastRefresh and a stale helper)."""
     assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
 
     def find(name, pat):
@@ -3245,7 +3249,11 @@ def versions_cmd():
             + assets
             + "; run it from the refresh skill's scripts folder, with its assets beside it"
         )
-    print(json.dumps({"page": page.group(1), "helper": helper.group(1)}))
+    v = {"page": page.group(1), "helper": helper.group(1)}
+    if tz:
+        v["refresh"] = _ts(tz)
+        v = {"lastRefresh": v["refresh"], "versions": v}
+    print(json.dumps(v))
 
 
 if __name__ == "__main__":
@@ -3282,7 +3290,7 @@ if __name__ == "__main__":
             sys.exit(__doc__)
         chats_cmd(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None)
     elif cmd == "versions":
-        versions_cmd()
+        versions_cmd(sys.argv[2] if len(sys.argv) > 2 else None)
     elif cmd == "restore-summary":
         a = [x for x in sys.argv[2:] if not x.startswith("--")]
         bk = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--backup=")]
