@@ -2668,7 +2668,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "4.2";
+  const PAGE_VERSION = "4.3";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3059,6 +3059,33 @@
           minute: "2-digit",
         });
   }
+  /* B54: meta/chat.lastRefresh (and versions.refresh) is a time in the chat's zone, "Mon Nov 23, 9:04 AM"; one a run
+     wrote as an ISO time is shown in that form, in meta/chat.tz (else the browser's zone). Anything else as written. */
+  function refreshShown(v, tz) {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(v ?? ""))) return v;
+    const d = new Date(v);
+    if (isNaN(d)) return v;
+    const o = { timeZone: validTz(tz), weekday: "short", month: "short", day: "numeric" };
+    const parts = new Intl.DateTimeFormat(
+      "en-US",
+      Object.assign(o, { hour: "numeric", minute: "2-digit", hour12: true }),
+    )
+      .formatToParts(d)
+      .reduce((a, x) => Object.assign(a, { [x.type]: x.value }), {});
+    return (
+      parts.weekday +
+      " " +
+      parts.month +
+      " " +
+      parts.day +
+      ", " +
+      parts.hour +
+      ":" +
+      parts.minute +
+      " " +
+      parts.dayPeriod
+    );
+  }
   const MK = { caught: "Last Mark caught up", own: "Your last message", time: "A date and time" };
   function markerInfo() {
     const mt = S.meta || {};
@@ -3432,7 +3459,7 @@
         el("b", null, fmtTs(mt.markerFrom)),
         mt.markerTo ? " to " : " through ",
         el("b", null, mt.markerTo ? fmtTs(mt.markerTo) : last ? last.t + " (newest)" : "—"),
-        ". Last refreshed " + (mt.lastRefresh || "—") + ".",
+        ". Last refreshed " + (refreshShown(mt.lastRefresh, mt.tz) || "—") + ".",
       );
     else
       w.append(
@@ -3449,7 +3476,7 @@
         ),
         " through ",
         el("b", null, end ? end.t : "—"),
-        ". Last refreshed " + (mt.lastRefresh || "—") + ".",
+        ". Last refreshed " + (refreshShown(mt.lastRefresh, mt.tz) || "—") + ".",
       );
     const strip = $("#strip");
     strip.textContent = "";
@@ -10595,7 +10622,7 @@
       return;
     }
     setRS(
-      (S.meta && S.meta.lastRefresh ? "Last refreshed " + S.meta.lastRefresh + ". " : "") +
+      (S.meta && S.meta.lastRefresh ? "Last refreshed " + refreshShown(S.meta.lastRefresh, S.meta.tz) + ". " : "") +
         "To pull new messages, ask Claude in chat to “" +
         RP() +
         "”. The choice above only filters what's shown; it doesn't fetch anything.",
@@ -10664,8 +10691,9 @@
     const running =
       isObj(status) && status.state === "running" && (now - Date.parse(status.startedAt || 0)) / 60000 < 25;
     const c1 = vcmp(V.page, M) === -1;
-    /* compared without a leading weekday: a refresh that copied an example without one isn't an older skill (#43) */
-    const noDay = x => String(x).replace(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun),? /, "");
+    /* compared without a leading weekday: a refresh that copied an example without one isn't an older skill (#43); an
+       ISO time (B54: a scheduled run wrote one in lastRefresh) is read as the same display form in the chat's zone */
+    const noDay = x => String(refreshShown(x, meta.tz)).replace(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun),? /, "");
     /* and within 45 minutes: a run that wrote its start time in one and its finish time in the other is the same run */
     const mins = x => {
       const m = /^([A-Z][a-z]{2}) (\d{1,2}),? (\d{1,2}):(\d{2}) ?([AP]M)$/i.exec(noDay(x).trim());
@@ -13510,10 +13538,16 @@
     if (c.state === "hidden") return "Hidden: nothing of it shows, and refreshes skip it.";
     const m = metaOf(c) || {};
     return (
-      (m.lastRefresh ? "Last refreshed " + m.lastRefresh + "." : "Not refreshed yet.") +
+      (m.lastRefresh
+        ? "Last refreshed " + refreshShown(m.lastRefresh, m.tz || (S.page || {}).tz) + "."
+        : "Not refreshed yet.") +
       (c.home
         ? ""
-        : " Scheduled runs refresh only " + homeChat().name + " for now: ask Claude to “refresh " + c.name + "”.")
+        : " Not in scheduled refreshes yet (only " +
+          homeChat().name +
+          " is). To refresh it, ask Claude to “refresh " +
+          c.name +
+          "”.")
     );
   }
   function tagChip(c) {
@@ -14039,9 +14073,9 @@
   function autoSelect(id, val) {
     const s = el("select");
     [
-      ["", "Use the page default (" + (autoFor(null) ? "send on their own" : "wait for my yes") + ")"],
-      ["on", "Send on their own"],
-      ["off", "Wait for my yes in chat"],
+      ["", "Same as all chats (" + (autoFor(null) ? "send automatically" : "wait for my OK") + ")"],
+      ["on", "Send automatically"],
+      ["off", "Wait for my OK"],
     ].forEach(([v, t]) => {
       const o = el("option", null, t);
       o.value = v;
@@ -14091,14 +14125,14 @@
         setNote(
           "page",
           dc.checked
-            ? "Replies you queue now go out on their own, except in chats set otherwise."
+            ? "Queued replies now send automatically, except in chats set otherwise."
             : "Claude now asks you before posting a reply, except in chats set otherwise.",
         );
       } catch (e) {
         setNote("page", "Couldn't save that. Try again.", true);
       }
     };
-    dl.append(dc, " Replies you queue go out on their own (the page default; each chat can differ)");
+    dl.append(dc, " Send queued replies automatically (all chats, unless a chat below says otherwise)");
     box.append(dl, note("page"));
     S.chats
       .filter(c => c.state !== "deleted")
@@ -14116,7 +14150,11 @@
         const ts = el("button", "secondary", "Save tag");
         ts.onclick = () => saveTag(c, ti.value);
         ti.addEventListener("keydown", e => e.key === "Enter" && saveTag(c, ti.value));
-        const tw = field("tag-" + c.key, "Tag (up to " + TAG_MAX + " letters, shown in citations)", ti);
+        const tw = field(
+          "tag-" + c.key,
+          "Short tag (up to " + TAG_MAX + " letters), shown beside this chat's messages and citations",
+          ti,
+        );
         tw.append(ts);
         const as = autoSelect("auto-" + c.key, c.auto);
         as.onchange = async () => {
@@ -14127,7 +14165,7 @@
             setNote(c.key, "Couldn't save that. Try again.", true);
           }
         };
-        ctl.append(tw, field("auto-" + c.key, "Replies queued in this chat", as));
+        ctl.append(tw, field("auto-" + c.key, "Queued replies in this chat", as));
         row.append(ctl);
         const acts = el("div", "btns");
         const act = (t, fn) => {
@@ -14136,7 +14174,7 @@
           acts.append(b);
           return b;
         };
-        if (c.state === "active") act("Pause", () => setState(c, "paused"));
+        if (c.state === "active") act("Pause this chat", () => setState(c, "paused"));
         if (c.state === "paused") act("Resume", () => setState(c, "active"));
         if (c.state === "hidden") act("Bring back", () => setState(c, c.was || "active"));
         if (!c.home && c.state !== "hidden") {
@@ -14148,6 +14186,11 @@
           rb.setAttribute("aria-expanded", String(S.rmOpen === c.key));
         }
         row.append(acts);
+        /* what Pause does (chats.md: a paused chat's refreshes are skipped; it stays on the page) */
+        if (c.state === "active")
+          row.append(
+            el("p", "note", "Pausing stops refreshes of this chat until you resume it. Its messages stay on the page."),
+          );
         if (S.rmOpen === c.key) row.append(rmBox(c));
         row.append(note(c.key));
         box.append(row);
@@ -14319,9 +14362,9 @@
       el(
         "p",
         "note",
-        "Paste the chat's link from Messenger (it looks like facebook.com/messages/t/1234…). You don't need Claude for this: the page saves it, and Claude reads the chat the next time you ask it to refresh it (say “refresh” and the chat's name). Scheduled runs refresh only " +
+        "Paste the chat's link from Messenger (it looks like facebook.com/messages/t/1234…). You don't need Claude for this: the page saves it, and Claude reads the chat the next time you ask it to refresh it (say “refresh” and the chat's name). It isn't in scheduled refreshes yet (only " +
           homeChat().name +
-          " for now.",
+          " is).",
       ),
     );
     const link = el("input");

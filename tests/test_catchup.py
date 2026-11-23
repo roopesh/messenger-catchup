@@ -5134,6 +5134,15 @@ class TestVersionsCmd(unittest.TestCase):
         with open(os.path.join(sk, "helper.user.js"), encoding="utf-8") as f:
             helper = re.search(r"@version\s+(\S+)", f.read()).group(1)
         self.assertEqual(json.loads(quiet(catchup.versions_cmd)), {"page": page, "helper": helper})
+        # B54: with the chat's zone, the ready-made step 7 fields: lastRefresh in the page's display form, and
+        # versions.refresh exactly the same string
+        out = json.loads(quiet(catchup.versions_cmd, "America/New_York"))
+        self.assertEqual(sorted(out), ["lastRefresh", "versions"])
+        self.assertEqual(out["versions"], {"page": page, "helper": helper, "refresh": out["lastRefresh"]})
+        self.assertRegex(
+            out["lastRefresh"], r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M$"
+        )
+        self.assertEqual(catchup.TZ, "America/Los_Angeles", "the chat's zone for other commands is untouched")
 
     def test_missing_assets_exit_with_a_message(self):
         """PR #61 review 7: a copy of catchup.py without the skill's assets beside it says so (no bare assert)."""
@@ -5216,15 +5225,15 @@ class TestChats(unittest.TestCase):
     def test_DM2_a_run_for_another_chat_is_refused(self):
         run, spec = self.world("cam")
         mp = os.path.join(run, "meta", "chat-cam.json")
-        w(mp, dict(r(mp), key="tea"))
-        with on_chat("cam"), self.assertRaisesRegex(AssertionError, "RUN's meta/chat is for chat tea, not chat cam"):
+        w(mp, dict(r(mp), key="book"))
+        with on_chat("cam"), self.assertRaisesRegex(AssertionError, "RUN's meta/chat is for chat book, not chat cam"):
             self.e.build(run, spec)
 
     def test_DM3_a_WORK_belongs_to_one_chat(self):
         run, spec = self.world("cam")
         with (
-            on_chat("tea"),
-            self.assertRaisesRegex(AssertionError, "WORK is for chat cam, not chat tea: use a separate"),
+            on_chat("book"),
+            self.assertRaisesRegex(AssertionError, "WORK is for chat cam, not chat book: use a separate"),
         ):
             self.e.build(run, spec)
         with self.assertRaisesRegex(AssertionError, "WORK is for chat cam, not the page's first chat"):
@@ -5294,10 +5303,10 @@ class TestChats(unittest.TestCase):
         meta = {"thread": "4242", "threadName": "Gear Chat", "shortName": "Gear", "outboxAuto": True}
         meta["chats"] = {
             "gear": {"name": "Gear Chat", "tag": "Gear", "home": True, "state": "active"},
-            "tea": {"name": "Tea Room", "tag": "Tea", "state": "pending", "thread": "777"},
+            "book": {"name": "Book Club", "tag": "Book", "state": "pending", "thread": "777"},
         }
-        meta["chats"]["tea"]["url"] = "https://www.facebook.com/messages/t/777"
-        meta["chats"]["tea"]["start"] = 1000
+        meta["chats"]["book"]["url"] = "https://www.facebook.com/messages/t/777"
+        meta["chats"]["book"]["start"] = 1000
         mp = os.path.join(self.t.name, "chat.json")
         w(mp, meta)
         g = chats_out(mp, "gear")
@@ -5305,17 +5314,17 @@ class TestChats(unittest.TestCase):
             (g["chatArg"], g["meta"], g["lastImport"], g["collections"]["chunks"]),
             ("", "meta/chat", "refresh/lastImport", "chunks"),
         )
-        t = chats_out(mp, "tea")
+        t = chats_out(mp, "book")
         self.assertEqual(
-            (t["chatArg"], t["meta"], t["lastImport"]), ("--chat=tea", "meta/chat-tea", "refresh/lastImport-tea")
+            (t["chatArg"], t["meta"], t["lastImport"]), ("--chat=book", "meta/chat-book", "refresh/lastImport-book")
         )
-        self.assertTrue(all(v == "tea_" + k for k, v in t["collections"].items()), t["collections"])
+        self.assertTrue(all(v == "book_" + k for k, v in t["collections"].items()), t["collections"])
         self.assertEqual(
             {k: t["seed"][k] for k in ("key", "thread", "chatUrl", "firstCount", "lastI", "chunkSize")},
             {
-                "key": "tea",
+                "key": "book",
                 "thread": "777",
-                "chatUrl": meta["chats"]["tea"]["url"],
+                "chatUrl": meta["chats"]["book"]["url"],
                 "firstCount": 1000,
                 "lastI": -1,
                 "chunkSize": 82,
@@ -5329,17 +5338,21 @@ class TestChats(unittest.TestCase):
     def test_OB4_replies_go_out_by_the_chats_own_setting_else_the_page_default(self):
         for page in (True, False):
             for own, want in ((None, page), (True, True), (False, False)):
-                meta = {"shortName": "Gear", "outboxAuto": page, "chats": {"tea": {"name": "Tea Room", "tag": "Tea"}}}
+                meta = {
+                    "shortName": "Gear",
+                    "outboxAuto": page,
+                    "chats": {"book": {"name": "Book Club", "tag": "Book"}},
+                }
                 if own is not None:
-                    meta["chats"]["tea"]["auto"] = own
-                self.assertIs(catchup.auto_for(meta, "tea"), want, (page, own))
+                    meta["chats"]["book"]["auto"] = own
+                self.assertIs(catchup.auto_for(meta, "book"), want, (page, own))
                 self.assertIs(catchup.auto_for(meta, "gear"), page, "the first chat with no setting of its own")
 
     def test_SET10_keys_and_tags_follow_the_same_rules_as_the_page(self):
         with open(os.path.join(ROOT, "plugin", "skills", "refresh", "assets", "page.html"), encoding="utf-8") as fh:
             src = fh.read()
         fns = [re.search(r"  const %s = [\s\S]*?;\n" % n, src).group(0) for n in ("TAG_MAX", "keyFrom", "tagFrom")]
-        names = ["Tea Room", "Camera Club", "  Gear  Chat ", "Ünïcode Ça", "", "12345678 x", "Book-Swap!"]
+        names = ["Book Club", "Camera Club", "  Gear  Chat ", "Ünïcode Ça", "", "12345678 x", "Book-Swap!"]
         js = "".join(fns) + "console.log(JSON.stringify(%s.map(s => [keyFrom(s), tagFrom(s)])))" % json.dumps(names)
         import subprocess
 
