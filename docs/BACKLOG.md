@@ -14,15 +14,14 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
-| R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
 | R18 | P3 | risk | Now that a chain run arms as it starts, a run still going when the next one fires (`every` minus 3 minutes after it started) has a lock older than 20 minutes for usual settings, which the next run takes over |
 | R13 | P2 | risk | A page holds at most 5,000 photo files and 1 GiB: day packs (v1.30.0) end the file problem; archive pages for the 1 GiB are left |
-| R19 | P3 | risk | Claude's own maintenance writes (link cleanup, digest backfill) hold the refresh lock while the user's approval waits, often past the lock's 20 minutes |
+| R19 | P3 | risk | Claude's own maintenance writes (link cleanup, a backfill) hold the refresh lock while the user's approval waits, often past the lock's 20 minutes |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
-| F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (builds on the refresh reports from F27, v1.29.0; notes in [design/day-summaries.md](design/day-summaries.md)) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; the schedule for frequent checks is left |
+| F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
 
 ---
 
@@ -52,13 +51,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### R5 · P2 · E2EE and messenger.com
 - **What:** `/messages/e2ee/t/` URLs are stored and used but untested against a live E2EE chat. The userscript `@match` covers only `www.facebook.com/messages/*`, so `messenger.com` isn't supported.
 
-### R12 · P3 · A chain conversation keeps growing
-- **What:** every hourly run adds tool output to the same conversation, so each run costs more over weeks. Predates v1.21.0. Arming at `every` minus 5 minutes (minus 3 from a run's start since v1.23.0) keeps runs inside the prompt cache, but the context still grows.
-- **Also:** a claude.ai conversation has a hard length limit. Once a chain's conversation reaches it, follow-ups can't be delivered and the chain stops (a refresh the user asks for then finds it stopped).
-- **Corrected (Nov 14):** a note here said a chain seems to keep the skill version it started with. The real cause was an older copy of the skill uploaded to the owner's account (Customize › Skills), which refreshes used instead of the 1.25.0 plugin; a refresh the owner started by hand ran it too. Nothing on the page could flag it, since that copy wrote a matching `versions.page`.
-- **Fix:** measure a chain's cost per run after a week or two; if it climbs, or the conversation nears its limit, have a run move the chain to a fresh conversation now and then (setup's Stop or change, then arm from the new one).
-- **Reanalyzed (Nov 22):** a fresh session per run (Desktop scheduled tasks) didn't work right for the owner, and R10/R11 are closed, so the chain stays. What's left: runs slowly cost more, and at the length limit the chain stops; the page flags a stopped chain (v1.24.0) and the refresh phrase in a new chat restarts it in a fresh conversation. Recommended on the board: close R12 and keep a live check for the first stop (L1). Waits on the owner.
-
 ### R18 · P3 · A run older than the lock's 20 minutes when the next one fires
 - **What:** since R14, a chain run arms as it starts, so the next run fires `every` minus 3 minutes after this one started, not after it ended. If this run is still going then (a large backlog, a long photo wait, a slow outbox) and `every` is 23 minutes or more, its `refresh/status` lock is more than 20 minutes old, and the next run treats it as stale and takes over. That run scans in the same Messenger tab. Pinned writes keep the database whole: a run whose write is refused while the other's `running` is in `refresh/status` stops (writing-the-build.md › Refused writes). But the two can disturb each other's scan, and the first to finish marks the status done while the other is still going. Before R14 this could only happen with a refresh the user asked for. `references/scheduling.md` › A scheduled run, Overlap, describes it.
 - **Unverified, check live:** a follow-up that comes due while this conversation is mid-turn (the run it would follow is still going) may be queued until the turn ends, or dropped. If the scheduling tool drops it, the chain stops at that run, and only a refresh the user asks for finds it stopped. Check with each follow-up tool (a short `every` and a run kept busy past it).
@@ -66,33 +58,38 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 ### R19 · P3 · Claude's maintenance writes hold the refresh lock through slow approvals
 - **Found (Nov 14, live):** the cross-conversation link cleanup and the F16 digest backfill take the `refresh/status` lock, then write, and each write waits for the user's approval in the UI. Approvals took from minutes to 5.5 hours. Once the lock is 20 minutes old, scheduled refreshes treat it as stale and take over. Pinned writes kept the database whole: the cleanup was refused twice (`version_mismatch`) and landed on the third try, and the backfill's digest write landed, but its lock release was refused because a refresh had already replaced the status.
-- **Options:** writes that only touch documents refreshes never write (the backfill's `digests/m…` while refreshes run an older skill; a refresh on v1.25+ does write them) could skip the lock and rely on the pin; or the lock, the write and its release go in one batch, so there's one approval and no stale window; or `references/digests.md` and the cleanup procedure say to re-read and re-pin after a slow approval instead of assuming the lock held.
+- **Options:** writes that only touch documents refreshes never write could skip the lock and rely on the pin (since v1.32.0 the backfill writes `daySummaries/d…` of past days, which refreshes write only for the newest days); or the lock, the write and its release go in one batch, so there's one approval and no stale window; or `references/day-summaries.md` › Backfill and the cleanup procedure say to re-read and re-pin after a slow approval instead of assuming the lock held.
 
 ## Features and opportunities
 
 ### F1 · P3 · Several chats
 - One page and one loop per chat today (LEARNINGS.md › Open issues). Simplest path: one page per chat, keyed by `meta/chat.thread`, and a loop that walks them.
 - **Owner's answers (Nov 22, board):** chats to start with: two more groups, more later (count unknown); one Ask across chats with results clearly labeled by chat, and filters by chat ("if search is cheap, focus on result filters"); the same schedule for all, parallel if possible. Leans to option A (chats inside this page). **Before any build:** designs or prototypes and written test cases, reviewed by the owner.
-- **Not on the decision board until Nov 22**, so it had no options or questions for the owner. To design: one page per chat or several chats on one page (tabs, a picker); one scheduled loop for all chats or one per chat, and what that does to cost and R12; how setup adds a second chat; whether search (F32) and Stats span chats. Related: F25 (a Facebook group on the same page).
+- **Not on the decision board until Nov 22**, so it had no options or questions for the owner. To design: one page per chat or several chats on one page (tabs, a picker); one scheduled loop for all chats or one per chat, and what that does to cost and to the chain conversation's growth; how setup adds a second chat; whether search (F32) and Stats span chats. Related: F25 (a Facebook group on the same page).
 
 ### F25 · P2 · Catch up with Facebook group posts
 - **Ask (owner, Nov 14):** besides a Messenger group chat, catch up with the posts in a Facebook group.
 - **How it differs:** a group is a feed of posts (text, photos, links), each with its own comment threads and reactions, at `facebook.com/groups/<id>`, not a single message log. The feed's default order isn't by time, posts and comments load lazily, and old posts get new comments, so "what's new since I last looked" means new posts **and** new comments on older ones. Claude in Chrome reads it from the owner's own logged-in Chrome, as for Messenger, read only.
 - **To design with the owner:** which groups; what counts as new; one page per group or groups on the chat's page (F1 is related); what the summary covers (posts, comment threads, deals in buy/sell groups, mentions); whether replying is in scope; how capture works (a helper mode for the group feed, sorted by new activity) and its markup risks (like R3).
 
-### F29 · P2 · Fuller day summaries (to define)
-- **The owner (Nov 15):**
-  - The By day digests are weak.
-  - Ask Claude's "summary of yesterday" is far better and doesn't match them.
-  - Wants a fuller day summary, refreshed at every refresh, that they can choose to share.
-- **Why:** a digest is capped at 8 bullets of 15 words, as a compact index for Ask's long-history prompt; By day shows those index cards.
-- **Direction:** two levels.
-  - Keep the short digest for Ask.
-  - Add a fuller summary written by the refresh: incremental during the day, then one final rewrite after the day ends.
-  - Sharing by "Copy for chat" and/or a shared link, the owner's call.
-- **Everything discussed:** options, the owner's decisions, Claude's proposed shape and the open questions are in [design/day-summaries.md](design/day-summaries.md).
-- **Builds on F27 (v1.29.0):** merge each day's saved refresh reports into its fuller summary at the day's end.
-- **Owner decided (Nov 22, board option A):** one fuller summary per day instead of two levels, since Ask now searches the whole history (F32, v1.31.0) and no longer needs the short digest as its index. Kept current by each refresh, with one rewrite after the day ends. Sharing by "Copy for chat" only: no links ("I'm not opening up the artifact"). Today's summary in progress can be copied too. No length limit for now. Backfill past days once the owner likes the output of a few. Next to build.
+### F33 · P3 · Windowed loading of day summaries for very long histories
+- **Today (v1.32.0):** the page listens to the whole `daySummaries` collection, as it does its other collections, and By day, Ask, Views and the `day_summaries` tool use the summaries in memory. The owner's page has about 55 days, roughly 0.5 MB. F29 built a window (the newest days live, older ones read on demand) and dropped it after three reviews kept finding faults in it; this item is that work, done in small pieces when it's needed.
+- **Trigger:** only when a page's day summaries pass about a year of days, or a load time or size threshold measured on the real runtime. Measure first; don't build ahead of it.
+- **Pieces, each its own PR with its own claude.ai check:**
+  - **(a) Measure:** load time and size of the collection on the real runtime at a few sizes; set the trigger from that.
+  - **(b) By day's live window:** an ordered, limited `onSnapshot` of the newest days, falling back to a plain listener when the runtime refuses it (its error callback); which days the window covers recomputed from every snapshot.
+  - **(c) "Show more" on demand:** `where("day","in",…)` reads, at most 30 values a query; the cards already drawn stay while a read runs (no flicker); only confirmed misses are cached.
+  - **(d) Ask's and Views' older history:** read the days a prompt would carry with a timeout, then send with what's known while late answers still land in memory; concurrent reads of the same days deduped, judged by whether the summary is in memory, not by who started the read; a note in the answer when days couldn't be read.
+  - **(e) The `day_summaries` tool reading older days:** first confirm the real runtime awaits an async `execute` (sample.d.ts 0.2.98 says "May be async"; the owner's page may run an older runtime).
+  - **(f) Tests per piece, plus the real-runtime checks:** an ordered snapshot, an `in` read, an async tool, and the consent code.
+- **Pitfalls the F29 reviews found in the removed code:**
+  - A day found to have no summary was asked again after an expiry, so cards flickered and reads repeated.
+  - A read answering after its timeout was dropped instead of landing.
+  - Whether a read brought summaries was judged by who started it, so a caller joining a read already running sent without them.
+  - The coverage stuck after the collection grew past the window (a backfill), so a day leaving the window looked like it had no summary.
+  - No fallback when the ordered snapshot was refused, and at first no timeout on reads, so Ask or the tool could hang.
+  - Packing a prompt to learn which days to read, then again after the read, doubled the packing work (H16); reuse the first pack when nothing came in.
+  - "Loading older days…" stopped the list at each unread day, and a redraw dropped cards already drawn.
 
 ### F30 · P2 · Send queued replies without a full refresh
 - **Ask (owner, Nov 16):** be able to send replies queued on the page without a full refresh, if possible.
@@ -100,10 +97,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Limits:** only Claude can reach the Messenger tab (through Claude in Chrome). The page can't, and the helper in the Messenger tab can't read the page's database. So something still has to start Claude. The change is how little that run does.
 - **Options to weigh:**
   - **A "send my replies" request:** reads the outbox, posts each approved reply (`outbox.md`), and confirms it with a short scan of the newest messages. No import, build or summary. Much cheaper and faster than a refresh.
-  - **Scheduled runs send first:** every scheduled run handles the outbox before (or instead of) the rest when the scan finds nothing new. Pairs with R12's cheap "nothing new" exit.
+  - **Scheduled runs send first:** every scheduled run handles the outbox before (or instead of) the rest when the scan finds nothing new. Pairs with a cheap "nothing new" exit.
   - **A sooner follow-up:** queuing a reply on the page arms a run a few minutes out instead of waiting for the hour. Needs a way for the page to wake Claude, which it may not have; check what the runtime allows.
 - **To settle:** how soon a reply should go out; whether a reply-only run confirms by its own short scan or leaves that to the next refresh (`sentAt` and `sentMid` today come from the confirm and the next capture, B46); and the approval rules, which stay as they are (`outboxAuto`, or a yes in chat to that exact text).
-- **Related:** R12 (cheap runs), B45 and F13 (how posting works).
+- **Related:** B45 and F13 (how posting works).
 - **Owner's answers (Nov 17):** decide in the moment, or else within a few minutes; at the Mac or on the phone; the phrase "send replies"; picked frequent checks and asked to keep tokens down.
 - **Revised recommendation:** frequent checks stay costly however small the skill (each is a whole session), so: a "Send now" button per queued reply that copies it and opens the message in Messenger with Reply open (the existing Reply link); the owner pastes and presses Enter, and the next refresh marks it sent. Plus scheduled runs posting queued replies first, and the "send replies" phrase for the phone. A later step: the helper types the reply in so only Enter is left. Option E, the page handing replies to the helper directly, would change the rule that only Claude's bridge command can make the helper post; it needs a probe.
 - **Part 1 in v1.27.0 (Nov 19):** the `replies` skill ("send replies" posts queued replies with no refresh) and replies first in every refresh. Left: measure what an empty reply run costs, then set C's interval with the owner (or not); option F (Send now opens the message in Messenger with the reply ready) if the owner wants it; a live check of the routing and a reply run end to end (L1). A reply run skips outbox.md's stored-message check (it would read a chunk); call 1 and `post` still check the live "Replying to" bar.
@@ -115,7 +112,9 @@ Gathered from finished items when they were removed (Nov 14). The item each came
 - **Ask over long histories (F6, the design's L2–L7):** "include older" answers carry a note like "Read #… word for word. Older than #…: summaries only." and no "(sent a smaller set…)"; answers about things 1 to 3 weeks old cite numbers and say when they rest on summaries or digests; Views on a 5-day window; a long span before `fromI` refused with a start time; what `sample.limits()` returns in the real runtime.
 - **Replies across conversations (F23):** on the owner's page, the 27 mid-conversation Messenger replies whose parent sits in another conversation each show "↩ replying to …" above the bubble, and a few of them open their parent, one on a day Show older hasn't loaded.
 - **Helper (B41, B49, F13):** whether Messenger puts a run's avatar on its last message or its first (either works if each run shows one); whether its loading indicator is a `[role="progressbar"]` at the top of the list; whether it accepts the helper's synthetic Enter and shift+Enter for `post`.
-- **Plugin updates (F7):** settled on Nov 14. The owner's account showed the custom-marketplace plugin at 1.25.0 within hours of the merge. The skills stayed old because of an uploaded copy of the skill, not the chain (see R12).
+- **Plugin updates (F7):** settled on Nov 14. The owner's account showed the custom-marketplace plugin at 1.25.0 within hours of the merge. The skills stayed old because of an uploaded copy of the skill (Customize › Skills), not the chain.
 - **Photos and captions (R13, v1.30.0):** the owner's page reached page 3.6 on Nov 22. Still to check there: captions on hover and in the photo viewer, caption search, the Photo storage box; after the owner turns packing on, `photos/packs` growing and `assetUsage.files` falling.
 - **Leftover originals (v1.31.3):** after the owner's page gets 3.9: leftover originals reclaimed (`photos/packs.reclaim.n` rising to about the count left behind, `reclaim.checked` reaching the list's length, no `photos/swept-*` documents, or any there explained), the Photo storage box saying how many were removed, and the file count falling by each packed day's photos less 2 from then on. With two copies of the page open, the one that waits says "Waiting: packing is running in another open copy of this page."
+- **Day summaries (F29, v1.32.0):** on the owner's page after its next refresh (page 4.0): today's fuller summary on By day, labelled in progress with its time, and updated (not rewritten) by the next refreshes; after midnight, yesterday's final rewrite (one piece, labelled final) and today's first summary; Copy for chat in claude.ai's artifact viewer ("Copied.", or the box to copy by hand if the viewer blocks the clipboard) and what the copied text looks like pasted into Messenger; older days showing their digest; Ask's answers about recent days citing the summaries. On claude.ai's runtime: which code a declined Claude consent rejects with (sample.d.ts says `not_granted`; any other failure now shows its code and message). The backfill (`references/day-summaries.md` › Backfill) once the owner likes a few days, and its cost per batch.
+- **Chain length (R12, closed Nov 22):** the owner's schedule now runs hourly 5 AM–10 PM with no overnight runs (`meta/chat.schedule.hours`), so the chain conversation grows more slowly. When it first stops at claude.ai's conversation length limit: the page flags the stopped chain, and the refresh phrase in a new chat restarts it in a fresh conversation.
 - **Scan start (Nov 21):** one scheduled refresh failed with "Scan didn't start scrolling…"; the next runs were fine. If it happens again, file it as a bug with the run's report.

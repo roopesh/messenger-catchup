@@ -384,9 +384,15 @@ function runtime(seed) {
     }
     return text;
   }
+  /* opts.sampleError: every request rejects with it ({code, message}, or a code), as a declined consent does */
+  const sampleErr = () => {
+    const e = window.__sampleError !== undefined ? window.__sampleError : opts.sampleError;
+    if (e) throw typeof e === 'string' ? { code: e, message: 'refused: ' + e } : e;
+  };
   async function sample(msgs, o) {
     samples.push(msgs);
     capCheck(msgs);
+    sampleErr();
     if (o && o.tools) {
       if (o.cache !== false && o.cache !== undefined)
         throw { code: 'invalid_request', message: 'cache passed with tools' };
@@ -409,6 +415,7 @@ function runtime(seed) {
   sample.json = async (prompt, o) => {
     samples.push(prompt);
     capCheck(prompt);
+    sampleErr();
     /* with tools, the final round's text is the JSON (narration in earlier rounds is ignored, as the runtime does) */
     if (o && o.tools) {
       const text = await playTools(o);
@@ -608,6 +615,7 @@ const convSet = (p, conv, open) =>
     },
     [conv, open],
   );
+const convIds = p => p.evaluate(() => [...document.querySelectorAll('#msgs details.conv')].map(d => d.dataset.conv));
 const get = (p, k) => p.evaluate(k => __rt.get(k) ?? null, k);
 /* The stored photo slots, merged here (independently of the page) from photos/index and the photos/b<start> blocks:
    byK[i][k] = "/_blob/<id>" | null (owed) | {e} (given up); stored(i) = message i's stored photos in slot order. */
@@ -1413,11 +1421,9 @@ async function pipeline() {
   );
   await p.click('#lay-flat');
   ok((await p.$$eval('#msgs .msg', r => r.length)) === 57, 'messages: timeline shows all 57');
-  await p.fill('#msg-q', 'Message number 75 ');
-  await p.waitForTimeout(300);
+  await msgFilter(p, 'Message number 75 ');
   ok((await p.$$eval('#msgs .msg', r => r.length)) === 1, 'messages: filter by text finds exactly one');
-  await p.fill('#msg-q', '');
-  await p.waitForTimeout(250);
+  await msgFilter(p, '');
   // markers
   await p.evaluate(() => {
     location.hash = '#summary';
@@ -1968,11 +1974,9 @@ async function layouts() {
     'layout: the archived conversation shows in the Messages tab with its messages',
   );
   const words = msgs[mem[0]].b;
-  await pNew.fill('#msg-q', words);
-  await pNew.waitForTimeout(300);
+  await msgFilter(pNew, words);
   ok(!!(await pNew.$('#msgs #m' + mem[0])), 'layout: searching finds a message in an archived conversation');
-  await pNew.fill('#msg-q', '');
-  await pNew.waitForTimeout(250);
+  await msgFilter(pNew, '');
   // a live change to one block document re-renders (a link fixed in place)
   const tb = Object.keys(S0.new).find(k => {
     const d = S0.new[k];
@@ -2143,8 +2147,7 @@ async function names() {
     JSON.stringify(who.slice(0, 4)) === JSON.stringify(['Ana', 'Ben Brooks', 'Ben Ortiz', 'Cy (Taylor)']),
     'names: two Bens get full names, a nickname gets "(first name)" (' + who.join(' | ') + ')',
   );
-  await p.fill('#msg-q', 'ortiz');
-  await p.waitForTimeout(300);
+  await msgFilter(p, 'ortiz');
   ok((await p.$$eval('#msgs .msg', r => r.length)) === 1, 'names: the filter finds people by full name');
   ok(p.errors.length === 0, 'names: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
@@ -2282,6 +2285,28 @@ const topOf = (p, sel) =>
     const r = n && n.getBoundingClientRect();
     return r && r.height ? Math.round(r.top) : null;
   }, sel);
+/* Types into the Messages filter and waits until the page has redrawn for that text (it waits 150 ms after the last
+   key, then draws), instead of a fixed wait that a busy runner can outlast: F15 O4 failed that way on Nov 22, the list
+   not yet drawn again 400 ms after the filter was cleared. */
+async function msgFilter(p, q) {
+  await p.evaluate(() => {
+    if (!window.__mfWrapped) {
+      const f = window.renderMessages;
+      window.renderMessages = function () {
+        const r = f.apply(this, arguments);
+        window.__mfDrawn = { n: ((window.__mfDrawn || {}).n || 0) + 1, q: document.getElementById('msg-q').value };
+        return r;
+      };
+      window.__mfWrapped = true;
+    }
+    window.__mfAt = (window.__mfDrawn || {}).n || 0;
+  });
+  await p.fill('#msg-q', q);
+  ok(
+    await until(p, q => window.__mfDrawn && window.__mfDrawn.n > window.__mfAt && window.__mfDrawn.q === q, q),
+    'the Messages filter drew the list for "' + q + '"',
+  );
+}
 const opacity = (p, sel) => p.$eval(sel, e => getComputedStyle(e).opacity).catch(() => null);
 /* each selector's computed opacity once they all read want (strings), or what they read when that didn't happen in
    5 s: the page fades a bubble's actions over 0.12 s, which a fixed 250 ms wait raced on a busy runner (B42, Nov 22) */
@@ -2457,22 +2482,19 @@ async function messagesView() {
     }),
     'B42: the #31 link on the reply jumps to the second bubble',
   );
-  await p.fill('#msg-q', '#31');
-  await p.waitForTimeout(300);
+  await msgFilter(p, '#31');
   const s31 = await p.evaluate(() => ({
     convs: [...document.querySelectorAll('#msgs details.conv')].map(d => d.dataset.conv),
     has: !!document.querySelector('#m31'),
   }));
-  await p.fill('#msg-q', 'old pack');
-  await p.waitForTimeout(300);
+  await msgFilter(p, 'old pack');
   const s30 = await p.evaluate(() => !!document.querySelector('#m30'));
   ok(
     s31.has && s31.convs.join() === 'packs' && s30,
     'B42: search finds each bubble (#31 by number, #30 by text) (' + JSON.stringify(s31) + ')',
   );
   await p.click('#lay-flat');
-  await p.fill('#msg-q', '');
-  await p.waitForTimeout(300);
+  await msgFilter(p, '');
   const flat = await p.evaluate(() => {
     const g = n => (document.querySelector('#m' + n) || {}).parentElement;
     return {
@@ -2486,13 +2508,12 @@ async function messagesView() {
     flat.pair && flat.answer && flat.apart && flat.rows === 60,
     'B42: the timeline groups the same bubbles and keeps all 60 rows (' + JSON.stringify(flat) + ')',
   );
-  await p.fill('#msg-q', '#31');
-  await p.waitForTimeout(300);
+  await msgFilter(p, '#31');
   ok(
     (await p.$$eval('#msgs .msg', r => r.map(x => x.id))).join() === 'm31',
     'B42: in the timeline, search by number finds the second bubble alone',
   );
-  await p.fill('#msg-q', '');
+  await msgFilter(p, '');
   await p.click('#lay-thread');
   // B40: the conversation that starts with a reply to #30 (in "packs") shows #30 first
   const ctxOf = sel =>
@@ -2549,6 +2570,19 @@ async function messagesView() {
   );
   await convSet(p, 'packs', false);
   await convSet(p, 'lend', true);
+  /* new data redraws the list (threading written again, unchanged): what the reader opened and closed stays */
+  await p.evaluate(() => {
+    document.querySelector('#msgs details.conv[data-conv="lend"]').__before = true;
+    __rt.write('threading/current', __rt.get('threading/current'));
+  });
+  ok(
+    await until(p, () => {
+      const l = document.querySelector('#msgs details.conv[data-conv="lend"]'),
+        k = document.querySelector('#msgs details.conv[data-conv="packs"]');
+      return l && !l.__before && l.open && k && !k.open;
+    }),
+    'B40: a redraw for new data keeps "lend" open and "packs" closed',
+  );
   await flashReset(p);
   ok(
     await tryClick(p, '#msgs details.conv[data-conv="lend"] > .ctx button.link'),
@@ -4008,7 +4042,7 @@ async function digests() {
       dig.length > 0 &&
         digestLines(dig).length === 0 &&
         dig.some(([, , l]) => /\] \d+ messages\. Busiest: /.test(l)) &&
-        !/Digest:|Day digests/.test(r.prompt + r.note),
+        !/Digest:|Summary:|Day summaries/.test(r.prompt + r.note),
       'D1: with no digests, the day lines are title-only as before ("Busiest: …") and nothing mentions digests',
     );
     await p.evaluate(docs => Object.entries(docs).forEach(([k, v]) => __rt.write(k, v)), hdigests(msgs));
@@ -4061,8 +4095,12 @@ async function digests() {
     };
     ok(
       r.prompt.includes(
-        'The day lines from #' + from + ' to #' + to + ' that say Digest: carry a few bullets on that day',
-      ) && r.note.includes(' Day digests for ' + n + ' day' + (n === 1 ? '' : 's') + ' (' + days(from, to) + ').'),
+        'The day lines from #' +
+          from +
+          ' to #' +
+          to +
+          " that say Summary: carry that day's summary, and those that say Digest: a few short bullets on it",
+      ) && r.note.includes(' Day summaries for ' + n + ' day' + (n === 1 ? '' : 's') + ' (' + days(from, to) + ').'),
       'D1: "What you have" and the note say which day lines carry digests ("' + r.note + '")',
     );
     const qa = await until(p, () =>
@@ -4081,7 +4119,7 @@ async function digests() {
       'D1: the qa row saves sent.digests ' + JSON.stringify(sent && sent.digests),
     );
     ok(
-      (await p.textContent('#qa-list')).includes(', day digests #' + from + '–#' + to),
+      (await p.textContent('#qa-list')).includes(', day summaries #' + from + '–#' + to),
       'D1: Earlier questions says digests were used',
     );
     ok(
@@ -4461,8 +4499,12 @@ async function byDay() {
         JSON.stringify(cards.map(c => [c.day, c.title, c.bullets[0]])),
     );
     ok(
-      !cards.some(c => c.day === '2026-10-05') && /Mon, Oct 5 gets its digest at a refresh after it ends/.test(st.note),
-      'F24 BD1: the day without a digest (Oct 5) is left out, and the quiet line says why: "' + st.note + '"',
+      !cards.some(c => c.day === '2026-10-05') &&
+        st.note ===
+          "A refresh keeps each day's summary current and rewrites it once after the day ends. Mon, Oct 5 gets its summary at the next refresh. Older days show their short digest: ask Claude to write day summaries for past days.",
+      'F24 BD1: the day with neither a summary nor a digest (Oct 5) is left out, and the quiet line says why: "' +
+        st.note +
+        '"',
     );
     await p.reload();
     await until(p, () => document.querySelectorAll('#days-list article').length === 4, null, 10000);
@@ -4522,8 +4564,11 @@ async function byDay() {
       cards: document.querySelectorAll('#days-list article').length,
     }));
     ok(
-      /^No day digests yet\./.test(r.empty) && r.cards === 0 && p.errors.length === 0,
-      'F24 BD4: with no digests the tab shows an empty state ' + JSON.stringify(r) + ' ' + JSON.stringify(p.errors),
+      /^No day summaries yet\./.test(r.empty) && r.cards === 0 && p.errors.length === 0,
+      'F24 BD4: with no summaries or digests the tab shows an empty state ' +
+        JSON.stringify(r) +
+        ' ' +
+        JSON.stringify(p.errors),
     );
   });
 
@@ -4539,16 +4584,17 @@ async function byDay() {
     await p.waitForTimeout(400);
     const e2 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
     ok(
-      e1 === "The day digests can't load in this view. Open the page on claude.ai while signed in." &&
+      e1 === "The day summaries can't load in this view. Open the page on claude.ai while signed in." &&
         e2 === e1 &&
         p.errors.length === 0,
       'F24 BD5: with no database, the tab says "' + e1 + '" and no page errors ' + JSON.stringify(p.errors),
     );
   });
 
-  /* BD10: the digests listener fails: the tab says so instead of waiting for the data forever, also opened at #days */
+  /* BD10: both listeners fail: the tab says so instead of waiting for the data forever, also opened at #days; the day
+     summaries' alone: the older digests show, under a line saying the summaries couldn't load */
   await hcase('BD10', async () => {
-    const p = await open(Object.assign(SEED(), { __opts: { snapFail: ['c:digests'] } }));
+    const p = await open(Object.assign(SEED(), { __opts: { snapFail: ['c:daySummaries', 'c:digests'] } }));
     HP.push(p);
     await bdShow(p);
     await p.waitForTimeout(300);
@@ -4557,11 +4603,21 @@ async function byDay() {
     await p.waitForTimeout(400);
     const e2 = await p.evaluate(() => (document.querySelector('#days-list .empty') || {}).textContent || '');
     ok(
-      e1 === "Couldn't load the day digests. Reload the page to try again." && e2 === e1 && p.errors.length === 0,
-      'F24 BD10: when the digests listener fails, the tab says "' +
-        e1 +
-        '"; no page errors ' +
-        JSON.stringify(p.errors),
+      e1 === "Couldn't load the day summaries. Reload the page to try again." && e2 === e1 && p.errors.length === 0,
+      'F24 BD10: when both listeners fail, the tab says "' + e1 + '"; no page errors ' + JSON.stringify(p.errors),
+    );
+    const { p: q } = await bdOpen({ opts: { snapFail: ['c:daySummaries'] } });
+    await bdShow(q);
+    await until(q, () => document.querySelectorAll('#days-list article').length === 4, null, 5000);
+    const r = await q.evaluate(() => ({
+      note: (document.querySelector('#days-list > p.note') || {}).textContent || '',
+      cards: document.querySelectorAll('#days-list article').length,
+    }));
+    ok(
+      r.note === "Couldn't load the day summaries. Reload the page to try again. Older digests show meanwhile." &&
+        r.cards === 4 &&
+        q.errors.length === 0,
+      'F29 BD10: the day summaries listener alone fails: the digests show, with a line saying so ' + JSON.stringify(r),
     );
   });
 
@@ -4767,7 +4823,7 @@ async function byDayReports() {
       card.first === '2026-10-05' &&
         card.title === 'Mon, Oct 5' &&
         card.count === '100 messages so far' &&
-        card.lead === 'No digest yet. What each refresh found:' &&
+        card.lead === 'No summary yet. What each refresh found:' &&
         card.details === 0 &&
         card.tags === 0,
       'F27 BD13: the day in progress comes first, titled, with its count so far, its runs in full ' +
@@ -4910,7 +4966,7 @@ async function byDayReports() {
       empty: document.querySelectorAll('#days-list .empty').length,
     }));
     ok(
-      /^No day digests yet\./.test(r.note) &&
+      /^No day summaries yet\./.test(r.note) &&
         JSON.stringify(r.days) ===
           JSON.stringify([
             ['2026-10-05', '100 messages so far', 2],
@@ -4953,6 +5009,1128 @@ async function byDayReports() {
     ok(
       r.runs === 4 && r.sw <= r.w && r.right <= r.w && p.errors.length === 0,
       'F27 BD17: at 390 px the runs fit the width, no sideways scroll ' + JSON.stringify(r),
+    );
+  });
+}
+
+/* ---------- F29: day summaries on the By day tab, Copy for chat, and in Ask ----------
+   daySummaries/d<YYYY-MM-DD> {day, fromI, toI, n, at, full, final, sections:[{h, bullets:[{t, refs}]}], open:[{t,
+   refs}]}, written by catchup.py; the page only reads them. Oct 1-5, 2026, 100 messages a day, the clock on Oct 5 at
+   1 PM in Los Angeles, so Oct 5 is the day in progress: it has a summary in progress (and a refresh's run), Oct 4 a
+   final one (and two runs), Oct 3 one written while in progress (its final rewrite still to come), Oct 2 one with no
+   bullet worth showing (its digest shows instead), Oct 1 only its digest; a document with a bad id is ignored. */
+const DS_NOW = Date.UTC(2026, 9, 5, 20, 0);
+const DS = () => ({
+  'daySummaries/d2026-10-05': {
+    day: '2026-10-05',
+    fromI: 400,
+    toI: 489,
+    n: 90,
+    at: '2026-10-05T16:04:00Z',
+    full: false,
+    final: false,
+    sections: [
+      {
+        h: 'Stove sale',
+        bullets: [
+          { t: 'Ana offered a stove; Ben claimed it', refs: [401, 405] },
+          { t: 'Pickup set for Saturday', refs: [410] },
+        ],
+      },
+      { h: 'Trip plans', bullets: [{ t: 'Cy proposed the ridge loop', refs: range(440, 451, i => i) }] },
+    ],
+    open: [{ t: 'Dee asked about permits', refs: [470] }],
+  },
+  'daySummaries/d2026-10-04': {
+    day: '2026-10-04',
+    fromI: 300,
+    toI: 399,
+    n: 100,
+    at: '2026-10-05T08:10:00Z',
+    full: true,
+    final: true,
+    sections: [
+      {
+        h: 'Tarp <i>deal</i>',
+        bullets: [
+          { t: 'Dee sold the tarp to <b>Ben</b>', refs: [310] },
+          { t: 'Ben paid for it [#312]', refs: [312] },
+        ],
+      },
+    ],
+    open: [],
+  },
+  'daySummaries/d2026-10-03': {
+    day: '2026-10-03',
+    fromI: 200,
+    toI: 290,
+    n: 91,
+    at: '2026-10-03T23:00:00Z',
+    full: false,
+    final: false,
+    sections: [{ h: 'Gear', bullets: [{ t: 'Cy listed a pack', refs: [205] }] }],
+    open: [],
+  },
+  'daySummaries/d2026-10-02': {
+    day: '2026-10-02',
+    fromI: 100,
+    toI: 199,
+    sections: [{ h: 'Empty', bullets: [{ t: '   ', refs: [101] }, { refs: [102] }] }],
+    open: [],
+  },
+  'daySummaries/today': { day: '2026-10-05', sections: [{ h: 'X', bullets: [{ t: 'never shown', refs: [400] }] }] },
+  'reports/d2026-10-05': {
+    day: '2026-10-05',
+    runs: [
+      { at: '2026-10-05T16:04:00Z', fromI: 400, toI: 489, n: 90, bullets: [{ t: 'Ana offered a stove', refs: [401] }] },
+    ],
+  },
+  'reports/d2026-10-04': {
+    day: '2026-10-04',
+    runs: [
+      { at: '2026-10-04T23:04:00Z', fromI: 300, toI: 389, n: 90, bullets: [{ t: 'Dee sold the tarp', refs: [310] }] },
+      { at: '2026-10-05T07:30:00Z', fromI: 390, toI: 399, n: 10, bullets: [] },
+    ],
+  },
+});
+const dsOpen = (docs = DS(), ctx = {}) => bdOpen({ docs }, Object.assign({ clockAt: DS_NOW }, ctx));
+const dsCard = (p, day) =>
+  p.evaluate(day => {
+    const a = document.querySelector('#days-list article[data-day="' + day + '"]');
+    if (!a) return null;
+    return {
+      ds: a.classList.contains('ds-day'),
+      state: a.dataset.state || null,
+      line: (a.querySelector('.ds-state') || {}).textContent || '',
+      badge: (a.querySelector('.ds-state .chip') || {}).textContent || '',
+      count: (a.querySelector('.row .note') || {}).textContent || '',
+      heads: [...a.querySelectorAll('h4')].map(h => h.textContent),
+      lists: [...a.querySelectorAll(':scope > ul')].map(ul => [...ul.children].map(li => li.textContent)),
+      copy: !!a.querySelector(':scope > .ds-share > button.ds-copy'),
+      last: a.lastElementChild.tagName,
+      more: (a.querySelector('details.rp-more > summary') || {}).textContent || '',
+      open: !!a.querySelector('details.rp-more[open]'),
+      tags: a.querySelectorAll('li b, li i, h4 b, h4 i').length,
+    };
+  }, day);
+const DS5_TEXT =
+  'Mon, Oct 5 (so far)\n\nStove sale\n• Ana offered a stove; Ben claimed it\n• Pickup set for Saturday\n\nTrip plans\n• Cy proposed the ridge loop\n\nStill open\n• Dee asked about permits';
+const DS4_TEXT = 'Sun, Oct 4\n\nTarp <i>deal</i>\n• Dee sold the tarp to <b>Ben</b>\n• Ben paid for it';
+const DS2_TEXT = 'Fri, Oct 2\n\n• Ana sold a stove on day 1\n• Ben asked about permits on day 1';
+/* the page's clock stops (it runs on Playwright's clock, clockAt), so "Copied." can't clear before it's read; a case
+   moves the clock on itself (p.clock.runFor) */
+const dsHold = async p => p.clock.pauseAt((await p.evaluate(() => Date.now())) + 1000);
+const dsCopy = async (p, day) => {
+  const sel = '#days-list article[data-day="' + day + '"]';
+  ok(await tryClick(p, sel + ' button.ds-copy'), 'F29: Copy for chat on ' + day + ' can be clicked');
+  await until(p, sel => (document.querySelector(sel + ' .ds-copied') || {}).textContent, sel, 5000);
+  return p.evaluate(sel => {
+    const ta = document.querySelector(sel + ' .ds-share textarea');
+    const st = document.querySelector(sel + ' .ds-copied');
+    return {
+      status: st.textContent,
+      role: st.getAttribute('role'),
+      boxes: document.querySelectorAll(sel + ' .ds-share textarea').length,
+      text: ta ? ta.value : null,
+      focused: !!ta && document.activeElement === ta,
+      selected: !!ta && ta.selectionStart === 0 && ta.selectionEnd === ta.value.length,
+    };
+  }, sel);
+};
+
+async function daySums() {
+  /* DS1: each day's summary, newest first: its title and count, where it stands (in progress with when it was last
+     updated, final, or ended with its final rewrite to come), its topic headings over bullets with every number cited,
+     then Still open; markup stays text; Copy for chat on each card; the refresh runs collapsed under it; a day whose
+     summary has nothing to show, and one with none, fall back to the older digest; a bad document id is ignored */
+  await hcase('DS1', async () => {
+    const { p } = await dsOpen();
+    await bdShow(p);
+    await until(p, () => document.querySelectorAll('#days-list article').length === 5, null, 5000);
+    const order = await p.evaluate(() => [...document.querySelectorAll('#days-list article')].map(a => a.dataset.day));
+    const [d5, d4, d3, d2, d1] = await Promise.all(
+      ['2026-10-05', '2026-10-04', '2026-10-03', '2026-10-02', '2026-10-01'].map(d => dsCard(p, d)),
+    );
+    ok(
+      order.join() === '2026-10-05,2026-10-04,2026-10-03,2026-10-02,2026-10-01',
+      'F29 DS1: the days newest first ' + order,
+    );
+    ok(
+      d5.ds &&
+        d5.state === 'progress' &&
+        d5.line === 'In progress · updated 9:04 AM' &&
+        d5.badge === 'In progress' &&
+        d5.count === '100 messages so far' &&
+        JSON.stringify(d5.heads) === JSON.stringify(['Stove sale', 'Trip plans', 'Still open']) &&
+        JSON.stringify(d5.lists) ===
+          JSON.stringify([
+            ['Ana offered a stove; Ben claimed it #401 #405', 'Pickup set for Saturday #410'],
+            ['Cy proposed the ridge loop ' + range(440, 451, i => '#' + i).join(' ')],
+            ['Dee asked about permits #470'],
+          ]) &&
+        d5.copy &&
+        d5.more === 'What each refresh found (1)' &&
+        !d5.open &&
+        d5.last === 'DETAILS',
+      'F29 DS1: the day in progress: labelled with when it was updated, its headings, bullets (all 12 numbers) and Still open, Copy for chat, its run collapsed ' +
+        JSON.stringify(d5),
+    );
+    ok(
+      d4.ds &&
+        d4.state === 'final' &&
+        d4.line === 'Final · written Mon 1:10 AM' &&
+        d4.count === '100 messages' &&
+        JSON.stringify(d4.heads) === JSON.stringify(['Tarp <i>deal</i>']) &&
+        JSON.stringify(d4.lists) ===
+          JSON.stringify([['Dee sold the tarp to <b>Ben</b> #310', 'Ben paid for it [#312] #312']]) &&
+        d4.tags === 0 &&
+        d4.copy &&
+        d4.more === 'What each refresh found (2)' &&
+        d4.last === 'DETAILS',
+      'F29 DS1: a final day: labelled final with when it was written (the next day), markup shown as text, no Still open when nothing is ' +
+        JSON.stringify(d4),
+    );
+    ok(
+      d3.ds &&
+        d3.state === 'ended' &&
+        d3.line === 'Day ended · updated 4:00 PM; rewritten as one piece at a refresh that brings new messages',
+      'F29 DS1: a day that ended before its final rewrite says so ' + JSON.stringify(d3),
+    );
+    ok(
+      !d2.ds &&
+        !d1.ds &&
+        d2.lists[0].join(' / ') === 'Ana sold a stove on day 1 #101 #102 / Ben asked about permits on day 1 #105' &&
+        d1.lists[0][0] === 'Ana sold a stove on day 0 #1 #2' &&
+        d2.copy &&
+        d1.copy &&
+        !d2.state,
+      'F29 DS1: a summary with nothing to show (Oct 2) and a day without one (Oct 1) show their older digest ' +
+        JSON.stringify([d2, d1]),
+    );
+    const r = await p.evaluate(() => ({
+      note: (document.querySelector('#days-list > p.note') || {}).textContent || '',
+      junk: document.getElementById('days-list').textContent.includes('never shown'),
+    }));
+    ok(
+      r.note ===
+        "A refresh keeps each day's summary current and rewrites it once after the day ends. Older days show their short digest: ask Claude to write day summaries for past days." &&
+        !r.junk &&
+        p.errors.length === 0,
+      'F29 DS1: the quiet line, a bad document id ignored, no page errors ' + JSON.stringify([r, p.errors]),
+    );
+  });
+
+  /* DS2: a number in a summary opens that message in Messages (loading its day when it's before the window), from a
+     topic's bullet and from Still open */
+  await hcase('DS2', async () => {
+    const { p } = await dsOpen();
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.ds-day'), null, 5000);
+    const opens = async (sel, i) => {
+      await bdShow(p);
+      await until(p, () => document.querySelector('#days-list article.ds-day'), null, 5000);
+      await flashReset(p);
+      ok(await tryClick(p, sel), 'F29 DS2: ' + sel + ' can be clicked');
+      await until(p, i => document.querySelector('#m' + i + '[data-flashed]'), i, 5000);
+      return p.evaluate(i => {
+        const n = document.getElementById('m' + i);
+        const b = n && n.getBoundingClientRect();
+        return (
+          location.hash === '#messages' &&
+          !!b &&
+          b.height > 0 &&
+          b.top >= 0 &&
+          b.bottom <= innerHeight &&
+          n.hasAttribute('data-flashed')
+        );
+      }, i);
+    };
+    const a = await opens('#days-list article[data-day="2026-10-05"] li a.cite:has-text("#405")', 405);
+    const b = await opens('#days-list article[data-day="2026-10-05"] h4.ds-open + ul a.cite', 470);
+    const c = await opens('#days-list article[data-day="2026-10-04"] li a.cite:has-text("#310")', 310);
+    ok(
+      a && b && c,
+      'F29 DS2: #405, #470 (Still open) and #310 (a final day) each open in Messages, on screen ' + [a, b, c],
+    );
+    ok(p.errors.length === 0, 'F29 DS2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* DS3: Copy for chat puts the day on the clipboard as chat-ready plain text: the day as a title ("(so far)" on the
+     day in progress), each heading and its bullets, Still open, and no message numbers; a digest copies its bullets.
+     "Copied." shows in a status line */
+  await hcase('DS3', async () => {
+    const { p } = await dsOpen();
+    await p.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:9917' });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.ds-day'), null, 5000);
+    await dsHold(p);
+    const got = {};
+    for (const d of ['2026-10-05', '2026-10-04', '2026-10-02']) {
+      const st = await dsCopy(p, d);
+      got[d] = Object.assign(st, { clip: await p.evaluate(() => navigator.clipboard.readText()) });
+    }
+    ok(
+      got['2026-10-05'].clip === DS5_TEXT &&
+        got['2026-10-04'].clip === DS4_TEXT &&
+        got['2026-10-02'].clip === DS2_TEXT &&
+        Object.values(got).every(x => !/#\d/.test(x.clip)),
+      'F29 DS3: the day in progress, a final day and a digest copy as plain text without message numbers ' +
+        JSON.stringify(Object.values(got).map(x => x.clip)),
+    );
+    ok(
+      Object.values(got).every(x => x.status === 'Copied.' && x.role === 'status' && x.boxes === 0),
+      'F29 DS3: each says "Copied." in a status line, with no text box ' + JSON.stringify(got),
+    );
+    await p.clock.runFor(5100);
+    const after = await p.evaluate(
+      () => document.querySelector('#days-list article[data-day="2026-10-02"] .ds-copied').textContent,
+    );
+    ok(after === '', 'F29 DS3: "Copied." clears 5 s later ("' + after + '")');
+    ok(p.errors.length === 0, 'F29 DS3: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* DS4: where the clipboard is out of reach (the artifact viewer can block it), Copy for chat says so and shows the
+     text selected in a box below, to copy by hand; pressing it again doesn't add a second box */
+  await hcase('DS4', async () => {
+    const { p } = await dsOpen();
+    await p.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: () => Promise.reject(new Error('blocked by the host')) },
+      });
+      document.execCommand = () => false;
+    });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.ds-day'), null, 5000);
+    await dsHold(p);
+    const a = await dsCopy(p, '2026-10-04');
+    const b = await dsCopy(p, '2026-10-04');
+    ok(
+      a.status === "Couldn't copy here: select the text below and copy it." &&
+        a.text === DS4_TEXT &&
+        a.focused &&
+        a.selected &&
+        a.boxes === 1 &&
+        b.boxes === 1 &&
+        b.text === DS4_TEXT,
+      'F29 DS4: a blocked clipboard: the message and the text selected in one box ' + JSON.stringify([a, b]),
+    );
+    ok(p.errors.length === 0, 'F29 DS4: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* DS5: at 390 px a summary with a long unbroken heading and bullet, many numbers, the Copy row and the box a blocked
+     clipboard shows: nothing scrolls sideways */
+  await hcase('DS5', async () => {
+    const docs = DS();
+    const long = 'tentpolesandstakes'.repeat(8);
+    docs['daySummaries/d2026-10-05'].sections.push({
+      h: 'Heading ' + long,
+      bullets: [{ t: 'Ana listed ' + long + ' with a long note about the ridge trail', refs: range(450, 480, i => i) }],
+    });
+    const { p } = await dsOpen(docs, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await p.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: () => Promise.reject(new Error('no')) },
+      });
+      document.execCommand = () => false;
+    });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.ds-day'), null, 5000);
+    await dsCopy(p, '2026-10-05');
+    await p.evaluate(() => document.querySelectorAll('#days-list details.rp-more').forEach(d => (d.open = true)));
+    await p.waitForTimeout(150);
+    const r = await p.evaluate(() => ({
+      sw: document.documentElement.scrollWidth,
+      w: innerWidth,
+      right: Math.max(
+        ...[
+          ...document.querySelectorAll(
+            '#days-list article, #days-list li, #days-list h4, #days-list .ds-share, #days-list textarea',
+          ),
+        ].map(x => Math.round(x.getBoundingClientRect().right)),
+      ),
+      box: !!document.querySelector('#days-list .ds-share textarea'),
+    }));
+    ok(
+      r.box && r.sw <= r.w && r.right <= r.w && p.errors.length === 0,
+      'F29 DS5: at 390 px the summaries, the Copy row and its box fit the width, no sideways scroll ' +
+        JSON.stringify(r),
+    );
+  });
+
+  /* DS6: dark mode: the state chips use the dark theme's tokens */
+  await hcase('DS6', async () => {
+    const { p } = await dsOpen(DS(), { colorScheme: 'dark' });
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.ds-day'), null, 5000);
+    const c = await p.evaluate(() => {
+      const chip = d =>
+        getComputedStyle(document.querySelector('#days-list article[data-day="' + d + '"] .ds-state .chip'));
+      return {
+        progress: [chip('2026-10-05').backgroundColor, chip('2026-10-05').color],
+        final: [chip('2026-10-04').backgroundColor, chip('2026-10-04').color],
+        ended: [chip('2026-10-03').backgroundColor, chip('2026-10-03').color],
+      };
+    });
+    ok(
+      c.progress.join() === 'rgb(31, 43, 69),rgb(122, 165, 255)' &&
+        c.final.join() === 'rgb(43, 49, 34),rgb(180, 195, 138)' &&
+        c.ended.join() === 'rgb(58, 42, 28),rgb(233, 164, 106)',
+      'F29 DS6: in dark mode the state chips use the theme tokens ' + JSON.stringify(c),
+    );
+  });
+
+  /* DS7: a refresh's writes reach the open tab without a reload: today's summary updated (a new topic, a later time),
+     a summary for a day that only had a digest replaces it, and today's turning final */
+  await hcase('DS7', async () => {
+    const { p } = await dsOpen();
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.ds-day'), null, 5000);
+    await p.evaluate(() => {
+      const d = __rt.get('daySummaries/d2026-10-05');
+      d.sections.push({ h: 'Lunch', bullets: [{ t: 'Dee brought soup', refs: [495] }] });
+      Object.assign(d, { toI: 499, n: 100, at: '2026-10-05T19:04:00Z' });
+      __rt.write('daySummaries/d2026-10-05', d);
+      __rt.write('daySummaries/d2026-10-02', {
+        day: '2026-10-02',
+        fromI: 100,
+        toI: 199,
+        n: 100,
+        at: '2026-10-05T19:04:00Z',
+        full: true,
+        final: true,
+        sections: [{ h: 'Backfilled', bullets: [{ t: 'Ben fixed his stove', refs: [150] }] }],
+        open: [],
+      });
+    });
+    await until(p, () => /Lunch/.test(document.getElementById('days-list').textContent), null, 5000);
+    const [d5, d2] = await Promise.all([dsCard(p, '2026-10-05'), dsCard(p, '2026-10-02')]);
+    ok(
+      d5.line === 'In progress · updated 12:04 PM' &&
+        d5.heads.join() === 'Stove sale,Trip plans,Lunch,Still open' &&
+        d2.ds &&
+        d2.state === 'final' &&
+        d2.lists[0][0] === 'Ben fixed his stove #150',
+      'F29 DS7: the update and the backfilled day show in the open tab ' + JSON.stringify([d5, d2]),
+    );
+    await p.evaluate(() => {
+      const d = __rt.get('daySummaries/d2026-10-05');
+      __rt.write('daySummaries/d2026-10-05', Object.assign(d, { full: true, final: true, at: '2026-10-06T08:04:00Z' }));
+    });
+    await until(
+      p,
+      () => (document.querySelector('#days-list article[data-day="2026-10-05"]') || {}).dataset.state === 'final',
+      null,
+      5000,
+    );
+    const f = await dsCard(p, '2026-10-05');
+    ok(
+      f.line === 'Final · written Tue 1:04 AM' && f.count === '100 messages' && p.errors.length === 0,
+      'F29 DS7: today turning final shows as final, without "so far" ' + JSON.stringify([f, p.errors]),
+    );
+  });
+
+  /* DS8: summaries but no digests, the day in progress without its summary yet: the quiet line names it, and the
+     older days without a summary; the day in progress shows its refresh runs in full */
+  await hcase('DS8', async () => {
+    const docs = DS();
+    delete docs['daySummaries/d2026-10-05'];
+    delete docs['daySummaries/d2026-10-02'];
+    const { msgs, seed } = bdSeed({ noDigests: true, docs });
+    const p = await open(seed, PAGE, { clockAt: DS_NOW });
+    HP.push(p);
+    await until(p, n => S.msgs.length === n && S.threading, msgs.length, 120000);
+    await bdShow(p);
+    await until(p, () => document.querySelectorAll('#days-list article').length === 3, null, 5000);
+    const r = await p.evaluate(() => ({
+      note: (document.querySelector('#days-list > p.note') || {}).textContent || '',
+      days: [...document.querySelectorAll('#days-list article')].map(a => [a.dataset.day, a.className]),
+    }));
+    ok(
+      r.note ===
+        "A refresh keeps each day's summary current and rewrites it once after the day ends. Mon, Oct 5 gets its summary at the next refresh. 2 older days have no summary: ask Claude to write day summaries for past days." &&
+        JSON.stringify(r.days) ===
+          JSON.stringify([
+            ['2026-10-05', 'item dg-day rp-day'],
+            ['2026-10-04', 'item dg-day ds-day'],
+            ['2026-10-03', 'item dg-day ds-day'],
+          ]) &&
+        p.errors.length === 0,
+      'F29 DS8: ' + JSON.stringify([r, p.errors]),
+    );
+  });
+
+  /* DS10 (F29 review, finding 6): a summary's state follows the day boundary while the tab stays open: at midnight in
+     the chat's time zone the day in progress becomes "Day ended", in words that hold however the next refreshes go */
+  await hcase('DS10', async () => {
+    const { p } = await dsOpen(DS(), { clockAt: Date.UTC(2026, 9, 6, 6, 58, 30) }); /* 11:58:30 PM on Oct 5 in LA */
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.ds-day'), null, 5000);
+    const before = await dsCard(p, '2026-10-05');
+    await p.clock.runFor(120000); /* past midnight; the page's minute tick runs */
+    await until(
+      p,
+      () => document.querySelector('#days-list article[data-day="2026-10-05"]').dataset.state === 'ended',
+      null,
+      5000,
+    );
+    const after = await dsCard(p, '2026-10-05');
+    const text = await p.evaluate(() => document.getElementById('days-list').textContent);
+    ok(
+      before.state === 'progress' &&
+        before.count === '100 messages so far' &&
+        after.state === 'ended' &&
+        after.line === 'Day ended · updated 9:04 AM; rewritten as one piece at a refresh that brings new messages' &&
+        after.count === '100 messages' &&
+        !/next refresh/.test(text),
+      'F29 DS10: the day in progress at 11:58 PM is "Day ended" after midnight without a reload ' +
+        JSON.stringify([before.line, after.line]),
+    );
+    ok(p.errors.length === 0, 'F29 DS10: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* DS12 (F29 second review, finding 5): a day rewritten after it ended, with a later day stored, is Final only when no
+     message of that day was stored after its summary; otherwise its final rewrite is still to come */
+  await hcase('DS12', async () => {
+    const docs = DS();
+    Object.assign(docs['daySummaries/d2026-10-04'], { full: true, final: false, toI: 389, fullToI: 389, n: 90 });
+    const { p } = await dsOpen(docs);
+    await bdShow(p);
+    await until(p, () => document.querySelector('#days-list article.ds-day'), null, 5000);
+    const a = await dsCard(p, '2026-10-04');
+    await p.evaluate(() => {
+      const d = __rt.get('daySummaries/d2026-10-04');
+      __rt.write('daySummaries/d2026-10-04', Object.assign(d, { toI: 399, fullToI: 399, n: 100 }));
+    });
+    await until(
+      p,
+      () => (document.querySelector('#days-list article[data-day="2026-10-04"]') || {}).dataset.state === 'final',
+      null,
+      5000,
+    );
+    const b = await dsCard(p, '2026-10-04');
+    ok(
+      a.state === 'ended' &&
+        a.line === 'Day ended · updated Mon 1:10 AM; rewritten as one piece at a refresh that brings new messages' &&
+        b.state === 'final' &&
+        b.line === 'Final · written Mon 1:10 AM',
+      'F29 DS12: #390–#399 stored after the summary (through #389): not Final; through #399: Final ' +
+        JSON.stringify([a.line, b.line]),
+    );
+  });
+}
+
+/* ---------- F29: Ask and Views read the day summaries (older digests where a day has none) ---------- */
+/* summary documents for the days of msgs that keep(k, day, ids) picks; make(k, ids) gives {sections, open} */
+function hsums(msgs, keep = () => true, make) {
+  const by = new Map();
+  msgs.forEach(m => (by.has(m.d) ? by.get(m.d).push(m.i) : by.set(m.d, [m.i])));
+  const docs = {};
+  [...by].forEach(([d, ids], k) => {
+    if (!keep(k, d, ids)) return;
+    const body = make
+      ? make(k, ids)
+      : {
+          sections: [
+            {
+              h: 'Stove sale',
+              bullets: [
+                { t: 'Ana offered a stove on day ' + k, refs: [ids[1], ids[2]] },
+                { t: 'Ben claimed it', refs: [ids[5]] },
+              ],
+            },
+            { h: 'Trip', bullets: [{ t: 'Cy proposed the loop', refs: [ids[40]] }] },
+          ],
+          open: [{ t: 'Dee asked about permits', refs: [ids[70]] }],
+        };
+    docs['daySummaries/d' + d] = Object.assign(
+      {
+        day: d,
+        fromI: ids[0],
+        toI: ids[ids.length - 1],
+        n: ids.length,
+        at: '2026-10-20T08:00:00Z',
+        full: true,
+        final: true,
+      },
+      body,
+    );
+  });
+  return docs;
+}
+const sumLoaded = (p, n) => until(p, n => S.daySums && S.daySums.size === n, n);
+const sumLines = dig => dig.filter(([, , l]) => /\] [\d,]+ messages?\. Summary: /.test(l));
+
+async function askDaySums() {
+  /* AD1: Ask's older history: a day line carries the day's summary where it has one for the whole day, else its older
+     digest; each point cites only that day's stored messages; "What you have", the note and the saved row count both;
+     a view's prompt reads the same lines */
+  await hcase('AD1', async () => {
+    const msgs = hmsgs(800, { perDay: 134 });
+    const docs = Object.assign(
+      hdigests(msgs),
+      hsums(msgs, k => k !== 1),
+    );
+    const p = await hopen(
+      hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: 16384 }, docs }),
+      800,
+    );
+    await sumLoaded(p, 5);
+    await dgLoaded(p, 6);
+    const r = await hask(p, 'Who sold a stove?', true);
+    const { dig } = parts(r.prompt);
+    const sl = sumLines(dig),
+      dl = digestLines(dig);
+    const span = hdays(msgs);
+    ok(
+      sl.length > 0 &&
+        sl.every(([a, b, l]) => {
+          const k = Math.floor(a / 134);
+          return (
+            k !== 1 &&
+            span.get(msgs[a].d)[0] === a &&
+            span.get(msgs[a].d)[1] === b &&
+            l.endsWith(
+              ' messages. Summary: Stove sale: Ana offered a stove on day ' +
+                k +
+                ' [#' +
+                (a + 1) +
+                ', #' +
+                (a + 2) +
+                ']; Ben claimed it [#' +
+                (a + 5) +
+                '] | Trip: Cy proposed the loop [#' +
+                (a + 40) +
+                '] | Still open: Dee asked about permits [#' +
+                (a + 70) +
+                ']',
+            ) &&
+            citedIn(l.slice(l.indexOf('Summary: '))).every(i => i >= a && i <= b)
+          );
+        }) &&
+        dl.every(([a]) => Math.floor(a / 134) === 1),
+      'F29 AD1: ' +
+        sl.length +
+        ' day lines carry their summary, ' +
+        dl.length +
+        ' a digest (day 1, which has no summary, only): ' +
+        sl.map(x => x[2].slice(0, 70)).join(' / '),
+    );
+    const n = sl.length + dl.length;
+    ok(
+      r.prompt.includes(
+        " that say Summary: carry that day's summary, and those that say Digest: a few short bullets on it",
+      ) &&
+        r.note.includes(' Day summaries for ' + n + ' day' + (n === 1 ? '' : 's')) &&
+        r.calls.length === 1 &&
+        r.calls[0].bytes <= 16384 - HMARGIN,
+      'F29 AD1: "What you have" names both kinds; the note counts ' +
+        n +
+        ' days; one call within the cap ("' +
+        r.note +
+        '")',
+    );
+    const v = await p.evaluate(() => viewPrompt('Group everything by topic', 16384, false).text);
+    ok(
+      /\] [\d,]+ messages\. Summary: Stove sale: /.test(v),
+      'F29 AD1: a view built over the whole history reads the same summary lines',
+    );
+    ok(p.errors.length === 0, 'F29 AD1: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* AD2: dayLines: a summary's line is the whole day's, headings before their points and Still open last; a point
+     keeps only the numbers of its own day that are stored, and one with none left is dropped; a summary that doesn't
+     cover the whole day, or a stretch starting mid-day, falls back; a long summary goes in whole points within the
+     line's bytes and says how many didn't fit, all of them with room enough, and at least one point at any size */
+  await hcase('AD2', async () => {
+    const msgs = hmsgs(400, { perDay: 100 });
+    const longDay = (k, ids) => ({
+      sections: Array.from({ length: 6 }, (_, j) => ({
+        h: 'Topic ' + j,
+        bullets: Array.from({ length: 10 }, (_, b) => ({
+          t: 'Point ' + j + '.' + b + ' about the ridge trail permits and the spare tent poles, '.repeat(3),
+          refs: [ids[j * 10 + b]],
+        })),
+      })),
+      open: [],
+    });
+    const docs = Object.assign(
+      hsums(
+        msgs,
+        k => k !== 1,
+        (k, ids) =>
+          k === 0
+            ? {
+                sections: [
+                  {
+                    h: 'Stove\nsale  ',
+                    bullets: [
+                      { t: 'Ana offered a stove', refs: [ids[1], 5000, ids[2], ids[2] + 100] },
+                      { t: 'Elsewhere only', refs: [250] },
+                      { t: 7, refs: [ids[3]] },
+                    ],
+                  },
+                  { h: '', bullets: [{ t: 'No heading', refs: [ids[9]] }] },
+                ],
+                open: [{ t: 'Dee asked', refs: [ids[70]] }],
+              }
+            : k === 3
+              ? longDay(k, ids)
+              : { sections: [{ h: 'Gear', bullets: [{ t: 'Cy listed a pack', refs: [ids[3]] }] }], open: [] },
+      ),
+      hdigests(msgs, k => k === 1),
+    );
+    docs['daySummaries/d' + msgs[200].d].fromI = 199; /* claims a day that started a message earlier */
+    const p = await hopen(hseed(msgs, { threads: true, docs }), 400);
+    await sumLoaded(p, 3);
+    await dgLoaded(p, 1);
+    const ls = await p.evaluate(() => [
+      dayLines(0, 399),
+      dayLines(150, 199),
+      dayLines(300, 399, 100000),
+      dayLines(300, 399, 120),
+    ]);
+    const [all, mid, big, tiny] = ls;
+    ok(
+      all.length === 4 &&
+        all[0].text ===
+          '[#0–#99, Oct 1] 100 messages. Summary: Stove sale: Ana offered a stove [#1, #2] | More: No heading [#9] | Still open: Dee asked [#70]' &&
+        all[0].ds &&
+        all[0].dg &&
+        all[1].text.startsWith('[#100–#199, Oct 2] 100 messages. Digest: ') &&
+        !all[1].ds &&
+        /Busiest: |Not grouped/.test(all[2].text) &&
+        !all[2].dg,
+      'F29 AD2: summary lines; a day with only a digest; a summary claiming an earlier start falls back to title-only: ' +
+        all.map(l => l.text.slice(0, 80)).join(' / '),
+    );
+    const n3 = (all[3].text.match(/\[#\d+\]/g) || []).length;
+    ok(
+      all[3].bytes <= 4096 + 1 &&
+        n3 > 5 &&
+        all[3].text.endsWith(' (+' + (60 - n3) + ' more points)') &&
+        all[3].text.includes('| Topic 1: Point 1.0'),
+      'F29 AD2: a long summary in a prompt line: ' +
+        n3 +
+        ' whole points within 4,096 bytes, then how many more (' +
+        all[3].bytes +
+        ' bytes)',
+    );
+    ok(
+      (big[0].text.match(/\[#\d+\]/g) || []).length === 60 &&
+        !/more point/.test(big[0].text) &&
+        mid.length === 1 &&
+        !mid[0].dg,
+      'F29 AD2: with room, every point; a stretch starting mid-day gets that day title-only',
+    );
+    ok(
+      tiny[0].ds && tiny[0].bytes <= 121 && tiny[0].text.endsWith('(+59 more points)'),
+      'F29 AD2: at any size, at least one point, cut to fit: ' + tiny[0].text,
+    );
+    ok(p.errors.length === 0, 'F29 AD2: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* AD3: the day_summaries tool gives each day's summary (a long one cut to fit one result, then how many points more),
+     and where to continue when the days don't all fit; days without one get their digest or the title-only line */
+  await hcase('AD3', async () => {
+    const msgs = hmsgs(1200, { perDay: 100 });
+    const docs = Object.assign(
+      hsums(
+        msgs,
+        k => k < 2,
+        (k, ids) =>
+          k === 0
+            ? {
+                sections: [
+                  {
+                    h: 'Everything',
+                    bullets: ids.map(i => ({
+                      t: 'Point ' + i + ' about the ridge trail permits and the spare poles. '.repeat(3),
+                      refs: [i],
+                    })),
+                  },
+                ],
+                open: [],
+              }
+            : { sections: [{ h: 'Gear', bullets: [{ t: 'Cy listed a pack', refs: [ids[3]] }] }], open: [] },
+      ),
+      hdigests(msgs, k => k === 2),
+    );
+    const plan = [
+      {
+        calls: [
+          { name: 'day_summaries', input: { from: '2026-10-01', to: '2026-10-12' } },
+          { name: 'day_summaries', input: { from: '2026-10-02', to: '2026-10-12' } },
+          { name: 'day_summaries', input: { from: '2026-10-01', to: '2026-10-01' } },
+        ],
+      },
+      { say: 'Cy listed a pack [#103].' },
+    ];
+    const p = await asOpen(hseed(msgs, { threads: true, docs, opts: { tools: true } }), plan);
+    await sumLoaded(p, 2);
+    const r = await hask(p, 'What happened on Oct 1 and 2?');
+    const log = (await asTools(p)).filter(x => x.name === 'day_summaries');
+    const [one, two, alone] = log.map(x => x.out);
+    const b8 = t => new TextEncoder().encode(t).length;
+    ok(
+      one.days.length === 12 &&
+        one.days[0].startsWith('[#0–#99, Oct 1] 100 messages. Summary: Everything: Point 0 ') &&
+        /\(\+\d+ more points\)$/.test(one.days[0]) &&
+        b8(one.days[0]) + 1 <= 4096 &&
+        !one.next,
+      'F29 AD3 (third review, finding 2): over several days a long day takes at most 4 KB, so the other days fit too ' +
+        JSON.stringify([one.days.length, b8(one.days[0]), one.days[0].slice(-40), one.next]),
+    );
+    ok(
+      alone.days.length === 1 &&
+        b8(alone.days[0]) > 4096 &&
+        b8(alone.days[0]) + 1 <= 16384 - 512 &&
+        /\(\+\d+ more points\)$/.test(alone.days[0]),
+      'F29 AD3: asked for alone, the day gets its summary up to a whole result ' + b8(alone.days[0]) + ' bytes',
+    );
+    ok(
+      two.days.length === 11 &&
+        two.days[0] === '[#100–#199, Oct 2] 100 messages. Summary: Gear: Cy listed a pack [#103]' &&
+        two.days[1].startsWith('[#200–#299, Oct 3] 100 messages. Digest: ') &&
+        /Busiest: |Not grouped/.test(two.days[2]) &&
+        !two.next,
+      'F29 AD3: then a day per line: a summary, a digest, title-only ' + JSON.stringify(two.days.slice(0, 3)),
+    );
+    ok(
+      r.prompt.includes('day_summaries (a line per day, with its summary where it has one)') && p.errors.length === 0,
+      'F29 AD3: the SEARCH line names what day_summaries gives; no page errors ' + JSON.stringify(p.errors),
+    );
+  });
+
+  /* AD4 (F29 review, finding 2): a day whose full summary doesn't fit still carries as much as its digest would: its
+     summary cut to the digest's size. Ask's older history never covers fewer days than with the digests alone. */
+  await hcase('AD4', async () => {
+    const msgs = hmsgs(800, { perDay: 134 });
+    const long = (k, ids) => ({
+      sections: [
+        {
+          h: 'Everything',
+          bullets: ids
+            .slice(0, 60)
+            .map(i => ({ t: 'Point ' + i + ' about the ridge trail permits and the tent poles', refs: [i] })),
+        },
+      ],
+      open: [],
+    });
+    const got = {};
+    for (const [label, docs] of [
+      ['digests', hdigests(msgs)],
+      [
+        'both',
+        Object.assign(
+          hdigests(msgs),
+          hsums(msgs, () => true, long),
+        ),
+      ],
+    ]) {
+      const p = await hopen(
+        hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: 16384 }, docs }),
+        800,
+      );
+      await dgLoaded(p, 6);
+      if (label === 'both') await sumLoaded(p, 6);
+      const r = await hask(p, 'Anything about permits?', true);
+      const { dig } = parts(r.prompt);
+      got[label] = {
+        carried: dig.filter(([, , l]) => /\] [\d,]+ messages\. (Digest|Summary): /.test(l)).length,
+        sums: sumLines(dig).map(([, , l]) => l),
+        bytes: r.calls[0].bytes,
+      };
+      await p.close();
+    }
+    ok(
+      got.digests.carried > 0 &&
+        got.both.carried >= got.digests.carried &&
+        got.both.sums.length > 0 &&
+        got.both.sums.every(l => /\(\+\d+ more points\)$/.test(l)) &&
+        got.both.bytes <= 16384 - HMARGIN,
+      'F29 AD4: with long summaries, ' +
+        got.both.carried +
+        ' day lines carry one (the digests alone: ' +
+        got.digests.carried +
+        '), each cut to fit: ' +
+        JSON.stringify(got.both.sums.slice(0, 2)),
+    );
+  });
+
+  /* AD5 (F29 review, finding 5): the older history builds a day's summary line only when the swap reaches that day,
+     once per prompt, not every day's on every round */
+  await hcase('AD5', async () => {
+    const msgs = hmsgs(800, { perDay: 20 }); /* 40 days, every one summarized, each too long for more than a few */
+    const docs = hsums(
+      msgs,
+      () => true,
+      (k, ids) => ({
+        sections: [
+          {
+            h: 'Day ' + k,
+            bullets: ids.map(i => ({
+              t: 'Point ' + i + ' about the ridge trail permits and the spare tent poles',
+              refs: [i],
+            })),
+          },
+        ],
+        open: [],
+      }),
+    );
+    const p = await hopen(
+      hseed(msgs, { threads: true, meta: { caughtUpI: 789 }, opts: { promptMax: 32768 }, docs }),
+      800,
+    );
+    await sumLoaded(p, 40);
+    await p.evaluate(() => {
+      window.__dsCalls = 0;
+      const f = window.daySumLine;
+      window.daySumLine = function () {
+        window.__dsCalls++;
+        return f.apply(this, arguments);
+      };
+    });
+    const r = await hask(p, 'Anything about permits?', true);
+    const { dig } = parts(r.prompt);
+    const calls = await p.evaluate(() => window.__dsCalls);
+    const dayLs = dig.filter(([, , l]) => /\] [\d,]+ messages?\./.test(l)).length;
+    ok(
+      sumLines(dig).length > 0 && calls <= 60,
+      'F29 AD5: ' + calls + ' summary lines built for ' + dayLs + ' day lines (' + sumLines(dig).length + ' carry one)',
+    );
+    ok(p.errors.length === 0, 'F29 AD5: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* AD6 (F29 review, findings 7 and 8): a summary's line never passes its byte cap (its line break counted), and a
+     point it shows is a real one, with its numbers; when not even part of one fits there's no line (the digest or the
+     title-only line takes its place). dayLines stops at a byte budget and says where to continue. */
+  await hcase('AD6', async () => {
+    const msgs = hmsgs(300, { perDay: 100 });
+    const docs = hsums(
+      msgs,
+      () => true,
+      (k, ids) => ({
+        sections: [
+          {
+            h: 'Topic',
+            bullets: ids
+              .slice(0, 20)
+              .map(i => ({ t: 'Point ' + i + ' about the ridge trail permits and the tent poles', refs: [i] })),
+          },
+        ],
+        open: [],
+      }),
+    );
+    const p = await hopen(hseed(msgs, { threads: true, docs }), 300);
+    await sumLoaded(p, 3);
+    const res = await p.evaluate(() => {
+      const x = dayScan(idxOf(100), idxOf(200) - 1).days[0];
+      const out = [];
+      for (let cap = 20; cap <= 1200; cap += 3) {
+        const l = daySumLine(x, cap);
+        out.push({
+          cap,
+          bytes: l ? l.bytes : null,
+          text: l ? l.text : null,
+          real: l ? new TextEncoder().encode(l.text).length + 1 : null,
+        });
+      }
+      return out;
+    });
+    const lines = res.filter(r => r.text);
+    const over = res.filter(r => r.bytes != null && (r.bytes > r.cap || r.real !== r.bytes));
+    const bad = lines.filter(r => {
+      const shown = (r.text.match(/\[#\d+\]/g) || []).length;
+      const m = /\(\+(\d+) more points?\)$/.exec(r.text);
+      return !shown || shown + (m ? +m[1] : 0) !== 20 || !/Summary: Topic: Point 1/.test(r.text);
+    });
+    ok(
+      lines.length > 300 && res.some(r => !r.text) && !over.length && !bad.length,
+      'F29 AD6: at every cap from 20 to 1,200 bytes the line fits it, and every point it shows is real (' +
+        lines.length +
+        ' lines; over the cap: ' +
+        JSON.stringify(over.slice(0, 2)) +
+        '; wrong points: ' +
+        JSON.stringify(bad.slice(0, 2)) +
+        ')',
+    );
+    const cut = await p.evaluate(() => {
+      const ls = dayLines(0, 299, 4096, 3000);
+      return { n: ls.length, bytes: ls.reduce((n, l) => n + l.bytes, 0), next: ls.next || null };
+    });
+    ok(
+      cut.n >= 1 && cut.n < 3 && cut.bytes <= 3000 && cut.next === '2026-10-0' + (1 + cut.n),
+      'F29 AD6: dayLines within a budget stops there and names the day to continue from ' + JSON.stringify(cut),
+    );
+    ok(p.errors.length === 0, 'F29 AD6: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* AD8 (F29 second review, finding 3): a newer day whose line doesn't fit is skipped, and the older days after it
+     still take theirs: one large day never leaves the older ones title-only */
+  await hcase('AD8', async () => {
+    const msgs = hmsgs(800, { perDay: 134 });
+    const small = (k, ids) => ({
+      sections: [{ h: 'Day ' + k, bullets: [{ t: 'A short note', refs: [ids[3]] }] }],
+      open: [],
+    });
+    const big = (k, ids) => ({
+      sections: [
+        {
+          h: 'Day ' + k,
+          bullets: ids
+            .slice(0, 80)
+            .map(i => ({ t: 'Point ' + i + ' about the ridge trail permits and the tent poles', refs: [i] })),
+        },
+      ],
+      open: [],
+    });
+    const run = async make => {
+      const p = await hopen(
+        hseed(msgs, {
+          threads: true,
+          meta: { caughtUpI: 789 },
+          opts: { promptMax: 12288 },
+          docs: hsums(msgs, () => true, make),
+        }),
+        800,
+      );
+      await sumLoaded(p, 6);
+      const r = await hask(p, 'Anything about permits?', true);
+      const sl = sumLines(parts(r.prompt).dig).map(([a]) => a);
+      await p.close();
+      return sl;
+    };
+    const A = await run(small); /* every day small: the day lines that carry one */
+    const D = Math.max(...A);
+    const B = await run((k, ids) => (ids[0] === D ? big(k, ids) : small(k, ids)));
+    ok(
+      A.length >= 2 && !B.includes(D) && JSON.stringify(B) === JSON.stringify(A.filter(a => a !== D)),
+      'F29 AD8: the newest day line with a summary made too long to fit (#' +
+        D +
+        ') is skipped; the older ones keep theirs ' +
+        JSON.stringify({ allSmall: A, oneLarge: B }),
+    );
+  });
+}
+
+/* ---------- askErrors: what Ask and Views say when a request to Claude fails (sample.d.ts error codes) ---------- */
+const NOT_GRANTED_TEXT =
+  "Claude access wasn't allowed on this page, so nothing was sent. To allow it, open this page's Permissions (in the artifact's menu), allow Claude, then reload the page and try again.";
+async function askErrors() {
+  /* E1: a declined consent (not_granted) says plainly that Claude access wasn't allowed and how to allow it, in Ask and
+     in Views; a refusal without a code that talks of consent says the same; other codes get their own words, and an
+     unknown one names its code */
+  await hcase('E1', async () => {
+    const msgs = hmsgs(40, { perDay: 20 });
+    const p = await hopen(hseed(msgs, { threads: true, opts: { sampleError: 'not_granted' } }), 40);
+    const askNote = async q => {
+      await p.evaluate(q => {
+        location.hash = '#ask';
+        document.getElementById('ask-in').value = q;
+        document.getElementById('ask-go').click();
+      }, q);
+      await until(
+        p,
+        () => document.getElementById('ask-note').textContent && !document.getElementById('ask-go').disabled,
+      );
+      return p.evaluate(() => document.getElementById('ask-note').textContent);
+    };
+    const viewNote = async () => {
+      await p.evaluate(() => {
+        location.hash = '#views';
+        document.getElementById('view-in').value = 'group by person';
+        document.getElementById('view-go').click();
+      });
+      await until(
+        p,
+        () => document.getElementById('view-note').textContent && !document.getElementById('view-go').disabled,
+      );
+      return p.evaluate(() => document.getElementById('view-note').textContent);
+    };
+    const got = { ask: await askNote('Who sold a stove?'), view: await viewNote() };
+    got.noCode = {};
+    for (const m of [
+      'The viewer declined consent',
+      'Claude declined to answer',
+      'Request denied by upstream',
+      'Missing permission for tool',
+    ]) {
+      await p.evaluate(m => (window.__sampleError = { message: m }), m);
+      got.noCode[m] = await askNote('And now? ' + m);
+    }
+    await p.evaluate(() => (window.__sampleError = 'upstream_error'));
+    got.upstream = await askNote('Once more?');
+    await p.evaluate(() => (window.__sampleError = 'weird_code'));
+    got.unknown = await askNote('Again?');
+    ok(
+      got.ask === NOT_GRANTED_TEXT &&
+        got.view === NOT_GRANTED_TEXT &&
+        Object.entries(got.noCode).every(([m, t]) => t === 'Something went wrong (' + m + '). Try again.'),
+      'E1: a declined consent (not_granted, as sample.d.ts says), in Ask and in Views; a failure without a code shows its message, whatever it says (third review, finding 5): ' +
+        JSON.stringify(got),
+    );
+    ok(
+      got.upstream ===
+        "Claude couldn't be reached: a service or connection problem, or Claude isn't allowed on this page yet. If you closed a permission prompt, open this page's Permissions (in the artifact's menu), allow Claude and reload; otherwise try again." &&
+        got.unknown === 'Something went wrong (weird_code: refused: weird_code). Try again.',
+      'E1: a service error has its own words; an unknown code is named ' + JSON.stringify([got.upstream, got.unknown]),
+    );
+    ok(p.errors.length === 0, 'E1: no page errors ' + JSON.stringify(p.errors));
+  });
+
+  /* E2 (F32 left it behind): the page never mentions an "include older" checkbox for Ask; it always reads the whole
+     history */
+  await hcase('E2', async () => {
+    const p = await hopen(hseed(hmsgs(40, { perDay: 20 }), { threads: true }), 40);
+    const text = await p.evaluate(() => document.body.textContent.replace(/\s+/g, ' '));
+    ok(
+      !/include (them|older)|with its checkbox|messages before the catch-up window/i.test(text) &&
+        /Ask Claude and Views always cover the whole history/.test(text),
+      'E2: no "include older" checkbox anywhere on the page; the help says Ask and Views cover the whole history',
+    );
+  });
+
+  /* E3 (F29 third review, finding 4): an automatic view update and a range summary that fail say the same as Ask:
+     a declined consent how to allow Claude, a failure without a code its message (saved with the view's autoErr) */
+  await hcase('E3', async () => {
+    const got = {};
+    for (const [label, m] of [
+      ['consent', { fail: 'not_granted' }],
+      ['no code', { failRaw: { message: 'Missing permission for tool' } }],
+    ]) {
+      const p = await vopen({ v1: { auto: true } });
+      await vjson(p, m);
+      await vmore(p, 25);
+      await until(p, () => (__rt.get('views/v1') || {}).autoErr, null, 5000);
+      const doc = await get(p, 'views/v1');
+      await vtoggle(p, 'v1');
+      got[label] = { st: (await vstate(p)).st, autoErr: doc.autoErr };
+      await p.close();
+    }
+    ok(
+      got.consent.st === NOT_GRANTED_TEXT &&
+        got['no code'].st === 'Something went wrong (Missing permission for tool). Try again.' &&
+        got['no code'].autoErr.msg === 'Missing permission for tool',
+      'E3: an automatic view update that fails: ' + JSON.stringify(got),
+    );
+    const rs = {};
+    for (const [label, reply] of [
+      ['consent', { __throw: 'not_granted' }],
+      ['no code', { __throwRaw: { message: 'Missing permission for tool' } }],
+    ]) {
+      const { p } = await lrOpen({ promptMax: 24576 });
+      rs[label] = await lrRun(p, [reply, reply], () => {
+        const t = (document.querySelector('#v-summary .rangebox .range-st') || {}).textContent || '';
+        return /failed|Something went wrong|wasn't allowed/.test(t) && t;
+      });
+      await p.close();
+    }
+    ok(
+      (rs.consent || '').includes(NOT_GRANTED_TEXT) &&
+        (rs['no code'] || '').includes('Something went wrong (Missing permission for tool). Try again.'),
+      'E3: a range summary that fails: ' + JSON.stringify(rs),
     );
   });
 }
@@ -7383,6 +8561,7 @@ async function scriptJson(p, replies) {
         r = __replies.length ? __replies.shift() : { __auto: true };
       }
       if (r && r.__throw) throw Object.assign(new Error(r.__throw), { code: r.__throw });
+      if (r && r.__throwRaw) throw r.__throwRaw; /* a failure that isn't a SampleError: no code */
       return r && r.__auto ? auto(prompt, r.add, r.big || window.__big) : r;
     };
   }, replies);
@@ -8411,14 +9590,12 @@ async function olderByDay() {
         ') and shows it ' +
         JSON.stringify(j),
     );
-    await p.fill('#msg-q', '#5');
-    await p.waitForTimeout(400);
+    await msgFilter(p, '#5');
     const f = await p.evaluate(() => [
       !!document.getElementById('m5'),
       document.querySelectorAll('#msgs .msg[id]').length,
     ]);
-    await p.fill('#msg-q', '');
-    await p.waitForTimeout(400);
+    await msgFilter(p, '');
     ok(
       f[0] && f[1] < 100 && (await oRows(p)) >= td.n && (await p.$('#m' + t)),
       'F15 O4: the filter searches every stored message (#5 found, ' +
@@ -8771,10 +9948,7 @@ const xrOf = (p, i) =>
 async function crossReply() {
   let p = await viewPage({ tweak: xrTweak });
   await p.click('#lay-thread');
-  await p.evaluate(() => {
-    document.querySelectorAll('#msgs details.conv').forEach(d => (d.open = ['t5', 'lend'].includes(d.dataset.conv)));
-  });
-  await p.waitForTimeout(150);
+  for (const c of await convIds(p)) await convSet(p, c, ['t5', 'lend'].includes(c));
   const x45 = await xrOf(p, 45);
   ok(
     x45 &&
@@ -8862,10 +10036,7 @@ async function crossReply() {
     ctx: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme: 'dark' },
   });
   await p.click('#lay-thread');
-  await p.evaluate(() => {
-    document.querySelectorAll('#msgs details.conv').forEach(d => (d.open = d.dataset.conv === 't5'));
-  });
-  await p.waitForTimeout(150);
+  for (const c of await convIds(p)) await convSet(p, c, c === 't5');
   const ph = await p.evaluate(() => {
     const x = document.querySelector('#m42 > .xr');
     const r = x && x.getBoundingClientRect();
@@ -9437,6 +10608,7 @@ const vjson = (p, m) =>
       __rt.sampleLog.push({ bytes: prompt.length, code: m.fail || null });
       await new Promise(r => setTimeout(r, m.delay || 0));
       if (m.fail) throw Object.assign(new Error('scripted ' + m.fail), { code: m.fail });
+      if (m.failRaw) throw m.failRaw; /* no code */
       return (
         m.reply || {
           title: 'Rebuilt',
@@ -13429,8 +14601,7 @@ async function capPage(o = {}) {
   return p;
 }
 async function capFilter(p, q) {
-  await p.fill('#msg-q', q);
-  await p.waitForTimeout(350);
+  await msgFilter(p, q);
 }
 const capRows = p =>
   p.evaluate(() => ({
@@ -13978,6 +15149,9 @@ const SECTIONS = {
   digests,
   byDay,
   byDayReports,
+  daySums,
+  askDaySums,
+  askErrors,
   notices,
   schedule,
   claims,

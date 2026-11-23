@@ -35,19 +35,25 @@
                                      RUNDIR/out/manifest.json as a build does and advances WORK's summary (`restore` undoes it).
                                      The refresh skill's references/restoring-a-summary.md has the whole procedure.
   catchup.py days WORK RUNDIR [--backfill] [--max=N]
-                                     The days to digest (F16), each day's messages in RUNDIR/out/days/<day>.txt. RUNDIR
-                                     holds step 5's chunks and `list digests` (a digests/ folder, empty if need be). A
-                                     refresh: finished days after the newest digest (none yet: the newest finished day),
-                                     and a day digested before a later day was stored that gained messages since (once),
-                                     oldest first, 3 at most. --backfill: finished days that need one, newest first, up to
-                                     10 days (or N) and 2,000 messages.
-  catchup.py digests WORK RUNDIR SPEC
-                                     The backfill's write: SPEC is {"digests": {...}} alone. Saves the listed month
-                                     documents in RUNDIR/out/backup/ and writes RUNDIR/out/manifest.json; WORK doesn't move.
-  catchup.py check-digests WORK RUNDIR AFTERDIR
-                                     After that write, AFTERDIR = a fresh `list digests`: every day the backup held is
-                                     unchanged, every day written is there, and how many days still need one.
-                                     The refresh skill's references/digests.md has both procedures.
+                                     The day summaries to write (F29), each day's file in RUNDIR/out/days/<day>.txt.
+                                     RUNDIR holds step 5's chunks and its query of the newest daySummaries (a
+                                     daySummaries/ folder, empty if need be). A refresh: the day in progress gets an
+                                     UPDATE (its summary so far and only the messages after its toI) or a NEW one (all
+                                     its messages), and a day that has ended its FINAL rewrite from all its messages: the
+                                     days after the newest summary (none yet: the newest day and the newest finished day,
+                                     unless RUN's `list digests`, when there, has its digest) and any not final, oldest
+                                     first, 3 at most. --backfill (RUNDIR: the whole collection, listed a page at a time,
+                                     with an empty daySummaries/.all after the last page): finished days without their
+                                     final summary, newest first, up to 5 days (or N) and 2,000 messages.
+  catchup.py day-summaries WORK RUNDIR SPEC
+                                     The backfill's write: SPEC is {"daySummaries": {...}} alone, days that have ended.
+                                     Saves what it replaces in RUNDIR/out/backup/ and writes RUNDIR/out/manifest.json;
+                                     WORK doesn't move.
+  catchup.py check-day-summaries WORK RUNDIR AFTERDIR
+                                     After that write, AFTERDIR = a fresh whole listing (with .all): every day it held
+                                     is still there (a final one unchanged), every day written is there, and how many
+                                     finished days still need one. The refresh skill's references/day-summaries.md has
+                                     both procedures.
   catchup.py captions WORK RUNDIR [SPEC] [--max=N]
                                      Captions for photos stored before (R13): RUNDIR holds `list photos` and `list
                                      captions`. Without SPEC: the next N (50) stored photos with no caption, oldest first,
@@ -84,10 +90,17 @@ SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or 
   "status":"sold"|"pending"|null,"statusAt":i,"index":n,"ref":i}} (index or ref only when the conv has several deals;
   ref: a message of the deal; index is refused where the same spec moves or adds deals), "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
   "answered":[{conv,ask,answer,refs}], "mentions":[{"note","refs":[[i],...]}],
-  "digests":{"YYYY-MM-DD":[["text",[refs]],...]} (a finished day's digest: 1-8 bullets of at most 15 words and 240
-  bytes, one line of plain text each, citing 1-10 stored messages of that day by their date label d (the browser's
-  zone; a day never goes back); a day that has one is refused unless that one isn't final (written before a later day
-  was stored) and the day gained messages; written to digests/m<YYYY-MM>, pinned when that month exists),
+  "daySummaries":{"YYYY-MM-DD":{"sections":[{"h":"heading","bullets":[["text",[refs]],...]}],"open":[["text",[refs]],
+  ...]}} (a day's fuller summary, F29: at least one section, each a one-line heading and at least one bullet; "open"
+  (optional, [] when nothing is) what's still open; every bullet one line of plain text, no length cap, citing at least
+  one stored message of that day by its date label d (the browser's zone; a day never goes back). The whole summary
+  each time: the day in progress is updated from its summary so far (written full:false), a day that has ended is
+  rewritten from all its messages (full:true, fullToI; final:true when a later day was already stored); messages still
+  dated with a day that ended in meta/chat.tz come as updates (full and fullToI kept) until it's rewritten as final. A final day is refused,
+  and so is one that needs nothing (catchup.py days says what's due). Written to daySummaries/d<YYYY-MM-DD> {day,
+  fromI, toI, n, at, full, fullToI?, final, sections:[{h, bullets:[{t, refs}]}], open:[{t, refs}]}, pinned when RUN's query
+  holds it; a day older than everything a full query of the newest 5 returned is refused. The old "digests" key is
+  refused: refreshes no longer write digests),
   "report":[["text",[refs]],...] (this run's report, saved for the page's By day tab: up to 8 bullets of at most 25
   words and 300 bytes, each citing 1-10 of the messages this build adds; [] when nothing stands out. Required when RUN
   holds a reports/ folder (step 5's query of the newest reports), except on the first build. Saved under the day of
@@ -217,7 +230,7 @@ BATCH_DOCS = 48  # documents per batch: the tool takes 50 writes, and the last b
 BATCH_BYTES = 900 * 1024  # the tool takes 1 MiB per batch
 LAYOUT_KEYS = ("layout", "block", "blocks", "activeFrom")
 BLOCK_ID = re.compile(r"^b\d{6,}-[0-9a-f]{8}$")
-FIXED_IDS = ("digests", "reports", "captions")  # collections whose documents keep their ids (a month, a day, a block)
+FIXED_IDS = ("daySummaries", "reports", "captions")  # collections whose documents keep their ids (a day, a block)
 NEWEST_FIRST = ("convs", "open", "answered", "mentions")  # summary lists kept newest first; deals are oldest first
 SUMMARY_LISTS = NEWEST_FIRST + ("deals",)
 
@@ -226,9 +239,14 @@ def _size(o):  # bytes as the database counts a document: compact JSON
     return len(json.dumps(o, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
+def _hash(doc):  # SHA-256 of a document's canonical JSON (hex): block ids, the backfill's record of what it saw
+    return hashlib.sha256(
+        json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _bid(start, doc):  # a block's id carries a hash of its content, so a changed block is a new document
-    h = hashlib.sha256(json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-    return "b%06d-%s" % (start, h.hexdigest()[:8])
+    return "b%06d-%s" % (start, _hash(doc)[:8])
 
 
 def _nums(x):  # the message numbers in a value ([1, [2], 3] -> [1, 2, 3])
@@ -433,6 +451,12 @@ def layout_docs(t, s=None, active_from=0):
 
 def _too_big(big, docs):
     p, z = big[0]
+    if p.startswith("daySummaries/"):
+        return (
+            "%s would be %d bytes, over the %d-byte limit (the database refuses documents over 262,144). Nothing was "
+            "written and WORK is unchanged. Shorten its long points, or drop the least useful ones, then build again."
+            % (p, z, DOC_LIMIT)
+        )
     hint = "Report it (github.com/roopesh/messenger-catchup/issues)."
     if p.startswith("summary/"):
         cs = sorted(((_size(c), c["id"]) for c in docs[p].get("convs", [])), reverse=True)[:3]
@@ -463,7 +487,8 @@ def _plan(docs, listing):
         raise AssertionError(_too_big(big, docs))
     coll = lambda p: p.split("/")[0]
     did = lambda p: p.split("/")[1]
-    # digests/m<month> and reports/d<day> keep their ids: always written, first (pinned when the listing holds them)
+    # daySummaries/d<day>, reports/d<day> and captions/b<start> keep their ids: always written, first (pinned when the
+    # listing holds them)
     creates = [p for p in sorted(docs) if coll(p) in FIXED_IDS]
     creates += [
         p for p in sorted(docs) if coll(p) not in FIXED_IDS and did(p) != "current" and did(p) not in listing[coll(p)]
@@ -488,7 +513,9 @@ def _plan(docs, listing):
     return batches, [gone[k : k + 50] for k in range(0, len(gone), 50)]
 
 
-def _pins(docs, listing):  # written over an existing one: `current`, and digest months or report days already there
+def _pins(
+    docs, listing
+):  # written over an existing one: `current`, and day summaries, report days or caption blocks there
     return {
         p
         for p in docs
@@ -1752,7 +1779,7 @@ def build(work, run, specp):
     scur = listing["summary"]["current"]
     docs = layout_docs(t, s, scur.get("activeFrom", 0) if scur.get("layout") == 2 else 0)
     _roundtrip(docs, t, s)
-    digested = _digest_spec(sp, pool, run, docs, listing)  # digests/m<month> documents join docs (first batch)
+    summed = _sum_spec(sp, pool, run, docs, listing)  # daySummaries/d<day> documents join docs (first batch, F29)
     reported = _report_spec(sp, pool, ids, base, run, docs, listing)  # and reports/d<day> (F27)
     captioned = _caption_spec(sp, pool, run, docs, listing)  # and captions/b<start> (R13)
     # _plan fails here, before anything is written, if a document is too big
@@ -1774,7 +1801,7 @@ def build(work, run, specp):
             ids[0],
             ids[-1],
             dict(collections.Counter(joined.values())),
-            digested,
+            summed,
             reported,
             captioned,
             json.dumps(st["stops"]),
@@ -1783,22 +1810,27 @@ def build(work, run, specp):
     print("write: " + told)
 
 
-# Per-day digests (F16): a few bullets per finished day, citing its messages, for Ask on the page about stretches older
-# than its conversation lines reach. One document per month, digests/m<YYYY-MM> {month, days:{"<YYYY-MM-DD>":
-# {bullets:[{t, refs}], fromI, toI, n, at, final}}}: a refresh writes one document, or two when its days (DUE_MAX at
-# most) cross a month; the page reads a few dozen for years of history; and with the caps below a full month stays
-# under 90 KB of the 240 KiB a build allows.
+# Day summaries (F29): one fuller summary per day, for the page's By day tab, Ask's day lines and "Copy for chat". One
+# document per day, daySummaries/d<YYYY-MM-DD> {day, fromI, toI, n, at, full, fullToI?, final, sections:[{h,
+# bullets:[{t, refs}]}], open:[{t, refs}]}: topic sections with bullets citing that day's messages, then what's still
+# open. No word caps: a day is as long as it needs, within a document's size (DOC_LIMIT). The day in progress is updated
+# at each refresh that builds, from its summary so far and only the messages after its toI; once the day has ended, it
+# gets one rewrite from all its messages (full, through fullToI), final when a later day was already stored then, and a
+# final day is never written again. A day that ended by the clock in meta/chat.tz while the browser still dates new
+# messages with it keeps getting them as updates, and is rewritten once more, as final, once a later day is stored.
+# They replace the per-day digests (F16, digests/m<YYYY-MM>), which refreshes no longer write: the page still reads the
+# old ones for days without a summary.
 
-DIGEST_WORDS = 15  # like a conversation bullet
-DIGEST_BYTES = 240  # UTF-8 bytes of one bullet's text
-DIGEST_BULLETS = 8  # bullets per day
-DIGEST_REFS = 10  # messages one bullet cites
-DUE_MAX = 3  # days one refresh digests (oldest first); the next refresh carries on
-BACKFILL_DAYS = 10  # days per backfill batch (newest first) ...
+DAY_QUERY = 5  # step 5 queries the newest 5 documents by day of each per-day collection (daySummaries, reports)
+DAY_DUE_MAX = 3  # days one refresh writes (oldest first); the next refresh carries on
+BACKFILL_DAYS = 5  # finished days per backfill batch (newest first) ...
 BACKFILL_MSGS = 2000  # ... and no more messages than this in one batch (one day at least)
 DAY_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
-CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")  # one bullet is one line in Ask's prompt
-MONTH_RE = re.compile(r"^m\d{4}-\d\d$")
+DAY_ID = re.compile(r"^d(\d{4}-\d\d-\d\d)$")  # a per-day document's id (daySummaries, reports)
+PAGE = 1000  # the most documents one ArtifactData list returns; a whole collection is read a page at a time
+WHOLE = ".all"  # the empty file that says a per-day folder holds the whole collection: every page was listed
+LIMIT = ".limit"  # a file holding the limit of a larger query of the newest documents (a number); none: DAY_QUERY
+CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")  # one bullet is one line on the page and in Ask's prompt
 NOW = None  # tests: an aware datetime standing in for the clock
 
 
@@ -1832,50 +1864,115 @@ def _finished_before(days):
     return max(list(days) + ([t] if t else []))
 
 
-def _digest_listing(run):  # RUN's `list digests`: {doc id: document}
-    assert os.path.isdir(run + "/digests"), (
-        "%s has no digests/ folder: list the digests collection into it (list, limit 1000). If the collection is "
-        "empty and the list leaves no folder, create an empty %s/digests folder (references/digests.md)" % (run, run)
+def _per_day(run, coll, how, whole=False):
+    """A per-day collection read into RUN/<coll>/ (out_dir files named d<YYYY-MM-DD>.json): {day: document}. how: how
+    the folder gets there, for the message when it's missing. whole: it must be the whole collection, listed a page at a
+    time until a page came back with no next_cursor, which the WHOLE file says: a list stops at PAGE documents, and a
+    day missing from a cut-off listing looks like a day with none."""
+    d = os.path.join(run, coll)
+    assert os.path.isdir(d), (
+        "%s has no %s/ folder: %s. If the collection is empty and that leaves no folder, create an empty %s folder"
+        % (run, coll, how, d)
     )
-    return {k: v for k, v in _docs(run + "/digests").items() if MONTH_RE.match(k)}
+    assert not whole or os.path.exists(os.path.join(d, WHOLE)), (
+        "%s isn't marked as the whole %s collection: list it into %s a page at a time (query limit %d, then each "
+        "result's next_cursor as query.cursor) until a page has no next_cursor, then create an empty file %s "
+        "(references/day-summaries.md › Backfill)" % (d, coll, run, PAGE, os.path.join(d, WHOLE))
+    )
+    out = {}
+    for k, v in _docs(d).items():
+        m = DAY_ID.match(k)
+        if m and isinstance(v, dict):
+            out[m.group(1)] = v
+    return out
 
 
-def _digest_index(docs):  # {day: its digest} from the month documents
-    return {day: e for k in sorted(docs) for day, e in ((docs[k] or {}).get("days") or {}).items()}
+def _query_reach(run, coll, listed):
+    """The oldest day a query of the newest documents certainly reached, or None when it holds the whole collection:
+    a WHOLE listing, or fewer documents than the query's limit (LIMIT, else DAY_QUERY) came back. A day older than
+    this may have a document the query didn't return."""
+    d = os.path.join(run, coll)
+    if os.path.exists(os.path.join(d, WHOLE)):
+        return None
+    lim = DAY_QUERY
+    if os.path.exists(os.path.join(d, LIMIT)):
+        with open(os.path.join(d, LIMIT), encoding="utf-8") as fh:
+            txt = fh.read().strip()
+        assert re.fullmatch(r"[1-9]\d{0,3}", txt), "%s holds %r: the query's limit, a number" % (
+            os.path.join(d, LIMIT),
+            txt,
+        )
+        lim = int(txt)
+    return min(listed) if listed and len(listed) >= lim else None
 
 
-def _needs(e, ids, later):
-    """No digest yet; or one written before a later day was stored (not `final`: the browser's zone may still have
-    been on that day) whose day gained messages, now that a later day is stored. That second digest is final, so a day
-    is digested twice at most, however far meta/chat.tz runs ahead of the browser."""
+def _sum_listing(run, whole=False):  # RUN's daySummaries: step 5's query of the newest, or the backfill's whole list
+    return _per_day(
+        run,
+        "daySummaries",
+        "query the daySummaries collection into it (newest %d by day; the backfill lists all of it; "
+        "references/day-summaries.md)" % DAY_QUERY,
+        whole,
+    )
+
+
+def _sum_needs(e, ids, fin, later):
+    """What a day's summary needs: "final" (a rewrite from all the day's messages, now that it has ended), "update"
+    (messages stored after it: fold them into its summary so far), "new" (the day in progress has none yet) or None. A
+    final summary stays. A day that has ended is rewritten once (`full`, through `fullToI`); if the browser still dates
+    new messages with it (meta/chat.tz ahead of the browser's zone), they come as updates, and once a later day is
+    stored it's rewritten once more, as final. So a day is rewritten twice at most, and never misses a message."""
     if not isinstance(e, dict) or not isinstance(e.get("toI"), int):
-        return True
-    return not e.get("final") and later and max(ids) > e["toI"]
+        return "final" if fin else "new"
+    if e.get("final"):
+        return None
+    last = max(ids)
+    if fin:
+        fto = (e["fullToI"] if isinstance(e.get("fullToI"), int) else e["toI"]) if e.get("full") else None
+        if fto is None or later and last > fto:
+            return "final"
+    return "update" if last > e["toI"] else None
 
 
-def _due(msgs, have, backfill=False, most=None):
-    """The days to digest, how many more need one after them, and every stored day. A refresh: finished days newer than
-    the newest digest (none yet: only the newest finished day; older ones are the backfill's) and any digested day that
-    gained messages, oldest first, DUE_MAX at most. A backfill: every finished day that needs one, newest first, up to
-    BACKFILL_DAYS days (or `most`) and BACKFILL_MSGS messages."""
+def _with_digest(run):  # the days an older digest covers (digests/m<YYYY-MM>, F16), when RUN holds `list digests`
+    d = os.path.join(run, "digests")
+    if not os.path.isdir(d):
+        return set()
+    return {day for v in _docs(d).values() if isinstance(v, dict) for day in (v.get("days") or {})}
+
+
+def _sum_due(msgs, have, backfill=False, most=None, digested=frozenset()):
+    """[(day, what it needs)], how many more are due after them, and every stored day. A refresh: the days after the
+    newest summary, and any summarized day that needs writing again, oldest first, DAY_DUE_MAX at most. With no summary
+    yet (the first refresh after the update), the newest day and the newest finished day, unless an older digest covers
+    that one (digested): the day that ended just before the update gets its summary too. A backfill: finished days that
+    need their final summary, newest first, up to BACKFILL_DAYS days (or `most`) and BACKFILL_MSGS messages (one day at
+    least)."""
     days = _days(msgs)
     edge, last = _finished_before(days), max(days, default="")
-    need = [d for d in sorted(days) if d < edge and _needs(have.get(d), days[d], d < last)]
+    need = {}
+    for d in sorted(days):
+        k = _sum_needs(have.get(d), days[d], d < edge, d < last)
+        if k:
+            need[d] = k
     if backfill:
+        fin = [d for d in sorted(need) if d < edge and need[d] == "final"]
         out, n = [], 0
-        for d in reversed(need):
+        for d in reversed(fin):
             if out and (len(out) >= (most or BACKFILL_DAYS) or n + len(days[d]) > BACKFILL_MSGS):
                 break
             out.append(d)
             n += len(days[d])
-        return out, len(need) - len(out), days
+        return [(d, need[d]) for d in out], len(fin) - len(out), days
     newest = max(have, default=None)
-    fin = [d for d in sorted(days) if d < edge]
-    need = [d for d in need if d in have or (d > newest if newest else d == fin[-1])]
-    return need[: most or DUE_MAX], max(0, len(need) - (most or DUE_MAX)), days
+    ended = max((d for d in days if d < edge), default=None)
+    first = {last} | ({ended} if ended and ended not in digested else set())
+    scope = [d for d in sorted(need) if d in have or (d > newest if newest else d in first)]
+    cap = most or DAY_DUE_MAX
+    return [(d, need[d]) for d in scope[:cap]], max(0, len(scope) - cap), days
 
 
-def _day_line(m):  # one message as Claude reads it to write a digest
+def _day_line(m):  # one message as Claude reads it to write a day's summary
     s = "#%d [%s] %s" % (m["i"], m.get("t") or "", m.get("f") or "?")
     if m.get("r"):
         s += " (replying to %s%s)" % (m["r"], ': "%s"' % m["q"][:60] if m.get("q") else "")
@@ -1897,175 +1994,326 @@ def _bullet(b):  # [text, [refs]] (as conversation bullets) or {t, refs} -> (tex
     return (b[0], b[1]) if isinstance(b, list) and len(b) == 2 else (None, None)
 
 
-def _digest_entries(sd, pool, have):
-    """The spec's `digests` ({"YYYY-MM-DD": [[text, [refs]], ...]}), checked, as the entries to store."""
-    assert isinstance(sd, dict) and sd, 'digests: {"YYYY-MM-DD": [["bullet", [refs]], ...]}, one key per day'
+def _sum_item(day, where, b, dayof, ids):
+    """One bullet of a day's summary, checked: one line of plain text citing at least one stored message of that day."""
+    t, refs = _bullet(b)
+    assert isinstance(t, str) and t.strip(), "daySummaries %s %s: each bullet is [text, [refs]]: %r" % (day, where, b)
+    assert not CONTROL_RE.search(t), (
+        "daySummaries %s %s: a bullet is one line of plain text (no line breaks or control characters): %r"
+        % (day, where, t)
+    )
+    assert isinstance(refs, list) and refs and all(isinstance(r, int) and not isinstance(r, bool) for r in refs), (
+        "daySummaries %s %s: each bullet cites at least one message number" % (day, where),
+        t,
+        refs,
+    )
+    bad = [r for r in refs if dayof.get(r) != day]
+    assert not bad, "daySummaries %s %s: %s %s not a stored message from that day (#%d-#%d): %r" % (
+        day,
+        where,
+        ", ".join("#%d" % r for r in bad),
+        "is" if len(bad) == 1 else "are",
+        ids[0],
+        ids[-1],
+        t,
+    )
+    return {"t": t.strip(), "refs": list(dict.fromkeys(refs))}
+
+
+def _sum_entries(sd, pool, have, oldest=None, refresh=True):
+    """The spec's `daySummaries` ({"YYYY-MM-DD": {"sections": [{"h", "bullets": [[text, [refs]], ...]}], "open":
+    [[text, [refs]], ...]}}), checked: {day: the document to write}. have: the listed summaries; oldest: the oldest day
+    a query of the newest DAY_QUERY reached (None: the whole collection is listed). The backfill (refresh=False) takes
+    only days that have ended."""
+    assert isinstance(sd, dict) and sd, (
+        'daySummaries: {"YYYY-MM-DD": {"sections": [{"h": "heading", "bullets": [["text", [refs]], ...]}], "open": '
+        "[...]}}, one key per day"
+    )
     days = _days(pool.values())
     dayof = {i: d for d, ids in days.items() for i in ids}
-    edge = _finished_before(days)
+    edge, last = _finished_before(days), max(days, default="")
+    at = _now_iso()
     out = {}
     for day in sorted(sd):
         try:
             real = bool(DAY_RE.match(day)) and datetime.date.fromisoformat(day).isoformat() == day
         except ValueError:
             real = False
-        assert real, "digests: %r is not a day (YYYY-MM-DD)" % day
-        assert day in days, "digests %s: no stored message has that date" % day
-        ids, bs = days[day], sd[day]
-        assert day < edge, (
-            "digests %s: that day hasn't finished in %s (meta/chat.tz) and no later day is stored: digest it at a later "
-            "refresh" % (day, TZ)
+        assert real, "daySummaries: %r is not a day (YYYY-MM-DD)" % day
+        assert day in days, "daySummaries %s: no stored message has that date" % day
+        assert not (oldest and day < oldest and day not in have), (
+            "RUN/daySummaries holds %d summaries, all after %s: query the daySummaries collection again with limit 30 "
+            "into RUN and write 30 into RUN/daySummaries/%s (references/day-summaries.md)" % (len(have), day, LIMIT)
         )
-        assert _needs(have.get(day), ids, day < max(days)), (
-            "digests %s: it already has a digest (through #%s) that stays: drop it from the spec (a day is digested "
-            "again only once, when it gained messages before the next day began)" % (day, have[day].get("toI"))
+        ids, fin, later, e = days[day], day < edge, day < last, have.get(day)
+        assert refresh or fin, (
+            "daySummaries %s: that day hasn't finished in %s (meta/chat.tz) and no later day is stored: the day in "
+            "progress is a refresh's" % (day, TZ)
         )
-        assert isinstance(bs, list) and 1 <= len(bs) <= DIGEST_BULLETS, "digests %s: 1 to %d bullets, as a list" % (
-            day,
-            DIGEST_BULLETS,
+        assert not (isinstance(e, dict) and e.get("final")), (
+            "daySummaries %s: its summary (through #%s) is final and never written again: drop it from the spec"
+            % (day, e.get("toI"))
         )
-        items = []
-        for b in bs:
-            t, refs = _bullet(b)
-            assert isinstance(t, str) and t.strip(), "digests %s: each bullet is [text, [refs]]: %r" % (day, b)
-            assert not CONTROL_RE.search(t), (
-                "digests %s: a bullet is one line of plain text (no line breaks or control characters): %r" % (day, t)
-            )
-            assert len(t.split()) <= DIGEST_WORDS, ("digest bullet over %d words" % DIGEST_WORDS, day, t)
-            assert len(t.encode("utf-8")) <= DIGEST_BYTES, ("digest bullet over %d bytes" % DIGEST_BYTES, day, t)
-            assert (
-                isinstance(refs, list)
-                and 1 <= len(refs) <= DIGEST_REFS
-                and all(isinstance(r, int) and not isinstance(r, bool) for r in refs)
-            ), ("digests %s: each bullet cites 1 to %d message numbers" % (day, DIGEST_REFS), t, refs)
-            bad = [r for r in refs if dayof.get(r) != day]
-            assert not bad, "digests %s: %s %s not a stored message from that day (#%d-#%d): %r" % (
+        kind = _sum_needs(e, ids, fin, later)
+        assert kind, (
+            "daySummaries %s: its summary (through #%s) stays: no message was stored after it: drop it from the spec"
+            % (
                 day,
-                ", ".join("#%d" % r for r in bad),
-                "is" if len(bad) == 1 else "are",
-                ids[0],
-                ids[-1],
-                t,
+                e.get("toI"),
             )
-            items.append({"t": t.strip(), "refs": list(dict.fromkeys(refs))})
-        out[day] = {"bullets": items, "fromI": ids[0], "toI": ids[-1], "n": len(ids), "at": _ts()}
-        out[day]["final"] = day < max(days)  # a later day was already stored: never digested again
+        )
+        assert refresh or kind == "final", (
+            "daySummaries %s: its summary needs only the messages stored after #%s, which is a refresh's update"
+            % (day, e.get("toI"))
+        )
+        x = sd[day]
+        assert isinstance(x, dict), (
+            'daySummaries %s: {"sections": [{"h": "heading", "bullets": [["text", [refs]], ...]}], "open": [...]}' % day
+        )
+        extra = sorted(set(x) - {"sections", "open"})
+        assert not extra, 'daySummaries %s: unknown key %s (only "sections" and "open")' % (day, ", ".join(extra))
+        secs = x.get("sections")
+        assert isinstance(secs, list) and secs, (
+            'daySummaries %s: "sections" is a list of at least one {"h": "heading", "bullets": [...]}' % day
+        )
+        sections = []
+        for k, s in enumerate(secs):
+            assert isinstance(s, dict) and set(s) <= {"h", "bullets"}, (
+                'daySummaries %s section %d: {"h": "heading", "bullets": [["text", [refs]], ...]}' % (day, k + 1)
+            )
+            h = s.get("h")
+            assert isinstance(h, str) and h.strip() and not CONTROL_RE.search(h), (
+                "daySummaries %s section %d: a heading is one line of plain text: %r" % (day, k + 1, h)
+            )
+            bs = s.get("bullets")
+            assert isinstance(bs, list) and bs, 'daySummaries %s "%s": at least one bullet' % (day, h.strip())
+            where = '"%s"' % h.strip()
+            sections.append({"h": h.strip(), "bullets": [_sum_item(day, where, b, dayof, ids) for b in bs]})
+        op = x.get("open", [])
+        assert isinstance(op, list), (
+            'daySummaries %s: "open" is a list of [text, [refs]] ([] when nothing is open)' % day
+        )
+        doc = {"day": day, "fromI": ids[0], "toI": ids[-1], "n": len(ids), "at": at}
+        if kind == "final":  # rewritten from all its messages; final when a later day was already stored
+            doc.update(full=True, fullToI=ids[-1], final=later)
+        elif fin:  # an update to a day that has ended by the clock: its rewrite stays on record
+            doc.update(full=True, fullToI=e["fullToI"] if isinstance(e.get("fullToI"), int) else e["toI"], final=False)
+        else:
+            doc.update(full=False, final=False)
+        doc.update(sections=sections, open=[_sum_item(day, "Still open", b, dayof, ids) for b in op])
+        out[day] = doc
     return out
 
 
-def _digest_docs(entries, listed):  # the month documents to write: each as the listing holds it, plus these days
-    docs = {}
-    for day in sorted(entries):
-        p = "digests/m" + day[:7]
-        if p not in docs:
-            docs[p] = copy.deepcopy(listed.get(p.split("/")[1]) or {"month": day[:7], "days": {}})
-        docs[p]["days"] = dict(sorted(dict(docs[p].get("days") or {}, **{day: entries[day]}).items()))
-    return docs
+def _sum_finalize(listed, pool, entries):
+    """{day: its listed summary marked final}: days rewritten after they ended (full) before a later day was stored,
+    with no message stored after that rewrite, now that a later day is stored. Nothing to rewrite, so the summary stays
+    as written and only `final` changes; it's never written again. Days the spec writes are left to it."""
+    days = _days(pool.values())
+    last = max(days, default="")
+    out = {}
+    for d, e in sorted(listed.items()):
+        if d in entries or d not in days or not isinstance(e, dict) or e.get("final") or not e.get("full"):
+            continue
+        fto = e["fullToI"] if isinstance(e.get("fullToI"), int) else e.get("toI")
+        if d < last and isinstance(e.get("toI"), int) and e["toI"] == fto == days[d][-1]:
+            out[d] = dict(copy.deepcopy(e), final=True, fullToI=fto)
+    return out
 
 
-def _digest_spec(sp, pool, run, docs, listing):
-    """A build's `digests`: checked, their month documents added to docs and listing. -> a line on what's still due."""
-    if not sp.get("digests") and not os.path.isdir(run + "/digests"):
-        return "0 digest(s); RUN has no digests/ folder, so what's due is unknown (step 5 lists digests)"
-    listed = _digest_listing(run)
-    have = _digest_index(listed)
-    entries = _digest_entries(sp["digests"], pool, have) if sp.get("digests") else {}
-    if entries:
-        docs.update(_digest_docs(entries, listed))
-        listing["digests"] = listed
-    todo, more, _ = _due(pool.values(), dict(have, **entries))
+def _sum_said(entries):  # "2026-11-21 final, 2026-11-22 in progress (#6205)"
+    def said(e):
+        if e["final"]:
+            return "final"
+        if e["full"]:
+            return "rewritten after it ended" if e["fullToI"] == e["toI"] else "updated after it ended (#%d)" % e["toI"]
+        return "in progress (#%d)" % e["toI"]
+
+    return ", ".join("%s %s" % (d, said(e)) for d, e in sorted(entries.items()))
+
+
+def _sum_spec(sp, pool, run, docs, listing):
+    """A build's `daySummaries`: checked, their documents added to docs and listing. -> a line on what it wrote and
+    what's still due."""
+    assert "digests" not in sp, (
+        "digests: refreshes no longer write per-day digests (v1.32.0): put the day's summary in daySummaries instead "
+        "(catchup.py days, references/day-summaries.md)"
+    )
+    if not sp.get("daySummaries") and not os.path.isdir(run + "/daySummaries"):
+        return (
+            "0 day summaries; RUN has no daySummaries/ folder, so what's due is unknown (step 5 queries daySummaries)"
+        )
+    listed = _sum_listing(run)
+    oldest = _query_reach(run, "daySummaries", listed)
+    entries = _sum_entries(sp["daySummaries"], pool, listed, oldest) if sp.get("daySummaries") else {}
+    done = _sum_finalize(listed, pool, entries)
+    if entries or done:
+        docs.update({"daySummaries/d" + d: e for d, e in dict(entries, **done).items()})
+        listing["daySummaries"] = {"d" + k: v for k, v in listed.items()}
+    todo, more, _ = _sum_due(pool.values(), dict(listed, **entries, **done), digested=_with_digest(run))
+    n = len(entries)
+    said = "%d day summar%s%s" % (n, "y" if n == 1 else "ies", " (%s)" % _sum_said(entries) if n else "")
+    if done:
+        said += "; marked final, as rewritten: %s" % ", ".join(sorted(done))
     if not todo:
-        return "%d digest(s)" % len(entries)
-    return "%d digest(s); still due: %s%s (catchup.py days, references/digests.md)" % (
-        len(entries),
-        ", ".join(todo),
+        return said
+    return "%s; still due: %s%s (catchup.py days, references/day-summaries.md)" % (
+        said,
+        ", ".join("%s (%s)" % x for x in todo),
         " and %d more" % more if more else "",
     )
 
 
+def _sum_spec_form(e):  # a stored summary as the spec writes it, for Claude to edit
+    items = lambda xs: [[x.get("t"), x.get("refs")] for x in xs or [] if isinstance(x, dict)]
+    secs = [s for s in e.get("sections") or [] if isinstance(s, dict)]
+    return {
+        "sections": [{"h": s.get("h"), "bullets": items(s.get("bullets"))} for s in secs],
+        "open": items(e.get("open")),
+    }
+
+
 def days_cmd(work, run, backfill=False, most=None):
-    """`catchup.py days WORK RUN [--backfill] [--max=N]`: the days to digest, each written to RUN/out/days/<day>.txt."""
+    """`catchup.py days WORK RUN [--backfill] [--max=N]`: the day summaries to write, each day's file in
+    RUN/out/days/<day>.txt: its summary so far and the messages after it (the day in progress), or all its messages."""
     global TZ
     TZ = _load(work + "/state.json").get("tz") or TZ
     pool = _pool(work, run)
-    have = _digest_index(_digest_listing(run))
-    todo, more, days = _due(pool.values(), have, backfill, most)
+    have = _sum_listing(run, whole=backfill)
+    todo, more, days = _sum_due(pool.values(), have, backfill, most, _with_digest(run))
     out = os.path.join(run, "out", "days")
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out, exist_ok=True)
-    for d in todo:
-        ids = days[d]
-        head = (
-            "%s: #%d-#%d, %d message%s. Up to %d bullets of at most %d words, each citing messages of this day.\n"
-            % (
-                d,
-                ids[0],
-                ids[-1],
-                len(ids),
-                "" if len(ids) == 1 else "s",
-                DIGEST_BULLETS,
-                DIGEST_WORDS,
+    for d, kind in todo:
+        ids, e = days[d], have.get(d)
+        if kind == "update":
+            read = [i for i in ids if i > e["toI"]]
+            head = (
+                "%s: UPDATE (%s). Its summary so far covers #%d-#%d. Fold in the %d new message%s "
+                "below (#%d-#%d): add to its sections or start new ones, close what's no longer open, and write the "
+                "whole summary in the spec's daySummaries (references/day-summaries.md).\nSUMMARY SO FAR (as the spec "
+                "writes it):\n%s\nNEW MESSAGES:\n"
+                % (
+                    d,
+                    "it has ended in meta/chat.tz, but messages still carry its date"
+                    if e.get("full")
+                    else "the day in progress",
+                    e.get("fromI", ids[0]),
+                    e["toI"],
+                    len(read),
+                    "" if len(read) == 1 else "s",
+                    read[0],
+                    read[-1],
+                    json.dumps(_sum_spec_form(e), ensure_ascii=False, indent=1),
+                )
             )
+        else:
+            read = ids
+            head = (
+                "%s: %s. Write its summary from all %d message%s below (#%d-#%d)%s, in the spec's daySummaries (references/day-summaries.md).\n"
+                % (
+                    d,
+                    "FINAL (the day has ended)" if kind == "final" else "NEW (the day in progress)",
+                    len(ids),
+                    "" if len(ids) == 1 else "s",
+                    ids[0],
+                    ids[-1],
+                    "; it replaces the summary so far, as one piece" if e else "",
+                )
+            )
+        p = os.path.join(out, d + ".txt")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(head + "\n".join(_day_line(pool[i]) for i in read) + "\n")
+        print(
+            "DAY %s %s #%d-#%d (%d message%s to read): %s"
+            % (d, kind.upper(), read[0], read[-1], len(read), "" if len(read) == 1 else "s", p)
         )
-        with open(os.path.join(out, d + ".txt"), "w", encoding="utf-8") as fh:
-            fh.write(head + "\n".join(_day_line(pool[i]) for i in ids) + "\n")
-        print("DIGEST %s #%d-#%d (%d messages): %s" % (d, ids[0], ids[-1], len(ids), os.path.join(out, d + ".txt")))
     if backfill:
-        left = "; %d more day%s without a digest after these" % (more, "" if more == 1 else "s")
-        left = left if todo else "; every finished day has a digest: the backfill is complete"
+        left = "; %d more day%s without a final summary after these" % (more, "" if more == 1 else "s")
+        left = left if todo else "; every finished day has its final summary: the backfill is complete"
     else:
         left = "; %d more due: the next refresh carries on" % more if more else ""
-    print("days ok: %d day%s to digest%s" % (len(todo), "" if len(todo) == 1 else "s", left))
+    print("days ok: %d day%s to write%s" % (len(todo), "" if len(todo) == 1 else "s", left))
 
 
-def digests_cmd(work, run, specp):
-    """`catchup.py digests WORK RUN SPEC`: write only digests (the backfill). SPEC is {"digests": {...}}. Saves the
-    month documents as listed, and the days they hold, in RUN/out/backup/ first; WORK doesn't move."""
+def day_summaries_cmd(work, run, specp):
+    """`catchup.py day-summaries WORK RUN SPEC`: write only day summaries (the backfill). SPEC is {"daySummaries":
+    {...}}, days that have ended. RUN holds the whole `list daySummaries`. Saves the documents it replaces, and which
+    days the listing held, in RUN/out/backup/ first; WORK doesn't move."""
     global TZ
     sp = _load(specp)
-    assert set(sp) == {"digests"}, 'digests SPEC takes only "digests" (a refresh puts them in the build spec)'
+    assert set(sp) == {
+        "daySummaries"
+    }, 'day-summaries SPEC takes only "daySummaries" (a refresh puts them in the build spec)'
     TZ = _load(work + "/state.json").get("tz") or TZ
     pool = _pool(work, run)
-    listed = _digest_listing(run)
-    entries = _digest_entries(sp["digests"], pool, _digest_index(listed))
-    docs = _digest_docs(entries, listed)
-    listing = {"digests": listed}
+    listed = _sum_listing(run, whole=True)
+    entries = _sum_entries(sp["daySummaries"], pool, listed, None, refresh=False)
+    entries.update(_sum_finalize(listed, pool, entries))
+    docs = {"daySummaries/d" + d: e for d, e in entries.items()}
+    listing = {"daySummaries": {"d" + k: v for k, v in listed.items()}}
     batches, cleanup = _plan(docs, listing)  # fails here, before anything is written, if a document is too big
     out = os.path.join(run, "out")
     shutil.rmtree(os.path.join(out, "backup"), ignore_errors=True)
-    for k, v in listed.items():
-        _dump(v, os.path.join(out, "backup", "digests", k + ".json"))
-    _dump({"had": sorted(_digest_index(listed)), "wrote": sorted(entries)}, os.path.join(out, "backup", "days.json"))
+    replaced = [d for d in sorted(entries) if d in listed]
+    for d in replaced:
+        _dump(listed[d], os.path.join(out, "backup", "daySummaries", "d" + d + ".json"))
+    rec = {
+        "had": {d: _hash(v) for d, v in sorted(listed.items())},
+        "final": sorted(d for d, v in listed.items() if v.get("final")),
+        "wrote": sorted(entries),
+    }
+    _dump(rec, os.path.join(out, "backup", "days.json"))
     told = _write_out(out, docs, batches, cleanup, {}, _pins(docs, listing))
     print(
-        "digests ok: %d day%s (%s); backup of %d month document%s in %s"
+        "day-summaries ok: %d day%s (%s); backup of %d replaced summar%s in %s"
         % (
             len(entries),
             "" if len(entries) == 1 else "s",
-            ", ".join(sorted(entries)),
-            len(listed),
-            "" if len(listed) == 1 else "s",
+            _sum_said(entries),
+            len(replaced),
+            "y" if len(replaced) == 1 else "ies",
             os.path.join(out, "backup"),
         )
     )
     print("write: " + told)
 
 
-def check_digests(work, run, after):
-    """`catchup.py check-digests WORK RUN AFTER`: after a digests write, AFTER = a fresh `list digests`. Every day the
-    backup held is still there unchanged (or replaced by this write), and every day written is there as written."""
+def _sum_later(old, new):
+    """new is old, or a refresh's later write of the same day: it reaches further (toI) with its rewrite no shorter
+    (fullToI), or it marked the same summary final. Anything else lost content or went backwards."""
+    if not isinstance(new, dict) or not isinstance(old, dict):
+        return False
+    if new == old:
+        return True
+    if new.get("day") != old.get("day") or not isinstance(new.get("toI"), int) or not isinstance(old.get("toI"), int):
+        return False
+    fto = lambda e: e["fullToI"] if isinstance(e.get("fullToI"), int) else -1
+    if new["toI"] > old["toI"] and fto(new) >= fto(old):
+        return True
+    same = {k: v for k, v in new.items() if k != "final"} == {k: v for k, v in old.items() if k != "final"}
+    return same and bool(new.get("final")) and not old.get("final")
+
+
+def check_day_summaries(work, run, after):
+    """`catchup.py check-day-summaries WORK RUN AFTER`: after a day-summaries write, AFTER = a fresh `list
+    daySummaries`. Every day the listing held is still there (a final one unchanged; a refresh may have updated
+    another), and every day written is there as written (or made final since by a refresh)."""
     global TZ
     TZ = _load(work + "/state.json").get("tz") or TZ
     out = os.path.join(run, "out")
-    assert os.path.exists(out + "/backup/days.json"), "RUN/out has no backup: run catchup.py digests first"
+    assert os.path.exists(out + "/backup/days.json"), "RUN/out has no backup: run catchup.py day-summaries first"
     rec = _load(out + "/backup/days.json")
-    before = _digest_index(_docs(out + "/backup/digests"))
-    wrote = _digest_index(_docs(out + "/digests"))
-    now = _digest_index(_digest_listing(after))
-    lost = [d for d in rec["had"] if d not in rec["wrote"] and now.get(d) != before.get(d)]
-    bad = [d for d in rec["wrote"] if now.get(d) != wrote.get(d)]
+    now = _sum_listing(after, whole=True)
+    wrote = _per_day(out, "daySummaries", "run catchup.py day-summaries first")
+    lost = [
+        d
+        for d, h in sorted(rec["had"].items())
+        if d not in rec["wrote"] and (d not in now or (d in rec["final"] and _hash(now[d]) != h))
+    ]
+    bad = [d for d in rec["wrote"] if not _sum_later(wrote.get(d), now.get(d))]
     assert not lost and not bad, (
-        "check-digests: %s. Write nothing more, and tell the user (references/digests.md › Backfill)"
+        "check-day-summaries: %s. Write nothing more, and tell the user (references/day-summaries.md › Backfill)"
         % "; ".join(
             x
             for x in (
@@ -2075,22 +2323,23 @@ def check_digests(work, run, after):
             if x
         )
     )
-    todo, more, _ = _due(_pool(work, after).values(), now, True)
+    todo, more, _ = _sum_due(_pool(work, after).values(), now, True)
+    left = len(todo) + more
     print(
-        "check ok: %d day%s written, %d kept; %d finished day%s still without a digest%s"
+        "check ok: %d day%s written, %d kept; %d finished day%s still without a final summary%s"
         % (
             len(rec["wrote"]),
             "" if len(rec["wrote"]) == 1 else "s",
             len([d for d in rec["had"] if d not in rec["wrote"]]),
-            len(todo) + more,
-            "" if len(todo) + more == 1 else "s",
+            left,
+            "" if left == 1 else "s",
             "" if todo else ": the backfill is complete",
         )
     )
 
 
 # Each refresh's report (F27): the bullets of the report a refresh gives in chat, saved on the page under the day of
-# the messages they cite, for the By day tab (and for F29, which can fold a finished day's runs into a fuller summary).
+# the messages they cite, for the By day tab.
 # One document per day, reports/d<YYYY-MM-DD> {day, runs:[{at, fromI, toI, n, bullets:[{t, refs}]}], dropped?}, runs
 # in message order. A build that spans midnight adds a run to each day its messages cover: that day's messages, and
 # the bullets citing them with only those refs. Claude writes the bullets once, in the build spec; the counts, the
@@ -2105,8 +2354,6 @@ REPORT_BYTES = 300  # UTF-8 bytes of one bullet's text
 REPORT_REFS = 10  # messages one bullet cites
 REPORT_RUNS = 40  # runs a day keeps (hourly refreshes make about 17) ...
 REPORT_DOC = 128 * 1024  # ... within this many bytes, well inside a document's 256 KiB
-REPORT_QUERY = 5  # step 5 queries the newest 5 reports by day
-REPORT_ID = re.compile(r"^d(\d{4}-\d\d-\d\d)$")
 
 
 def _now_iso():  # the run's time, as the page reads it ("2026-11-21T17:04:00Z")
@@ -2115,17 +2362,9 @@ def _now_iso():  # the run's time, as the page reads it ("2026-11-21T17:04:00Z")
 
 
 def _report_listing(run):  # step 5's query of the newest reports: {day: document}
-    assert os.path.isdir(run + "/reports"), (
-        "%s has no reports/ folder: query the reports collection into it (newest %d by day; references/reports.md). If "
-        "the collection is empty and the query leaves no folder, create an empty %s/reports folder"
-        % (run, REPORT_QUERY, run)
+    return _per_day(
+        run, "reports", "query the reports collection into it (newest %d by day; references/reports.md)" % DAY_QUERY
     )
-    out = {}
-    for k, v in _docs(run + "/reports").items():
-        m = REPORT_ID.match(k)
-        if m and isinstance(v, dict):
-            out[m.group(1)] = v
-    return out
 
 
 def _report_entries(sd, pool, ids):
@@ -2211,9 +2450,11 @@ def _report_spec(sp, pool, ids, base, run, docs, listing):
     listed = _report_listing(run)
     entries = _report_entries(sp["report"], pool, ids)
     days = sorted(entries)
-    assert not (len(listed) >= REPORT_QUERY and days and min(listed) > days[0]), (
+    reach = _query_reach(run, "reports", listed)
+    assert not (reach and days and reach > days[0]), (
         "RUN/reports holds %d reports, all after %s, the first day this build covers: query the reports collection "
-        "again with a larger limit (references/reports.md)" % (len(listed), days[0])
+        "again with limit 30 into RUN and write 30 into RUN/reports/%s (references/reports.md)"
+        % (len(listed), days[0], LIMIT)
     )
     docs.update(_report_docs(entries, listed))
     listing["reports"] = {"d" + k: v for k, v in listed.items()}
@@ -2855,16 +3096,16 @@ if __name__ == "__main__":
         if len(a) != 2:
             sys.exit(__doc__)
         days_cmd(a[0].rstrip("/"), a[1].rstrip("/"), "--backfill" in sys.argv[2:], mx[0] if mx else None)
-    elif cmd == "digests":
-        digests_cmd(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4])
+    elif cmd == "day-summaries":
+        day_summaries_cmd(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4])
     elif cmd == "captions":
         a = [x for x in sys.argv[2:] if not x.startswith("--")]
         mx = [int(x.split("=", 1)[1]) for x in sys.argv[2:] if x.startswith("--max=")]
         if len(a) not in (2, 3):
             sys.exit(__doc__)
         captions_cmd(a[0].rstrip("/"), a[1].rstrip("/"), a[2] if len(a) == 3 else None, mx[0] if mx else CAPTION_BATCH)
-    elif cmd == "check-digests":
-        check_digests(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4].rstrip("/"))
+    elif cmd == "check-day-summaries":
+        check_day_summaries(sys.argv[2].rstrip("/"), sys.argv[3].rstrip("/"), sys.argv[4].rstrip("/"))
     elif cmd == "restore-summary":
         a = [x for x in sys.argv[2:] if not x.startswith("--")]
         bk = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--backup=")]

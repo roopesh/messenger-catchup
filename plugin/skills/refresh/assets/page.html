@@ -1472,6 +1472,47 @@
   .dg-day details.rp-more > .rp-box {
     margin-top: 8px;
   }
+  /* F29: a day's fuller summary: topic headings over their bullets, then Still open; its state and Copy for chat */
+  .ds-day p.ds-state {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+  .ds-day .chip.ds-progress {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .ds-day .chip.ds-final {
+    background: var(--olive-soft);
+    color: var(--olive);
+  }
+  .ds-day .chip.ds-ended {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  .ds-day h4.ds-h {
+    margin: 4px 0 0;
+    font-size: 1rem;
+    overflow-wrap: anywhere;
+  }
+  .ds-day h4.ds-open {
+    color: var(--warn);
+  }
+  .dg-day .ds-share {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    align-items: center;
+    min-width: 0;
+  }
+  .dg-day .ds-share textarea {
+    flex: 1 1 100%;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 0.9rem;
+  }
   .method ul {
     margin: 0;
     padding-left: 1.1em;
@@ -2133,8 +2174,8 @@
       <div class="sec-head">
         <h2>By day</h2>
         <p>
-          A few lines on each finished day, and what each refresh found on the day in progress, newest first. A number
-          opens that message.
+          Each day's summary, newest first: its topics, then what's still open. Today's is kept current at every refresh
+          and rewritten once after the day ends. A number opens that message; Copy for chat copies a day as plain text.
         </p>
       </div>
       <div class="list" id="days-list"></div>
@@ -2251,8 +2292,8 @@
         that point; nothing older is carried forward.
       </li>
       <li>
-        Older messages are kept as history. See them under Messages with "Show older messages", or include them in Ask
-        Claude with its checkbox.
+        Older messages are kept as history. See them under Messages with "Show older messages"; Ask Claude and Views
+        always cover the whole history.
       </li>
       <li>
         <b>Reply in Messenger ↗</b> (on every card, open question and message) opens Messenger at that exact message
@@ -2367,7 +2408,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "3.9";
+  const PAGE_VERSION = "4.0";
   const CFG = () => S.meta || {};
   const RP = () => CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
@@ -2469,7 +2510,9 @@
     qa: [],
     views: [],
     rangeSums: {},
-    digests: new Map() /* "YYYY-MM-DD" -> that day's digest (digests/m<YYYY-MM>, written by catchup.py) */,
+    daySums:
+      new Map() /* F29: "YYYY-MM-DD" -> that day's summary (daySummaries/d<YYYY-MM-DD>, written by catchup.py) */,
+    digests: new Map() /* "YYYY-MM-DD" -> that day's older digest (digests/m<YYYY-MM>, F16; no longer written) */,
     caps: null /* R13: caps[i][k] = what photo slot k of message i shows (captions/b<start>, written by catchup.py) */,
   };
 
@@ -4587,10 +4630,9 @@
   let RJ = null;
   S.rangeUnsaved = {}; /* k -> a written summary whose save failed: shown until the page reloads */
   S.rangeSaveErr = null; /* {k, code, bytes?}: the last failed save */
-  const RANGE_ERR = {
-    not_granted: "Claude isn't allowed on this page in this view.",
-    rate_limited: "Too many requests right now; try again in a few minutes.",
-  };
+  /* sample.d.ts: a viewer who declined Claude for this page gets not_granted for the rest of the view */
+  const NOT_GRANTED =
+    "Claude access wasn't allowed on this page, so nothing was sent. To allow it, open this page's Permissions (in the artifact's menu), allow Claude, then reload the page and try again.";
   /* "#a–#b (Fri 9:00 AM to Fri 2:10 PM)": the messages of part x of J */
   function rangePartSpan(J, x) {
     const [s, e] = J.parts[x];
@@ -4631,11 +4673,11 @@
         "Joining the parts failed (" +
         (J.err || "error") +
         ")." +
-        (RANGE_ERR[J.err] ? " " + RANGE_ERR[J.err] : "") +
+        (J.errObj ? " " + errCopy(J.errObj) : "") +
         " " +
         kept.trim()
       );
-    if (n === 1) return RANGE_ERR[J.err] || "Couldn't write it (" + (J.err || "error") + "). Try again.";
+    if (n === 1) return J.errObj ? errCopy(J.errObj) : "Couldn't write it (" + (J.err || "error") + "). Try again.";
     return (
       "Part " +
       (done + 1) +
@@ -4646,7 +4688,7 @@
       ", failed twice (" +
       (J.err || "error") +
       "), so that span isn't summarized." +
-      (RANGE_ERR[J.err] ? " " + RANGE_ERR[J.err] : "") +
+      (J.errObj ? " " + errCopy(J.errObj) : "") +
       (kept || " Press the button to try again.")
     );
   }
@@ -5033,6 +5075,7 @@
     } catch (e) {
       J.state = e && e.code === "cancelled" ? "stopped" : "failed";
       J.err = (e && e.code) || "error";
+      J.errObj = e;
       J.phase = null;
       paintRange();
     }
@@ -5894,36 +5937,114 @@
       x.d,
       plural(x.n, "message") + "." + (busy.length ? " Busiest: " + busy.join("; ") : " Not grouped."),
     );
-    return { a: x.a, b: x.b, kind: "day", text, bytes: u8(text) + 1 };
+    return { a: x.a, b: x.b, d: x.d, kind: "day", text, bytes: u8(text) + 1 };
   }
-  /* The same day's line with its digest (F16): its bullets, each citing its stored messages of that day, or null when
-     there's none, or the line doesn't cover the whole day the digest was written for (a scope starting or a cut falling
-     mid-day). A bullet citing nothing it may cite is left out: every line cites message numbers. */
-  function digestText(x) {
+  /* The same day's line with its summary (F29) within cap bytes, else its older digest (F16); null when it has neither
+     for the whole day */
+  const DAYSUM_LINE = 4096; /* a full summary's line in a prompt's older history */
+  const DAYSUM_SHORT = 1024; /* a summary's short line, for a day without a digest: about what a full digest took */
+  function digestText(x, cap = DAYSUM_LINE) {
+    return daySumLine(x, cap) || digestLine(x);
+  }
+  /* "[#a–#b, Oct 3] N messages. Summary: Heading: point [#12, #15]; point [#20] | Heading: … | Still open: …": the
+     day's summary as one line of at most cap bytes (counting its line break), each point citing its stored messages of
+     that day; whole points while they fit, then how many more there are. Null when there's none, when the line doesn't
+     cover the whole day the summary was written for (a scope starting or a cut falling mid-day), or when not even one
+     point fits (the first point's text is cut to fit when at least a little of it does, keeping its numbers). A point
+     citing nothing it may cite is left out: every line cites message numbers. */
+  function daySumLine(x, cap) {
+    const s = daySumOf(x.d);
+    if (!s || !Number.isInteger(s.fromI) || !Number.isInteger(s.toI) || x.a > s.fromI || x.b < s.toI) return null;
+    const point = b => {
+      const t = b && oneLine(b.t);
+      const refs =
+        t && Array.isArray(b.refs)
+          ? b.refs.filter(i => Number.isInteger(i) && i >= x.a && i <= x.b && S.byI.has(i))
+          : [];
+      return refs.length ? { t: trunc(t, 400), r: " [#" + refs.join(", #") + "]" } : null;
+    };
+    const groups = s.sections.map(g => [oneLine(g && g.h) || "More", g && Array.isArray(g.bullets) ? g.bullets : []]);
+    groups.push(["Still open", Array.isArray(s.open) ? s.open : []]);
+    const pts = groups.map(([h, bs]) => [h, bs.map(point).filter(Boolean)]).filter(([, ps]) => ps.length);
+    const total = pts.reduce((n, [, ps]) => n + ps.length, 0);
+    if (!total) return null;
+    const more = k => " (+" + plural(k, "more point") + ")";
+    const room = cap - u8(more(total)); /* for points while some are left out */
+    let text = digLine(x.a, x.b, x.d, x.d, plural(x.n, "message") + ". Summary:"),
+      used = u8(text) + 1,
+      n = 0;
+    out: for (const [g, [h, ps]] of pts.entries()) {
+      for (const [j, p] of ps.entries()) {
+        const pre = j ? "; " : (g ? " | " : " ") + h + ": ";
+        const b = u8(pre + p.t + p.r);
+        if (used + b > (n + 1 === total ? cap : room)) {
+          if (n) break out;
+          const left = room - used - u8(pre) - u8(p.r);
+          if (left < 24) return null;
+          text += pre + clipBytes(p.t, left) + p.r;
+          n = 1;
+          break out;
+        }
+        text += pre + p.t + p.r;
+        used += b;
+        n++;
+      }
+    }
+    if (n < total) text += more(total - n);
+    return { a: x.a, b: x.b, d: x.d, kind: "day", dg: true, ds: true, text, bytes: u8(text) + 1 };
+  }
+  /* The day's older digest (F16) as one line: "… N messages. Digest: bullet [#12] | …" */
+  function digestLine(x) {
     const g = S.digests && S.digests.get(x.d);
     if (!g || !Array.isArray(g.bullets) || !Number.isInteger(g.fromI) || !Number.isInteger(g.toI)) return null;
     if (x.a > g.fromI || x.b < g.toI) return null;
     const bs = [];
     for (const b of g.bullets) {
       if (!b || typeof b.t !== "string" || !Array.isArray(b.refs)) continue;
-      /* one line each, whatever was stored: control characters and runs of spaces become one space */
-      const t = b.t
-        .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+      const t = oneLine(b.t);
       const refs = b.refs.filter(i => Number.isInteger(i) && i >= x.a && i <= x.b && S.byI.has(i)).slice(0, 10);
       if (t && refs.length) bs.push(trunc(t, 240) + " [#" + refs.join(", #") + "]");
     }
     if (!bs.length) return null;
     const text = digLine(x.a, x.b, x.d, x.d, plural(x.n, "message") + ". Digest: " + bs.join(" | "));
-    return { a: x.a, b: x.b, kind: "day", dg: true, text, bytes: u8(text) + 1 };
+    return { a: x.a, b: x.b, d: x.d, kind: "day", dg: true, text, bytes: u8(text) + 1 };
   }
-  /* One line per day of fromI..toI: the day's digest where it has one for the whole day, else the title-only line.
-     For other prompts that summarize a stretch by day (none yet: Look deeper's step 1 reuses the lines Ask sent). */
-  function dayLines(fromI, toI) {
+  /* A scan day's two candidate lines for a prompt's older history, each built the first time it's asked for and kept
+     with the day (a scan's whole days are the same objects through packHistory's rounds): short, never longer than
+     the day's digest (its summary cut to the digest's bytes, else the digest; with no digest, its summary within
+     DAYSUM_SHORT), so a day with a long summary carries at least what its digest gave; and full, its summary within
+     DAYSUM_LINE (else its digest). */
+  const dayLineMemo = new WeakMap();
+  function dayLineOf(x, kind) {
+    let c = dayLineMemo.get(x);
+    if (!c) dayLineMemo.set(x, (c = {}));
+    if (!(kind in c)) {
+      if (kind === "full") c.full = daySumLine(x, DAYSUM_LINE) || dayLineOf(x, "short");
+      else {
+        const g = digestLine(x);
+        c.short = daySumLine(x, g ? g.bytes : DAYSUM_SHORT) || g;
+      }
+    }
+    return c[kind];
+  }
+  /* One line per day of fromI..toI: the day's summary (a summary's line at most cap bytes) or older digest where it has
+     one for the whole day, else the title-only line; at most budget bytes in all: the lines stop there and .next names
+     the day to continue from. The day_summaries tool reads them; Look deeper's step 1 reuses the lines Ask sent. */
+  function dayLines(fromI, toI, cap = DAYSUM_LINE, budget = Infinity) {
     const a = idxOf(fromI),
       z = idxOf(toI + 1) - 1;
-    return z < a ? [] : dayScan(a, z).days.map(x => digestText(x) || dayText(x));
+    const out = [];
+    let n = 0;
+    for (const x of z < a ? [] : dayScan(a, z).days) {
+      const l = digestText(x, cap) || dayText(x);
+      if (n + l.bytes > budget) {
+        out.next = x.d || "#" + x.a;
+        break;
+      }
+      out.push(l);
+      n += l.bytes;
+    }
+    return out;
   }
   /* What a conversation's line says: its outcome, else its last bullet, else an old plain-text synopsis */
   function sumText(c) {
@@ -6031,10 +6152,13 @@
      lines. Units come newest message first, so every one not taken ends at or before the first that didn't fit: day
      lines run up to that one's newest message, and every older message is in some line (a day line, or the line of its
      own conversation). If that's still over (the last day was estimated), the oldest lines go.
-     Per-day digests (F16): title-only day lines are the floor, so every older message still has a line. While days have
-     digests to show, conversation lines leave room for them: dgMax, DIGEST_SHARE of the summaries' share of the whole
-     budget (fixed, so the rounds of packHistory don't shrink it), or what the digests add, if less. Then day lines swap
-     in their digest, newest day first, while it fits. What neither uses goes back to messages. */
+     Day summaries (F29) and digests (F16): title-only day lines are the floor, so every older message still has a line.
+     While days have something to show, conversation lines leave room for it: dgMax, DIGEST_SHARE of the summaries'
+     share of the whole budget (fixed, so the rounds of packHistory don't shrink it), or what the days' short lines add,
+     if less. Then day lines swap in their short line (never longer than the day's digest), newest day first, a day
+     that doesn't fit skipped for the older ones after it; then, while room is left, those take their full summary the
+     same way. Each day's lines are built once per prompt, when a swap first reaches it (dayLineOf). What neither uses
+     goes back to messages. */
   const DIGEST_SHARE = 0.5;
   function digest(sc, a, k, hiI, after, D, dgMax = 0) {
     const out = { before: [], after: after.slice() };
@@ -6059,14 +6183,16 @@
     const units = digestUnits(S.msgs[a].i, hiI, rawLoI, sc.loose);
     /* where day lines stop when units[0..j-1] are taken: everything taken covers its own members */
     const edge = j => (j < units.length ? Math.min(rawLoI, units[j].b + 1) : S.msgs[a].i);
-    /* the days' digest lines, and the room kept from conversation lines for them: what the swap below, newest day
-       first, would add within dgMax and the room left over the floor (0 when no digest fits, so none is held back) */
-    const ups = sc.days.map(digestText);
+    /* the room kept from conversation lines for the day lines: what the first swap below (short lines, newest day
+       first, skipping one that doesn't fit) would add within dgMax and the room left over the floor (0 when none fits,
+       so none is held back) */
     const most = Math.min(dgMax, Math.max(0, D - used - l2(edge(0))));
     let keep = 0;
-    for (let d = ups.length - 1; d >= 0; d--) {
-      const add = ups[d] ? Math.max(0, ups[d].bytes - days[d].bytes) : 0;
-      if (ups[d] && keep + add <= most) keep += add;
+    for (let d = sc.days.length - 1; d >= 0 && keep < most; d--) {
+      const g = dayLineOf(sc.days[d], "short");
+      if (!g) continue;
+      const add = Math.max(0, g.bytes - days[d].bytes);
+      if (keep + add <= most) keep += add;
     }
     let l1 = 0,
       j = 0;
@@ -6091,13 +6217,24 @@
         break;
       }
     }
-    /* whole days before the cut (lines[d] is day d's) take their digest, newest first, while it fits */
+    /* whole days before the cut (lines[d] is day d's) take their short line, newest first, skipping a day that doesn't
+       fit; then, the same way, those take their full summary in its place */
     let room = D - used - l1 - lines.reduce((n, x) => n + x.bytes, 0);
-    for (let d = Math.min(lines.length, sc.days.length) - 1; d >= 0 && room > 0; d--) {
-      const g = ups[d];
-      if (!g || sc.days[d].b >= cut || g.bytes - days[d].bytes > room) continue;
+    const top = Math.min(lines.length, sc.days.length) - 1;
+    for (let d = top; d >= 0 && room > 0; d--) {
+      if (sc.days[d].b >= cut) continue;
+      const g = dayLineOf(sc.days[d], "short");
+      if (!g || g.bytes - days[d].bytes > room) continue;
       room -= g.bytes - days[d].bytes;
       lines[d] = g;
+    }
+    for (let d = top; d >= 0 && room > 0; d--) {
+      if (!lines[d].dg) continue;
+      const f = dayLineOf(sc.days[d], "full");
+      const add = f.bytes - lines[d].bytes;
+      if (add <= 0 || add > room) continue;
+      room -= add;
+      lines[d] = f;
     }
     lines.push(...chosen);
     lines.sort((p, q) => p.a - q.a || p.b - q.b);
@@ -6199,7 +6336,8 @@
     const days = P.before.filter(l => l.kind === "day");
     P.hasDays = days.length > 0;
     P.dayUntil = P.hasDays ? Math.max(...days.map(l => l.b)) + 1 : null;
-    /* the day lines that carry a digest (F16): how many, from the first one's start to the last one's end */
+    /* the day lines that carry a summary (F29) or a digest (F16): how many, from the first one's start to the last one's
+       end (saved as sent.digests, the name older rows have) */
     const dg = days.filter(l => l.dg);
     P.digests = dg.length ? { n: dg.length, from: dg[0].a, to: dg[dg.length - 1].b } : null;
     P.digestDays = dg.length ? daySpan((S.byI.get(dg[0].a) || {}).d, (S.byI.get(dg[dg.length - 1].b) || {}).d) : "";
@@ -6275,7 +6413,7 @@
           P.digests.from +
           " to #" +
           P.digests.to +
-          " that say Digest: carry a few bullets on that day, each citing its messages."
+          " that say Summary: carry that day's summary, and those that say Digest: a few short bullets on it; each point cites its messages."
         : "";
       L.push(
         "- OLDER HISTORY: " +
@@ -6394,7 +6532,7 @@
               : "nothing included.");
     }
     if (P.digests)
-      s += " Day digests for " + plural(P.digests.n, "day") + (P.digestDays ? " (" + P.digestDays + ")" : "") + ".";
+      s += " Day summaries for " + plural(P.digests.n, "day") + (P.digestDays ? " (" + P.digestDays + ")" : "") + ".";
     if (P.hasAfter)
       s +=
         " Newer than #" +
@@ -6432,14 +6570,16 @@
           " word for word" +
           (x.sent.sumFrom != null ? ", older as summaries from #" + x.sent.sumFrom : "") +
           (x.sent.afterFrom != null ? ", newer as summaries from #" + x.sent.afterFrom : "") +
-          (x.sent.digests && x.sent.digests.n ? ", day digests #" + x.sent.digests.from + "–#" + x.sent.digests.to : "")
+          (x.sent.digests && x.sent.digests.n
+            ? ", day summaries #" + x.sent.digests.from + "–#" + x.sent.digests.to
+            : "")
         : "";
 
   /* ---------- search tools (F32) ----------
      Ask and Views always cover the whole history. Where sample.limits() reports tools (S.tools), the prompt is kept to
      ASK_TOOLS_CAP (or 60% of a smaller cap) and Claude gets three page functions over every stored message: search_messages (all words, in the
      text, the sender's names, link previews, quotes and photo captions), read_messages (word for word, a range or a
-     day) and day_summaries (the day lines, digests where there are some). Each result is at most TOOL_BYTES; together
+     day) and day_summaries (the day lines, each day's summary where it has one, F29). Each result is at most TOOL_BYTES; together
      they stay within what the prompt left of the cap, after which a tool refuses and Claude answers. Every search and
      read is recorded (newRec) for the live status, the note under the answer, the saved row's sent and the match
      lists. Without tools, the same prompt goes in at the full cap, as before. */
@@ -6447,7 +6587,7 @@
   const ASK_TOOLS_CAP = 98304;
   const TOOL_SPARE = 8192; /* of the cap, for Claude's own words between rounds and the platform's framing */
   const SEARCH_HAVE =
-    "\n- SEARCH: three tools over every stored message, photo captions included: search_messages (by words, dates, sender), read_messages (word for word: a range of numbers or a whole day) and day_summaries (a line per day, with digests). Use them for whatever the lines above don't settle: details of older messages, things only in photos, exact wording.";
+    "\n- SEARCH: three tools over every stored message, photo captions included: search_messages (by words, dates, sender), read_messages (word for word: a range of numbers or a whole day) and day_summaries (a line per day, with its summary where it has one). Use them for whatever the lines above don't settle: details of older messages, things only in photos, exact wording.";
   const SEARCH_RULES =
     "\n- Search before saying something isn't in the chat. When a search finds nothing, try other words, a synonym or a broader word. Read around a hit before you cite it.\n- Write nothing until your final answer: no remarks before or between searches.";
   /* What a search matches in: the message, who sent it, its link preview, the message it quotes and its photos */
@@ -6610,25 +6750,24 @@
       {
         name: "day_summaries",
         description:
-          "One line per day between two dates (YYYY-MM-DD) or message numbers: its message numbers, how many messages, the busiest topics, and a few digest bullets where the day has them. For an overview of a long stretch before searching or reading it.",
+          "One line per day between two dates (YYYY-MM-DD) or message numbers: its message numbers, how many messages, and the day's summary where it has one (its topics with points citing messages, then what's still open), else its busiest topics. For an overview of a long stretch before searching or reading it; over several days each day's line is cut to about 4 KB (it says how many points more), so ask for one day alone to get its whole summary. Returns as many days as fit and where to continue.",
         inputSchema: { type: "object", properties: range, required: ["from"] },
         execute: input => {
           mark();
           const a = boundOf(input.from, false),
             b = boundOf(input.to == null || input.to === "" ? input.from : input.to, true);
           if (a == null || b == null) throw new Error("from and to must be dates (YYYY-MM-DD) or #numbers.");
-          const ls = [];
-          let n = 0;
-          for (const x of dayLines(a, b)) {
-            if (n + x.bytes > TOOL_BYTES - 256) break;
-            ls.push(x.text);
-            n += x.bytes;
-          }
+          /* the lines that fit one result (dayLines). Several days: each line at most DAYSUM_LINE, so one busy day
+             can't fill the result; a single day: its whole summary, up to the result's size */
+          const one = (S.byI.get(a) || {}).d && (S.byI.get(a) || {}).d === (S.byI.get(b) || {}).d;
+          const ls = dayLines(a, b, one ? TOOL_BYTES - 512 : DAYSUM_LINE, TOOL_BYTES - 256);
           if (!ls.length) throw new Error("No stored messages in that range.");
           rec.reads.push(["days", String(input.from), String(input.to || input.from)]);
           rec.lastKind = "read";
           rec.on();
-          return give(JSON.stringify({ days: ls }));
+          const out = { days: ls.map(l => l.text) };
+          if (ls.next) out.next = ls.next;
+          return give(JSON.stringify(out));
         },
       },
     ];
@@ -6947,7 +7086,7 @@
       turns.pop();
       if (e.text) renderCites(out, e.text);
       else out.textContent = "";
-      $("#ask-note").textContent = errCopy(e.code);
+      $("#ask-note").textContent = errCopy(e);
     } finally {
       $("#ask-go").disabled = false;
       $("#ask-stop").hidden = true;
@@ -7250,7 +7389,7 @@
       again(
         e && e.code === "too_long" && out
           ? "Nothing Claude named fits in one request, so nothing was sent."
-          : errCopy(e && e.code),
+          : errCopy(e),
       );
     } finally {
       $("#ask-go").disabled = false;
@@ -7258,19 +7397,37 @@
       ctl = null;
     }
   }
-  function errCopy(c) {
-    return (
-      {
-        cancelled: "Stopped.",
-        not_granted: "Claude wasn't allowed for this page.",
-        rate_limited: "Too many requests right now. Try again in a minute.",
-        prompt_too_large: "Too much to send at once, even trimmed. Tell Claude in chat if this repeats.",
-        too_long: "That's too long to send, even with the chat trimmed. Shorten it.",
-        refused: "Claude declined that one. Try rephrasing.",
-        session_expired: "Sign in again, then retry.",
-        invalid_json: "Claude's reply couldn't be read as a view. Try again or simplify the request.",
-      }[c] || "Something went wrong. Try again."
-    );
+  /* Viewer copy for each way a request to Claude fails (sample.d.ts SampleErrorCode); e: the error or its code. A
+     refusal without a code that talks of consent or permission reads as not_granted; any other unknown failure names
+     its code, so it can be reported. */
+  function errCopy(e) {
+    const c = e && typeof e === "object" ? e.code : e;
+    const msg =
+      e && typeof e === "object" && typeof e.message === "string" ? e.message.replace(/\s+/g, " ").trim() : "";
+    const copy = {
+      cancelled: "Stopped.",
+      not_granted: NOT_GRANTED,
+      sampling_disabled: "Claude isn't available for this account or organization, so nothing was sent.",
+      not_declared: "Asking Claude isn't available in this version of the page. Reload it to get the latest.",
+      capability_disabled: "Asking Claude isn't available in this view of the page.",
+      capability_removed: "Asking Claude isn't available in this view of the page. Update the Claude app or reload.",
+      rate_limited: "Too many requests right now. Try again in a minute.",
+      prompt_too_large: "Too much to send at once, even trimmed. Tell Claude in chat if this repeats.",
+      too_long: "That's too long to send, even with the chat trimmed. Shorten it.",
+      refused: "Claude declined that one. Try rephrasing.",
+      session_expired: "Sign in again, then retry.",
+      invalid_json: "Claude's reply couldn't be read as a view. Try again or simplify the request.",
+      empty_completion: "Claude gave no answer. Try asking a little differently.",
+      upstream_error:
+        "Claude couldn't be reached: a service or connection problem, or Claude isn't allowed on this page yet. If you closed a permission prompt, open this page's Permissions (in the artifact's menu), allow Claude and reload; otherwise try again.",
+      tools_unavailable: "This view can't run the page's search tools. Try again.",
+      invalid_request: "The page sent a request Claude couldn't take. Tell Claude in chat if this repeats.",
+      transform_error: "The page sent a request Claude couldn't take. Tell Claude in chat if this repeats.",
+      queue_overflow: "Too many requests at once. Reload the page and try again.",
+    }[c];
+    if (copy) return copy;
+    const what = [c, msg].filter(Boolean).join(": ").slice(0, 160);
+    return what ? "Something went wrong (" + what + "). Try again." : "Something went wrong. Try again.";
   }
   /* ---------- removing saved questions (F26) ----------
      Remove (or Clear all, from 2 saved questions) hides them at once and puts "Removed … · Undo" in #qa-undo, a
@@ -7578,7 +7735,7 @@
         $("#view-note").textContent = "Built, but not saved.";
       }
     } catch (e) {
-      $("#view-note").textContent = errCopy(e && e.code);
+      $("#view-note").textContent = errCopy(e);
     } finally {
       vwBusy = null;
       renderViews();
@@ -7742,7 +7899,9 @@
       );
     else {
       /* a failed automatic update says why; Rebuild tries now, and the next import tries again by itself */
-      const x = vwSt.get(id) || (v.autoErr ? { t: errCopy(v.autoErr.code), err: true } : null);
+      const x =
+        vwSt.get(id) ||
+        (v.autoErr ? { t: errCopy({ code: v.autoErr.code, message: v.autoErr.msg }), err: true } : null);
       if (x) st.textContent = x.t;
       if (x && x.err) st.classList.add("err");
     }
@@ -7932,13 +8091,14 @@
       vwNotes.set(id, viewNote(P, retried, rec));
     } catch (e) {
       const code = (e && e.code) || null;
+      const msg = e && typeof e.message === "string" ? e.message.slice(0, 200) : null;
       if (auto)
         try {
-          await ref.update({ autoErr: { at: new Date().toISOString(), code, toI: n0 }, autoBusy: null });
+          await ref.update({ autoErr: { at: new Date().toISOString(), code, msg, toI: n0 }, autoBusy: null });
         } catch (e2) {
-          vwSt.set(id, { t: errCopy(code) + " The earlier version stays.", err: true });
+          vwSt.set(id, { t: errCopy(e) + " The earlier version stays.", err: true });
         }
-      else vwSt.set(id, { t: errCopy(code), err: true });
+      else vwSt.set(id, { t: errCopy(e), err: true });
     } finally {
       vwBusy = null;
       renderViews();
@@ -10119,6 +10279,7 @@
     if (S.refresh) renderRefresh();
     renderUpdates();
     renderSchedule();
+    renderDays();
   }, 60000);
 
   /* ---------- update notices (F5) ----------
@@ -10536,13 +10697,15 @@
     return d;
   };
 
-  /* ---------- By day (F24) ----------
-      The per-day digests (S.digests, from digests/m<YYYY-MM>), a card per day, newest first, DAYS_STEP at a time. Drawn
-      only while the tab is open, and again when the digests or the messages change. Bullet text is shown as text. Days
-      without a digest are left out; one line at the top says why. route() calls this while the page script is still
-      loading (an opened #days link): S.digestsIn is unset then, so only the empty state is drawn. S.digestsIn is true
-      once the digests are in, "nodb" with no database (signed out, or not on claude.ai) and "error" when the listener
-      fails before they arrive; each has its own line. */
+  /* ---------- By day (F24, F29) ----------
+      A card per day, newest first, DAYS_STEP at a time: the day's fuller summary (S.daySums, from
+      daySummaries/d<YYYY-MM-DD>, F29) when it has one, else its older digest (S.digests, from digests/m<YYYY-MM>, F16,
+      which refreshes no longer write), and what each refresh found that day (S.reports, F27). Drawn only while the tab
+      is open, and again when any of them or the messages change. Text is shown as text. One line at the top says which
+      days are still waiting and why. route() calls this while the page script is still loading (an opened #days link):
+      S.daySumsIn and S.digestsIn are unset then, so only the empty state is drawn. Each is true once its collection is
+      in, "nodb" with no database (signed out, or not on claude.ai) and "error" when its listener fails before it
+      arrives; each case has its own line. */
   const DAYS_STEP = 30;
   /* "Sat, Nov 14" (with the year when it isn't this year in the chat's time zone): the day's own date, as stored */
   function dayTitle(k) {
@@ -10561,57 +10724,173 @@
     };
     return a;
   }
-  /* a list of bullets ({t, refs}), each followed by its message numbers; null when none has text */
-  function dayBullets(bullets) {
+  /* one line of plain text, whatever was stored: control characters and runs of spaces become one space */
+  function oneLine(t) {
+    return typeof t === "string"
+      ? t
+          .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+      : "";
+  }
+  /* a list of bullets ({t, refs}), each followed by its message numbers (at most `most`); null when none has text */
+  function dayBullets(bullets, most = 10) {
     const ul = el("ul");
     (Array.isArray(bullets) ? bullets : []).forEach(b => {
-      if (!b || typeof b.t !== "string") return;
-      const t = b.t
-        .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+      const t = b && oneLine(b.t);
       if (!t) return;
       const li = el("li", null, t);
       (Array.isArray(b.refs) ? b.refs : [])
         .filter(i => Number.isInteger(i) && i >= 0)
-        .slice(0, 10)
+        .slice(0, most)
         .forEach(i => li.append(" ", dayCite(i)));
       ul.append(li);
     });
     return ul.children.length ? ul : null;
   }
-  /* A day's card: its digest (g) when it has one, and what each refresh found that day (r, F27): under a digest as a
-     collapsed list, on a day without one (the day in progress) in full. cnt: stored messages per day, for the latter. */
-  function dayCard(k, g, r, cnt) {
+  /* A day's fuller summary (F29) when it has a bullet worth showing, else null */
+  function daySumOf(k) {
+    const s = S.daySums && S.daySums.get(k);
+    if (!s || typeof s !== "object" || !Array.isArray(s.sections)) return null;
+    const some = bs => Array.isArray(bs) && bs.some(b => b && oneLine(b.t));
+    return s.sections.some(x => x && some(x.bullets)) ? s : null;
+  }
+  /* Where a day's summary stands: written after the day ended (final, or before a later day was stored), the day
+     ended and its final rewrite still to come, or the day in progress; with when it was last written */
+  function sumState(k, s, cnt) {
+    const at = runTime(s.at, k);
+    const later = !!cnt.last && k < cnt.last;
+    const fto = Number.isInteger(s.fullToI) ? s.fullToI : s.toI;
+    /* final, or rewritten after it ended with nothing stored after that and a later day stored: never written again */
+    const after =
+      (cnt.end.get(k) ?? -1) > s.toI; /* messages of that day stored after it: catchup.py still writes them */
+    if (s.final === true || (s.full === true && later && s.toI === fto && !after))
+      return { k: "final", badge: "Final", text: at ? "written " + at : "" };
+    /* ended, its rewrite as one piece still to come: catchup.py writes it with the next build, which needs new messages */
+    if (later || (s.full !== true && k < dsToday()))
+      return {
+        k: "ended",
+        badge: "Day ended",
+        text: (at ? "updated " + at + "; " : "") + "rewritten as one piece at a refresh that brings new messages",
+      };
+    /* ended by the clock in the chat's time zone while messages still carry its date: each refresh adds them */
+    if (s.full === true)
+      return { k: "ended", badge: "Day ended", text: at ? (s.toI === fto ? "rewritten " : "updated ") + at : "" };
+    return { k: "progress", badge: "In progress", text: at ? "updated " + at : "" };
+  }
+  /* today in the chat's time zone (a function declaration: renderDays runs while the script is still loading) */
+  function dsToday() {
+    return new Date().toLocaleDateString("en-CA", { timeZone: validTz(S.meta && S.meta.tz) });
+  }
+  /* "Copy for chat" (F29): the day as plain text for the owner to paste into the chat themselves, without message
+     numbers (they only mean something on the page): the day as a title, then each section's heading (when it has one)
+     and its bullets, then Still open */
+  const noRefs = t => t.replace(/\s*[[(]#\d+(?:\s*[,–-]\s*#?\d+)*[\])]/g, "").trim();
+  function chatText(k, groups, soFar) {
+    const L = [dayTitle(k) + (soFar ? " (so far)" : "")];
+    groups.forEach(([h, bs]) => {
+      const ls = (Array.isArray(bs) ? bs : []).map(b => noRefs(oneLine(b && b.t))).filter(Boolean);
+      if (!ls.length) return;
+      L.push("", ...(h ? [h] : []), ...ls.map(t => "• " + t));
+    });
+    return L.join("\n");
+  }
+  /* The Copy for chat button and its status line. When the clipboard is out of reach (the artifact viewer can block
+     it), the text appears selected in a box below, to copy by hand. */
+  function copyRow(text) {
+    const box = el("div", "ds-share");
+    const b = el("button", "secondary ds-copy", "Copy for chat");
+    b.type = "button";
+    b.title = "Copies this day as plain text, without message numbers, to paste into the chat";
+    const st = el("span", "note ds-copied");
+    st.setAttribute("role", "status");
+    let tm;
+    b.onclick = async () => {
+      const t = text();
+      const old = box.querySelector("textarea");
+      if (old) old.remove();
+      clearTimeout(tm);
+      st.textContent = "";
+      if (await copyText(t)) {
+        st.textContent = "Copied.";
+        tm = setTimeout(() => (st.textContent = ""), 5000);
+        return;
+      }
+      st.textContent = "Couldn't copy here: select the text below and copy it.";
+      const ta = el("textarea");
+      ta.readOnly = true;
+      ta.value = t;
+      ta.rows = Math.min(12, t.split("\n").length);
+      ta.setAttribute("aria-label", "The day as text for the chat");
+      box.append(ta);
+      ta.focus();
+      ta.select();
+    };
+    box.append(b, st);
+    return box;
+  }
+  /* what each refresh found that day (F27), collapsed under a summary or a digest */
+  function runsMore(k, r, runs) {
+    const more = el("details", "rp-more");
+    more.append(el("summary", null, "What each refresh found (" + runs.length + ")"), runList(k, r, runs));
+    return more;
+  }
+  /* A day's card: its summary (s) when it has one, else its older digest (g), with Copy for chat and what each refresh
+     found that day (r, F27) collapsed under it; on a day with neither (the day in progress before its first summary),
+     what each refresh found in full. cnt: stored messages per day. */
+  function dayCard(k, s, g, r, cnt) {
     const art = el("article", "item dg-day");
     art.dataset.day = k;
     art.tabIndex = -1;
     const head = el("div", "row");
     head.append(el("h3", null, dayTitle(k)));
     const runs = r ? reportRuns(r) : [];
+    const n = cnt.get(k);
+    if (s) {
+      art.classList.add("ds-day");
+      const st = sumState(k, s, cnt);
+      art.dataset.state = st.k;
+      if (n) head.append(el("span", "note", plural(n, "message") + (st.k === "progress" ? " so far" : "")));
+      const line = el("p", "ds-state");
+      line.append(el("span", "chip ds-" + st.k, st.badge));
+      if (st.text) line.append(" · " + st.text);
+      art.append(head, line);
+      const groups = [];
+      s.sections.forEach(x => {
+        const ul = x && dayBullets(x.bullets, Infinity);
+        if (!ul) return;
+        const h = oneLine(x.h) || "More";
+        groups.push([h, x.bullets]);
+        art.append(el("h4", "ds-h", h), ul);
+      });
+      const op = dayBullets(s.open, Infinity);
+      if (op) {
+        groups.push(["Still open", s.open]);
+        art.append(el("h4", "ds-h ds-open", "Still open"), op);
+      }
+      art.append(copyRow(() => chatText(k, groups, st.k === "progress")));
+      if (runs.length) art.append(runsMore(k, r, runs));
+      return art;
+    }
     if (g) {
       if (Number.isInteger(g.n) && g.n > 0) head.append(el("span", "note", plural(g.n, "message")));
       art.append(head);
       const ul = dayBullets(g.bullets);
       if (ul) art.append(ul);
-      if (runs.length) {
-        const more = el("details", "rp-more");
-        more.append(el("summary", null, "What each refresh found (" + runs.length + ")"), runList(k, r, runs));
-        art.append(more);
-      }
+      art.append(copyRow(() => chatText(k, [[null, g.bullets]], false)));
+      if (runs.length) art.append(runsMore(k, r, runs));
       return art;
     }
     art.classList.add("rp-day");
-    const n = cnt && cnt.get(k);
     if (n) head.append(el("span", "note", plural(n, "message") + (cnt.last === k ? " so far" : "")));
-    art.append(head, el("p", "note rp-lead", "No digest yet. What each refresh found:"), runList(k, r, runs));
+    art.append(head, el("p", "note rp-lead", "No summary yet. What each refresh found:"), runList(k, r, runs));
     return art;
   }
   /* ---------- Each refresh's report (F27) ----------
       reports/d<YYYY-MM-DD> {day, runs:[{at, fromI, toI, n, bullets:[{t, refs}]}], dropped?}, written by catchup.py
       with each build that adds messages: the bullets of the report that refresh gave in chat, under the day of the
       messages they cite (a refresh over midnight has a run on each day). Read only, into S.reports; the By day tab
-      shows them. A listener that fails leaves the digests as they are. */
+      shows them. A listener that fails leaves the summaries as they are. */
   function watchReports(db) {
     db.collection("reports").onSnapshot(
       q => {
@@ -10667,74 +10946,102 @@
     box.append(ol);
     return box;
   }
-  /* stored messages per day, a day never going back (as dayScan counts them); .last: the newest day */
+  /* stored messages per day, a day never going back (as dayScan counts them), oldest first; .last: the newest day;
+     .end: each day's last message number */
   function dayCounts() {
     const m = new Map();
+    m.end = new Map();
     let prev = "";
     S.msgs.forEach(x => {
       const d = x.d && x.d > prev ? x.d : prev || x.d || "";
       prev = d;
-      if (d) m.set(d, (m.get(d) || 0) + 1);
+      if (d) {
+        m.set(d, (m.get(d) || 0) + 1);
+        m.end.set(d, x.i);
+      }
     });
     m.last = prev;
     return m;
   }
-  /* the quiet line: which stored days have no digest yet, and why */
-  function daysWhy(days) {
-    const newest = days[0][1],
-      oldest = days[days.length - 1][0];
-    const after = Number.isInteger(newest.toI) ? newest.toI : Infinity;
-    const wait = new Set();
-    for (let j = S.msgs.length - 1; j >= 0 && S.msgs[j].i > after; j--) {
-      const d = S.msgs[j].d;
-      if (/^\d{4}-\d\d-\d\d$/.test(d || "") && d > days[0][0]) wait.add(d);
+  /* the quiet line: how summaries are kept, which stored days are still waiting for theirs, and what older days have */
+  function daysWhy(SM, G, cnt) {
+    const days = [...cnt.keys()].filter(k => /^\d{4}-\d\d-\d\d$/.test(k));
+    const newest = [...SM.keys()].sort().pop();
+    /* a refresh writes the days after the newest summary (none yet: only the newest day); earlier ones are the
+       backfill's */
+    const wait = days.filter(d => !SM.has(d) && (newest ? d > newest : d === cnt.last));
+    const older = days.filter(d => !SM.has(d) && !wait.includes(d));
+    let s = "A refresh keeps each day's summary current and rewrites it once after the day ends.";
+    if (wait.length === 1) s += " " + dayTitle(wait[0]) + " gets its summary at the next refresh.";
+    else if (wait.length > 1)
+      s +=
+        " " +
+        wait.length +
+        " newer days, from " +
+        dayTitle(wait[0]) +
+        ", get theirs at the next refreshes, a few at a time.";
+    if (older.length) {
+      const dg = older.filter(d => G.has(d)).length;
+      s +=
+        " " +
+        (dg === older.length
+          ? "Older days show their short digest"
+          : dg
+            ? "Older days show their short digest where they have one"
+            : older.length === 1
+              ? dayTitle(older[0]) + " has no summary"
+              : older.length + " older days have no summary") +
+        ": ask Claude to write day summaries for past days.";
     }
-    const w = [...wait].sort();
-    let s;
-    if (!w.length) s = "A day gets its digest at the first refresh after it ends.";
-    else if (w.length === 1) s = dayTitle(w[0]) + " gets its digest at a refresh after it ends.";
-    else if (w.length === 2) s = dayTitle(w[0]) + " and " + dayTitle(w[1]) + " get theirs at a refresh after they end.";
-    else s = w.length + " newer days, from " + dayTitle(w[0]) + ", get theirs at the next refreshes, a few at a time.";
-    const first = S.msgs.length && S.msgs[0].d;
-    if (/^\d{4}-\d\d-\d\d$/.test(first || "") && first < oldest)
-      s += " Days before " + dayTitle(oldest) + " have none: ask Claude to write digests for past days.";
     return s;
   }
   function renderDays() {
     const box = $("#days-list"),
       v = $("#v-days");
     if (!box || !v || v.hidden) return;
-    const key = [S.digests, S.reports, S.msgs, S.daysN, S.meta, S.digestsIn];
+    /* the date in the key: a summary's state follows the day boundary (the minute tick calls this) */
+    const key = [S.daySums, S.digests, S.reports, S.msgs, S.daysN, S.meta, S.daySumsIn, S.digestsIn, dsToday()];
     if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
     renderDays.k = key;
     /* a run list the reader opened stays open when the tab redraws (after an import or a refresh's write) */
     const opened = [...box.querySelectorAll("details.rp-more[open]")].map(d => d.closest("article").dataset.day);
     box.textContent = "";
-    if (S.digestsIn !== true) {
-      const why = {
-        nodb: "The day digests can't load in this view. Open the page on claude.ai while signed in.",
-        error: "Couldn't load the day digests. Reload the page to try again.",
-      };
-      box.append(el("div", "empty", why[S.digestsIn] || "Day digests show here once the chat data loads."));
+    /* both collections in (or failed) before drawing, so a day never shows its digest a moment before its summary */
+    const ins = [S.daySumsIn, S.digestsIn];
+    const why = {
+      nodb: "The day summaries can't load in this view. Open the page on claude.ai while signed in.",
+      error: "Couldn't load the day summaries. Reload the page to try again.",
+    };
+    let w = "";
+    if (ins.includes("nodb")) w = "nodb";
+    else if (!ins.every(x => x === true || x === "error")) w = "wait";
+    else if (S.daySumsIn === "error" && S.digestsIn !== true) w = "error";
+    if (w) {
+      box.append(el("div", "empty", why[w] || "Day summaries show here once the chat data loads."));
       return;
     }
-    const days = [...S.digests]
-      .filter(([k, g]) => /^\d{4}-\d\d-\d\d$/.test(k) && g && Array.isArray(g.bullets) && g.bullets.length)
-      .sort((p, q) => (p[0] < q[0] ? 1 : -1));
-    /* the days with what each refresh found (F27), and every day to draw: those and the digested ones, newest first */
-    const R = new Map([...(S.reports || [])].filter(([k, r]) => /^\d{4}-\d\d-\d\d$/.test(k) && reportRuns(r).length));
-    const G = new Map(days);
-    const all = [...new Set([...G.keys(), ...R.keys()])].sort().reverse();
+    const day = k => /^\d{4}-\d\d-\d\d$/.test(k);
+    const SM = new Map(
+      [...S.daySums.keys()]
+        .filter(day)
+        .map(k => [k, daySumOf(k)])
+        .filter(([, s]) => s),
+    );
+    const G = new Map([...S.digests].filter(([k, g]) => day(k) && g && Array.isArray(g.bullets) && g.bullets.length));
+    const R = new Map([...(S.reports || [])].filter(([k, r]) => day(k) && reportRuns(r).length));
     const none =
-      "No day digests yet. A refresh writes a few lines on each day after it ends; to fill in earlier days, ask Claude to write digests for past days.";
+      "No day summaries yet. A refresh writes the day's summary and keeps it current; to fill in earlier days, ask Claude to write day summaries for past days.";
+    if (S.daySumsIn === "error") box.append(el("p", "note", why.error + " Older digests show meanwhile."));
+    /* a card for every day with a summary, a digest or a refresh's run (F27), newest first */
+    const all = [...new Set([...SM.keys(), ...G.keys(), ...R.keys()])].sort().reverse();
     if (!all.length) {
       box.append(el("div", "empty", none));
       return;
     }
-    box.append(el("p", "note", days.length ? daysWhy(days) : none));
-    const cnt = all.some(k => !G.has(k)) ? dayCounts() : null;
+    const cnt = dayCounts();
+    box.append(el("p", "note", SM.size || G.size ? daysWhy(SM, G, cnt) : none));
     const n = S.daysN || DAYS_STEP;
-    all.slice(0, n).forEach(k => box.append(dayCard(k, G.get(k) || null, R.get(k) || null, cnt)));
+    all.slice(0, n).forEach(k => box.append(dayCard(k, SM.get(k) || null, G.get(k) || null, R.get(k) || null, cnt)));
     box.querySelectorAll("article.dg-day > details.rp-more").forEach(d => {
       if (opened.includes(d.parentNode.dataset.day)) d.open = true;
     });
@@ -12766,7 +13073,7 @@
     }
     if (!db) {
       $("#window").textContent = "The chat data can't load in this view. Open the page on claude.ai while signed in.";
-      S.digestsIn = "nodb";
+      S.daySumsIn = S.digestsIn = "nodb";
       renderDays();
       renderStats();
       return;
@@ -12859,7 +13166,28 @@
       },
       () => {},
     );
-    /* per-day digests (F16): read only, for Ask's day lines and the By day tab (F24); Claude's refresh writes them */
+    /* day summaries (F29): read only, the whole collection, for By day, Ask, Views and the day_summaries tool;
+       Claude's refresh writes them */
+    db.collection("daySummaries").onSnapshot(
+      q => {
+        const m = new Map();
+        q.docs.forEach(d => {
+          const k = /^d(\d{4}-\d\d-\d\d)$/.exec(d.id);
+          const v = d.data();
+          if (k && v && typeof v === "object" && Array.isArray(v.sections)) m.set(k[1], v);
+        });
+        S.daySums = m;
+        S.daySumsIn = true;
+        renderDays();
+      },
+      () => {
+        /* summaries already shown stay; only a tab still waiting says it failed */
+        if (S.daySumsIn === true) return;
+        S.daySumsIn = "error";
+        renderDays();
+      },
+    );
+    /* per-day digests (F16, older pages): read only, for days without a summary in By day and Ask's day lines */
     db.collection("digests").onSnapshot(
       q => {
         const m = new Map();
