@@ -6072,7 +6072,8 @@ async function askErrors() {
         JSON.stringify(got),
     );
     ok(
-      got.upstream === "Claude couldn't be reached just now (a service or connection problem). Try again." &&
+      got.upstream ===
+        "Claude couldn't be reached: a service or connection problem, or Claude isn't allowed on this page yet. If you closed a permission prompt, open this page's Permissions (in the artifact's menu), allow Claude and reload; otherwise try again." &&
         got.unknown === 'Something went wrong (weird_code: refused: weird_code). Try again.',
       'E1: a service error has its own words; an unknown code is named ' + JSON.stringify([got.upstream, got.unknown]),
     );
