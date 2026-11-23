@@ -2115,19 +2115,30 @@ sim('S: send replies: nothing queued', async b => {
   );
   await s.ctx.close();
 });
-/* the reply-check skill (F30 option C, step 1): its one read, with the state and limit its SKILL.md gives, then a stop
-   or the replies skill's run */
+/* the reply-check skill (F30 option C): meta/chat, then each active chat's outbox (an added chat's KEY_outbox), with
+   the state and limit its SKILL.md gives, then a stop or the replies skill's run (modeled here for the first chat only) */
 const RC = fs.readFileSync(D + 'plugin/skills/reply-check/SKILL.md', 'utf8');
 async function replyCheck(s) {
   const where = JSON.parse((RC.match(/`where` `(\[[^`]+\])`/) || [])[1]);
   const limit = +(RC.match(/`limit` (\d+)/) || [])[1];
   if (where[0] !== 'state' || where[1] !== '==' || limit !== 1) throw new Error('reply-check: no state query, limit 1');
-  if (!s.db.query('outbox', [where[2]]).slice(0, limit).length) return s.log.push('say No replies waiting.'), null;
-  s.log.push('hand over to replies');
+  const two = (RC.match(/^2\. .*$/m) || [''])[0];
+  const active = (two.match(/whose `state` is `(\w+)`/) || [])[1];
+  if (!two.includes('`ArtifactData get meta/chat`') || !active || !two.includes('`KEY_outbox`'))
+    throw new Error('reply-check: no per-chat reads');
+  const meta = s.db.get('meta/chat').data;
+  const chats = meta.chats ? Object.entries(meta.chats).filter(([, c]) => c.state === active) : [['', { home: true }]];
+  const found = chats
+    .filter(([key, c]) => s.db.query(c.home ? 'outbox' : key + '_outbox', [where[2]]).slice(0, limit).length)
+    .map(([key]) => key);
+  if (!found.length) return s.log.push('say No replies waiting.'), null;
+  s.log.push('hand over to replies' + (meta.chats ? ' for ' + found.join(',') : ''));
+  if (meta.chats) return found;
   return sendReplies(s);
 }
 sim('S: reply check', { s: 15 }, async b => {
-  // nothing queued (rows in sending, sent or cancelled only): one read and stop; a queued row: the replies skill posts it
+  // nothing queued (rows in sending, sent or cancelled only): meta/chat and one query, then stop; a queued row: the
+  // replies skill posts it
   let s = await freshS(b, {
     'meta/chat': SMETA,
     'refresh/status': { state: 'idle' },
@@ -2137,8 +2148,8 @@ sim('S: reply check', { s: 15 }, async b => {
   });
   await replyCheck(s);
   ok(
-    JSON.stringify(s.log) === JSON.stringify(['query outbox', 'say No replies waiting.']),
-    'S: reply check, nothing queued: one read, one line, no other call (' + JSON.stringify(s.log) + ')',
+    JSON.stringify(s.log) === JSON.stringify(['get meta/chat', 'query outbox', 'say No replies waiting.']),
+    'S: reply check, nothing queued: meta/chat and one query, one line, no other call (' + JSON.stringify(s.log) + ')',
   );
   await s.ctx.close();
   s = await freshS(b, {
@@ -2149,17 +2160,76 @@ sim('S: reply check', { s: 15 }, async b => {
   await replyCheck(s);
   const sent = await s.sent();
   ok(
-    s.log[0] === 'query outbox' &&
-      s.log[1] === 'hand over to replies' &&
-      s.log[2] === 'query outbox' &&
+    s.log[0] === 'get meta/chat' &&
+      s.log[1] === 'query outbox' &&
+      s.log[2] === 'hand over to replies' &&
+      s.log[3] === 'query outbox' &&
       sent.length === 1 &&
       sent[0].text === 'Still have the stove?' &&
       s.db.d['outbox/r1'].v.state === 'sent' &&
       s.db.d['refresh/status'].v.state === 'done',
     'S: reply check, a queued row: handed to the replies skill, which posts it and releases the lock (' +
-      JSON.stringify(s.log.slice(0, 4)) +
+      JSON.stringify(s.log.slice(0, 5)) +
       ', ' +
       JSON.stringify(sent) +
+      ')',
+  );
+  await s.ctx.close();
+  // several chats: only active ones are read (paused, pending, hidden and deleted skipped), and only those with a
+  // queued row are handed over
+  const CHATS = {
+    home: { home: true, state: 'active' },
+    book: { state: 'active' },
+    chess: { state: 'paused' },
+    pend: { state: 'pending' },
+    old: { state: 'hidden' },
+    gone: { state: 'deleted' },
+  };
+  const skipped = {
+    'chess_outbox/r1': row('Cy', 112, 'Paused chat', iso(NOW, -5)),
+    'pend_outbox/r1': row('Cy', 112, 'Pending chat', iso(NOW, -5)),
+    'old_outbox/r1': row('Cy', 112, 'Hidden chat', iso(NOW, -5)),
+    'gone_outbox/r1': row('Cy', 112, 'Deleted chat', iso(NOW, -5)),
+  };
+  s = await freshS(
+    b,
+    Object.assign(
+      {
+        'meta/chat': Object.assign({}, SMETA, { chats: CHATS }),
+        'refresh/status': { state: 'idle' },
+        'book_outbox/r1': row('Ben', 111, 'Still have the book?', iso(NOW, -2)),
+      },
+      skipped,
+    ),
+  );
+  let found = await replyCheck(s);
+  ok(
+    JSON.stringify(s.log) ===
+      JSON.stringify(['get meta/chat', 'query outbox', 'query book_outbox', 'hand over to replies for book']) &&
+      JSON.stringify(found) === '["book"]',
+    "S: reply check, several chats: meta/chat, then each active chat's outbox (1 + 2 reads); an added chat's queued row is handed over for that chat only; paused, pending, hidden and deleted chats are never read (" +
+      JSON.stringify(s.log) +
+      ')',
+  );
+  await s.ctx.close();
+  s = await freshS(
+    b,
+    Object.assign(
+      {
+        'meta/chat': Object.assign({}, SMETA, { chats: CHATS }),
+        'refresh/status': { state: 'idle' },
+        'book_outbox/r1': row('Ben', 111, 'On its way', iso(NOW, -30), 'sending'),
+      },
+      skipped,
+    ),
+  );
+  found = await replyCheck(s);
+  ok(
+    JSON.stringify(s.log) ===
+      JSON.stringify(['get meta/chat', 'query outbox', 'query book_outbox', 'say No replies waiting.']) &&
+      found === null,
+    'S: reply check, several chats, nothing queued in an active chat: one line and stop (' +
+      JSON.stringify(s.log) +
       ')',
   );
   await s.ctx.close();

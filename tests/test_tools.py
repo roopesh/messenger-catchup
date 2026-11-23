@@ -2558,19 +2558,41 @@ class TestReplyCheck(unittest.TestCase):
             'From a scheduled reply check, ask nothing: list them, say "send replies" asks for the yes, and stop.', two
         )
 
-    def test_one_read_then_stop_or_hand_over(self):
-        read_step = re.search(r"(?m)^2\. \*\*One read:\*\*.*$", self.rc).group(0)
+    def test_reads_each_active_chat_then_stop_or_hand_over(self):
+        """F30 step 2 (owner: "check each chat"): meta/chat, then one queued-row query per active chat (an added chat's
+        KEY_outbox too); paused, hidden, deleted and pending chats are skipped. The cost is said honestly."""
+        read_step = re.search(r"(?m)^2\. \*\*Reads:\*\*.*$", self.rc).group(0)
         for must in (
-            '`ArtifactData query outbox` with `where` `["state","==","queued"]` and `limit` 1',
-            'None: say "No replies waiting." and stop.',
+            "`ArtifactData get meta/chat`",
+            "whose `state` is `active` (no `chats`: the one chat)",
+            '`where` `["state","==","queued"]` and `limit` 1',
+            "the first chat's (`home:true`) is `outbox`, an added chat KEY's `KEY_outbox`",
+            'None anywhere: say "No replies waiting." and stop.',
+            "(1 plus one per active chat)",
             "no other read, file, browser or schedule",
         ):
             self.assertIn(must, read_step)
+        self.assertNotIn("one read", self.rc.lower())
+        self.assertIn("1 read plus one per active chat", self.rc)
+        self.assertIn("one database read plus one per active chat", self.desc)
         self.assertNotIn("sending", self.rc, "rows in sending are the next refresh's: they don't start a reply run")
         hand = re.search(r"(?m)^3\. .*$", self.rc).group(0)
         self.assertIn("follow `messenger-catchup:replies` on that page", hand)
+        self.assertIn("for only the chats with a waiting row", hand)
         self.assertIn("never posts by itself", hand)
         self.assertNotRegex(self.rc, r"tabs_context_mcp|javascript_tool|refresh/status|outboxAuto")
+        # replies does just those chats, each with its own auto, in its own thread
+        several = section(in_replies("SKILL.md"), "Several chats")
+        self.assertIn("From a reply check, do only the chats it found a queued row in.", several)
+        self.assertIn("a reply never goes to another chat", several)
+        self.assertIn("its `auto` in `meta/chat.chats` when set", in_replies("SKILL.md"))
+        self.assertIn(
+            "A reply check (`messenger-catchup:reply-check`)",
+            section(in_skill("references", "chats.md"), "Replies in several chats"),
+        )
+        rc = section(in_skill("references", "scheduling.md"), "Reply checks")
+        self.assertIn("`meta/chat` plus one outbox read per active chat", rc)
+        self.assertNotIn("one outbox read;", rc)
 
     def test_it_finds_the_page_as_the_replies_skill_does(self):
         self.assertIn(
