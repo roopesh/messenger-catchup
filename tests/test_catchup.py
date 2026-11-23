@@ -5097,5 +5097,221 @@ class TestCli(unittest.TestCase):
         self.assertIn("catchup.py bootstrap WORK DBDIR", p.stderr)
 
 
+def as_chat(d, key):
+    """An out_dir as ArtifactData fills it for an added chat (F1): its collections under their own names (cam_chunks/),
+    and its meta/chat-<key>.json, which carries its key."""
+    for c in ("chunks", "threading", "summary", "daySummaries", "reports", "photos", "captions"):
+        if os.path.isdir(os.path.join(d, c)):
+            os.rename(os.path.join(d, c), os.path.join(d, key + "_" + c))
+    mp = os.path.join(d, "meta", "chat.json")
+    if os.path.exists(mp):
+        w(os.path.join(d, "meta", "chat-%s.json" % key), dict(r(mp), key=key))
+        os.remove(mp)
+    return d
+
+
+@contextlib.contextmanager
+def on_chat(key):
+    catchup.set_chat(key)
+    try:
+        yield
+    finally:
+        catchup.set_chat(None)
+
+
+def chats_out(*a):
+    return json.loads(quiet(catchup.chats_cmd, *a))
+
+
+class TestChats(unittest.TestCase):
+    """F1 stage A: several chats on one page. An added chat's documents live under its key (cam_chunks, meta/chat-cam),
+    catchup.py --chat=KEY reads and writes only those, a WORK belongs to one chat, and the page's first chat keeps its
+    names, so a one-chat page and an older skill work as before."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+        catchup.NOW = utc("2026-11-13T18:04:00")
+        catchup.TZ = "America/Los_Angeles"
+
+    def tearDown(self):
+        catchup.NOW = None
+        catchup.TZ = "America/Los_Angeles"
+        catchup.set_chat(None)
+        self.t.cleanup()
+
+    def world(self, key="cam"):
+        """A chat's history built through #23 in one conversation and a RUN importing #24-#29, as an added chat's out_dirs
+        hold them (key None: the page's first chat)."""
+        ms = day_msgs(0, 3, first="2026-11-11")
+        old, new = ms[:24], ms[24:]
+        th = {"convs": [{"id": "a", "title": "Talk", "members": [m["i"] for m in old]}], "links": {}, "to": 23}
+        sm = {"version": 2, "convs": [{"id": "a", "tag": "", "synopsis": [], "outcome": "", "key": []}]}
+        sm.update({"open": [], "answered": [], "deals": [], "mentions": [], "toI": 23})
+        self.e.seed(old, threading=th, summary=sm)
+        db = os.path.join(self.t.name, "db")
+        if key:
+            as_chat(db, key)
+            shutil.rmtree(self.e.work)
+            with on_chat(key):
+                quiet(catchup.bootstrap, self.e.work, db)
+        run = self.e.run(new)
+        os.makedirs(os.path.join(run, "reports"))
+        os.makedirs(os.path.join(run, "daySummaries"))
+        if key:
+            as_chat(run, key)
+        return run, {"join": {"a": [m["i"] for m in new]}}
+
+    def manifest_colls(self, run):
+        man = r(os.path.join(run, "out", "manifest.json"))
+        return {x["collection"] for bt in man["batches"] for x in bt} | {
+            x["collection"] for g in man["cleanup"] for x in g
+        }
+
+    def test_DM2_RF11_RF12_an_added_chats_build_writes_only_its_collections(self):
+        run, spec = self.world("cam")
+        spec["report"] = [["Ana asked about the stove", [24]]]
+        spec["daySummaries"] = {"2026-11-13": daysum(("Today", [["Ana asked about the stove", [24, 29]]]))}
+        with on_chat("cam"):
+            self.e.build(run, spec)
+        colls = self.manifest_colls(run)
+        self.assertTrue({"cam_threading", "cam_summary", "cam_reports", "cam_daySummaries"} <= colls, colls)
+        self.assertTrue(all(c.startswith("cam_") for c in colls), colls)
+        self.assertEqual(self.e.state()["chat"], "cam")
+
+    def test_DM2_a_run_for_another_chat_is_refused(self):
+        run, spec = self.world("cam")
+        mp = os.path.join(run, "meta", "chat-cam.json")
+        w(mp, dict(r(mp), key="tea"))
+        with on_chat("cam"), self.assertRaisesRegex(AssertionError, "RUN's meta/chat is for chat tea, not chat cam"):
+            self.e.build(run, spec)
+
+    def test_DM3_a_WORK_belongs_to_one_chat(self):
+        run, spec = self.world("cam")
+        with (
+            on_chat("tea"),
+            self.assertRaisesRegex(AssertionError, "WORK is for chat cam, not chat tea: use a separate"),
+        ):
+            self.e.build(run, spec)
+        with self.assertRaisesRegex(AssertionError, "WORK is for chat cam, not the page's first chat"):
+            self.e.build(run, spec)
+        self.assertFalse(os.path.exists(os.path.join(run, "out", "manifest.json")), "nothing to write")
+
+    def test_DM8_an_added_chats_documents_keep_todays_limits(self):
+        run, spec = self.world("cam")
+        spec["report"] = []
+        with on_chat("cam"):
+            self.e.build(run, spec)
+        man = r(os.path.join(run, "out", "manifest.json"))
+        self.assertTrue(man["sizes"] and max(man["sizes"].values()) <= 240 * 1024, man["sizes"])
+
+    def test_CMP1_the_first_chat_and_an_older_skill_never_touch_another_chats_collections(self):
+        run, spec = self.world(None)
+        spec["report"] = []
+        db = os.path.join(self.t.name, "db")
+        w(os.path.join(db, "cam_chunks", "c0000.json"), {"start": 0, "msgs": [msg(0, "Ana", "another chat")]})
+        w(os.path.join(run, "cam_chunks", "c0000.json"), {"start": 0, "msgs": [msg(0, "Ana", "another chat")]})
+        self.e.build(run, spec)
+        colls = self.manifest_colls(run)
+        self.assertTrue(colls and not any("_" in c for c in colls), colls)
+        self.assertNotIn("chat", self.e.state(), "a first chat's WORK is as before")
+
+    def test_MIG_the_upgrade_is_one_write_of_meta_chat_chats_and_runs_once(self):
+        meta = {"thread": "4242", "threadName": "Gear Chat", "shortName": "Gear", "lastI": 5, "outboxAuto": False}
+        mp = os.path.join(self.t.name, "chat.json")
+        w(mp, meta)
+        up = chats_out(mp)
+        self.assertEqual(
+            up,
+            {
+                "chats": {
+                    "gear": {
+                        "name": "Gear Chat",
+                        "tag": "Gear",
+                        "color": 1,
+                        "order": 0,
+                        "state": "active",
+                        "home": True,
+                    }
+                }
+            },
+        )
+        # MIG2: pinned to the version read; refused if the page wrote meta/chat in between, and safe to retry
+        db = FakeDB()
+        db.put("meta/chat", meta)
+        v = db.ver["meta/chat"]
+        db.put("meta/chat", dict(meta, lastI=6))  # the page imported meanwhile
+        write = lambda ver: db.batch(
+            [{"op": "update", "collection": "meta", "doc_id": "chat", "data": up, "if_version": ver}]
+        )
+        with self.assertRaises(Refused):
+            write(v)
+        self.assertNotIn("chats", db.docs["meta/chat"])
+        w(mp, db.docs["meta/chat"])
+        up = chats_out(mp)
+        write(db.ver["meta/chat"])
+        self.assertEqual(list(db.docs["meta/chat"]["chats"]), ["gear"])
+        self.assertEqual(db.docs["meta/chat"]["lastI"], 6, "the page's import is kept")
+        # MIG3: the second run writes nothing
+        w(mp, db.docs["meta/chat"])
+        self.assertEqual(chats_out(mp), {})
+
+    def test_chat_info_and_the_seed_for_a_pending_chat(self):
+        meta = {"thread": "4242", "threadName": "Gear Chat", "shortName": "Gear", "outboxAuto": True}
+        meta["chats"] = {
+            "gear": {"name": "Gear Chat", "tag": "Gear", "home": True, "state": "active"},
+            "tea": {"name": "Tea Room", "tag": "Tea", "state": "pending", "thread": "777"},
+        }
+        meta["chats"]["tea"]["url"] = "https://www.facebook.com/messages/t/777"
+        meta["chats"]["tea"]["start"] = 1000
+        mp = os.path.join(self.t.name, "chat.json")
+        w(mp, meta)
+        g = chats_out(mp, "gear")
+        self.assertEqual(
+            (g["chatArg"], g["meta"], g["lastImport"], g["collections"]["chunks"]),
+            ("", "meta/chat", "refresh/lastImport", "chunks"),
+        )
+        t = chats_out(mp, "tea")
+        self.assertEqual(
+            (t["chatArg"], t["meta"], t["lastImport"]), ("--chat=tea", "meta/chat-tea", "refresh/lastImport-tea")
+        )
+        self.assertTrue(all(v == "tea_" + k for k, v in t["collections"].items()), t["collections"])
+        self.assertEqual(
+            {k: t["seed"][k] for k in ("key", "thread", "chatUrl", "firstCount", "lastI", "chunkSize")},
+            {
+                "key": "tea",
+                "thread": "777",
+                "chatUrl": meta["chats"]["tea"]["url"],
+                "firstCount": 1000,
+                "lastI": -1,
+                "chunkSize": 82,
+            },
+        )
+        self.assertNotIn("seed", g)
+        with self.assertRaisesRegex(AssertionError, "no chat 'cam'"):
+            chats_out(mp, "cam")
+        self.assertIsNone(catchup.CHAT, "chats leaves no chat set")
+
+    def test_OB4_replies_go_out_by_the_chats_own_setting_else_the_page_default(self):
+        for page in (True, False):
+            for own, want in ((None, page), (True, True), (False, False)):
+                meta = {"shortName": "Gear", "outboxAuto": page, "chats": {"tea": {"name": "Tea Room", "tag": "Tea"}}}
+                if own is not None:
+                    meta["chats"]["tea"]["auto"] = own
+                self.assertIs(catchup.auto_for(meta, "tea"), want, (page, own))
+                self.assertIs(catchup.auto_for(meta, "gear"), page, "the first chat with no setting of its own")
+
+    def test_SET10_keys_and_tags_follow_the_same_rules_as_the_page(self):
+        with open(os.path.join(ROOT, "plugin", "skills", "refresh", "assets", "page.html"), encoding="utf-8") as fh:
+            src = fh.read()
+        fns = [re.search(r"  const %s = [\s\S]*?;\n" % n, src).group(0) for n in ("TAG_MAX", "keyFrom", "tagFrom")]
+        names = ["Tea Room", "Camera Club", "  Gear  Chat ", "Ünïcode Ça", "", "12345678 x", "Book-Swap!"]
+        js = "".join(fns) + "console.log(JSON.stringify(%s.map(s => [keyFrom(s), tagFrom(s)])))" % json.dumps(names)
+        import subprocess
+
+        got = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(got, [[catchup.key_from(s), catchup.tag_from(s)] for s in names])
+
+
 if __name__ == "__main__":
     unittest.main()

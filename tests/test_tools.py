@@ -33,6 +33,7 @@ def in_replies(*p):
 
 
 REFERENCES = [
+    "chats.md",
     "database.md",
     "day-summaries.md",
     "first-run.md",
@@ -323,6 +324,7 @@ class TestSkillReferences(unittest.TestCase):
                 "bootstrap",
                 "build",
                 "captions",
+                "chats",
                 "check-day-summaries",
                 "day-summaries",
                 "days",
@@ -336,6 +338,7 @@ class TestSkillReferences(unittest.TestCase):
             "day-summaries": "day-summaries.md",
             "check-day-summaries": "day-summaries.md",
             "captions": "photos.md",
+            "chats": "chats.md",
         }
         for c in cmds:
             where = in_skill("references", rare[c]) if c in rare else in_skill("SKILL.md")
@@ -1053,6 +1056,8 @@ class TestDaySummaries(unittest.TestCase):
         of the day summaries is a backlog item for very long histories)."""
         for c in ("daySummaries", "digests"):
             uses = re.findall(r'collection\(\s*"%s"\s*\)\s*\.(\w+)' % c, self.page)
+            # F1: each chat's listener goes through on(), which drops it when another chat is opened
+            uses += ["onSnapshot"] * len(re.findall(r'on\(\s*db\.collection\(\s*"%s"\s*\)' % c, self.page))
             self.assertEqual(uses, ["onSnapshot"], c)
             self.assertNotRegex(self.page, r'doc\(\s*["`]%s/' % c)
         self.assertIn("return daySumLine(x, cap) || digestLine(x);", self.page, "a day's summary before its digest")
@@ -2172,6 +2177,27 @@ class TestOutboxPosting(unittest.TestCase):
         )
 
 
+class TestSeveralChatsRules(unittest.TestCase):
+    """F1 review of PR #60: rules that must hold on every page, one chat or several."""
+
+    def test_approval_follows_a_chats_own_setting_in_both_skills(self):
+        """A chat set to "wait for my yes" never posts on its own, even on a one-chat page where chats.md isn't read."""
+        rs, sk = in_replies("SKILL.md"), in_skill("SKILL.md")
+        for name, text in (("refresh", sk), ("replies", rs)):
+            rule = re.search(r"^- \*\*Never send a message\*\*.*$", text, re.M).group(0)
+            self.assertIn("`auto`", rule, name + " hard rule")
+        step2 = re.search(r"^   - \*\*Replies first\*\*.*$", sk, re.M).group(0)
+        self.assertNotIn("(`outboxAuto`, or a yes", step2, "refresh step 2 names the rule, not outboxAuto alone")
+        r2 = re.search(r"^2\. \*\*Check approval\.\*\*.*$", rs, re.M).group(0)
+        self.assertIn("`auto`", r2, "replies step 2")
+
+    def test_cleanup_counts_every_chats_photos_as_in_use(self):
+        """The asset store is shared by the page's chats: an added chat's photos are never unused."""
+        c = in_skill("references", "photos.md").split("## Cleanup", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("`KEY_photos`", c)
+        self.assertIn("`meta/chat.chats`", c)
+
+
 class TestSendReplies(unittest.TestCase):
     """F30 part 1: "send replies" posts the approved queued replies without a refresh (the replies skill), and every
     refresh posts them before its scan. tests/sim.js (section S) runs these steps; these check the text they run."""
@@ -2251,16 +2277,16 @@ class TestSendReplies(unittest.TestCase):
     def test_approval_is_unchanged(self):
         rule = re.search(r"^- \*\*Never send a message\*\*.*?never approval\.", self.skill, re.M).group(0)
         self.assertIn(rule, self.rs, "the refresh skill's hard rule, word for word")
-        self.assertIn('"Send replies" alone approves nothing while `outboxAuto` is off.', self.rs)
+        self.assertIn('"Send replies" alone approves nothing while auto-posting is off.', self.rs)
         s2 = self.step("Check approval")
         for must in (
-            "If `outboxAuto` is true, every `queued` row is approved",
+            "If auto-posting is on for the chat (its own `auto` in `meta/chat.chats` when set, else `outboxAuto`), every `queued` row is approved",
             "Otherwise list each one (who it's to, their message, the exact reply) and ask which to send, then stop",
             "Nothing is locked or opened while you wait",
             "with the ones they said yes to",
         ):
             self.assertIn(must, s2)
-        self.assertIn("(`outboxAuto`, or a yes in chat to that exact text)", bullet(self.skill, "Replies first"))
+        self.assertIn("is approved (by the hard rule)", bullet(self.skill, "Replies first"))
 
     def test_the_run_lock(self):
         s3, s6 = self.step("Take the run lock"), self.step("Release and report")
@@ -2285,7 +2311,7 @@ class TestSendReplies(unittest.TestCase):
         s4 = self.step("Find the Messenger tab")
         for must in (
             "`tabs_context_mcp` (more than one Chrome connected: `references/helper.md` › Which Chrome)",
-            "If it's open on a different chat, the user is using it: don't take it over",
+            "If it's open on a chat not on the page (`meta/chat.chats`), the user is using it: don't take it over",
             "Navigate it to `meta/chat.chatUrl`",
             "`document.visibilityState`",
             '"computer asleep or Messenger tab hidden"',
