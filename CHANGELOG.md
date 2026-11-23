@@ -2,6 +2,20 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.37.0] - 2026-11-23
+**Reply checks can be scheduled** (BACKLOG F30, option C step 2). MINOR: a new request users and Claude can notice ("schedule reply checks"), and SKILL.md procedure changes. No page or helper change (`PAGE_VERSION` 4.3, helper unchanged).
+
+### Added
+- **"Schedule reply checks"** (or "check replies every 10 minutes"; "change reply checks to every 15 minutes", "stop reply checks"): setup arms a recurring task tied to this computer (posting needs the user's Chrome) that runs `messenger-catchup:reply-check` on the page. Its cron carries both the interval and the hours, so a check needs no extra read: every 10 minutes, 5 AM–10 PM is `*/10 5-21 * * *` in the user's time zone. Hours default to the refresh schedule's. Its prompt is `Scheduled reply check (recurring <armId>): use the messenger-catchup:reply-check skill on the page <page url>.` As with a recurring refresh task, it's kept only if the tool's result confirms the tie to the computer, and with no suitable tool Claude says so and changes nothing. New `references/scheduling.md` › Reply checks (setup's copy synced).
+- **`meta/chat.replyCheck`** `{every, hours, tz, armId}` stores the choice (`references/database.md`, copies synced). Changing arms a new task with a new `armId`, then disables the old one by its `armId`; stopping disables it and sets `replyCheck:null`.
+
+### Changed
+- **A scheduled reply check never asks anything.** `reply-check/SKILL.md`: a message starting "Scheduled reply check" does the same one read. `replies/SKILL.md` step 2: from a scheduled check with auto-posting off, it lists the waiting replies, says "send replies" asks for the yes, and stops.
+- **A "Scheduled reply check" message is never taken for a scheduled refresh** (its prompt names the page, which `references/scheduling.md` › A scheduled run would otherwise count). The refresh skill routes it to reply-check; its own wording is trimmed a little to stay under the 20 KB cap.
+- **Routing:** setup's description and "Which part to follow" take the scheduling phrases; reply-check's description sends them to setup ("check replies every 10 minutes" starts like "check replies"). README names the phrase.
+- Tests: `test_tools.py` TestScheduling (the Reply checks section: tool and device requirement, the cron form and the 10-minute example, the prompt, the tie check, change before disable, stop, no token read; `replyCheck` in database.md; the scheduled-run exclusion; setup's routing) and TestReplyCheck (routing with the setup redirect; a scheduled check asks nothing). `scheduling.md`'s size cap goes from 10,500 to 12,500 bytes (about 500 more tokens per scheduled refresh).
+- **Backlog:** F30 updated: left are arming it on the owner's account and checking it, the added chats' outboxes (a check reads only the first chat's), and the later item to change the interval and hours from the page.
+
 ## [1.36.0] - 2026-11-23
 **No false "older copy of the skill" notice when a refresh writes an ISO `lastRefresh`** (BACKLOG B54), **and clearer wording in Settings › Your chats.** MINOR: users see the new Settings wording (meaning and controls unchanged), with a fix found on the owner's page. Page **`PAGE_VERSION` 4.3** (from 4.2); helper unchanged (2.4).
 

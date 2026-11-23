@@ -1853,8 +1853,78 @@ class TestScheduling(unittest.TestCase):
 
     def test_scheduling_reference_stays_small(self):
         """Read on every scheduled run (hourly). 10,500 since R14 (v1.23.0) added the end-of-run step, the overlap and the
-        early arm's approval note."""
-        self.assertLess(len(self.ref().encode()), 10500)
+        early arm's approval note; 12,500 since F30 step 2 (v1.37.0) added Reply checks (about 500 tokens a refresh)."""
+        self.assertLess(len(self.ref().encode()), 12500)
+
+    def reply_checks(self):
+        return section(self.ref(), "Reply checks")
+
+    def test_reply_checks_are_a_recurring_task_tied_to_this_computer(self):
+        """F30 step 2: a recurring task tied to this computer (posting needs the user's Chrome), its cron carrying both
+        the interval and the hours, its prompt naming the reply-check skill and the page; no tool: change nothing."""
+        rc = self.reply_checks()
+        for must in (
+            "`create_trigger` with `requires_local_device:true`",
+            "say so and change nothing",
+            "`*/<every> <hours> * * *`",
+            "`*/10 5-21 * * *`",
+            "Keep it only if its result confirms the tie",
+            '"Automatically approve"',
+            "can pause the task",
+        ):
+            self.assertIn(must, rc)
+        prompts = re.findall(r"`(Scheduled reply check[^`]*)`", rc)
+        self.assertEqual(
+            prompts,
+            [
+                "Scheduled reply check (recurring <armId>): use the messenger-catchup:reply-check skill on the page <page url>."
+            ],
+        )
+
+    def test_reply_checks_change_and_stop(self):
+        """Changing arms a new task with a new armId before the old one is disabled, so a failure leaves the old one;
+        stopping disables it and clears the choice. A check reads no token, so an old task left enabled keeps checking."""
+        rc = self.reply_checks()
+        change = bullet(rc, "Change:")
+        self.assertIn("new `armId`", change)
+        self.assertLess(change.index("Set up"), change.index("`update_trigger` `enabled:false`"))
+        self.assertIn("`list_triggers`", change)
+        self.assertIn("`replyCheck:null`", bullet(rc, "Stop:"))
+        self.assertIn("ask the user to delete it on the app's Scheduled page", rc)
+        self.assertIn("no `refresh/schedule`", rc)
+
+    def test_reply_check_choice_stored(self):
+        """`meta/chat.replyCheck` holds the choice; its hours default to the refresh schedule's."""
+        stored = bullet(self.reply_checks(), "Stored:")
+        for must in ("`meta/chat.replyCheck` `{every, hours, tz, armId}`", "`meta/chat.schedule.hours`"):
+            self.assertIn(must, stored)
+        meta = re.search(r"^- `meta/chat`:(.*)$", in_skill("references", "database.md"), re.M).group(1)
+        self.assertIn("`replyCheck` (`{every, hours, tz, armId}`", meta)
+        self.assertIn("`references/scheduling.md` › Reply checks", meta)
+
+    def test_a_scheduled_reply_check_is_not_a_scheduled_run(self):
+        """Its prompt names the page, which would make it a scheduled refresh under A scheduled run's rule."""
+        intro = self.run_steps().split("\n1. ")[0]
+        self.assertIn('A message starting "Scheduled reply check" never is', intro)
+        self.assertIn('"Scheduled reply check"', section(in_skill("SKILL.md"), "Which part to follow"))
+        self.assertIn(
+            '- **"Check replies", or a message starting "Scheduled reply check":** `messenger-catchup:reply-check`.',
+            in_skill("SKILL.md"),
+        )
+
+    def test_setup_routes_reply_check_scheduling(self):
+        which = bullet(in_setup("SKILL.md"), "Reply checks")
+        for must in (
+            '"schedule reply checks"',
+            '"check replies every 10 minutes"',
+            '"stop reply checks"',
+            "`references/scheduling.md` › Reply checks",
+            "step 2's lookup only",
+        ):
+            self.assertIn(must, which)
+        desc = json.loads(re.search(r"^description: (.*)$", in_setup("SKILL.md"), re.M).group(1))
+        self.assertIn("reply checks", desc)
+        self.assertIn("schedule, change or stop reply checks", self.ref().split("\n## ")[0])
 
     def test_desktop_requirement(self):
         self.assertIn("**The Claude Desktop app is open**", section(in_setup("SKILL.md"), "Requirements"))
@@ -2465,13 +2535,27 @@ class TestReplyCheck(unittest.TestCase):
 
     def test_routing(self):
         self.assertRegex(self.rc, r"(?m)^name: reply-check$")
-        phrases = re.findall(r'"([^"]+)"', self.desc)
+        use, _, rest = self.desc.partition("Scheduling")
+        phrases = re.findall(r'"([^"]+)"', use)
         self.assertEqual(phrases, ["check replies", "reply check", "Scheduled reply check"])
         self.assertIn("Use only for", self.desc)
         self.assertNotRegex(self.desc, r"(?i)send replies|send my replies|refresh|catch-up run")
+        # F30 step 2: "check replies every 10 minutes" starts like "check replies"; scheduling them is setup's
+        self.assertIn('"check replies every 10 minutes"', rest)
+        self.assertIn("is messenger-catchup:setup", rest)
         self.assertIn(
-            '- **"Check replies":** `messenger-catchup:reply-check`.',
+            '- **"Check replies", or a message starting "Scheduled reply check":** `messenger-catchup:reply-check`.',
             section(in_skill("SKILL.md"), "Which part to follow"),
+        )
+
+    def test_a_scheduled_check_asks_nothing(self):
+        """F30 step 2: a scheduled check is unattended (every 10 minutes); with auto-posting off, replies lists the
+        waiting rows and stops instead of asking."""
+        sched = re.search(r'(?m)^A message starting "Scheduled reply check".*$', self.rc).group(0)
+        self.assertIn("never ask the user anything", sched)
+        two = re.search(r"(?m)^2\. \*\*Check approval\.\*\*.*$", in_replies("SKILL.md")).group(0)
+        self.assertIn(
+            'From a scheduled reply check, ask nothing: list them, say "send replies" asks for the yes, and stop.', two
         )
 
     def test_one_read_then_stop_or_hand_over(self):
