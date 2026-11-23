@@ -17,12 +17,12 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R12 | P3 | risk | A chain conversation's context grows with every run, so its cost rises over weeks; it also hits the conversation length limit |
 | R18 | P3 | risk | Now that a chain run arms as it starts, a run still going when the next one fires (`every` minus 3 minutes after it started) has a lock older than 20 minutes for usual settings, which the next run takes over |
 | R13 | P2 | risk | A page holds at most 5,000 photo files and 1 GiB: day packs (v1.30.0) end the file problem; archive pages for the 1 GiB are left |
-| R19 | P3 | risk | Claude's own maintenance writes (link cleanup, digest backfill) hold the refresh lock while the user's approval waits, often past the lock's 20 minutes |
+| R19 | P3 | risk | Claude's own maintenance writes (link cleanup, a backfill) hold the refresh lock while the user's approval waits, often past the lock's 20 minutes |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | F1 | P3 | feature | More than one chat per page |
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
-| F29 | P2 | feature | Fuller day summaries for By day, kept current at every refresh and shareable; the short digest stays for Ask (builds on the refresh reports from F27, v1.29.0; notes in [design/day-summaries.md](design/day-summaries.md)) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; the schedule for frequent checks is left |
+| F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
 
 ---
 
@@ -66,7 +66,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 ### R19 · P3 · Claude's maintenance writes hold the refresh lock through slow approvals
 - **Found (Nov 14, live):** the cross-conversation link cleanup and the F16 digest backfill take the `refresh/status` lock, then write, and each write waits for the user's approval in the UI. Approvals took from minutes to 5.5 hours. Once the lock is 20 minutes old, scheduled refreshes treat it as stale and take over. Pinned writes kept the database whole: the cleanup was refused twice (`version_mismatch`) and landed on the third try, and the backfill's digest write landed, but its lock release was refused because a refresh had already replaced the status.
-- **Options:** writes that only touch documents refreshes never write (the backfill's `digests/m…` while refreshes run an older skill; a refresh on v1.25+ does write them) could skip the lock and rely on the pin; or the lock, the write and its release go in one batch, so there's one approval and no stale window; or `references/digests.md` and the cleanup procedure say to re-read and re-pin after a slow approval instead of assuming the lock held.
+- **Options:** writes that only touch documents refreshes never write could skip the lock and rely on the pin (since v1.32.0 the backfill writes `daySummaries/d…` of past days, which refreshes write only for the newest days); or the lock, the write and its release go in one batch, so there's one approval and no stale window; or `references/day-summaries.md` › Backfill and the cleanup procedure say to re-read and re-pin after a slow approval instead of assuming the lock held.
 
 ## Features and opportunities
 
@@ -80,19 +80,24 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **How it differs:** a group is a feed of posts (text, photos, links), each with its own comment threads and reactions, at `facebook.com/groups/<id>`, not a single message log. The feed's default order isn't by time, posts and comments load lazily, and old posts get new comments, so "what's new since I last looked" means new posts **and** new comments on older ones. Claude in Chrome reads it from the owner's own logged-in Chrome, as for Messenger, read only.
 - **To design with the owner:** which groups; what counts as new; one page per group or groups on the chat's page (F1 is related); what the summary covers (posts, comment threads, deals in buy/sell groups, mentions); whether replying is in scope; how capture works (a helper mode for the group feed, sorted by new activity) and its markup risks (like R3).
 
-### F29 · P2 · Fuller day summaries (to define)
-- **The owner (Nov 15):**
-  - The By day digests are weak.
-  - Ask Claude's "summary of yesterday" is far better and doesn't match them.
-  - Wants a fuller day summary, refreshed at every refresh, that they can choose to share.
-- **Why:** a digest is capped at 8 bullets of 15 words, as a compact index for Ask's long-history prompt; By day shows those index cards.
-- **Direction:** two levels.
-  - Keep the short digest for Ask.
-  - Add a fuller summary written by the refresh: incremental during the day, then one final rewrite after the day ends.
-  - Sharing by "Copy for chat" and/or a shared link, the owner's call.
-- **Everything discussed:** options, the owner's decisions, Claude's proposed shape and the open questions are in [design/day-summaries.md](design/day-summaries.md).
-- **Builds on F27 (v1.29.0):** merge each day's saved refresh reports into its fuller summary at the day's end.
-- **Owner decided (Nov 22, board option A):** one fuller summary per day instead of two levels, since Ask now searches the whole history (F32, v1.31.0) and no longer needs the short digest as its index. Kept current by each refresh, with one rewrite after the day ends. Sharing by "Copy for chat" only: no links ("I'm not opening up the artifact"). Today's summary in progress can be copied too. No length limit for now. Backfill past days once the owner likes the output of a few. Next to build.
+### F33 · P3 · Windowed loading of day summaries for very long histories
+- **Today (v1.32.0):** the page listens to the whole `daySummaries` collection, as it does its other collections, and By day, Ask, Views and the `day_summaries` tool use the summaries in memory. The owner's page has about 55 days, roughly 0.5 MB. F29 built a window (the newest days live, older ones read on demand) and dropped it after three reviews kept finding faults in it; this item is that work, done in small pieces when it's needed.
+- **Trigger:** only when a page's day summaries pass about a year of days, or a load time or size threshold measured on the real runtime. Measure first; don't build ahead of it.
+- **Pieces, each its own PR with its own claude.ai check:**
+  - **(a) Measure:** load time and size of the collection on the real runtime at a few sizes; set the trigger from that.
+  - **(b) By day's live window:** an ordered, limited `onSnapshot` of the newest days, falling back to a plain listener when the runtime refuses it (its error callback); which days the window covers recomputed from every snapshot.
+  - **(c) "Show more" on demand:** `where("day","in",…)` reads, at most 30 values a query; the cards already drawn stay while a read runs (no flicker); only confirmed misses are cached.
+  - **(d) Ask's and Views' older history:** read the days a prompt would carry with a timeout, then send with what's known while late answers still land in memory; concurrent reads of the same days deduped, judged by whether the summary is in memory, not by who started the read; a note in the answer when days couldn't be read.
+  - **(e) The `day_summaries` tool reading older days:** first confirm the real runtime awaits an async `execute` (sample.d.ts 0.2.98 says "May be async"; the owner's page may run an older runtime).
+  - **(f) Tests per piece, plus the real-runtime checks:** an ordered snapshot, an `in` read, an async tool, and the consent code.
+- **Pitfalls the F29 reviews found in the removed code:**
+  - A day found to have no summary was asked again after an expiry, so cards flickered and reads repeated.
+  - A read answering after its timeout was dropped instead of landing.
+  - Whether a read brought summaries was judged by who started it, so a caller joining a read already running sent without them.
+  - The coverage stuck after the collection grew past the window (a backfill), so a day leaving the window looked like it had no summary.
+  - No fallback when the ordered snapshot was refused, and at first no timeout on reads, so Ask or the tool could hang.
+  - Packing a prompt to learn which days to read, then again after the read, doubled the packing work (H16); reuse the first pack when nothing came in.
+  - "Loading older days…" stopped the list at each unread day, and a redraw dropped cards already drawn.
 
 ### F30 · P2 · Send queued replies without a full refresh
 - **Ask (owner, Nov 16):** be able to send replies queued on the page without a full refresh, if possible.
@@ -118,4 +123,5 @@ Gathered from finished items when they were removed (Nov 14). The item each came
 - **Plugin updates (F7):** settled on Nov 14. The owner's account showed the custom-marketplace plugin at 1.25.0 within hours of the merge. The skills stayed old because of an uploaded copy of the skill, not the chain (see R12).
 - **Photos and captions (R13, v1.30.0):** the owner's page reached page 3.6 on Nov 22. Still to check there: captions on hover and in the photo viewer, caption search, the Photo storage box; after the owner turns packing on, `photos/packs` growing and `assetUsage.files` falling.
 - **Leftover originals (v1.31.3):** after the owner's page gets 3.9: leftover originals reclaimed (`photos/packs.reclaim.n` rising to about the count left behind, `reclaim.checked` reaching the list's length, no `photos/swept-*` documents, or any there explained), the Photo storage box saying how many were removed, and the file count falling by each packed day's photos less 2 from then on. With two copies of the page open, the one that waits says "Waiting: packing is running in another open copy of this page."
+- **Day summaries (F29, v1.32.0):** on the owner's page after its next refresh (page 4.0): today's fuller summary on By day, labelled in progress with its time, and updated (not rewritten) by the next refreshes; after midnight, yesterday's final rewrite (one piece, labelled final) and today's first summary; Copy for chat in claude.ai's artifact viewer ("Copied.", or the box to copy by hand if the viewer blocks the clipboard) and what the copied text looks like pasted into Messenger; older days showing their digest; Ask's answers about recent days citing the summaries. On claude.ai's runtime: which code a declined Claude consent rejects with (sample.d.ts says `not_granted`; any other failure now shows its code and message). The backfill (`references/day-summaries.md` › Backfill) once the owner likes a few days, and its cost per batch.
 - **Scan start (Nov 21):** one scheduled refresh failed with "Scan didn't start scrolling…"; the next runs were fine. If it happens again, file it as a bug with the run's report.

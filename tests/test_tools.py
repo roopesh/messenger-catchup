@@ -33,7 +33,7 @@ def in_replies(*p):
 
 REFERENCES = [
     "database.md",
-    "digests.md",
+    "day-summaries.md",
     "first-run.md",
     "helper.md",
     "open-message.md",
@@ -310,7 +310,7 @@ class TestSkillReferences(unittest.TestCase):
             self.assertIn(l, ref)
 
     def test_every_catchup_command_is_documented(self):
-        """Every refresh command in SKILL.md; restore-summary and the digest backfill, run only when the user asks, in
+        """Every refresh command in SKILL.md; restore-summary and the day summary backfill, run only when the user asks, in
         their own references."""
         py = in_skill("scripts", "catchup.py")
         cmds = re.findall(r'cmd == "([\w-]+)"', py)
@@ -320,9 +320,9 @@ class TestSkillReferences(unittest.TestCase):
                 "bootstrap",
                 "build",
                 "captions",
-                "check-digests",
+                "check-day-summaries",
+                "day-summaries",
                 "days",
-                "digests",
                 "relink",
                 "restore",
                 "restore-summary",
@@ -330,8 +330,8 @@ class TestSkillReferences(unittest.TestCase):
         )
         rare = {
             "restore-summary": "restoring-a-summary.md",
-            "digests": "digests.md",
-            "check-digests": "digests.md",
+            "day-summaries": "day-summaries.md",
+            "check-day-summaries": "day-summaries.md",
             "captions": "photos.md",
         }
         for c in cmds:
@@ -383,7 +383,7 @@ class TestSkillReferences(unittest.TestCase):
         skill = in_skill("SKILL.md")
         step5 = re.search(r"^5\. .*$", skill, re.M).group(0)
         step7 = re.search(r"^7\. .*$", skill, re.M).group(0)
-        self.assertIn("`list threading`, `list summary` and `list digests` (limit 1000) into RUN", step5)
+        self.assertIn("`list threading` and `list summary` (limit 1000) into RUN", step5)
         for must in (
             "`RUN/out/manifest.json`",
             "one `batch` per entry of `batches`, in order",
@@ -874,38 +874,66 @@ class TestUpdateNotice(unittest.TestCase):
                 test.test_page_never_writes_versions()
 
 
-class TestDigests(unittest.TestCase):
-    """F16: per-day digests. The refresh lists and writes them, the backfill is bounded, backed up and checked, the
-    reference states catchup.py's own caps, and the page only reads them."""
+class TestDaySummaries(unittest.TestCase):
+    """F29: one fuller summary per day. The refresh queries the collection and writes the days `catchup.py days` names
+    (the day in progress from its summary so far and the new messages, a finished day from all its messages); the
+    backfill is on request, bounded, backed up and checked; the page only reads them; refreshes no longer write the
+    per-day digests (F16), which the page still reads for days without a summary."""
 
     def setUp(self):
         self.skill = in_skill("SKILL.md")
-        self.ref = in_skill("references", "digests.md")
+        self.ref = in_skill("references", "day-summaries.md")
         self.py = in_skill("scripts", "catchup.py")
         self.page = in_skill("assets", "page.html")
 
     def const(self, name):
         return int(re.search(r"^%s = (\d+)" % name, self.py, re.M).group(1))
 
-    def test_a_refresh_lists_the_collection_and_asks_for_the_days(self):
-        self.assertIn("`list threading`, `list summary` and `list digests` (limit 1000) into RUN", step(self.skill, 5))
+    def test_a_refresh_queries_the_collection_and_asks_for_the_days(self):
+        five = step(self.skill, 5)
+        self.assertIn("`list threading` and `list summary` (limit 1000) into RUN", five)
+        self.assertIn("query `reports` and `daySummaries`", five)
+        self.assertIn("`references/day-summaries.md`", five)
+        self.assertNotIn("list digests", self.skill)
         six = step(self.skill, 6)
         self.assertLess(six.index("catchup.py days WORK RUN"), six.index("catchup.py build WORK RUN spec.json"))
-        self.assertIn("`references/digests.md`", six)
-        self.assertIn("`digests`", section(self.skill, "catchup.py"))
-        self.assertIn("`references/digests.md` › Backfill", section(self.skill, "Which part to follow"))
+        self.assertIn("the spec's `daySummaries` (`references/day-summaries.md`)", six)
+        self.assertIn("`daySummaries`", section(self.skill, "catchup.py"))
+        self.assertNotIn("`digests`", section(self.skill, "catchup.py"))
+        self.assertIn("`references/day-summaries.md` › Backfill", section(self.skill, "Which part to follow"))
+        query = section(self.ref, "During a refresh")
+        self.assertIn(
+            'query: {order_by: {field: "day", direction: "desc"}, limit: %d}' % self.const("DAY_QUERY"), query
+        )
+        self.assertIn("create an empty one", query)
 
-    def test_the_reference_states_catchups_caps(self):
-        rules = section(self.ref, "Writing the bullets") + section(self.ref, "What catchup.py checks")
-        for name, text in (
-            ("DIGEST_BULLETS", "1 to %d bullets"),
-            ("DIGEST_WORDS", "≤%d words"),
-            ("DIGEST_BYTES", "%d bytes"),
-            ("DIGEST_REFS", "1 to %d messages"),
+    def test_the_reference_states_catchups_rules(self):
+        during = section(self.ref, "During a refresh")
+        self.assertIn("%d at most" % self.const("DAY_DUE_MAX"), during)
+        for kind in ("`UPDATE`", "`NEW`", "`FINAL`"):
+            self.assertIn(kind, during)
+            self.assertIn('"%s"' % kind.strip("`").lower(), self.py, "catchup.py names it")
+        self.assertIn("only the messages stored after it", during)
+        self.assertIn("write the whole summary, not just the changes", during)
+        self.assertIn("A final day is never written again", during)
+        rules = section(self.ref, "What catchup.py checks")
+        for must in (
+            "the day's summary isn't final",
+            "`limit: 30`",
+            "only `sections` and `open`",
+            "at least one section, each a one-line heading and at least one bullet",
+            "citing at least one message number, all stored messages of that day",
+            "within the build's 240 KiB",
+            "the old `digests` is refused",
         ):
-            self.assertIn(text % self.const(name), rules, name)
-        self.assertIn("1–%d bullets" % self.const("DIGEST_BULLETS"), rules)
-        self.assertIn("%d at most" % self.const("DUE_MAX"), section(self.ref, "During a refresh"))
+            self.assertIn(must, rules)
+        self.assertEqual(catchup_doc_limit(self.py), 240 * 1024)
+        writing = section(self.ref, "Writing a day's summary")
+        self.assertIn("No length limit", writing)
+        self.assertIn("never write message numbers in the text", writing)
+        self.assertNotRegex(writing + rules, r"≤\d+ words|\d+ bullets of", "no word or bullet caps")
+        example = re.search(r"```json\n(.*?)```", writing, re.S).group(1)
+        self.assertEqual(set(json.loads(example)["2026-11-22"]), {"sections", "open"})
 
     def test_the_backfill_is_on_request_bounded_backed_up_and_checked(self):
         bf = section(self.ref, "Backfill")
@@ -916,25 +944,21 @@ class TestDigests(unittest.TestCase):
         )
         order = [
             "catchup.py days WORK RUN --backfill",
-            "catchup.py digests WORK RUN spec.json",
+            "catchup.py day-summaries WORK RUN spec.json",
             "Take the run lock just before the write",
             "`RUN/out/manifest.json`",
             "Release the lock right after",
-            "catchup.py check-digests WORK RUN AFTER",
+            "catchup.py check-day-summaries WORK RUN AFTER",
         ]
         self.assertEqual([bf.index(x) for x in order], sorted(bf.index(x) for x in order))
         self.assertIn("`RUN/out/backup/`", bf)
-        self.assertNotIn("never changes a day that already has a digest", bf, "a non-final day can be digested again")
         self.assertIn("stop, write nothing more, and tell the user", bf)
         self.assertIn("found again by the next `days`", bf)
-
-    def test_the_backfill_locks_each_write_and_retries_a_refused_one(self):
-        """A pinned write refused because a refresh wrote the current month is routine: back to step 2, no check. The
-        lock is taken just before each batch's write (an approval wait can outlast the 20-minute stale window)."""
-        bf = section(self.ref, "Backfill")
+        self.assertIn("Do 2 or 3 batches in a session, then stop and tell the user how many days are left", bf)
+        self.assertIn("`offset` and `limit`", in_skill("references", "day-summaries.md"))
         lock = re.search(r"^4\. Take the run lock.*$", bf, re.M).group(0)
         for must in (
-            '`{state:"running",startedAt,step:"digests",by:"digest backfill"}`, pinned',
+            '`{state:"running",startedAt,step:"daySummaries",by:"day summary backfill"}`, pinned',
             "under 20 minutes old",
             "`get` it again",
             'update `refresh/status` (pinned) to `{state:"done",finishedAt}`',
@@ -943,43 +967,96 @@ class TestDigests(unittest.TestCase):
         refused = re.search(r"^   - \*\*A refused write\*\*.*$", bf, re.M).group(0)
         self.assertIn("Don't run the check", refused)
         self.assertIn("go back to step 2 with a fresh folder", refused)
-        self.assertIn("Do 2 or 3 batches in a session, then stop and tell the user how many days are left", bf)
-        self.assertIn("`offset` and `limit`", bf)
+        self.assertIn("If the same batch is refused again from a fresh, whole listing, stop and tell the user", refused)
+        # F29 review, finding 1: one document per day, so the backfill lists every page and marks the listing whole
+        listing = re.search(r"^2\. .*$", bf, re.M).group(0)
+        for must in (
+            "a page at a time",
+            "query: {limit: %d}" % self.const("PAGE"),
+            "`next_cursor`",
+            "cursor: <next_cursor>",
+            "`RUN/daySummaries/%s`" % re.search(r'^WHOLE = "([^"]+)"', self.py, re.M).group(1),
+            "every backfill command refuses a listing without it",
+        ):
+            self.assertIn(must, listing)
+        self.assertIn("`AFTER/daySummaries/.all`", re.search(r"^5\. .*$", bf, re.M).group(0))
 
     def test_days_are_the_browsers_dates(self):
-        """The helper dates messages in the browser's zone, not meta/chat.tz; days never go back; final digests."""
+        """The helper dates messages in the browser's zone, not meta/chat.tz; days never go back; final summaries."""
         db = in_skill("references", "database.md")
         for text in (self.ref, db):
             self.assertIn("browser's time zone", text)
             self.assertNotIn("in the chat's time zone (`meta/chat.tz`)", text)
             self.assertIn("final", text)
         self.assertIn("A day never goes back", self.ref)
-        self.assertIn("create an empty", section(self.ref, "During a refresh"))
         wb = in_skill("references", "writing-the-build.md")
-        self.assertIn("a `digests/m<YYYY-MM>` month step 5's listing holds", wb)
-        self.assertNotIn("(only the `current` documents)", wb)
-        self.assertIn("or two when its days (DUE_MAX at", self.py)
+        self.assertIn("a `daySummaries/d<YYYY-MM-DD>` day step 5's query of the day summaries held", wb)
+        self.assertIn("`references/day-summaries.md` › A refused write", wb)
+        self.assertNotIn("digests.md", wb + in_skill("references", "reports.md"))
 
-    def test_database_md_documents_digests(self):
+    def test_database_md_documents_day_summaries_and_older_digests(self):
         db = in_skill("references", "database.md")
-        line = re.search(r"^- `digests/m<YYYY-MM>`.*$", db, re.M)
+        line = re.search(r"^- `daySummaries/d<YYYY-MM-DD>`.*$", db, re.M)
         self.assertTrue(line)
         for part in (
-            "`{month, days:",
-            "bullets:[{t, refs}]",
-            "fromI",
-            "toI",
-            "Ask sends them",
+            "`{day, fromI, toI, n, at, full, fullToI, final, sections:[{h, bullets:[{t, refs}]}], open:[{t, refs}]}`",
+            "the page reads them all",
+            "only `catchup.py` writes them",
             "the By day tab shows them",
+            "Copy for chat",
+            "`day_summaries` tool",
+            "never written again",
         ):
             self.assertIn(part, line.group(0))
+        old = re.search(r"^- `digests/m<YYYY-MM>`.*$", db, re.M).group(0)
+        for part in ("never since", "for days without a day summary", "never delete them", "bullets:[{t, refs}]"):
+            self.assertIn(part, old)
         self.assertIn("`digests` (when present) `{n, from, to}`", db)
         self.assertIn("digests: P.digests", self.page)
 
-    def test_the_page_never_writes_digests(self):
-        uses = re.findall(r'collection\(\s*"digests"\s*\)\s*\.(\w+)', self.page)
-        self.assertEqual(uses, ["onSnapshot"])
-        self.assertNotRegex(self.page, r'doc\(\s*["`]digests/')
+    def test_per_day_collections_share_their_helpers(self):
+        """F29 review, finding 9: day summaries and reports are read by one per-day helper, with one id pattern and one
+        query size, and hashes come from one helper."""
+        self.assertNotRegex(self.py, r"REPORT_ID|REPORT_QUERY|_sum_hash|hashlib\.sha256\(json")
+        for name in ("_sum_listing", "_report_listing"):
+            body = re.search(r"^def %s\(.*?(?=^def )" % name, self.py, re.M | re.S).group(0)
+            self.assertIn("return _per_day(", body, name)
+        self.assertEqual(len(re.findall(r"DAY_ID\.match", self.py)), 1, "only _per_day matches day ids")
+        self.assertIn("_hash(doc)[:8]", self.py, "block ids use the shared hash")
+
+    def test_nothing_mentions_asks_old_include_older_box(self):
+        """F32 made Ask and Views always take the whole history: the page and the skill docs never mention the
+        "include older" checkbox (found on claude.ai in the Refreshing help, F29 review)."""
+        stale = re.compile(r"include (them|older)|with its checkbox|messages before the catch-up window", re.I)
+        texts = {"page.html": self.page}
+        for skill in ("refresh", "setup", "replies"):
+            d = os.path.join(ROOT, "plugin", "skills", skill)
+            for base, _, files in os.walk(d):
+                for f in files:
+                    if f.endswith(".md"):
+                        texts[os.path.relpath(os.path.join(base, f), ROOT)] = read(
+                            os.path.relpath(os.path.join(base, f), ROOT)
+                        )
+        for name, text in texts.items():
+            self.assertNotRegex(text, stale, name)
+
+    def test_catchup_writes_day_summaries_and_never_digests(self):
+        self.assertIn('FIXED_IDS = ("daySummaries", "reports", "captions")', self.py)
+        self.assertNotRegex(self.py, r"DIGEST_|def _digest|def digests_cmd|def check_digests")
+        self.assertIn("refreshes no longer write per-day digests", self.py)
+
+    def test_the_page_reads_both_and_writes_neither(self):
+        """The page only reads them, each collection whole by one snapshot listener, never a write (windowed loading
+        of the day summaries is a backlog item for very long histories)."""
+        for c in ("daySummaries", "digests"):
+            uses = re.findall(r'collection\(\s*"%s"\s*\)\s*\.(\w+)' % c, self.page)
+            self.assertEqual(uses, ["onSnapshot"], c)
+            self.assertNotRegex(self.page, r'doc\(\s*["`]%s/' % c)
+        self.assertIn("return daySumLine(x, cap) || digestLine(x);", self.page, "a day's summary before its digest")
+
+
+def catchup_doc_limit(py):
+    return eval(re.search(r"^DOC_LIMIT = ([\d *]+)", py, re.M).group(1))
 
 
 class TestHelper2(unittest.TestCase):
@@ -2126,7 +2203,7 @@ class TestSendReplies(unittest.TestCase):
             "catchup.py",
             "page.html",
             "photos.md",
-            "digests.md",
+            "day-summaries.md",
             "scheduling.md",
             "writing-the-build.md",
             "first-run.md",

@@ -1,52 +1,39 @@
 # Fuller day summaries (F29): design notes
 
-Status: **to define with the owner, not ready to build.** Goes with F28 (rethink Views), since By day and Views should be designed together. Started Nov 15, 2026.
+Status: **built in v1.32.0** (Nov 22, 2026). Started Nov 15, 2026; decided on the owner's decision board on Nov 22 (option A). What shipped is under "What was built"; the rest is the history of the decision. The procedures Claude follows are in the refresh skill's `references/day-summaries.md`, the page and `catchup.py` in [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## The problem
-- The owner finds the By day tab's digests weak. An Ask Claude question like "Give me a summary of yesterday" gives a far better answer than the By day card for the same day, and the two don't match.
-- **Why they differ:**
-  - **A digest is capped:** 1–8 bullets of at most 15 words each (`DIGEST_BULLETS`, `DIGEST_WORDS` in `catchup.py`). That's about 120 words for a day that can hold 1,200+ messages.
-  - **It was designed as a compact index for Ask, not as reading.** For days older than its conversation lines reach (about 3 weeks), Ask's single prompt carries only each day's digest, so short digests let months fit. F24 then displayed those index cards as the By day tab.
+- The owner found the By day tab's digests weak. An Ask Claude question like "Give me a summary of yesterday" gave a far better answer than the By day card for the same day, and the two didn't match.
+- **Why they differed:**
+  - **A digest was capped:** 1–8 bullets of at most 15 words each. That's about 120 words for a day that can hold 1,200+ messages.
+  - **It was designed as a compact index for Ask, not as reading.** For days older than its conversation lines reach (about 3 weeks), Ask's single prompt carried only each day's digest, so short digests let months fit. F24 then displayed those index cards as the By day tab.
   - **Ask answers with the whole day word for word** and one task, at any length. In the owner's example it gave about 1,000 words in roughly 40 bullets, grouped by topic, with a "Still open" section.
-  - **The digest was written differently:** by a scheduled refresh at about 1 AM, as one step among scanning, importing and rebuilding, reading the same full messages. The older days were written by backfill batches of about 1,700 messages each.
+  - **The digest was written differently:** by a scheduled refresh at about 1 AM, as one step among scanning, importing and rebuilding.
 
 ## Options considered
-1. **Two levels (chosen direction):**
-   - Keep the short digest for Ask's long-history prompt.
-   - Store a fuller day summary, written by the refresh, for By day and for sharing.
-2. **Write the day summary when the owner first opens the day,** with the page's Claude, as Ask does, and save it.
-   - Repeat visits cost nothing.
-   - **Rejected,** because nothing exists until the day is opened (nothing ready to share), and a summary written once never updates as the day goes on.
-3. **Raise the digest cap** (for example 20–25 bullets).
-   - Simple.
-   - But Ask's long-history questions would fit fewer days, and it's still one compressed list.
+1. **Two levels:** keep the short digest for Ask's long-history prompt, and store a fuller day summary, written by the refresh, for By day and for sharing. The owner's first direction (Nov 15).
+2. **Write the day summary when the owner first opens the day,** with the page's Claude, as Ask does, and save it. Rejected: nothing exists until the day is opened, and a summary written once never updates as the day goes on.
+3. **Raise the digest cap** (for example 20–25 bullets). Simple, but Ask's long-history questions would fit fewer days, and it's still one compressed list.
 
-## The owner's direction (Nov 15)
-- **Option 1.** The owner pointed out that an on-demand summary (option 2) wastes nothing on repeat visits only if it's saved, and that it isn't refreshed.
-- **The fuller summary is refreshed at every refresh**, so it's current and ready to share with others if the owner chooses.
+## The owner's decision (Nov 22, board option A)
+- **One fuller summary per day instead of two levels.** Ask now searches the whole history itself (F32, v1.31.0), so it no longer needs the short digest as its index.
+- **Kept current by each refresh,** incrementally, with **one rewrite after the day ends** so it reads as one piece.
+- **Layout like the Ask answer the owner liked:** topic sections with bullets citing message numbers, then "Still open". **No length limit** for now.
+- **Sharing: "Copy for chat" only.** No shared links ("I'm not opening up the artifact"). Today's summary in progress can be copied too.
+- **Backfill later:** past days get fuller summaries only once the owner likes a few days.
 
-## Proposed shape (Claude's thoughts, for the design conversation)
-- **Incremental during the day:** each refresh folds only its new messages into today's summary (new threads, updates to existing ones, answers to open questions), at about the cost of the summary work a refresh already does.
-  - **Not** a rewrite from scratch every hour. That would re-read the whole day each run: over 1,000 messages by evening, about 24 times a day.
-- **A final rewrite after the day ends:** once a later day is stored, one full rewrite of the finished day from all its messages, marked `final`, so it reads as one piece rather than an hour-by-hour patchwork.
-  - The short digest Ask uses is written from it in the same step, so it's almost free.
-- **Reuse the refresh's work:** the refresh already groups messages into conversations and writes bullets for the Summary tab. A day summary is mostly a different cut of that work (by day instead of since the marker).
-- **Layout:** like the Ask answer the owner liked: topic sections with bullets citing message numbers, then "Still open".
-- **Storage:** probably alongside the digests (`digests/m<YYYY-MM>`, or its own collection).
-  - Mind the 256 KiB per-document cap: a month of fuller summaries at roughly 5–8 KB a day is 150–250 KB, so it may need one document per day or per week.
-- **Quality:** every line keeps its message numbers on the page, so the owner can check a line before sharing. A recap the owner posted earlier was called out in the chat for errors.
+## What was built (v1.32.0)
+- **Storage:** one document per day, `daySummaries/d<YYYY-MM-DD>` `{day, fromI, toI, n, at, full, final, sections:[{h, bullets:[{t, refs}]}], open:[{t, refs}]}` (a month of fuller summaries could pass the 256 KiB document cap, so not one per month). Only `catchup.py` writes them, through the build's manifest, pinned when step 5's query (the newest 5 by day) holds the day.
+- **Refreshes:** `catchup.py days WORK RUN` lists what's due, 3 days at most per refresh, oldest first:
+  - `UPDATE`: the day in progress gained messages. Claude gets its summary so far (in the spec's form) and only the messages after its `toI`, and writes the whole updated summary.
+  - `NEW`: the day in progress has no summary yet (all its messages so far).
+  - `FINAL`: the day has ended (a later day is stored, or it's before today in `meta/chat.tz`, the digests' rule): one rewrite from all its messages, `full` through `fullToI`, and `final` when a later day was already stored. A final day is never written again. A day that ended by the clock alone (the browser's zone behind the chat's) gets the messages still dated with it as updates, then its final rewrite once a later day is stored.
+  - The days after the newest summary are due (none yet: only the newest day, so the first refresh after the update starts today, or writes yesterday's final summary just after midnight); earlier days are the backfill's.
+- **The spec** `daySummaries` is checked as strictly as digests were: a real day with stored messages, not final, needed, only `sections` and `open`, at least one section with a one-line heading and at least one bullet, each bullet one line citing at least one stored message of that day, the document within the build's byte cap. No word or bullet caps.
+- **Digests retired:** refreshes no longer write `digests/*`, and a build refuses the `digests` key. The old documents stay; the page shows a day's digest only while it has no summary (By day and Ask's day lines).
+- **The page (`PAGE_VERSION` 4.0):** it reads the whole collection, one document per day (windowed loading for very long histories is BACKLOG F33). By day shows each day's summary (headings, bullets with clickable citations, Still open), labelled "In progress · updated 9:04 AM", "Final · written …" or "Day ended", with the refresh runs (F27) collapsed under it; days without one show their digest. **Copy for chat** copies the day as plain text (the day as a title, "(so far)" in progress, headings, "• " bullets, Still open, no message numbers), says "Copied.", and where the viewer blocks the clipboard shows the text selected in a box to copy by hand.
+- **Ask and Views:** a day line in the older history carries the day's summary (a short line no longer than its digest first, the full line, whole points within 4,096 bytes, while room is left), else its digest; the `day_summaries` tool gives each day's summary (up to one result's 16 KiB) and where to continue.
+- **Backfill:** built, run only when the user asks: the whole collection listed a page at a time (marked with `.all`), `days --backfill` (finished days, newest first, 5 days and 2,000 messages a batch), `day-summaries` (backs up what it replaces), the run lock around each write, and `check-day-summaries`.
 
-## Sharing
-Sharing publishes other people's messages, so it's the owner's decision each time.
-- **"Copy for chat":** a button on each day that copies chat-ready text for the owner to paste into Messenger themselves, without message numbers (they only mean something on the page). The owner already posts Claude recaps into the group. Cheapest and safest.
-- **A shared link:** a separate page showing just that day's summary.
-  - Easy to pass around, but anyone with the link can read what people said in the group.
-  - Only with the owner's explicit say-so each time, and never by sharing the whole catch-up page.
-
-## Open questions for the owner
-- Can today's in-progress summary be shared, or only finished days?
-- Copy-to-paste, a shared link, or both?
-- The same layout as the Ask answer (topics, then "Still open")? Any length limit?
-- Should the By day card show the fuller summary by default, with the short digest only for Ask?
-- Should days before the feature ships get fuller summaries too (a backfill, as F16 had), or only new days?
-- How does this fit with Views (F28)? Is a day summary one kind of view, or does By day stay its own tab?
+## Still to check (BACKLOG L1)
+The first fuller summaries on the owner's page after a refresh, then the final rewrite after midnight; Copy for chat in the artifact viewer; the backfill once the owner likes a few days.
