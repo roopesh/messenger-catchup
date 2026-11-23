@@ -2,6 +2,19 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.38.1] - 2026-11-23
+**Only scheduled runs stop at 15 minutes** (BACKLOG F1, stage B). PATCH: v1.38.0 applied the run limit to every run over all chats, including "refresh my catch-up"; the owner's decided answer was that only scheduled runs stop at 15 minutes, and a run the user asks for refreshes every chat to the end. Page and helper unchanged (`PAGE_VERSION` 4.4, helper 2.4). `SKILL.md` unchanged.
+
+### Fixed
+- **`catchup.py run-plan … [--scheduled]`:** the 15-minute limit applies only with `--scheduled`. Without it, the next chat starts whenever one is left, and the run's end writes `refresh/skipped` `[]`, unless a failure that stops the run (`--stop`) leaves chats unreached.
+- **`references/chats.md` › A run over every chat:** a scheduled run passes `--scheduled` to every `run-plan`; a run the user asked for never does, refreshes every chat to the end and writes `refresh/skipped` `[]` at its end unless a stopping failure leaves chats unreached. The report's "Not reached (15-minute limit)" line is a scheduled run's. `references/scheduling.md` (A scheduled run › Several chats) and `references/database.md` (`refresh/skipped.why`) say the same; setup's and replies' copies synced.
+
+### Tests
+- `TestRunPlan`: a run the user asked for past 15 minutes still starts the next chat and reaches every chat, while the same run scheduled stops at the limit as before; a stopping failure still records the chats not reached in an asked-for run; the CLI takes `--scheduled`; the references say only a scheduled run has the limit. The earlier time-limit cases now run as scheduled runs.
+
+### Backlog
+- F1: the chats' order dragged in Settings and "How often" per chat (a default with a per-chat override) are queued to build next, as stage B leftovers (the owner asked for both); stage B's note now names `refresh/skipped`. L1: the leftover-originals check removed (verified on the owner's page on Nov 22, see R20); stage A's end-to-end add (SET4, SET13) removed, checked on Nov 23 with the owner's test chat.
+
 ## [1.38.0] - 2026-11-23
 **One schedule refreshes every chat** (BACKLOG F1, stage B), **plus fixes to the several-chats page** (B56 in part, B57). MINOR: scheduled runs and "refresh my catch-up" now cover added chats, with new procedure in `references/chats.md` and new page wording. Page **`PAGE_VERSION` 4.4** (from 4.3); helper unchanged (2.4). `SKILL.md` unchanged.
 
