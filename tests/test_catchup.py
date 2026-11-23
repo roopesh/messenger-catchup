@@ -5360,13 +5360,19 @@ class TestChats(unittest.TestCase):
         self.assertEqual(got, [[catchup.key_from(s), catchup.tag_from(s)] for s in names])
 
 
-def plan_out(meta, skipped, done=(), started=None, d=None, stop=False, scheduled=False):
+def plan_out(meta, skipped, done=(), started=None, d=None, stop=False, scheduled=False, failed=()):
     """`catchup.py run-plan` on meta/chat and refresh/skipped, as a run calls it before each chat (catchup.NOW is the
-    clock; scheduled: --scheduled)."""
+    clock; scheduled: --scheduled; failed: --failed)."""
     w(os.path.join(d, "chat.json"), meta)
     w(os.path.join(d, "skipped.json"), skipped)
-    args = (os.path.join(d, "chat.json"), os.path.join(d, "skipped.json"), done, started, stop, scheduled)
+    args = (os.path.join(d, "chat.json"), os.path.join(d, "skipped.json"), done, started, stop, scheduled, failed)
     return json.loads(quiet(catchup.run_plan_cmd, *args))
+
+
+def bare(doc):
+    """a refresh/skipped write without `last` (when each chat was last refreshed by a run: TestRunPlan's How often
+    cases)"""
+    return {k: v for k, v in (doc or {}).items() if k != "last"}
 
 
 class TestRunPlan(unittest.TestCase):
@@ -5401,14 +5407,14 @@ class TestRunPlan(unittest.TestCase):
         catchup.NOW = utc(self.T0) + catchup.datetime.timedelta(minutes=minutes)
         return catchup._now_iso()
 
-    def plan(self, skipped, done=(), started=None, stop=False, scheduled=True):
-        return plan_out(self.meta, skipped, done, started, self.t.name, stop, scheduled)
+    def plan(self, skipped, done=(), started=None, stop=False, scheduled=True, failed=()):
+        return plan_out(self.meta, skipped, done, started, self.t.name, stop, scheduled, failed)
 
-    def run_all(self, skipped, ends, scheduled=True):
-        """One run (scheduled unless told otherwise): the plan before each chat; chat n ends at minute ends[n].
-        Returns the chats refreshed and the last plan (its skippedDoc is what the run's end writes to
+    def run_all(self, skipped, ends, scheduled=True, t=0):
+        """One run (scheduled unless told otherwise) starting at minute t: the plan before each chat; chat n ends at
+        minute ends[n]. Returns the chats refreshed and the last plan (its skippedDoc is what the run's end writes to
         refresh/skipped)."""
-        self.at(0)
+        self.at(t)
         p = self.plan(skipped, scheduled=scheduled)
         start, done = p["runAt"], []
         for end in ends:
@@ -5438,7 +5444,7 @@ class TestRunPlan(unittest.TestCase):
         self.assertIsNone(p["next"])
         end = self.at(12)
         self.assertEqual(p["status"], {"state": "done", "finishedAt": end})
-        self.assertEqual(p["skippedDoc"], {"keys": [], "at": end, "run": self.at(0)})
+        self.assertEqual(bare(p["skippedDoc"]), {"keys": [], "at": end, "run": self.at(0)})
 
     def test_between_chats_the_lock_is_renewed_for_the_next_one(self):
         self.at(0)
@@ -5467,7 +5473,7 @@ class TestRunPlan(unittest.TestCase):
         self.assertIsNone(p["next"])
         self.assertEqual(p["skipped"], ["cam", "chess"])
         self.assertEqual(p["status"], {"state": "done", "finishedAt": end})
-        self.assertEqual(p["skippedDoc"], {"keys": ["cam", "chess"], "why": "time", "at": end, "run": start})
+        self.assertEqual(bare(p["skippedDoc"]), {"keys": ["cam", "chess"], "why": "time", "at": end, "run": start})
         # exactly 15 minutes is over the limit too
         self.at(15)
         self.assertEqual(self.plan({}, ["trail"], start)["skipped"], ["book", "cam", "chess"])
@@ -5484,12 +5490,12 @@ class TestRunPlan(unittest.TestCase):
         self.assertEqual(done, ["trail", "cam", "book", "chess"])
         end = self.at(40)
         self.assertEqual(p["status"], {"state": "done", "finishedAt": end})
-        self.assertEqual(p["skippedDoc"], {"keys": [], "at": end, "run": self.at(0)})
+        self.assertEqual(bare(p["skippedDoc"]), {"keys": [], "at": end, "run": self.at(0)})
         # the same run, scheduled, stops at the limit as before
         done, p = self.run_all({"keys": ["cam"]}, [10, 20, 30, 40])
         self.assertEqual(done, ["trail", "cam"])
         self.assertEqual(
-            p["skippedDoc"], {"keys": ["book", "chess"], "why": "time", "at": self.at(20), "run": self.at(0)}
+            bare(p["skippedDoc"]), {"keys": ["book", "chess"], "why": "time", "at": self.at(20), "run": self.at(0)}
         )
 
     def test_a_stopping_failure_still_leaves_chats_in_a_run_the_user_asked_for(self):
@@ -5497,7 +5503,9 @@ class TestRunPlan(unittest.TestCase):
         start = self.plan({}, scheduled=False)["runAt"]
         end = self.at(30)
         p = self.plan({}, ["trail"], start, stop=True, scheduled=False)
-        self.assertEqual(p["skippedDoc"], {"keys": ["book", "cam", "chess"], "why": "stopped", "at": end, "run": start})
+        self.assertEqual(
+            bare(p["skippedDoc"]), {"keys": ["book", "cam", "chess"], "why": "stopped", "at": end, "run": start}
+        )
 
     def test_the_cli_takes_scheduled(self):
         import subprocess
@@ -5532,7 +5540,9 @@ class TestRunPlan(unittest.TestCase):
         p = self.plan({}, ["trail"], start, stop=True)
         self.assertIsNone(p["next"])
         self.assertEqual(p["status"], {"state": "error", "finishedAt": end})
-        self.assertEqual(p["skippedDoc"], {"keys": ["book", "cam", "chess"], "why": "stopped", "at": end, "run": start})
+        self.assertEqual(
+            bare(p["skippedDoc"]), {"keys": ["book", "cam", "chess"], "why": "stopped", "at": end, "run": start}
+        )
         # before any chat finished: every chat, the first included
         p = self.plan({}, (), start, stop=True)
         self.assertEqual(p["skippedDoc"]["keys"], ["trail", "book", "cam", "chess"])
@@ -5569,6 +5579,131 @@ class TestRunPlan(unittest.TestCase):
             p = self.plan({}, ["trail"], s)
             self.assertEqual((p["minutes"], p["runAt"]), (6.0, "2026-11-23T17:00:00Z"), s)
 
+    # How often (F1 stage B leftovers, q10): a page default (meta/chat.chatEvery, minutes; missing = every scheduled run)
+    # and a per-chat override (chats.<key>.every; null = the default, 0 = every run). A scheduled run skips a chat a run
+    # refreshed less than its interval ago (refresh/skipped.last: each chat's last run start), less EVERY_SLACK minutes,
+    # since a chain run starts 3 minutes early each time. A run the user asks for refreshes every chat.
+
+    def runs(self, starts, skipped=None, failed=()):
+        """Scheduled runs starting at these minutes, each chat taking a minute (chats in failed fail). Returns what each
+        run refreshed and refresh/skipped after the last."""
+        got, sk = [], skipped or {}
+        for s in starts:
+            self.at(s)
+            p = self.plan(sk)
+            start, done = p["runAt"], []
+            while p["next"]:
+                done.append(p["next"])
+                self.at(s + len(done))
+                p = self.plan(sk, done, start, failed=[k for k in done if k in failed])
+            got.append(done)
+            sk = p["skippedDoc"] or sk
+        return got, sk
+
+    def test_how_often_an_hourly_chain_refreshes_each_chat_at_its_own_interval(self):
+        # a chain arms each run 57 minutes after the last started: the 2-hour chat comes every other run, the 4-hour
+        # one every fourth (228 minutes is within the slack of 240), the first chat (set to every run) every run
+        self.meta["chatEvery"] = 240
+        self.meta["chats"]["trail"]["every"] = 0
+        self.meta["chats"]["cam"]["every"] = 120
+        self.meta["chats"]["book"]["every"] = None
+        self.meta["chats"]["chess"]["state"] = "paused"
+        got, sk = self.runs([i * 57 for i in range(9)])
+        self.assertEqual(
+            got,
+            [
+                ["trail", "book", "cam"],
+                ["trail"],
+                ["trail", "cam"],
+                ["trail"],
+                ["trail", "book", "cam"],
+                ["trail"],
+                ["trail", "cam"],
+                ["trail"],
+                ["trail", "book", "cam"],
+            ],
+        )
+        self.assertEqual(sk["last"], {"trail": self.at(456), "book": self.at(456), "cam": self.at(456)})
+        self.assertEqual(catchup.EVERY_SLACK, 15)
+
+    def test_how_often_a_chat_not_due_is_listed_as_later_and_nothing_due_means_nothing_to_do(self):
+        self.meta["chatEvery"] = 120
+        self.meta["chats"]["chess"]["state"] = "paused"
+        last = {"trail": self.at(0), "book": self.at(0), "cam": self.at(0)}
+        self.at(60)
+        p = self.plan({"keys": [], "last": last})
+        self.assertEqual(
+            (p["order"], p["later"], p["next"], p["status"], p["skippedDoc"]),
+            ([], ["trail", "book", "cam"], None, None, None),
+        )
+        # the first chat follows the default like the others; one not due leaves the rest in order
+        last["book"] = self.at(-110)
+        self.at(60)
+        p = self.plan({"keys": [], "last": last})
+        self.assertEqual((p["order"], p["later"], p["next"]), (["book"], ["trail", "cam"], "book"))
+
+    def test_how_often_a_run_the_user_asked_for_refreshes_every_chat_and_records_them(self):
+        self.meta["chatEvery"] = 1440
+        last = {"trail": self.at(0), "book": self.at(0), "cam": self.at(0)}
+        done, p = self.run_all({"last": last}, [31, 32, 33, 34], scheduled=False, t=30)
+        self.assertEqual(done, ["trail", "book", "cam", "chess"])
+        self.assertEqual(p["later"], [])
+        self.assertEqual(p["skippedDoc"]["last"], {k: self.at(30) for k in ("trail", "book", "cam", "chess")})
+
+    def test_how_often_a_pending_chat_and_a_chat_never_recorded_are_due(self):
+        self.meta["chatEvery"] = 1440
+        self.at(10)
+        p = self.plan({"last": {"trail": self.at(0)}})
+        self.assertEqual((p["order"], p["later"]), (["book", "cam", "chess"], ["trail"]))
+
+    def test_how_often_a_failed_chat_is_not_recorded_so_the_next_run_tries_it(self):
+        self.meta["chatEvery"] = 240
+        self.meta["chats"]["chess"]["state"] = "paused"
+        got, sk = self.runs([0, 57], failed=("cam",))
+        self.assertEqual(got, [["trail", "book", "cam"], ["cam"]])
+        self.assertNotIn("cam", sk["last"])
+
+    def test_how_often_the_record_keeps_other_chats_and_drops_deleted_ones(self):
+        self.at(0)
+        old = self.at(-500)
+        sk = {"keys": [], "last": {"hike": old, "gone": old, "nosuch": old, "book": old}}
+        got, after = self.runs([0], sk)
+        self.assertEqual(got, [["trail", "book", "cam", "chess"]])
+        self.assertEqual(after["last"], dict({k: self.at(0) for k in ("trail", "book", "cam", "chess")}, hike=old))
+        # a stopping failure keeps the record too, with the chats finished before it
+        self.at(0)
+        p = self.plan(sk, ["trail"], self.at(0), stop=True)
+        self.assertEqual(p["skippedDoc"]["last"], {"hike": old, "book": old, "trail": self.at(0)})
+
+    def test_how_often_values_it_cannot_read_mean_every_run(self):
+        last = {"trail": self.at(0), "book": self.at(0), "cam": self.at(0)}
+        for default, own in ((None, "240"), ("240", None), (True, None), (-60, None), (None, -5)):
+            self.meta["chatEvery"] = default
+            self.meta["chats"]["book"]["every"] = own
+            self.at(30)
+            order = self.plan({"last": last})["order"]
+            self.assertIn("book", order, (default, own))
+
+    def test_a_reorder_on_the_page_is_the_next_runs_order(self):
+        # Settings › Your chats writes each chat's order (Move up / Move down); the first chat stays first
+        self.meta["chats"]["cam"]["order"] = 1
+        self.meta["chats"]["book"]["order"] = 2
+        self.meta["chats"]["trail"]["order"] = 9
+        self.at(0)
+        self.assertEqual(self.plan({})["order"], ["trail", "cam", "book", "chess"])
+
+    def test_the_cli_takes_failed(self):
+        import subprocess
+
+        self.meta["chatEvery"] = 240
+        w(os.path.join(self.t.name, "chat.json"), self.meta)
+        w(os.path.join(self.t.name, "skipped.json"), {})
+        cmd = [sys.executable, os.path.join(ROOT, "plugin", "skills", "refresh", "scripts", "catchup.py"), "run-plan"]
+        cmd += [os.path.join(self.t.name, "chat.json"), os.path.join(self.t.name, "skipped.json")]
+        cmd += ["--done=trail,book,cam,chess", "--failed=cam", "--started=2000-01-01T00:00:00Z"]
+        out = json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(sorted(out["skippedDoc"]["last"]), ["book", "chess", "trail"])
+
     def test_the_references_say_how_a_run_uses_it(self):
         refs = os.path.join(ROOT, "plugin", "skills", "refresh", "references")
         texts = []
@@ -5593,8 +5728,17 @@ class TestRunPlan(unittest.TestCase):
         self.assertNotIn("refresh/status.skipped", chats + sched + db)
         self.assertIn("`references/chats.md` › A run over every chat", sched)
         self.assertIn("`refresh/skipped`", sched)
-        self.assertIn("`refresh/skipped` `{keys, why, at, run}`", db)
+        self.assertIn("`refresh/skipped` `{keys, why, at, run, last}`", db)
         self.assertEqual(catchup.RUN_MINUTES, 15)
+        # How often and the order (F1 stage B leftovers): only a scheduled run follows How often; a failed chat goes in
+        # --failed so the next run tries it
+        self.assertIn("**How often** too applies only with `--scheduled`", chats)
+        self.assertIn("add it to `--done` and `--failed`", chats)
+        self.assertIn("`later` (chats not due yet by How often)", chats)
+        self.assertIn("**Order and How often**", chats)
+        self.assertIn("`every` how often a scheduled run refreshes it, in minutes", db)
+        self.assertIn("`chatEvery`", db)
+        self.assertIn("[--failed=KEY,KEY]", catchup.__doc__)
 
 
 if __name__ == "__main__":
