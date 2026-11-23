@@ -59,7 +59,7 @@ When a bug is found, write its test as the *fixed* behavior first. Python can ma
 | [README.md](../README.md) | What it is, install, requirements |
 | [CLAUDE.md](../CLAUDE.md) | The workflow rules (PR, versioning, release) |
 | [CHANGELOG.md](../CHANGELOG.md) | What changed in each release |
-| [plugin/skills/refresh/](../plugin/skills/refresh), [plugin/skills/setup/](../plugin/skills/setup) and [plugin/skills/replies/](../plugin/skills/replies) | The procedures Claude follows: refresh's `SKILL.md` every run and its `references/` when needed; setup's `SKILL.md` once per chat; replies' `SKILL.md` for each "send replies". **Changing them changes behavior.** Setup's and replies' `assets/` and `references/` are generated copies. |
+| [plugin/skills/refresh/](../plugin/skills/refresh), [plugin/skills/setup/](../plugin/skills/setup), [plugin/skills/replies/](../plugin/skills/replies), and [plugin/skills/reply-check/](../plugin/skills/reply-check) | The procedures Claude follows: refresh's `SKILL.md` every run and its `references/` when needed; setup's `SKILL.md` once per chat; replies' `SKILL.md` for each "send replies"; reply-check's tiny `SKILL.md` for each "check replies" (one outbox read, then replies only when one is waiting). **Changing them changes behavior.** Setup's and replies' `assets/` and `references/` are generated copies. |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the parts fit; full database reference; helper functions and bridge; capture format (`fn`); tests; range summaries |
 | [BACKLOG.md](BACKLOG.md) | Everything open, by priority |
 | [DECISIONS.md](DECISIONS.md) | What was chosen, why, and what was rejected |

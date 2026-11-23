@@ -1927,6 +1927,55 @@ sim('S: send replies: nothing queued', async b => {
   );
   await s.ctx.close();
 });
+/* the reply-check skill (F30 option C, step 1): its one read, with the state and limit its SKILL.md gives, then a stop
+   or the replies skill's run */
+const RC = fs.readFileSync(D + 'plugin/skills/reply-check/SKILL.md', 'utf8');
+async function replyCheck(s) {
+  const where = JSON.parse((RC.match(/`where` `(\[[^`]+\])`/) || [])[1]);
+  const limit = +(RC.match(/`limit` (\d+)/) || [])[1];
+  if (where[0] !== 'state' || where[1] !== '==' || limit !== 1) throw new Error('reply-check: no state query, limit 1');
+  if (!s.db.query('outbox', [where[2]]).slice(0, limit).length) return s.log.push('say No replies waiting.'), null;
+  s.log.push('hand over to replies');
+  return sendReplies(s);
+}
+sim('S: reply check', { s: 15 }, async b => {
+  // nothing queued (rows in sending, sent or cancelled only): one read and stop; a queued row: the replies skill posts it
+  let s = await freshS(b, {
+    'meta/chat': SMETA,
+    'refresh/status': { state: 'idle' },
+    'outbox/r0': row('Dee', 114, 'On my way', iso(NOW, -30), 'sending'),
+    'outbox/r1': row('Ana', 110, 'Sounds good', iso(NOW, -90), 'sent'),
+    'outbox/r2': row('Ben', 111, 'Maybe', iso(NOW, -80), 'cancelled'),
+  });
+  await replyCheck(s);
+  ok(
+    JSON.stringify(s.log) === JSON.stringify(['query outbox', 'say No replies waiting.']),
+    'S: reply check, nothing queued: one read, one line, no other call (' + JSON.stringify(s.log) + ')',
+  );
+  await s.ctx.close();
+  s = await freshS(b, {
+    'meta/chat': SMETA,
+    'refresh/status': { state: 'idle' },
+    'outbox/r1': row('Ana', 110, 'Still have the stove?', iso(NOW, -2)),
+  });
+  await replyCheck(s);
+  const sent = await s.sent();
+  ok(
+    s.log[0] === 'query outbox' &&
+      s.log[1] === 'hand over to replies' &&
+      s.log[2] === 'query outbox' &&
+      sent.length === 1 &&
+      sent[0].text === 'Still have the stove?' &&
+      s.db.d['outbox/r1'].v.state === 'sent' &&
+      s.db.d['refresh/status'].v.state === 'done',
+    'S: reply check, a queued row: handed to the replies skill, which posts it and releases the lock (' +
+      JSON.stringify(s.log.slice(0, 4)) +
+      ', ' +
+      JSON.stringify(sent) +
+      ')',
+  );
+  await s.ctx.close();
+});
 sim('S: send replies: a refresh holds the lock', async b => {
   // a refresh's live lock: the Messenger tab is never touched and nothing is written
   let s = await freshS(b, {
