@@ -15,9 +15,18 @@ The owner manages their chats on the page (title ▾ › Add a chat, and Setting
 If `meta/chat` has no `chats`: `python3 catchup.py chats META.json` prints the one write that adds it (`{}` when there's nothing to do). Write it as a `meta/chat` update pinned with the version you read. Refused: read `meta/chat` again and retry once. If that fails too, say so in the report and go on: the page reads a page without `chats` as one chat, so nothing is lost and the next refresh tries again. It changes nothing else.
 
 ## Which chat a refresh is for
-- A **scheduled run** and "refresh my catch-up" (`refreshPhrase`): the first chat only, exactly as SKILL.md says, unless it's `paused` (then skip it quietly and reschedule). Added chats aren't in the schedule yet: the page says so.
+- A **scheduled run** and "refresh my catch-up" (`refreshPhrase`): every `active` chat, then every `pending` one's first refresh, by A run over every chat (below).
 - "**Refresh** <name or tag>": that chat only, under the same lock. `paused` or `hidden`: say so and ask before refreshing it. `pending`: its first refresh (below). Several named: one after another, one at a time.
 - Never two chats at once: one Messenger tab, one clipboard, one paste at a time.
+
+## A run over every chat
+One run, one lock, the chats one after another (one Messenger tab: never in parallel), with a 15-minute limit: no new chat starts once 15 minutes have passed since the run began, and the next run starts with the chats this one didn't reach, so none is left out for long. A chat already started always finishes.
+1. Before each run (SKILL.md) as usual, then save `meta/chat` as META.json and the `refresh/status` you read as STATUS.json (`{}` if there's none). `python3 catchup.py run-plan META.json STATUS.json` prints `order`, `next` (the first chat to refresh; none: nothing is active or pending, so stop quietly and reschedule), its `chatArg`, `pending`, `runAt` (keep it) and `status`: step 1's lock. Write that as step 1 says, with `set`.
+2. Refresh chat `next` by SKILL.md's Refresh steps: the first chat as written there, an added chat by Refreshing an added chat KEY, a `pending` one by A pending chat's first refresh. Its WORK, RUN and spec are its own. While the run goes on, every place where its steps 7 and 8 would write `refresh/status` `state:"done"` writes `{state:"running",step:"outbox",added}` instead: the lock stays held between chats.
+3. After each chat: `python3 catchup.py run-plan META.json STATUS.json --done=<keys refreshed or tried, in order> --started=<runAt>`. With a `next`: update `refresh/status` (pinned) with its `status` (it renews `startedAt`, so a run that works through several chats never looks stale), then step 2 for it. Without one: update `refresh/status` (pinned) with its `status` plus `added` (the run's total). Its `skipped` lists the chats the time limit left (`[]` when every chat was refreshed): the page shows them as not refreshed in the last run.
+4. **A chat that fails** (a scan error after its retry, verify failing twice, a refused write its steps can't recover, a pending chat that can't be read): note it for the report, add it to `--done`, and go on to the next chat; the next run tries it again. A failure that stops every chat stops the run as SKILL.md says (`refresh/status` `state:"error"`): Chrome unreachable or the Messenger tab hidden, `selfcheck` not ok, the tab on a chat that isn't on the page, or the lock taken by another run.
+5. **Once per run, after the last chat:** Method ideas, the `people/index` check (step 8) for the chats refreshed, and scheduling.md's end of the run.
+6. **The report:** one report for the run. Each chat refreshed gets its own bullets, the first naming it ("Book Club: 12 new messages", then its spec's `report`); chats with nothing new share one line ("Nothing new: Camera Club, Trail Crew"); then any chat that failed, with why; then the chats the time limit left: "Not reached (15-minute limit): Chess Club. The next run starts with it."
 
 ## Refreshing an added chat KEY
 Follow SKILL.md's Refresh steps with these changes. Everything not named here is as written there.
@@ -30,8 +39,8 @@ Follow SKILL.md's Refresh steps with these changes. Everything not named here is
 - **Report:** name the chat in the first bullet ("Book Club: 12 new messages").
 
 ## A pending chat's first refresh
-1. `python3 catchup.py chats META.json KEY` for its seed. Take the lock as step 1 does.
-2. Navigate the Messenger tab to its `url`. Check it opens a group chat the user is in (a message box, the chat's name in the header; no "not available", no PIN prompt). If not, update `meta/chat` (pinned) `{chats:{KEY:{reason:"<what you saw, one short sentence>"}}}`, leave it `pending`, release the lock with `{state:"done",finishedAt,added:0}`, and tell the user. Other chats are unaffected.
+1. `python3 catchup.py chats META.json KEY` for its seed. Take the lock as step 1 does (in a run over every chat, the run holds it already).
+2. Navigate the Messenger tab to its `url`. Check it opens a group chat the user is in (a message box, the chat's name in the header; no "not available", no PIN prompt). If not, update `meta/chat` (pinned) `{chats:{KEY:{reason:"<what you saw, one short sentence>"}}}`, leave it `pending`, release the lock with `{state:"done",finishedAt,added:0}` (in a run over every chat: go on to the next chat instead), and tell the user. Other chats are unaffected.
 3. Seed in one batch: `meta/chat-KEY` from the seed with `threadName` (the header's name), `shortName` and `topic` (a few words, from the messages you see); `KEY_threading/current` `{convs:[],links:{},to:-1,note:""}`; `KEY_summary/current` `{version:2,convs:[],open:[],answered:[],deals:[],mentions:[],toI:-1}`.
 4. Run the first refresh for it by `references/first-run.md`, with the changes above (`firstCount` is its `start`).
 5. Then update `meta/chat` (pinned) `{chats:{KEY:{state:"active", name:"<threadName>", reason:null}}}`, keeping the tag the owner chose.

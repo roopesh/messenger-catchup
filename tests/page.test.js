@@ -15718,8 +15718,10 @@ async function multiChat() {
   );
   await until(p, () => document.querySelector('.chatrow[data-chat="chess2"]'));
   ok(
-    /Waiting for its first refresh. Ask Claude to “refresh Chess Club”/.test(await mcText(p, '#set-body')),
-    'F1 SET4: a pending chat says to ask Claude to refresh it',
+    (await mcText(p, '#set-body')).includes(
+      'Gets its first refresh at the next scheduled run (or ask Claude to “refresh Chess Club”).',
+    ),
+    'F1 SET4, stage B: a pending chat says the next scheduled run refreshes it, or ask Claude',
   );
   // SET12, DM4, CT7: renaming a tag: empty, too long and duplicate refused; a good one shows at once, nothing else written
   for (const [t, why] of [
@@ -16212,7 +16214,7 @@ async function multiChat2() {
   );
   await p.context().close();
   // B54: an ISO lastRefresh (the first chat's, as a scheduled run wrote it) shows in the display form everywhere: each
-  // All chats card and each Settings row; an added chat's line says it isn't in scheduled refreshes yet
+  // All chats card and each Settings row; an added chat's line no longer says it isn't in scheduled refreshes (stage B)
   const s54 = mcSeed();
   s54['meta/chat'].lastRefresh = '2026-11-23T17:04:30Z';
   s54['meta/chat-cam'].lastRefresh = '2026-11-23T16:34:00Z';
@@ -16234,12 +16236,10 @@ async function multiChat2() {
       ')',
   );
   ok(
-    cam54.every(t =>
-      t.includes(
-        'Not in scheduled refreshes yet (only Trail Crew is). To refresh it, ask Claude to “refresh Camera Club”.',
-      ),
-    ) && !both.some(t => /Scheduled runs refresh only/.test(t)),
-    "B54: an added chat's line says it isn't in scheduled refreshes yet, the first chat's name in brackets",
+    !both.some(t => /scheduled refreshes yet|Scheduled runs refresh only|To refresh it, ask Claude/.test(t)),
+    "F1 stage B: an added chat's line no longer says it's left out of scheduled refreshes (" +
+      JSON.stringify(cam54.map(t => t.slice(0, 200))) +
+      ')',
   );
   ok(
     (await mcText(p, '#set-body')).includes(
@@ -16261,6 +16261,80 @@ async function multiChat2() {
       ')',
   );
   ok(!p.errors.length, 'B54: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  // F1 stage B: one schedule refreshes every chat. A chat the last run's 15-minute limit didn't reach says so on its
+  // All chats card and Settings row (refresh/status.skipped) until the next run starts; Add a chat says the next
+  // refresh reads the chat with the others; with refreshes only on request, a pending chat says to ask
+  const sB = mcSeed({ chats: pend, extra: seeded });
+  sB['refresh/status'] = { state: 'done', finishedAt: '2026-11-23T17:21:00Z', skipped: ['book', 'chess'] };
+  p = await open(sB);
+  const SKIP = 'Not refreshed in the last run: it reached the 15-minute limit. The next run starts with this chat.';
+  const lines = async () => {
+    const o = {};
+    for (const c of await p.$$eval('#v-all .chatcard', cs => cs.map(c => [c.dataset.chat, c.textContent])))
+      o['all:' + c[0]] = c[1];
+    for (const c of await p.$$eval('.chatrow', rs => rs.map(r => [r.dataset.chat, r.textContent])))
+      o['set:' + c[0]] = c[1];
+    return o;
+  };
+  let L = await lines();
+  ok(
+    (L['all:book'] || '').includes(SKIP) && ['all:trail', 'all:cam'].every(k => L[k] && !L[k].includes(SKIP)),
+    "F1 stage B: All chats: the skipped chat's card says so, the others not (" + JSON.stringify(L) + ')',
+  );
+  await mcSettings(p);
+  L = await lines();
+  ok(
+    (L['set:book'] || '').includes(SKIP) &&
+      ['set:trail', 'set:cam', 'set:chess'].every(k => L[k] && !L[k].includes(SKIP)) &&
+      L['set:chess'].includes(
+        'Gets its first refresh at the next scheduled run (or ask Claude to “refresh Chess Club”).',
+      ),
+    'F1 stage B: Settings: the chat the time limit skipped says so; the others, and a pending one, do not (' +
+      JSON.stringify(L) +
+      ')',
+  );
+  const addNote = await mcText(p, '.addform');
+  ok(
+    addNote.includes(
+      "You don't need Claude for this: the page saves it, and the next refresh, scheduled or asked for, reads it with your other chats. To read it sooner, ask Claude to “refresh” and the chat's name.",
+    ) && !/scheduled refreshes yet/.test(addNote),
+    'F1 stage B: Add a chat says the next refresh reads the new chat with the others (' + addNote.slice(0, 600) + ')',
+  );
+  await p.click('#settings-close');
+  await p.waitForTimeout(150);
+  await p.evaluate(() =>
+    __rt.write('refresh/status', { state: 'running', startedAt: new Date().toISOString(), step: 'scan' }),
+  );
+  ok(
+    await until(p, s => !document.querySelector('#v-all').textContent.includes(s), SKIP),
+    'F1 stage B: the skipped note goes while the next run holds the lock',
+  );
+  await p.evaluate(() =>
+    __rt.write('refresh/status', { state: 'done', finishedAt: new Date().toISOString(), skipped: ['cam'] }),
+  );
+  await until(p, s => document.querySelector('#v-all .chatcard[data-chat="cam"]').textContent.includes(s), SKIP);
+  L = await lines();
+  ok(
+    L['all:cam'].includes(SKIP) && !L['all:book'].includes(SKIP),
+    'F1 stage B: the note follows refresh/status: gone while a run holds the lock, then on the chat the new run skipped (' +
+      JSON.stringify(L) +
+      ')',
+  );
+  ok(!p.errors.length, 'F1 stage B: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  const sM = mcSeed({ chats: pend, extra: seeded });
+  sM['meta/chat'].schedule = { mode: 'manual' };
+  p = await open(sM);
+  await mcSettings(p);
+  ok(
+    (await mcText(p, '.chatrow[data-chat="chess"]')).includes(
+      'Waiting for its first refresh. Ask Claude to “refresh Chess Club” (or “refresh my catch-up” for every chat).',
+    ),
+    'F1 stage B: with refreshes only on request, a pending chat says to ask Claude (' +
+      (await mcText(p, '.chatrow[data-chat="chess"]')) +
+      ')',
+  );
   await p.context().close();
 }
 

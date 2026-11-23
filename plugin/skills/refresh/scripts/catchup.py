@@ -65,6 +65,11 @@
                                      to a page from before F1 ({} when it has it). With KEY: where that chat's documents
                                      live, its --chat argument, whether its replies go out without asking, and for a
                                      pending chat the meta/chat-KEY to seed. references/chats.md.
+  catchup.py run-plan META.json STATUS.json [--done=KEY,KEY] [--started=ISO]
+                                     A run over every chat (F1): the next chat (skipped by the last run's time limit
+                                     first, then the first chat, the others by order, pending ones last), none once 15
+                                     minutes have passed since --started, and the refresh/status write for that point.
+                                     references/chats.md › A run over every chat.
   catchup.py versions [TZ]           `versions.page` and `versions.helper` for meta/chat (references/database.md ›
                                      Versions), read from this skill's assets/page.html and assets/helper.user.js.
                                      With TZ (meta/chat.tz): {lastRefresh, versions:{page, helper, refresh}}, lastRefresh
@@ -360,6 +365,48 @@ def chats_cmd(meta_file, key=None):
             "anchorMids": [],
             "markerMode": None,
         }
+    print(json.dumps(out, indent=1))
+
+
+RUN_MINUTES = 15  # a run over every chat starts no new chat from this many minutes after it began (F1 stage B)
+
+
+def run_plan_cmd(meta_file, status_file, done=(), started=None):
+    """`catchup.py run-plan META.json STATUS.json [--done=K,K] [--started=ISO]`: which chat a run over every chat
+    refreshes next. The order: the chats the last run's time limit left (STATUS.json's `skipped`), then the first chat,
+    the other active chats by `order`, then pending chats by `order`; paused, hidden and deleted chats never. Called
+    first with no --done (next = the first chat; runAt = now, the run's start), then after each chat with the chats done
+    so far and --started=runAt: from RUN_MINUTES on no new chat starts, and the rest are `skipped`. `status` is the
+    refresh/status write for that point: step 1's lock, the lock renewed for the next chat, or the run's end."""
+    meta = _load(meta_file)
+    st = _load(status_file)
+    st = st if isinstance(st, dict) else {}
+    cs = chats_of(meta)
+    by = lambda k: (not cs[k].get("home"), cs[k].get("order") if isinstance(cs[k].get("order"), int) else 99, k)
+    base = sorted((k for k in cs if cs[k].get("state", "active") == "active"), key=by)
+    base += sorted((k for k in cs if cs[k].get("state") == "pending" and not cs[k].get("home")), key=by)
+    last = st.get("skipped") if isinstance(st.get("skipped"), list) else []
+    order = [k for k in base if k in last] + [k for k in base if k not in last]
+    done = [k for k in done if k]
+    assert started or not done, "run-plan: pass --started=<runAt from the run's first run-plan> with --done"
+    now = NOW or datetime.datetime.now(datetime.timezone.utc)
+    t0 = datetime.datetime.fromisoformat(started.replace("Z", "+00:00")) if started else now
+    minutes = (now - t0).total_seconds() / 60
+    left = [k for k in order if k not in done]
+    nxt = left[0] if left and (not done or minutes < RUN_MINUTES) else None
+    out = {
+        "order": order,
+        "next": nxt,
+        "chatArg": "" if not nxt or cs[nxt].get("home") else "--chat=" + nxt,
+        "pending": bool(nxt) and cs[nxt].get("state") == "pending",
+        "runAt": t0.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "minutes": round(minutes, 1),
+        "skipped": [] if nxt else left,
+    }
+    if nxt:
+        out["status"] = {"state": "running", "startedAt": _now_iso(), "step": "scan", "by": "refresh " + nxt}
+    else:
+        out["status"] = {"state": "done", "finishedAt": _now_iso(), "skipped": left} if done else None
     print(json.dumps(out, indent=1))
 
 
@@ -3289,6 +3336,13 @@ if __name__ == "__main__":
         if len(sys.argv) not in (3, 4):
             sys.exit(__doc__)
         chats_cmd(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None)
+    elif cmd == "run-plan":
+        a = [x for x in sys.argv[2:] if not x.startswith("--")]
+        dn = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--done=")]
+        sa = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--started=")]
+        if len(a) != 2:
+            sys.exit(__doc__)
+        run_plan_cmd(a[0], a[1], dn[0].split(",") if dn else (), sa[0] if sa else None)
     elif cmd == "versions":
         versions_cmd(sys.argv[2] if len(sys.argv) > 2 else None)
     elif cmd == "restore-summary":
