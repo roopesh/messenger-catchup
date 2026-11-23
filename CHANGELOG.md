@@ -2,8 +2,8 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
-## [1.35.2] - 2026-11-23
-**No false "older copy of the skill" notice when a refresh writes an ISO `lastRefresh`** (BACKLOG B54), **and clearer wording in Settings › Your chats.** PATCH: a fix found on the owner's page, and wording the owner found confusing (meaning and controls unchanged). Page **`PAGE_VERSION` 4.3** (from 4.2); helper unchanged (2.4).
+## [1.36.0] - 2026-11-23
+**No false "older copy of the skill" notice when a refresh writes an ISO `lastRefresh`** (BACKLOG B54), **and clearer wording in Settings › Your chats.** MINOR: users see the new Settings wording (meaning and controls unchanged), with a fix found on the owner's page. Page **`PAGE_VERSION` 4.3** (from 4.2); helper unchanged (2.4).
 
 ### Fixed
 - **The page reads `lastRefresh` and `versions.refresh` in either form.** Two scheduled refreshes on v1.35.1 wrote `meta/chat.lastRefresh` as an ISO time ("2026-11-23T17:04:30Z") while `versions.refresh` was "Mon Nov 23, 9:00 AM", so the page said the last refresh ran an older copy of the skill and showed the raw ISO time as "Last refreshed". An ISO time is now read as the display form in `meta/chat.tz` (else the browser's zone) and compared as before (the weekday ignored, 45 minutes counts as the same run); every "Last refreshed" (the refresh line, the catch-up window, each All chats card and each chat's row in Settings; an added chat without its own `tz` uses the first chat's) shows it as "Mon Nov 23, 9:04 AM". A mismatch over 45 minutes still shows the notice.
