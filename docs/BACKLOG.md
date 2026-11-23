@@ -14,6 +14,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B53 | P2 | bug | A first scan with a count can stop at a false "top of chat" and store a short history as the whole chat |
 | B55 | P3 | bug | Chrome names ("Browser 1", "Browser 2") swap when the extension reconnects, so helper notices can name the wrong Chrome |
 | B56 | P3 | bug | Several-chats page oddities: a pending chat shows the first chat's stats; All chats' "need you" count disagrees with the rows |
+| B57 | P3 | bug | All chats: chat names in the cards are misaligned (one centered, one right-aligned, the tag pill at the left) instead of lining up left, right after the tag |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -41,6 +42,11 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 ### B56 · P3 · Several-chats page oddities
 - **Seen (Nov 23, owner's page 4.2):** while the owner's test chat was pending its view showed the first chat's stat row; one load after activation opened on the first chat instead of All chats (a reload fixed it); All chats in the picker said "6 need you" while the rows said 5 and 3.
 - **To do:** reproduce each in the page tests (pending chat view, opening view, picker total) and fix.
+
+### B57 · P3 · All chats: chat names misaligned in the cards
+- **Seen (Nov 23, owner's page 4.3):** in All chats, each card's title sits in a different spot (for example Book Club centered, Camera Club right-aligned) while the tag pill sits at the left. They should line up left, right after the tag.
+- **Likely cause:** the `.chathead` flex layout, or `text-wrap: balance` on `h2`/`h3`.
+- **To do:** a page test that each card's title starts just right of its tag, then the fix.
 
 ---
 
