@@ -2,6 +2,57 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.38.0] - 2026-11-23
+**One schedule refreshes every chat** (BACKLOG F1, stage B), **plus fixes to the several-chats page** (B56 in part, B57). MINOR: scheduled runs and "refresh my catch-up" now cover added chats, with new procedure in `references/chats.md` and new page wording. Page **`PAGE_VERSION` 4.4** (from 4.3); helper unchanged (2.4). `SKILL.md` unchanged.
+
+### Added
+- **A run over every chat** (`references/chats.md`): a scheduled run, and "refresh my catch-up", refresh every `active` chat one after another under the one `refresh/status` lock. The first chat goes first, then the chats the last run didn't reach (in the order they were left), then the other active chats by `order`, then each `pending` chat's first refresh. Paused, hidden and deleted chats are skipped. One after another, not in parallel: one Messenger tab, one clipboard, one paste at a time. "Refresh <name>" still refreshes that chat alone.
+- **A 15-minute limit per run.** Before each next chat the run checks the time. From 15 minutes on it starts no new chat; a chat already started always finishes. Chats after the first skip Before each run's lock check, because the run holds the lock and renews `startedAt` at each chat.
+- **`refresh/skipped` `{keys, why, at, run}`:** the chats a run didn't reach, in the order left, with `why` `"time"` (the limit) or `"stopped"` (a failure that stopped the run: Chrome, `selfcheck`, the lock lost). `[]` when the run reached every chat. Only a run's end writes it, so the lock's own writes never lose it (a refresh's step 1, a reply run, an error). The next run takes those chats right after the first chat, round robin, so none is left out for long.
+- **`catchup.py run-plan META.json SKIPPED.json [--done=K,K] [--started=ISO] [--stop]`** works out the order, the next chat (with its `--chat` argument and whether it's pending), the time check, the `refresh/status` write for each point (step 1's lock, the lock renewed for the next chat, the run's end, or `error` with `--stop`) and, at the end, the `refresh/skipped` write. A `--started` time without a zone is read as UTC.
+- **One report per run:** each chat refreshed named in its first bullet, chats with nothing new on one line, failures with why, and "Not reached (15-minute limit): <chat>. The next run starts with it." A chat that fails is reported and the run goes on to the next one.
+- `references/scheduling.md` (setup's copy synced) points a scheduled run over several chats to `chats.md` and notes the lock renewal in Overlap. `references/database.md` (copies synced) documents `refresh/skipped`.
+
+### Changed
+- **Page wording** (All chats cards and Settings rows; lines update in place, so a change never rebuilds Settings while someone types):
+  - An added chat's line no longer says "Not in scheduled refreshes yet (only <first chat> is). To refresh it, ask Claude to “refresh <chat>”." It shows "Last refreshed …" like the first chat.
+  - A pending chat, while a schedule is on (a chain or recurring task, not a stopped chain): "Waiting for its first refresh. Ask Claude to “refresh <chat>”." becomes "Gets its first refresh at the next scheduled run (or ask Claude to “refresh <chat>”)." With no schedule, refreshes only on request, an unknown mode or a stopped chain: "Waiting for its first refresh. Ask Claude to “refresh <chat>” (or “refresh my catch-up” for every chat)." The phrase stays "refresh my catch-up" whichever chat is open. A chat that couldn't be added keeps its reason, followed by "The next scheduled run tries again (…)" or "To try again, ask Claude …".
+  - The pending chat's own header: "No messages stored yet. Ask Claude in chat to refresh <chat>; the first run loads your starting stretch of history." becomes "No messages stored yet. " followed by the same sentence as its card.
+  - A chat in `refresh/skipped` adds: "Not refreshed in the last run: it reached the 15-minute limit. The next run starts with this chat." (or "…: the run stopped early. …").
+  - Add a chat's note: "…and Claude reads the chat the next time you ask it to refresh it (say “refresh” and the chat's name). It isn't in scheduled refreshes yet (only <first chat> is)." becomes "…the page saves it, and the next refresh, scheduled or asked for, reads it with your other chats. To read it sooner, ask Claude to “refresh” and the chat's name."
+
+### Fixed
+- **B56 (part):** a chat with no messages (a pending one) showed the counter strip (new messages, people, mentions, open questions) of the chat shown before. `renderHeader` returned before clearing `#strip`; it now clears it.
+- **B57:** All chats card titles didn't line up. A card with an Open link had its title centred, and a pending card (no Open) had it at the far right, because the head spread its items apart. Every title now sits right after its tag, and Open goes to the far end.
+
+### Tests
+- **Python `TestRunPlan`** (14 cases, simulating whole runs on a fake clock, `catchup.NOW`):
+  - the order: first chat, skipped ones in the order left, then `order`, pending last
+  - a whole run clearing `refresh/skipped`, and the lock renewed between chats
+  - a pending chat's first refresh after the active ones
+  - the limit letting the current chat finish, then recording the rest (exactly 15 minutes counts as over)
+  - four runs in a row taking turns, round robin, with the first chat always first
+  - a stopping failure recording every chat not reached (the first included when none finished)
+  - edge cases: skipped chats paused or removed since, a paused first chat, a page without `chats`, `--started` required after the first call, a start without a zone read as UTC
+  - the references: `refresh/skipped`, `--stop`, and chats after the first skipping the lock check
+
+  All 14 failed before the fixes.
+- **Page `multiChat2`:**
+  - the skipped note on that chat's All chats card and Settings row only, following `refresh/skipped` whatever `refresh/status` says
+  - a half-typed Add a chat link surviving a status change while the notes update in place
+  - Add a chat's note
+  - the pending line for a live chain, a stopped chain, no schedule, manual, an unknown mode and a recurring task, with an added chat open
+  - B57's title positions (the gap from tag to title on every card, pending included)
+  - B56's empty strip, and the pending chat's header
+- **Page `multiChat`:** SET4 (a page with no schedule) gets the manual-mode line. B54's check now asserts the old "Not in scheduled refreshes yet" sentence is gone.
+
+  All of these failed before the fixes.
+- **Backlog:**
+  - F1's stage B is done, so F1 has stage C left. Its entry lists what stage B's simplest design didn't build (the dragged order, "How often" per chat, per-chat status, packing for every chat) in case the owner wants them.
+  - Stage B's live checks moved to L1.
+  - B57 removed. B56 trimmed to the first-load view and the picker total.
+  - R18 notes that one slow chat in a run can still pass 20 minutes.
+
 ## [1.37.0] - 2026-11-23
 **Reply checks can be scheduled** (BACKLOG F30, option C step 2). MINOR: a new request users and Claude can notice ("schedule reply checks"), and SKILL.md procedure changes. No page or helper change (`PAGE_VERSION` 4.3, helper unchanged).
 

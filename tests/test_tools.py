@@ -339,6 +339,7 @@ class TestSkillReferences(unittest.TestCase):
                 "relink",
                 "restore",
                 "restore-summary",
+                "run-plan",
                 "versions",
             ],
         )
@@ -348,6 +349,7 @@ class TestSkillReferences(unittest.TestCase):
             "check-day-summaries": "day-summaries.md",
             "captions": "photos.md",
             "chats": "chats.md",
+            "run-plan": "chats.md",
             "versions": "database.md",
         }
         for c in cmds:
