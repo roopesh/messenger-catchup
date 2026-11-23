@@ -39,4 +39,4 @@ Follow SKILL.md's Refresh steps with these changes. Everything not named here is
 ## Replies in several chats
 - Whether a queued reply goes out without asking follows the chat's own `auto` when it's `true` or `false`, else the page default `meta/chat.outboxAuto` (`catchup.py chats` prints the result as `auto`). The rest of the approval rule is SKILL.md's.
 - Step 2's "Replies first" and step 8 handle the chat being refreshed: its `KEY_outbox`. A reply is posted only with the tab on that chat's `chatUrl`, after `selfcheck` and outbox.md's checks, so it never lands in another chat.
-- "Send replies" (`messenger-catchup:replies`) covers every live chat; its SKILL.md says how.
+- "Send replies" (`messenger-catchup:replies`) covers every live chat; its SKILL.md says how. A reply check (`messenger-catchup:reply-check`) reads each `active` chat's outbox and hands only the chats with a queued row to replies.

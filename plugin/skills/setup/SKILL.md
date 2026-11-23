@@ -1,6 +1,6 @@
 ---
 name: setup
-description: "Set up a private catch-up page for a Facebook Messenger group chat (summary, threads, deals, mentions, replies), read from the user's own Chrome through Claude in Chrome. Use for \"set up messenger catch-up\", a first catch-up page for a chat, changing the refresh schedule, or what refreshes need to work."
+description: "Set up a private catch-up page for a Facebook Messenger group chat (summary, threads, deals, mentions, replies), read from the user's own Chrome through Claude in Chrome. Use for \"set up messenger catch-up\", a first catch-up page for a chat, changing the refresh schedule, scheduling, changing or stopping reply checks, or what refreshes need to work."
 ---
 
 # Messenger Catch-up: setup
@@ -17,6 +17,7 @@ Files that ship with this skill, relative to its folder `${CLAUDE_SKILL_DIR}` (i
 ## Which part to follow
 - **No page yet for this chat**, or "set up messenger catch-up": the First run below.
 - **Change or stop the schedule:** find the page (step 2's lookup only; never reseed it), then Scheduling › Stop or change.
+- **Reply checks** ("schedule reply checks", "check replies every 10 minutes", "change reply checks to every 15 minutes", "stop reply checks"): find the page (step 2's lookup only), then `references/scheduling.md` › Reply checks.
 - **What a refresh needs:** Requirements.
 - **Another chat, for someone who already has a page:** never a second page. The owner adds it on their page (the title ▾ › Add a chat), and it's read the next time they ask Claude to refresh it by name. If they ask you to add it, update `meta/chat` (pinned) with the one entry the page would write (`references/database.md` › Several chats), with a key no entry uses.
 

@@ -6760,7 +6760,11 @@ async function photos2() {
   );
   await p.close();
   // review of #42, 1: a tab that lost its lease never writes its stale copy of a block over another tab's slots
-  p = await openR2({}, { tune: Object.assign({}, TUNE, { retryMs: 900 }) });
+  /* the retry waits a minute on Playwright's clock, which the case moves on once tab B holds the lease: at a real
+     900 ms, a busy runner could retry before the steal */
+  p = await open(Object.assign(SEED(), { __opts: { tune: Object.assign({}, TUNE, { retryMs: 60000 }) } }), PAGE, {
+    clockAt: Date.now(),
+  });
   await setUp(p, { delayMs: 300 });
   await pasteFirst(p, JSON.stringify(cap(range(0, 9), { photos: [PH(2), PH(3)] })));
   await p.evaluate(() => __rt.fails.push({ p: 'photos/b0', op: 'update' }, { p: 'photos/b0', op: 'set' }));
@@ -6768,11 +6772,12 @@ async function photos2() {
   const otherId = '/_blob/' + 'e'.repeat(32);
   await p.evaluate(id => {
     __rt.fails.length = 0;
-    __rt.steal('refresh/importLock', 'tabB', 60000); /* A froze past its lease; tab B took over and indexed #8 */
+    __rt.steal('refresh/importLock', 'tabB', 600000); /* A froze past its lease; tab B took over and indexed #8 */
     const b = __rt.get('photos/b0');
     b.byK['8'] = { 0: id };
     __rt.write('photos/b0', b);
   }, otherId);
+  await p.clock.runFor(60050);
   await until(p, () => !S.importing && !S.pasting, null, 15000);
   await sleep(300);
   st = await photoState(p);
@@ -12951,6 +12956,16 @@ const block0 = p => get(p, 'photos/b0');
 const liveIds = p => p.evaluate(() => __rt.uploads.filter(u => !u.deleted).map(u => u.id));
 const blobJson = async (p, id) => JSON.parse(await p.evaluate(id => __rt.blobText(id), id));
 const packSt = p => txt(p, '#phpack-st');
+/* A case that waits out packing's backoff opens its page on Playwright's clock (packOpen) with the backoff set to
+   PACK_RETRY, which never comes round on its own while the case runs. packRetry waits until the loop is idle with its
+   next try scheduled, then moves the clock to that try. K8 slept a real 1.5 s backoff and missed it on a busy runner
+   (Nov 23). */
+const PACK_RETRY = { errMs: 60000, maxErrMs: 60000 };
+const packOpen = seed => open(seed, PAGE, { clockAt: Date.now() });
+async function packRetry(p) {
+  await until(p, () => !PK.busy && PK.timer && PK.backoff > 0);
+  await p.clock.runFor(Math.max(0, await p.evaluate(() => PK.next - Date.now())) + 50);
+}
 /* the Messages view with every stored message shown, flat */
 async function showAll(p) {
   await p.evaluate(() => {
@@ -13240,8 +13255,8 @@ async function packs() {
 
   // K8: a full pack that doesn't match the originals: nothing repointed, the new packs deleted, the originals kept,
   // the error shown; the next try (after the backoff) packs it
-  W = packWorld({ on: false, backs: [2, 0], packTune: { errMs: 1500 } });
-  p = await open(W.seed);
+  W = packWorld({ on: false, backs: [2, 0], packTune: PACK_RETRY });
+  p = await packOpen(W.seed);
   await setUp(p, { mangle: 1 });
   const b0before = await block0(p);
   await p.click('#phstore summary');
@@ -13270,7 +13285,12 @@ async function packs() {
     ),
     'K8: the Photo storage box says the try failed, the originals are kept, and when it tries again (' + st8 + ')',
   );
-  await until(p, () => ((__rt.get('photos/packs') || {}).list || []).length === 1, null, 5000);
+  await packRetry(p);
+  /* the end state, not the first part listed: the error is cleared only once the whole day has packed */
+  await until(p, () => {
+    const d = __rt.get('photos/packs') || {};
+    return (d.list || []).length === 1 && d.err === null && !PK.busy;
+  });
   const pk8 = await packsDoc(p);
   ok(
     pk8.list.length === 1 && pk8.list[0].day === laDay(2) && pk8.err === null && !/failed/.test(await packSt(p)),
@@ -13357,7 +13377,7 @@ async function packs() {
 
   // K10: a paste while a day is packing finds the import lease taken and saves nothing
   W = packWorld({ backs: [2, 0], opts: { up: { delayMs: 1500 } } });
-  p = await open(W.seed);
+  p = await packOpen(W.seed);
   await until(p, () => __rt.calls() > 0);
   const r10 = await paste(p, JSON.stringify(cap([mk(W.msgs.length)], { base: W.msgs.length - 1 })));
   ok(
@@ -13372,8 +13392,11 @@ async function packs() {
       ')',
   );
   await setUp(p, {});
+  /* the day done and the loop stopped (refresh/packing goes once there's nothing left), so packing has let its lease
+     go with 1 s left; the clock passes that second, not a real sleep that a slow finish outran */
   await until(p, () => ((__rt.get('photos/packs') || {}).list || []).length === 1, null, 6000);
-  await p.waitForTimeout(1500);
+  await until(p, () => __rt.writes.some(w => w.p === 'refresh/packing' && w.op === 'delete') && !PK.busy);
+  await p.clock.runFor(1050);
   const r10b = await paste(p, JSON.stringify(cap([mk(W.msgs.length)], { base: W.msgs.length - 1 })));
   ok(
     r10b && r10b.ok && (await get(p, 'meta/chat')).lastI === W.msgs.length,
@@ -14629,10 +14652,11 @@ async function packs4() {
       [9, 0],
     ],
     inBlocks: true,
+    packTune: PACK_RETRY,
     tweak: w => oldPack(w, 6, [[1, 0]]),
   });
   W.seed.__opts.up = { blobFail: [W.orig['9.0']] };
-  p = await open(W.seed);
+  p = await packOpen(W.seed);
   await until(p, () => (((__rt.get('photos/packs') || {}).reclaim || {}).clean || []).length === 1, null, 10000);
   await until(p, () => (__rt.get('photos/packs') || {}).err, null, 5000);
   st = await packSt(p);
@@ -14647,6 +14671,7 @@ async function packs4() {
       ')',
   );
   await setUp(p, {});
+  await packRetry(p);
   await tidyDone(p, 3);
   live = await liveIds(p);
   const l15 = await packList(p);
