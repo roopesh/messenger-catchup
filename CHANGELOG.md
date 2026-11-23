@@ -12,7 +12,7 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 - Tests: page `multiChat2`: with the first chat and one pending chat (no `meta/chat-<key>` yet), a capture without `thread` imports into the first chat and the pending chat refuses one; the review finding 7 test now checks the new rule (refused in Camera Club, imported into the first chat). Sim `HP2`: a 2.1-style helper installed and 2.4 injected (2.4 alone answers the bridge, and runs `selfcheck`); 2.4 injected over 2.4 registers nothing and answers once; a newer copy injected over 2.4 answers alone; 2.4 injected under a newer copy stays out. The import and take-over checks failed on v1.35.0's page and helper.
 
 ### Changed
-- **Backlog:** L1's day summaries check removed (F29: checked on the owner's page on Nov 23, the final rewrite and the next day's summary).
+- **Backlog:** L1's day summaries check removed (F29: checked on the owner's page on Nov 23, the final rewrite and the next day's summary). R13 closed: its release 1 (day packs, previews, captions and photo search in v1.30.0, plus v1.31.3's leftover-originals fix) was verified on the owner's page on Nov 22 (1,194 files → 151, 149 MB → 111 MB, no photo lost); what's left of its decided option E + S is the new R20, archive pages before the 1 GB fills (P3), to start when a page passes about 600 MB or a few months before its estimated fill (the owner's page: May–October 2027).
 
 ## [1.35.0] - 2026-11-22
 **Several chats in one page, stage A** (BACKLOG F1, option A as the owner decided on Nov 22). MINOR: new page features and refresh procedure changes; a one-chat page and its documents are unchanged. Page **`PAGE_VERSION` 4.1** (from 4.0); helper **2.3** (from 2.1).
