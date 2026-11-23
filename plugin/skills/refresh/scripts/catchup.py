@@ -65,10 +65,11 @@
                                      to a page from before F1 ({} when it has it). With KEY: where that chat's documents
                                      live, its --chat argument, whether its replies go out without asking, and for a
                                      pending chat the meta/chat-KEY to seed. references/chats.md.
-  catchup.py run-plan META.json STATUS.json [--done=KEY,KEY] [--started=ISO]
-                                     A run over every chat (F1): the next chat (skipped by the last run's time limit
-                                     first, then the first chat, the others by order, pending ones last), none once 15
-                                     minutes have passed since --started, and the refresh/status write for that point.
+  catchup.py run-plan META.json SKIPPED.json [--done=KEY,KEY] [--started=ISO] [--stop]
+                                     A run over every chat (F1): the next chat (the first chat, then those the last run
+                                     left in refresh/skipped, the others by order, pending ones last), none once 15
+                                     minutes have passed since --started or with --stop, the refresh/status write for
+                                     that point, and at the end the refresh/skipped write.
                                      references/chats.md › A run over every chat.
   catchup.py versions [TZ]           `versions.page` and `versions.helper` for meta/chat (references/database.md ›
                                      Versions), read from this skill's assets/page.html and assets/helper.user.js.
@@ -371,42 +372,53 @@ def chats_cmd(meta_file, key=None):
 RUN_MINUTES = 15  # a run over every chat starts no new chat from this many minutes after it began (F1 stage B)
 
 
-def run_plan_cmd(meta_file, status_file, done=(), started=None):
-    """`catchup.py run-plan META.json STATUS.json [--done=K,K] [--started=ISO]`: which chat a run over every chat
-    refreshes next. The order: the chats the last run's time limit left (STATUS.json's `skipped`), then the first chat,
-    the other active chats by `order`, then pending chats by `order`; paused, hidden and deleted chats never. Called
-    first with no --done (next = the first chat; runAt = now, the run's start), then after each chat with the chats done
-    so far and --started=runAt: from RUN_MINUTES on no new chat starts, and the rest are `skipped`. `status` is the
-    refresh/status write for that point: step 1's lock, the lock renewed for the next chat, or the run's end."""
+def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False):
+    """`catchup.py run-plan META.json SKIPPED.json [--done=K,K] [--started=ISO] [--stop]`: which chat a run over every
+    chat refreshes next. The order: the first chat, then the chats the last run left (SKIPPED.json, refresh/skipped's
+    `keys`, in the order they were left), then the other active chats by `order`, then pending chats by `order`; paused,
+    hidden and deleted chats never. Called first with no --done (next = the first chat; runAt = now, the run's start),
+    then after each chat with the chats done so far and --started=runAt: from RUN_MINUTES on no new chat starts. --stop:
+    a failure stops the run now. `status` is the refresh/status write for that point (step 1's lock, the lock renewed
+    for the next chat, or the run's end); at the end, `skippedDoc` is the refresh/skipped write: the chats not reached
+    and `why` ("time" or "stopped"), [] when every chat was. Only a run's end writes refresh/skipped, so the lock's writes never lose it."""
     meta = _load(meta_file)
-    st = _load(status_file)
-    st = st if isinstance(st, dict) else {}
+    sk = _load(skipped_file)
+    keys = sk.get("keys") if isinstance(sk, dict) and isinstance(sk.get("keys"), list) else []
     cs = chats_of(meta)
     by = lambda k: (not cs[k].get("home"), cs[k].get("order") if isinstance(cs[k].get("order"), int) else 99, k)
     base = sorted((k for k in cs if cs[k].get("state", "active") == "active"), key=by)
     base += sorted((k for k in cs if cs[k].get("state") == "pending" and not cs[k].get("home")), key=by)
-    last = st.get("skipped") if isinstance(st.get("skipped"), list) else []
-    order = [k for k in base if k in last] + [k for k in base if k not in last]
+    home = [k for k in base if cs[k].get("home")]
+    last = [k for i, k in enumerate(keys) if k in base and k not in home and k not in keys[:i]]
+    order = home + last + [k for k in base if k not in home and k not in last]
     done = [k for k in done if k]
     assert started or not done, "run-plan: pass --started=<runAt from the run's first run-plan> with --done"
     now = NOW or datetime.datetime.now(datetime.timezone.utc)
     t0 = datetime.datetime.fromisoformat(started.replace("Z", "+00:00")) if started else now
+    if t0.tzinfo is None:  # a time without a zone is UTC, as runAt is printed
+        t0 = t0.replace(tzinfo=datetime.timezone.utc)
     minutes = (now - t0).total_seconds() / 60
     left = [k for k in order if k not in done]
-    nxt = left[0] if left and (not done or minutes < RUN_MINUTES) else None
+    nxt = left[0] if left and not stop and (not done or minutes < RUN_MINUTES) else None
+    run_at = t0.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     out = {
         "order": order,
         "next": nxt,
         "chatArg": "" if not nxt or cs[nxt].get("home") else "--chat=" + nxt,
         "pending": bool(nxt) and cs[nxt].get("state") == "pending",
-        "runAt": t0.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "runAt": run_at,
         "minutes": round(minutes, 1),
         "skipped": [] if nxt else left,
+        "status": None,
+        "skippedDoc": None,
     }
     if nxt:
         out["status"] = {"state": "running", "startedAt": _now_iso(), "step": "scan", "by": "refresh " + nxt}
-    else:
-        out["status"] = {"state": "done", "finishedAt": _now_iso(), "skipped": left} if done else None
+    elif done or stop:
+        out["status"] = {"state": "error" if stop else "done", "finishedAt": _now_iso()}
+        out["skippedDoc"] = {"keys": left, "at": _now_iso(), "run": run_at}
+        if left:  # why they weren't reached, for the page's note: the time limit, or a failure that stopped the run
+            out["skippedDoc"]["why"] = "stopped" if stop else "time"
     print(json.dumps(out, indent=1))
 
 
@@ -3342,7 +3354,7 @@ if __name__ == "__main__":
         sa = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--started=")]
         if len(a) != 2:
             sys.exit(__doc__)
-        run_plan_cmd(a[0], a[1], dn[0].split(",") if dn else (), sa[0] if sa else None)
+        run_plan_cmd(a[0], a[1], dn[0].split(",") if dn else (), sa[0] if sa else None, "--stop" in sys.argv[2:])
     elif cmd == "versions":
         versions_cmd(sys.argv[2] if len(sys.argv) > 2 else None)
     elif cmd == "restore-summary":

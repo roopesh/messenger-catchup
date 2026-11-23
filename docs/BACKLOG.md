@@ -13,8 +13,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 |---|---|---|---|
 | B53 | P2 | bug | A first scan with a count can stop at a false "top of chat" and store a short history as the whole chat |
 | B55 | P3 | bug | Chrome names ("Browser 1", "Browser 2") swap when the extension reconnects, so helper notices can name the wrong Chrome |
-| B56 | P3 | bug | Several-chats page oddities: a pending chat shows the first chat's stats; All chats' "need you" count disagrees with the rows |
-| B57 | P3 | bug | All chats: chat names in the cards are misaligned (one centered, one right-aligned, the tag pill at the left) instead of lining up left, right after the tag |
+| B56 | P3 | bug | Several-chats page oddities: one load after activation opened on the first chat, not All chats; All chats' "need you" count disagrees with the rows |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -40,13 +39,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **To do:** key by something stable (the extension's device id, with the display name alongside) or tell the user the names can change.
 
 ### B56 · P3 · Several-chats page oddities
-- **Seen (Nov 23, owner's page 4.2):** while the owner's test chat was pending its view showed the first chat's stat row; one load after activation opened on the first chat instead of All chats (a reload fixed it); All chats in the picker said "6 need you" while the rows said 5 and 3.
-- **To do:** reproduce each in the page tests (pending chat view, opening view, picker total) and fix.
-
-### B57 · P3 · All chats: chat names misaligned in the cards
-- **Seen (Nov 23, owner's page 4.3):** in All chats, each card's title sits in a different spot (for example Book Club centered, Camera Club right-aligned) while the tag pill sits at the left. They should line up left, right after the tag.
-- **Likely cause:** the `.chathead` flex layout, or `text-wrap: balance` on `h2`/`h3`.
-- **To do:** a page test that each card's title starts just right of its tag, then the fix.
+- **Seen (Nov 23, owner's page 4.2):** one load after activation opened on the first chat instead of All chats (a reload fixed it); All chats in the picker said "6 need you" while the rows said 5 and 3. (The pending chat's view showing the previous chat's stat row was fixed in v1.38.0.)
+- **To do:** reproduce each in the page tests (opening view, picker total) and fix.
 
 ---
 
@@ -76,6 +70,7 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 ### R18 · P3 · A run older than the lock's 20 minutes when the next one fires
 - **What:** since R14, a chain run arms as it starts, so the next run fires `every` minus 3 minutes after this one started, not after it ended. If this run is still going then (a large backlog, a long photo wait, a slow outbox) and `every` is 23 minutes or more, its `refresh/status` lock is more than 20 minutes old, and the next run treats it as stale and takes over. That run scans in the same Messenger tab. Pinned writes keep the database whole: a run whose write is refused while the other's `running` is in `refresh/status` stops (writing-the-build.md › Refused writes). But the two can disturb each other's scan, and the first to finish marks the status done while the other is still going. Before R14 this could only happen with a refresh the user asked for. `references/scheduling.md` › A scheduled run, Overlap, describes it.
 - **Unverified, check live:** a follow-up that comes due while this conversation is mid-turn (the run it would follow is still going) may be queued until the turn ends, or dropped. If the scheduling tool drops it, the chain stops at that run, and only a refresh the user asks for finds it stopped. Check with each follow-up tool (a short `every` and a run kept busy past it).
+- **Several chats (F1, v1.38.0):** a run over every chat renews `startedAt` at each chat, but not within one; a single slow chat in a run (a large first refresh, a photo backlog) can still pass 20 minutes.
 - **Fix (if it shows up):** have a run that finds the lock 20+ minutes old check `lastRunAt` and the lock's `step` before taking over, or renew `startedAt` at each step.
 
 ### R19 · P3 · Claude's maintenance writes hold the refresh lock through slow approvals
@@ -90,7 +85,7 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Stage B shipped in v1.38.0:** one scheduled run (and "refresh my catch-up") refreshes every active chat one after another under the one lock, the first chat first, then by `order`, then each pending chat's first refresh; no new chat starts after 15 minutes, the chats not reached go in `refresh/status.skipped` and the next run starts with them (`catchup.py run-plan`, `references/chats.md` › A run over every chat); the page says so on their lines. Sequential, not parallel: one Messenger tab, one clipboard, one paste at a time. Not built (the simplest design that works; build any only if the owner wants it): the order dragged in Settings › Schedule, "How often" per chat, per-chat status in `refresh/status.chats`, photo packing for every chat (stage A packs the chat open on the page; under All chats, the first chat).
 - **Stage C, across chats:** one Ask over every chat with keyed citations (`[book#412]`) and the match list (newest first or by chat, a chip per chat), full names across chats, Stats comparing the chats, By day on All chats and the summary across chats (`allchats/summary`). Tests SR, SD, CT2, CT3, PH5, SPK2.
 - Related: F25 (a Facebook group on the same page).
-- **Polish noticed in stage A's claude.ai check (Nov 22), still open:** a pending chat's kicker shows no chat name and an empty "Show messages" box; on wide screens a chat's name on its All chats card sits centred rather than beside its tag; removing a chat with no documents says "frees 0 files, 1 KB"; the URL keeps the last tab's hash on All chats; Settings' "Saved." notes linger after reopening.
+- **Polish noticed in stage A's claude.ai check (Nov 22), still open:** a pending chat's kicker shows no chat name and an empty "Show messages" box; removing a chat with no documents says "frees 0 files, 1 KB"; the URL keeps the last tab's hash on All chats; Settings' "Saved." notes linger after reopening.
 
 
 ### F25 · P2 · Catch up with Facebook group posts

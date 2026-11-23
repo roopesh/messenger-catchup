@@ -5360,21 +5360,23 @@ class TestChats(unittest.TestCase):
         self.assertEqual(got, [[catchup.key_from(s), catchup.tag_from(s)] for s in names])
 
 
-def plan_out(meta, status, done=(), started=None, d=None):
-    """`catchup.py run-plan` on these documents, as a run calls it before each chat (catchup.NOW is the clock)."""
+def plan_out(meta, skipped, done=(), started=None, d=None, stop=False):
+    """`catchup.py run-plan` on meta/chat and refresh/skipped, as a run calls it before each chat (catchup.NOW is the
+    clock)."""
     w(os.path.join(d, "chat.json"), meta)
-    w(os.path.join(d, "status.json"), status)
+    w(os.path.join(d, "skipped.json"), skipped)
     return json.loads(
-        quiet(catchup.run_plan_cmd, os.path.join(d, "chat.json"), os.path.join(d, "status.json"), done, started)
+        quiet(catchup.run_plan_cmd, os.path.join(d, "chat.json"), os.path.join(d, "skipped.json"), done, started, stop)
     )
 
 
 class TestRunPlan(unittest.TestCase):
     """F1 stage B: one scheduled run refreshes every chat, one after another (one Messenger tab), under the one lock.
-    `catchup.py run-plan` says which chat is next: the chats the last run's 15-minute limit left first, then the first
-    chat, the others by `order`, and pending chats last; paused, hidden and deleted ones never. Between chats it checks
-    the time: from 15 minutes on, no new chat starts and the rest are recorded as `skipped` for the next run. These
-    cases simulate whole runs on a fake clock (catchup.NOW), as Claude calls the command."""
+    `catchup.py run-plan` says which chat is next: the first chat, then the chats the last run left (`refresh/skipped`,
+    in the order they were left), then the other active chats by `order`, then pending chats; paused, hidden and
+    deleted ones never. Between chats it checks the time: from 15 minutes on, no new chat starts and the rest are
+    written to `refresh/skipped` for the next run (a document only a run's end writes, so the lock's writes never lose
+    it). These cases simulate whole runs on a fake clock (catchup.NOW), as Claude calls the command."""
 
     T0 = "2026-11-23T17:00:00"
 
@@ -5399,36 +5401,43 @@ class TestRunPlan(unittest.TestCase):
         catchup.NOW = utc(self.T0) + catchup.datetime.timedelta(minutes=minutes)
         return catchup._now_iso()
 
-    def plan(self, status, done=(), started=None):
-        return plan_out(self.meta, status, done, started, self.t.name)
+    def plan(self, skipped, done=(), started=None, stop=False):
+        return plan_out(self.meta, skipped, done, started, self.t.name, stop)
 
-    def run_all(self, status, ends):
+    def run_all(self, skipped, ends):
         """One scheduled run: the plan before each chat; chat n ends at minute ends[n]. Returns the chats refreshed
-        and the last plan (its status is the run's final refresh/status update)."""
+        and the last plan (its skippedDoc is what the run's end writes to refresh/skipped)."""
         self.at(0)
-        p = self.plan(status)
+        p = self.plan(skipped)
         start, done = p["runAt"], []
         for end in ends:
             if not p["next"]:
                 break
             done.append(p["next"])
             self.at(end)
-            p = self.plan(status, done, start)
+            p = self.plan(skipped, done, start)
         return done, p
 
     def test_order_first_chat_then_by_order_pending_last_never_paused_hidden_or_deleted(self):
         start = self.at(0)
-        p = self.plan({"state": "done"})
+        p = self.plan({})
         self.assertEqual(p["order"], ["trail", "book", "cam", "chess"])
         self.assertEqual((p["next"], p["chatArg"], p["pending"], p["runAt"]), ("trail", "", False, start))
         self.assertEqual(p["status"], {"state": "running", "startedAt": start, "step": "scan", "by": "refresh trail"})
-        self.assertEqual(p["skipped"], [])
+        self.assertEqual((p["skipped"], p["skippedDoc"]), ([], None))
+
+    def test_the_first_chat_first_then_the_skipped_ones_in_the_order_they_were_left(self):
+        self.at(0)
+        self.assertEqual(self.plan({"keys": ["chess", "cam"]})["order"], ["trail", "chess", "cam", "book"])
+        self.assertEqual(self.plan({"keys": ["trail", "cam"]})["order"], ["trail", "cam", "book", "chess"])
 
     def test_a_whole_run_refreshes_every_chat_one_after_another_and_clears_skipped(self):
-        done, p = self.run_all({"state": "done", "skipped": ["book"]}, [3, 5, 8, 12])
-        self.assertEqual(done, ["book", "trail", "cam", "chess"])
+        done, p = self.run_all({"keys": ["cam"]}, [3, 5, 8, 12])
+        self.assertEqual(done, ["trail", "cam", "book", "chess"])
         self.assertIsNone(p["next"])
-        self.assertEqual(p["status"], {"state": "done", "finishedAt": self.at(12), "skipped": []})
+        end = self.at(12)
+        self.assertEqual(p["status"], {"state": "done", "finishedAt": end})
+        self.assertEqual(p["skippedDoc"], {"keys": [], "at": end, "run": self.at(0)})
 
     def test_between_chats_the_lock_is_renewed_for_the_next_one(self):
         self.at(0)
@@ -5437,6 +5446,7 @@ class TestRunPlan(unittest.TestCase):
         p = self.plan({}, ["trail"], start)
         self.assertEqual((p["next"], p["chatArg"], p["minutes"]), ("book", "--chat=book", 6.0))
         self.assertEqual(p["status"], {"state": "running", "startedAt": now, "step": "scan", "by": "refresh book"})
+        self.assertIsNone(p["skippedDoc"])
 
     def test_a_pending_chat_gets_its_first_refresh_after_the_active_ones(self):
         self.at(0)
@@ -5455,24 +5465,43 @@ class TestRunPlan(unittest.TestCase):
         p = self.plan({}, ["trail", "book"], start)
         self.assertIsNone(p["next"])
         self.assertEqual(p["skipped"], ["cam", "chess"])
-        self.assertEqual(p["status"], {"state": "done", "finishedAt": end, "skipped": ["cam", "chess"]})
+        self.assertEqual(p["status"], {"state": "done", "finishedAt": end})
+        self.assertEqual(p["skippedDoc"], {"keys": ["cam", "chess"], "why": "time", "at": end, "run": start})
         # exactly 15 minutes is over the limit too
         self.at(15)
         self.assertEqual(self.plan({}, ["trail"], start)["skipped"], ["book", "cam", "chess"])
 
-    def test_the_next_run_starts_with_the_skipped_chats_so_none_starves(self):
-        done1, p1 = self.run_all({"state": "done"}, [7, 16])
-        self.assertEqual((done1, p1["skipped"]), (["trail", "book"], ["cam", "chess"]))
-        done2, p2 = self.run_all(p1["status"], [7, 16])
-        self.assertEqual((done2, p2["skipped"]), (["cam", "chess"], ["trail", "book"]))
-        done3, p3 = self.run_all(p2["status"], [2, 4, 6, 8])
-        self.assertEqual((done3, p3["skipped"]), (["trail", "book", "cam", "chess"], []))
+    def test_the_next_runs_start_with_the_skipped_chats_so_none_starves(self):
+        # each run has room for the first chat and one more: the others take turns, none left out twice in a row
+        self.meta["chats"]["chess"]["state"] = "active"
+        skipped, got = {}, []
+        for _ in range(4):
+            done, p = self.run_all(skipped, [7, 16])
+            got.append(done)
+            skipped = p["skippedDoc"]
+        self.assertEqual(
+            got, [["trail", "book"], ["trail", "cam"], ["trail", "chess"], ["trail", "book"]], "round robin"
+        )
+        self.assertEqual(skipped["keys"], ["cam", "chess"])
+
+    def test_a_stopping_failure_records_every_chat_not_reached(self):
+        # Chrome unreachable before book: book and the rest go first next time; the error state is the run's
+        self.at(0)
+        start = self.plan({})["runAt"]
+        end = self.at(4)
+        p = self.plan({}, ["trail"], start, stop=True)
+        self.assertIsNone(p["next"])
+        self.assertEqual(p["status"], {"state": "error", "finishedAt": end})
+        self.assertEqual(p["skippedDoc"], {"keys": ["book", "cam", "chess"], "why": "stopped", "at": end, "run": start})
+        # before any chat finished: every chat, the first included
+        p = self.plan({}, (), start, stop=True)
+        self.assertEqual(p["skippedDoc"]["keys"], ["trail", "book", "cam", "chess"])
 
     def test_a_skipped_chat_paused_or_removed_since_is_dropped(self):
         self.meta["chats"]["cam"]["state"] = "paused"
         self.at(0)
-        p = self.plan({"state": "done", "skipped": ["cam", "gone", "nosuch", "chess"]})
-        self.assertEqual(p["order"], ["chess", "trail", "book"])
+        p = self.plan({"keys": ["cam", "gone", "nosuch", "chess"]})
+        self.assertEqual(p["order"], ["trail", "chess", "book"])
 
     def test_a_paused_first_chat_is_skipped_and_nothing_live_means_nothing_to_do(self):
         self.meta["chats"]["trail"]["state"] = "paused"
@@ -5481,7 +5510,7 @@ class TestRunPlan(unittest.TestCase):
         for k in ("book", "cam", "chess"):
             self.meta["chats"][k]["state"] = "paused"
         p = self.plan({})
-        self.assertEqual((p["order"], p["next"], p["status"]), ([], None, None))
+        self.assertEqual((p["order"], p["next"], p["status"], p["skippedDoc"]), ([], None, None, None))
 
     def test_a_page_without_chats_is_its_one_chat(self):
         del self.meta["chats"]
@@ -5494,17 +5523,29 @@ class TestRunPlan(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "--started"):
             self.plan({}, ["trail"])
 
+    def test_a_start_without_a_time_zone_is_utc(self):
+        self.at(6)
+        for s in ("2026-11-23T17:00:00", "2026-11-23T17:00:00Z", "2026-11-23T12:00:00-05:00"):
+            p = self.plan({}, ["trail"], s)
+            self.assertEqual((p["minutes"], p["runAt"]), (6.0, "2026-11-23T17:00:00Z"), s)
+
     def test_the_references_say_how_a_run_uses_it(self):
         refs = os.path.join(ROOT, "plugin", "skills", "refresh", "references")
-        with open(os.path.join(refs, "chats.md"), encoding="utf-8") as f:
-            chats = f.read()
-        with open(os.path.join(refs, "scheduling.md"), encoding="utf-8") as f:
-            sched = f.read()
+        texts = []
+        for n in ("chats.md", "scheduling.md", "database.md"):
+            with open(os.path.join(refs, n), encoding="utf-8") as f:
+                texts.append(f.read())
+        chats, sched, db = texts
         self.assertIn("## A run over every chat", chats)
-        self.assertIn("python3 catchup.py run-plan META.json STATUS.json", chats)
+        self.assertIn("python3 catchup.py run-plan META.json SKIPPED.json", chats)
         self.assertIn("15 minutes", chats)
+        self.assertIn("skip Before each run's lock check", chats)
+        self.assertIn("--stop", chats)
         self.assertNotIn("Added chats aren't in the schedule yet", chats)
+        self.assertNotIn("refresh/status.skipped", chats + sched + db)
         self.assertIn("`references/chats.md` › A run over every chat", sched)
+        self.assertIn("`refresh/skipped`", sched)
+        self.assertIn("`refresh/skipped` `{keys, why, at, run}`", db)
         self.assertEqual(catchup.RUN_MINUTES, 15)
 
 

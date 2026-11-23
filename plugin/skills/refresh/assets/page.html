@@ -2218,7 +2218,12 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-start;
     gap: 8px;
+  }
+  /* B57: the title right after the tag on every card; Open, when there is one, at the far end */
+  .chathead > button {
+    margin-left: auto;
   }
   .chathead h2,
   .chathead h3 {
@@ -3434,15 +3439,19 @@
   function renderHeader() {
     renderMarker();
     const mt = S.meta;
+    /* a chat with nothing stored shows no counters (B56: they stayed from the chat shown before) */
+    if (!mt || !S.msgs.length) $("#strip").textContent = "";
     if (!mt) {
       $("#window").textContent = "No chat data yet. Ask Claude in chat to " + RP() + ".";
       return;
     }
     if (!S.msgs.length) {
       $("#window").textContent =
-        "No messages stored yet. Ask Claude in chat to " +
-        RP() +
-        "; the first run loads your starting stretch of history.";
+        CUR && CUR.state === "pending"
+          ? "No messages stored yet. " + firstRefreshText(CUR, !!CUR.reason)
+          : "No messages stored yet. Ask Claude in chat to " +
+            RP() +
+            "; the first run loads your starting stretch of history.";
       return;
     }
     const R = winRange();
@@ -10808,6 +10817,7 @@
      summary, the next run, and a calm line when the chain has stopped (scheduling.md's "Chain stopped") or runs keep
      missing Chrome. Anything missing, older or odd shows nothing. Times are in the schedule's time zone. */
   const SCHED_MODES = ["chain", "recurring", "manual"];
+  const STOPPED = "Scheduled refreshes have stopped"; /* a stopped chain's warning; schedOn reads it */
   /* "HH:MM" → minutes since midnight ("24:00" is the end of the day), or null */
   function hhmm(s) {
     const m = /^(\d{1,2}):(\d{2})$/.exec(typeof s === "string" ? s.trim() : "");
@@ -10921,7 +10931,7 @@
     const problem = typeof st.problem === "string" ? st.problem.trim() : "";
     if (stopped || problem) {
       let t = stopped
-        ? "Scheduled refreshes have stopped" + (Number.isFinite(next) ? " (the next run was due " + at(next) + ")" : "")
+        ? STOPPED + (Number.isFinite(next) ? " (the next run was due " + at(next) + ")" : "")
         : "Scheduled refreshes hit a problem";
       t += problem ? ": " + problem + (/[.!?]$/.test(problem) ? "" : ".") : ".";
       /* scheduling.md: Claude offers a restart only for a stopped chain; a problem alone is reported and cleared */
@@ -13525,33 +13535,24 @@
     c.state !== "deleted" &&
     !!((S.page || {}).versions || {}).page &&
     vcmp(S.page.versions.page, CHATS_FROM) < 0;
-  /* F1 stage B: one scheduled run refreshes every active chat, then pending ones; from 15 minutes on it starts no new
-     chat and lists the rest in refresh/status.skipped, which the next run starts with */
-  let skipShown = "[]";
+  /* F1 stage B: one scheduled run refreshes every active chat, then pending ones; from 15 minutes on (or when a
+     failure stops it) it starts no new chat, and its end writes the rest to refresh/skipped {keys, why, at, run}, which
+     the next run starts with. Only a run's end writes that document, so the lock's writes never lose it. */
   function skippedKeys() {
-    const r = S.refresh;
-    if (!r || r.state === "running" || !Array.isArray(r.skipped)) return [];
-    return r.skipped.filter(k => typeof k === "string");
+    const k = (S.skipped || {}).keys;
+    return Array.isArray(k) ? k.filter(x => typeof x === "string") : [];
+  }
+  /* a schedule that will run: a chain or recurring task, not a chain scheduleView shows as stopped */
+  function schedOn() {
+    const m = S.page || S.meta;
+    const mode = isObj(m) && isObj(m.schedule) ? m.schedule.mode : null;
+    if (mode !== "chain" && mode !== "recurring") return false;
+    return !scheduleView(m, S.sched, S.refresh, Date.now(), "").warns.some(t => t.startsWith(STOPPED));
   }
   function chatLine(c) {
     if (oldSkill(c)) return c.name + " isn't refreshed: the refresh skill is older than the page. Update the plugin.";
-    if (c.state === "pending") {
-      const manual = ((S.page || {}).schedule || {}).mode === "manual";
-      return (
-        (c.reason ? "Couldn't add it yet: " + c.reason + " " : "") +
-        (manual
-          ? (c.reason ? "To try again, ask" : "Waiting for its first refresh. Ask") +
-            " Claude to “refresh " +
-            c.name +
-            "” (or “" +
-            RP() +
-            "” for every chat)."
-          : (c.reason ? "The next scheduled run tries again" : "Gets its first refresh at the next scheduled run") +
-            " (or ask Claude to “refresh " +
-            c.name +
-            "”).")
-      );
-    }
+    if (c.state === "pending")
+      return (c.reason ? "Couldn't add it yet: " + c.reason + " " : "") + firstRefreshText(c, !!c.reason);
     if (c.state === "paused") return "Paused: refreshes skip it.";
     if (c.state === "hidden") return "Hidden: nothing of it shows, and refreshes skip it.";
     const m = metaOf(c) || {};
@@ -13560,9 +13561,36 @@
         ? "Last refreshed " + refreshShown(m.lastRefresh, m.tz || (S.page || {}).tz) + "."
         : "Not refreshed yet.") +
       (skippedKeys().includes(c.key)
-        ? " Not refreshed in the last run: it reached the 15-minute limit. The next run starts with this chat."
+        ? " Not refreshed in the last run: " +
+          ((S.skipped || {}).why === "stopped" ? "the run stopped early" : "it reached the 15-minute limit") +
+          ". The next run starts with this chat."
         : "")
     );
+  }
+  /* how a pending chat gets its first refresh: the next scheduled run while a schedule is on, else by asking */
+  function firstRefreshText(c, retry) {
+    if (schedOn())
+      return (
+        (retry ? "The next scheduled run tries again" : "Gets its first refresh at the next scheduled run") +
+        " (or ask Claude to “refresh " +
+        c.name +
+        "”)."
+      );
+    return (
+      (retry ? "To try again, ask" : "Waiting for its first refresh. Ask") +
+      " Claude to “refresh " +
+      c.name +
+      "” (or “refresh my catch-up” for every chat)."
+    );
+  }
+  /* the chats' status lines, rewritten in place (a status change never rebuilds Settings mid-typing) */
+  function refreshChatLines() {
+    document.querySelectorAll(".chatcard[data-chat] > .chatline, .chatrow[data-chat] > .chatline").forEach(n => {
+      const c = S.chats.find(x => x.key === n.parentElement.dataset.chat);
+      const t = c ? chatLine(c) : "";
+      if (c && n.textContent !== t) n.textContent = t;
+    });
+    if (S.meta && !S.msgs.length && CUR && CUR.state === "pending") renderHeader();
   }
   function tagChip(c) {
     const t = el("span", "ctag c" + ((((c.color || 1) - 1) % 4) + 1), c.tag);
@@ -14588,12 +14616,7 @@
         renderRefresh();
         renderUpdates();
         renderSchedule();
-        /* the chats the last run's time limit skipped show on their lines: redraw them only when that list changes */
-        const sk = JSON.stringify(skippedKeys());
-        if (sk !== skipShown) {
-          skipShown = sk;
-          renderChats();
-        }
+        refreshChatLines();
       },
       () => {},
     );
@@ -14601,6 +14624,14 @@
       s => {
         S.sched = s.exists ? s.data() : null;
         renderSchedule();
+        refreshChatLines();
+      },
+      () => {},
+    );
+    db.doc("refresh/skipped").onSnapshot(
+      s => {
+        S.skipped = s.exists ? s.data() : null;
+        refreshChatLines();
       },
       () => {},
     );

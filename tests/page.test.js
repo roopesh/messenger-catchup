@@ -15719,9 +15719,9 @@ async function multiChat() {
   await until(p, () => document.querySelector('.chatrow[data-chat="chess2"]'));
   ok(
     (await mcText(p, '#set-body')).includes(
-      'Gets its first refresh at the next scheduled run (or ask Claude to “refresh Chess Club”).',
+      'Waiting for its first refresh. Ask Claude to “refresh Chess Club” (or “refresh my catch-up” for every chat).',
     ),
-    'F1 SET4, stage B: a pending chat says the next scheduled run refreshes it, or ask Claude',
+    'F1 SET4, stage B: a pending chat on a page with no schedule says to ask Claude',
   );
   // SET12, DM4, CT7: renaming a tag: empty, too long and duplicate refused; a good one shows at once, nothing else written
   for (const [t, why] of [
@@ -16262,13 +16262,20 @@ async function multiChat2() {
   );
   ok(!p.errors.length, 'B54: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
-  // F1 stage B: one schedule refreshes every chat. A chat the last run's 15-minute limit didn't reach says so on its
-  // All chats card and Settings row (refresh/status.skipped) until the next run starts; Add a chat says the next
-  // refresh reads the chat with the others; with refreshes only on request, a pending chat says to ask
+  // F1 stage B: one schedule refreshes every chat. A chat the last run didn't reach (refresh/skipped, which only a
+  // run's end writes) says so on its All chats card and Settings row; Add a chat says the next refresh reads the chat
+  // with the others; a pending chat names the next scheduled run only while a schedule is on
+  const LIVE = { mode: 'chain', every: 60, tz: 'America/Los_Angeles' };
+  const FUTURE = { armId: '20261123T170000Z-ab12', nextAt: '2099-01-01T00:00:00Z' };
   const sB = mcSeed({ chats: pend, extra: seeded });
-  sB['refresh/status'] = { state: 'done', finishedAt: '2026-11-23T17:21:00Z', skipped: ['book', 'chess'] };
+  sB['meta/chat'].schedule = LIVE;
+  sB['refresh/schedule'] = FUTURE;
+  sB['refresh/skipped'] = { keys: ['book', 'chess'], at: '2026-11-23T17:21:00Z', run: '2026-11-23T17:00:00Z' };
   p = await open(sB);
   const SKIP = 'Not refreshed in the last run: it reached the 15-minute limit. The next run starts with this chat.';
+  const SCHED = 'Gets its first refresh at the next scheduled run (or ask Claude to “refresh Chess Club”).';
+  const MANUAL =
+    'Waiting for its first refresh. Ask Claude to “refresh Chess Club” (or “refresh my catch-up” for every chat).';
   const lines = async () => {
     const o = {};
     for (const c of await p.$$eval('#v-all .chatcard', cs => cs.map(c => [c.dataset.chat, c.textContent])))
@@ -16287,10 +16294,8 @@ async function multiChat2() {
   ok(
     (L['set:book'] || '').includes(SKIP) &&
       ['set:trail', 'set:cam', 'set:chess'].every(k => L[k] && !L[k].includes(SKIP)) &&
-      L['set:chess'].includes(
-        'Gets its first refresh at the next scheduled run (or ask Claude to “refresh Chess Club”).',
-      ),
-    'F1 stage B: Settings: the chat the time limit skipped says so; the others, and a pending one, do not (' +
+      L['set:chess'].includes(SCHED),
+    'F1 stage B: Settings: the skipped chat says so; the others do not; a pending chat names the next scheduled run (' +
       JSON.stringify(L) +
       ')',
   );
@@ -16301,40 +16306,105 @@ async function multiChat2() {
     ) && !/scheduled refreshes yet/.test(addNote),
     'F1 stage B: Add a chat says the next refresh reads the new chat with the others (' + addNote.slice(0, 600) + ')',
   );
+  // review 6c: a status change never rebuilds Settings: a half-typed link survives, focus elsewhere, while the
+  // skipped notes update in place
+  await p.fill('#add-link', 'https://www.facebook.com/messages/t/99');
+  await p.click('.addform h3');
+  await p.evaluate(() => {
+    __rt.write('refresh/status', { state: 'running', startedAt: new Date().toISOString(), step: 'scan' });
+    __rt.write('refresh/skipped', { keys: ['trail'], at: new Date().toISOString(), run: new Date().toISOString() });
+  });
+  const moved = await until(
+    p,
+    s => document.querySelector('.chatrow[data-chat="trail"] .chatline').textContent.includes(s),
+    SKIP,
+  );
+  ok(
+    moved &&
+      (await p.inputValue('#add-link')) === 'https://www.facebook.com/messages/t/99' &&
+      !(await mcText(p, '.chatrow[data-chat="book"]')).includes(SKIP),
+    'F1 review 6c: a status and skipped change update the notes in place; a half-typed Add a chat link survives (' +
+      (await p.inputValue('#add-link')) +
+      ')',
+  );
   await p.click('#settings-close');
   await p.waitForTimeout(150);
   await p.evaluate(() =>
-    __rt.write('refresh/status', { state: 'running', startedAt: new Date().toISOString(), step: 'scan' }),
-  );
-  ok(
-    await until(p, s => !document.querySelector('#v-all').textContent.includes(s), SKIP),
-    'F1 stage B: the skipped note goes while the next run holds the lock',
+    __rt.write('refresh/status', { state: 'done', finishedAt: new Date().toISOString(), added: 3 }),
   );
   await p.evaluate(() =>
-    __rt.write('refresh/status', { state: 'done', finishedAt: new Date().toISOString(), skipped: ['cam'] }),
+    __rt.write('refresh/skipped', { keys: ['cam'], at: new Date().toISOString(), run: new Date().toISOString() }),
   );
   await until(p, s => document.querySelector('#v-all .chatcard[data-chat="cam"]').textContent.includes(s), SKIP);
   L = await lines();
   ok(
-    L['all:cam'].includes(SKIP) && !L['all:book'].includes(SKIP),
-    'F1 stage B: the note follows refresh/status: gone while a run holds the lock, then on the chat the new run skipped (' +
-      JSON.stringify(L) +
+    L['all:cam'].includes(SKIP) && !L['all:book'].includes(SKIP) && !L['all:trail'].includes(SKIP),
+    'F1 review 1: the note follows refresh/skipped, whatever refresh/status says (' + JSON.stringify(L) + ')',
+  );
+  // review 6b: a chain that has stopped is no schedule to wait for
+  await p.evaluate(() => __rt.write('refresh/schedule', { armId: 'x', nextAt: '2026-01-01T00:00:00Z' }));
+  await mcSettings(p);
+  ok(
+    await until(p, s => document.querySelector('.chatrow[data-chat="chess"]').textContent.includes(s), MANUAL),
+    'F1 review 6b: a stopped chain: the pending chat says to ask Claude (' +
+      (await mcText(p, '.chatrow[data-chat="chess"]')) +
       ')',
   );
   ok(!p.errors.length, 'F1 stage B: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
-  const sM = mcSeed({ chats: pend, extra: seeded });
-  sM['meta/chat'].schedule = { mode: 'manual' };
-  p = await open(sM);
-  await mcSettings(p);
-  ok(
-    (await mcText(p, '.chatrow[data-chat="chess"]')).includes(
-      'Waiting for its first refresh. Ask Claude to “refresh Chess Club” (or “refresh my catch-up” for every chat).',
-    ),
-    'F1 stage B: with refreshes only on request, a pending chat says to ask Claude (' +
-      (await mcText(p, '.chatrow[data-chat="chess"]')) +
-      ')',
+  // review 6b: no schedule, "manual" or an unknown mode: ask Claude; "recurring": the next scheduled run. 6a: the
+  // phrase for every chat is "refresh my catch-up" even with an added chat open
+  for (const [sc, want, why] of [
+    [undefined, MANUAL, 'no schedule'],
+    [{ mode: 'manual' }, MANUAL, 'refreshes only on request'],
+    [{ mode: 'B', every: 60 }, MANUAL, 'an unknown mode'],
+    [{ mode: 'recurring', every: 60 }, SCHED, 'a recurring task'],
+  ]) {
+    const sM = mcSeed({ chats: pend, extra: seeded });
+    if (sc) sM['meta/chat'].schedule = sc;
+    p = await open(sM);
+    await p.evaluate(() => openChat('cam'));
+    await p.waitForTimeout(200);
+    await mcSettings(p);
+    const t = await mcText(p, '.chatrow[data-chat="chess"]');
+    ok(
+      t.includes(want) && !/for every chat/.test(t.replace(want, '')),
+      'F1 review 6a/6b: ' + why + ', with Camera Club open: the pending line (' + t.slice(0, 200) + ')',
+    );
+    await p.context().close();
+  }
+  // B57: every All chats card's title starts just right of its tag, with or without an Open link (a pending chat has
+  // none); B56: a chat with no messages shows no counter strip left from the chat before; the pending chat's own
+  // header says how it gets its first refresh, as its card does
+  const s57 = mcSeed({ chats: pend, extra: seeded });
+  s57['meta/chat'].schedule = LIVE;
+  s57['refresh/schedule'] = FUTURE;
+  p = await open(s57);
+  const heads = await p.$$eval('#v-all .chatcard', cs =>
+    cs.map(c => {
+      const t = c.querySelector('.chathead .ctag').getBoundingClientRect();
+      const h = c.querySelector('.chathead h2').getBoundingClientRect();
+      return [c.dataset.chat, Math.round(h.left - t.right)];
+    }),
   );
+  ok(
+    heads.length === 4 && heads.every(([, gap]) => gap >= 4 && gap <= 12),
+    'B57: each card title sits just right of its tag, the pending card (no Open) too (' + JSON.stringify(heads) + ')',
+  );
+  await p.evaluate(() => openChat('cam'));
+  const camStrip = await until(p, () => document.querySelector('#strip').textContent.includes('new messages'));
+  await p.evaluate(() => openChat('chess'));
+  await until(p, () => document.querySelector('#h1').textContent === 'Chess Club');
+  await p.waitForTimeout(300);
+  ok(
+    camStrip && (await mcText(p, '#strip')) === '',
+    'B56: a chat with no messages shows no counter strip from the chat before (' + (await mcText(p, '#strip')) + ')',
+  );
+  ok(
+    (await mcText(p, '#window')) === 'No messages stored yet. ' + SCHED,
+    "F1 review 8: the pending chat's header says how it gets its first refresh (" + (await mcText(p, '#window')) + ')',
+  );
+  ok(!p.errors.length, 'B56/B57: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 }
 
