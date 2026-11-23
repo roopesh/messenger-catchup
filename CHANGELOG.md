@@ -21,6 +21,9 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 - `SKILL.md`: a line naming `references/chats.md`; the approval rule names a chat's own setting; a Messenger tab on any of the page's chats is Claude's to move.
 - `references/database.md` (and its copies): Several chats, `meta/chat.chats`, `assetUsage.byChat`.
 - **Backlog:** F1 keeps stages B and C; L1 gains stage A's claude.ai and live checks; R13's estimate notes added chats.
+- **From the check on claude.ai** (three chats on a scratch page; everything listed passed): All chats no longer tells you to "refresh <the chat you looked at last>" but uses the first chat's phrase (test: F1 check B); the per-chat reply selects update as soon as the page default is ticked (a focused checkbox no longer holds Settings back from redrawing); a long chat name cut short keeps the title's ▾. The last two are a focus rule and CSS, checked by eye on claude.ai rather than by a page test.
+
+
 ## [1.34.0] - 2026-11-22
 **A reply check cheap enough to run every few minutes** (BACKLOG F30, option C step 1; the owner chose frequent checks and "measure first"). MINOR: a new skill. Page and helper unchanged (`PAGE_VERSION` 4.0, helper 2.1).
 

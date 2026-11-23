@@ -68,6 +68,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 - **Stage B, one schedule across chats:** one scheduled run refreshes every chat one after another in the order dragged in Settings › Schedule, with the 15-minute cap and its "Not refreshed this run — time limit" flag, failures kept to their chat (`refresh/status.chats.<key>`, a beat-based lock), "How often" per chat, and photo packing for every chat (stage A packs the chat open on the page; under All chats, the first chat). Also `reply-check`'s one query covers the first chat's `outbox` only: add each chat's `KEY_outbox` with the schedule. Page 4.2. Tests RF (but RF8, RF9, RF11, RF12), LK, SET8, SET9, SPK5.
 - **Stage C, across chats:** one Ask over every chat with keyed citations (`[tea#412]`) and the match list (newest first or by chat, a chip per chat), full names across chats, Stats comparing the chats, By day on All chats and the summary across chats (`allchats/summary`). Tests SR, SD, CT2, CT3, PH5, SPK2.
 - Related: F25 (a Facebook group on the same page).
+- **Polish noticed in stage A's claude.ai check (Nov 22), for stage B:** a pending chat's kicker shows no chat name and an empty "Show messages" box; on wide screens a chat's name on its All chats card sits centred rather than beside its tag; removing a chat with no documents says "frees 0 files, 1 KB"; the URL keeps the last tab's hash on All chats; Settings' "Saved." notes linger after reopening.
+
 
 ### F25 · P2 · Catch up with Facebook group posts
 - **Ask (owner, Nov 14):** besides a Messenger group chat, catch up with the posts in a Facebook group.

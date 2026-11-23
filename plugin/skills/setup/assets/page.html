@@ -2104,11 +2104,12 @@
     min-width: 0;
   }
   button.picker {
+    position: relative;
     font: inherit;
     color: inherit;
     background: none;
     border: 0;
-    padding: 0;
+    padding: 0 0.75em 0 0;
     cursor: pointer;
     text-align: left;
     max-width: 100%;
@@ -2117,7 +2118,10 @@
     white-space: nowrap;
   }
   button.picker::after {
-    content: " ▾";
+    content: "▾";
+    position: absolute;
+    right: 0;
+    bottom: 0.35em;
     font-size: 0.6em;
     color: var(--muted);
   }
@@ -2667,7 +2671,8 @@
   const PAGE_VERSION = "4.1";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
-  const RP = () => (!CUR.home ? "refresh " + CUR.name : CFG().refreshPhrase || "refresh my catch-up");
+  const RP = () =>
+    !CUR.home && S.view !== "all" ? "refresh " + CUR.name : CFG().refreshPhrase || "refresh my catch-up";
   const OWNER = () => CFG().ownerName || "the page owner";
   const ALIASES = () => (CFG().ownerAliases || []).join(", ") || OWNER();
   const CHATNAME = () => CFG().threadName || "this Messenger group chat";
@@ -14032,7 +14037,13 @@
     const box = $("#set-body");
     if (!box || $("#settings").hidden) return;
     const ae = document.activeElement;
-    if (ae && box.contains(ae) && (ae.tagName === "INPUT" || ae.tagName === "SELECT") && ae.type !== "radio") return;
+    if (
+      ae &&
+      box.contains(ae) &&
+      (ae.tagName === "INPUT" || ae.tagName === "SELECT") &&
+      !/^(radio|checkbox)$/.test(ae.type)
+    )
+      return;
     box.textContent = "";
     if (S.canWrite === false) {
       box.append(el("p", "note", "Only people who can edit this page can add, remove or change its chats."));

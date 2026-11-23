@@ -15964,6 +15964,14 @@ async function multiChat2() {
     !/refresh Camera Club/.test(sched),
     "F1 review 10: the schedule line in an added chat doesn't name it (" + sched + ')',
   );
+  // claude.ai check B: back on All chats, the phrase is the first chat's, not the chat looked at last
+  await p.evaluate(() => {
+    S.view = 'all';
+    showView();
+  });
+  await p.waitForTimeout(200);
+  const rpAll = await p.evaluate(() => RP());
+  ok(!/Camera Club/.test(rpAll), "F1 check B: All chats doesn't use the last chat's phrase (" + rpAll + ')');
   // 7: with several chats a capture that doesn't name its chat (helper 2.1 or older) is refused
   await p.evaluate(() => openChat('trail'));
   await p.waitForTimeout(200);
