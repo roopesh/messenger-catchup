@@ -2,6 +2,17 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.34.0] - 2026-11-22
+**A reply check cheap enough to run every few minutes** (BACKLOG F30, option C step 1; the owner chose frequent checks and "measure first"). MINOR: a new skill. Page and helper unchanged (`PAGE_VERSION` 4.0, helper 2.1).
+
+### Added
+- **The `reply-check` skill** ("check replies", "reply check", or a message starting "Scheduled reply check"; `/messenger-catchup:reply-check`). Its `SKILL.md` is about 1 KB and names no other file. It finds the page (the URL in the message, the one the conversation uses, or `Artifact list` as the replies skill does), makes one `ArtifactData query outbox` for a `queued` row with `limit` 1, and with none says "No replies waiting." and stops: no other read, file, browser or schedule. With one, it hands over to `messenger-catchup:replies`, which checks approval and the run lock, posts and reports. Rows in `sending` don't count: the replies skill leaves them for the next refresh. Nothing schedules it yet: step 2 measures an empty check's cost on the owner's account and then sets its schedule with the owner.
+- The refresh skill's "Which part to follow" sends "check replies" to the new skill (one short line: its `SKILL.md` is within 60 bytes of its 20 KB cap).
+- Tests: `test_tools.TestReplyCheck` (under 1,500 bytes and no files of its own, its trigger phrases exactly "check replies", "reply check" and "Scheduled reply check" with no "send replies" or refresh in its description, the one query and its stop, the hand-over, the page found as the replies skill finds it); the shipped-file, ZIP, skill-name and stale-wording tests include it. Sim `S: reply check`: the query its file gives, run against the stand-in database: nothing queued (only `sending`, `sent` and `cancelled` rows) is one read and one line; a queued row goes to the replies skill's run, which posts it and releases the lock.
+
+### Changed
+- CLAUDE.md, README.md and docs/STATUS.md list four skills. BACKLOG F30 records step 1 and what step 2 decides with the owner.
+
 ## [1.32.0] - 2026-11-22
 **Fuller day summaries, kept current by every refresh, with Copy for chat** (BACKLOG F29, decided on the owner's decision board as option A). MINOR: a new page feature and refresh procedure changes. Page **`PAGE_VERSION` 4.0** (from 3.9); helper unchanged (2.1).
 

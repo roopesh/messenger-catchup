@@ -18,6 +18,7 @@ Files that ship with this skill, relative to its folder `${CLAUDE_SKILL_DIR}` (i
 - **First run** (`meta/chat.lastI` is -1, right after setup): the Refresh steps, with `references/first-run.md`.
 - **"Refresh my catch-up", or a scheduled run:** the Refresh steps below.
 - **"Send replies"** (post queued replies now, without a refresh): the `messenger-catchup:replies` skill.
+- **"Check replies":** `messenger-catchup:reply-check`.
 - **"Reply 3232" / "open #3232":** `references/open-message.md`.
 - **The user asks for summaries of past days:** `references/day-summaries.md` › Backfill; **captions for older photos:** `references/photos.md` › Captions for older photos.
 - **The user asks about the schedule or the requirements:** `messenger-catchup:setup`. **About questions they asked on the page, or for a note or analysis worth keeping:** `references/database.md` › What the page saves for Claude.

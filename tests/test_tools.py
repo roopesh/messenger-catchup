@@ -12,6 +12,7 @@ _spec.loader.exec_module(sync)
 SKILL = os.path.join("plugin", "skills", "refresh")
 SETUP = os.path.join("plugin", "skills", "setup")
 REPLIES = os.path.join("plugin", "skills", "replies")
+REPLY_CHECK = os.path.join("plugin", "skills", "reply-check")
 
 
 def read(*p):
@@ -62,6 +63,7 @@ REPLIES_SHIPPED = [
     "references/outbox.md",
     "references/posting-with-helper.md",
 ]
+REPLY_CHECK_SHIPPED = ["SKILL.md"]
 
 
 class TestHelperCopies(unittest.TestCase):
@@ -203,6 +205,7 @@ class TestNoLeftoverNames(unittest.TestCase):
             [os.path.join(SKILL, f) for f in SHIPPED]
             + [os.path.join(SETUP, f) for f in SETUP_SHIPPED]
             + [os.path.join(REPLIES, f) for f in REPLIES_SHIPPED]
+            + [os.path.join(REPLY_CHECK, f) for f in REPLY_CHECK_SHIPPED]
         ):
             self.assertNotRegex(read(f), r"\bcc(Scan|Verify|Capture)\b|cctool|cc-capture|cc-cmd|cc_result", f)
 
@@ -1029,7 +1032,7 @@ class TestDaySummaries(unittest.TestCase):
         "include older" checkbox (found on claude.ai in the Refreshing help, F29 review)."""
         stale = re.compile(r"include (them|older)|with its checkbox|messages before the catch-up window", re.I)
         texts = {"page.html": self.page}
-        for skill in ("refresh", "setup", "replies"):
+        for skill in ("refresh", "setup", "replies", "reply-check"):
             d = os.path.join(ROOT, "plugin", "skills", skill)
             for base, _, files in os.walk(d):
                 for f in files:
@@ -1389,7 +1392,7 @@ class TestSetupSkill(unittest.TestCase):
 
         plugin = json.loads(read("plugin", ".claude-plugin", "plugin.json"))["name"]
         skills = sorted(os.listdir(os.path.join(ROOT, "plugin", "skills")))
-        self.assertEqual(skills, ["refresh", "replies", "setup"])
+        self.assertEqual(skills, ["refresh", "replies", "reply-check", "setup"])
         self.assertIn("`%s:setup`" % plugin, in_skill("SKILL.md"))
         self.assertIn("`%s:replies`" % plugin, in_skill("SKILL.md"))
         self.assertIn("`%s:refresh`" % plugin, in_setup("SKILL.md"))
@@ -1397,7 +1400,11 @@ class TestSetupSkill(unittest.TestCase):
         self.assertIn("`%s:refresh`" % plugin, in_replies("SKILL.md"))
         self.assertIn("`%s:setup`" % plugin, in_replies("SKILL.md"))
         text = (
-            in_skill("SKILL.md") + in_setup("SKILL.md") + in_replies("SKILL.md") + in_skill("references", "outbox.md")
+            in_skill("SKILL.md")
+            + in_setup("SKILL.md")
+            + in_replies("SKILL.md")
+            + read(REPLY_CHECK, "SKILL.md")
+            + in_skill("references", "outbox.md")
         )
         named = set(re.findall(r"\b%s:([a-z-]+)" % plugin, text))
         self.assertLessEqual(named, set(skills), "a skill name that doesn't exist")
@@ -2400,6 +2407,51 @@ class TestReleaseScript(unittest.TestCase):
         self.assertNotIn("\n## [", out)
 
 
+class TestReplyCheck(unittest.TestCase):
+    """F30 option C, step 1: a frequent scheduled check that reads the outbox once and hands a waiting reply to the
+    replies skill. It must stay tiny (it runs every few minutes) and never take "send replies" or a refresh."""
+
+    def setUp(self):
+        self.rc = read(REPLY_CHECK, "SKILL.md")
+        self.desc = json.loads(re.search(r"^description: (.*)$", self.rc, re.M).group(1))
+
+    def test_it_is_tiny(self):
+        self.assertLess(len(self.rc.encode()), 1500)
+        self.assertNotRegex(self.rc, r"`(assets|scripts|references)/", "it reads no file of its own")
+
+    def test_routing(self):
+        self.assertRegex(self.rc, r"(?m)^name: reply-check$")
+        phrases = re.findall(r'"([^"]+)"', self.desc)
+        self.assertEqual(phrases, ["check replies", "reply check", "Scheduled reply check"])
+        self.assertIn("Use only for", self.desc)
+        self.assertNotRegex(self.desc, r"(?i)send replies|send my replies|refresh|catch-up run")
+        self.assertIn(
+            '- **"Check replies":** `messenger-catchup:reply-check`.',
+            section(in_skill("SKILL.md"), "Which part to follow"),
+        )
+
+    def test_one_read_then_stop_or_hand_over(self):
+        read_step = re.search(r"(?m)^2\. \*\*One read:\*\*.*$", self.rc).group(0)
+        for must in (
+            '`ArtifactData query outbox` with `where` `["state","==","queued"]` and `limit` 1',
+            'None: say "No replies waiting." and stop.',
+            "no other read, file, browser or schedule",
+        ):
+            self.assertIn(must, read_step)
+        self.assertNotIn("sending", self.rc, "rows in sending are the next refresh's: they don't start a reply run")
+        hand = re.search(r"(?m)^3\. .*$", self.rc).group(0)
+        self.assertIn("follow `messenger-catchup:replies` on that page", hand)
+        self.assertIn("never posts by itself", hand)
+        self.assertNotRegex(self.rc, r"tabs_context_mcp|javascript_tool|refresh/status|outboxAuto")
+
+    def test_it_finds_the_page_as_the_replies_skill_does(self):
+        self.assertIn(
+            'an artifact titled "… Catch-up" whose `meta/chat` has `kind:"messenger-catchup"`', in_replies("SKILL.md")
+        )
+        self.assertIn('the artifact titled "… Catch-up" whose `meta/chat` has `kind:"messenger-catchup"`', self.rc)
+        self.assertIn("the URL in the message, else the one this conversation uses", self.rc)
+
+
 class TestZip(unittest.TestCase):
     def test_make_zip_contents(self):
         with tempfile.TemporaryDirectory() as t:
@@ -2409,6 +2461,7 @@ class TestZip(unittest.TestCase):
                 + ["skills/refresh/" + f for f in SHIPPED]
                 + ["skills/setup/" + f for f in SETUP_SHIPPED]
                 + ["skills/replies/" + f for f in REPLIES_SHIPPED]
+                + ["skills/reply-check/" + f for f in REPLY_CHECK_SHIPPED]
             )
             for f in files:
                 os.makedirs(os.path.dirname(os.path.join(dst, "plugin", f)), exist_ok=True)
@@ -2442,6 +2495,7 @@ class TestZip(unittest.TestCase):
                 + [SKILL + "/" + f for f in SHIPPED]
                 + [SETUP + "/" + f for f in SETUP_SHIPPED]
                 + [REPLIES + "/" + f for f in REPLIES_SHIPPED]
+                + [REPLY_CHECK + "/" + f for f in REPLY_CHECK_SHIPPED]
             ),
         )
 
