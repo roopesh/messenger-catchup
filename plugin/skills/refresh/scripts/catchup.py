@@ -65,6 +65,8 @@
                                      to a page from before F1 ({} when it has it). With KEY: where that chat's documents
                                      live, its --chat argument, whether its replies go out without asking, and for a
                                      pending chat the meta/chat-KEY to seed. references/chats.md.
+  catchup.py versions                `versions.page` and `versions.helper` for meta/chat (references/database.md ›
+                                     Versions), read from this skill's assets/page.html and assets/helper.user.js.
   --chat=KEY (any command above)     Work on the added chat KEY: out_dirs hold its documents under their own names
                                      (cam_chunks/, meta/chat-cam.json), manifests name its collections, and a WORK
                                      belongs to one chat. Without it, the page's first chat, as before.
@@ -3223,6 +3225,29 @@ def restore_summary(work, run, bdir, decp=None, dry=False, name=None):
     print("write: " + told)
 
 
+def versions_cmd():
+    """What this skill ships, for meta/chat.versions: copied from here, never typed from memory or an earlier write
+    (v1.35.0 refreshes kept writing helper 2.1 while shipping 2.3, which hid the page's helper notices)."""
+    assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
+
+    def find(name, pat):
+        try:
+            with open(os.path.join(assets, name), encoding="utf-8") as f:
+                return re.search(pat, f.read())
+        except OSError:
+            return None
+
+    page = find("page.html", r'const PAGE_VERSION\s*=\s*"([^"]+)"')
+    helper = find("helper.user.js", r"@version\s+(\S+)")
+    if not (page and helper):
+        sys.exit(
+            "catchup.py versions: PAGE_VERSION or the helper's @version not found in "
+            + assets
+            + "; run it from the refresh skill's scripts folder, with its assets beside it"
+        )
+    print(json.dumps({"page": page.group(1), "helper": helper.group(1)}))
+
+
 if __name__ == "__main__":
     _chat = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--chat=")]
     sys.argv = [x for x in sys.argv if not x.startswith("--chat=")]
@@ -3256,6 +3281,8 @@ if __name__ == "__main__":
         if len(sys.argv) not in (3, 4):
             sys.exit(__doc__)
         chats_cmd(sys.argv[2], sys.argv[3] if len(sys.argv) == 4 else None)
+    elif cmd == "versions":
+        versions_cmd()
     elif cmd == "restore-summary":
         a = [x for x in sys.argv[2:] if not x.startswith("--")]
         bk = [x.split("=", 1)[1] for x in sys.argv[2:] if x.startswith("--backup=")]

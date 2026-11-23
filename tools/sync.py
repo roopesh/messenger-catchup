@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Generated copies, kept in sync (npm run sync; npm test runs --check):
-1. The page's bookmarklet, from the refresh skill's assets/helper.user.js. (The userscript itself is installed from the
+1. The page's bookmarklet and its HELPER_VERSION, from the refresh skill's assets/helper.user.js. (The userscript itself is installed from the
    GitHub release and updates itself; the page only links to it.)
 2. The setup and replies skills' copies of the refresh skill's shared files (SHARED, REPLIES_SHARED). A skill can only
    count on its own folder, so each carries its own copy. Edit the refresh skill's file; never a copy.
@@ -47,6 +47,12 @@ def generate(page, src):
         pat = re.compile(r'(<textarea id="%s"[^>]*>)(.*?)(</textarea>)' % tid, re.S)
         assert len(pat.findall(out)) == 1, "expected one #%s textarea" % tid
         out = pat.sub(lambda m: m.group(1) + html.escape(val) + m.group(3), out)
+    # the helper version the page compares each Chrome's with (its update notices)
+    ver = re.search(r"@version\s+(\S+)", src)
+    assert ver, "@version not found in the helper"
+    pat = re.compile(r'(const HELPER_VERSION = ")[^"]*(";)')
+    assert len(pat.findall(out)) == 1, "expected one HELPER_VERSION in the page"
+    out = pat.sub(lambda m: m.group(1) + ver.group(1) + m.group(2), out)
     return out
 
 
