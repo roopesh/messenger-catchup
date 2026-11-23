@@ -7416,7 +7416,9 @@ const DAY = 864e5;
 const iso = msAgo => new Date(Date.now() - msAgo).toISOString();
 const LAST = 'Nov 20, 9:04 AM';
 const metaWith = o => Object.assign({}, META, { pageVersion: PV, lastRefresh: LAST }, o);
-const vers = o => Object.assign({ page: PV, helper: '2.0', refresh: LAST, browsers: {} }, o);
+/* the helper the page shipped with (v1.35.1: a Chrome behind it is flagged even when versions.helper is stale) */
+const HV = (SRC.match(/const HELPER_VERSION\s*=\s*"([^"]+)"/) || [])[1] || '0.0';
+const vers = o => Object.assign({ page: PV, helper: HV, refresh: LAST, browsers: {} }, o);
 const withMeta = (meta, extra) => Object.assign(SEED(), { 'meta/chat': meta }, extra);
 /* the visible notices' text, without their Dismiss buttons; null when the page has no notice area at all */
 const noticeTexts = p =>
@@ -7591,7 +7593,7 @@ async function notices() {
       n[0].includes('Chrome “Home” ran helper 1.1') &&
       /can't update itself/.test(n[0]) &&
       links.length === 1 &&
-      links[0].t === 'Install the userscript' &&
+      links[0].t === 'Update helper' &&
       links[0].href === inst &&
       links[0].target === '_blank' &&
       /\bnoopener\b/.test(links[0].rel),
@@ -7614,7 +7616,7 @@ async function notices() {
         ? n && n.length === 1 && n[0].includes('ran helper ' + h + ", which can't update itself")
         : n &&
           n.length === 1 &&
-          n[0].includes('Chrome “Work Mac” ran helper ' + h + '; the current one is 2.0') &&
+          n[0].includes('Chrome “Work Mac” ran helper ' + h + '; the current one is ' + HV) &&
           /Check for updates/.test(n[0]);
     ok(
       good,
@@ -7630,11 +7632,40 @@ async function notices() {
     );
     await p.close();
   }
-  for (const h of ['2.0', '2.1', '2', '2.0.0'])
+  for (const h of [HV, HV + '.0', '9.9'])
     await none(
       withMeta(metaWith({ versions: vers({ browsers: { 'Work Mac': { helper: h, at: iso(DAY) } } }) })),
-      'U9: helper ' + h + ' is not behind 2.0',
+      'U9: helper ' + h + ' is not behind ' + HV,
     );
+  /* v1.35.1: versions.helper is stale (v1.35.0 refreshes wrote 2.1 while shipping 2.3) and every Chrome ran it: the
+     page's own helper version still shows the last refresh's Chrome as behind, named, with a direct Update helper link */
+  p = await open(
+    withMeta(
+      metaWith({
+        versions: vers({
+          helper: '2.1',
+          browsers: { 'Work Mac': { helper: '2.1', at: iso(3600000) }, Home: { helper: '2.1', at: iso(2 * DAY) } },
+        }),
+      }),
+    ),
+  );
+  n = await noticeTexts(p);
+  links = await noticeLinks(p);
+  ok(
+    n &&
+      n.length === 1 &&
+      n[0].startsWith('At the last refresh, Chrome “Work Mac” ran helper 2.1; the current one is ' + HV + '.') &&
+      /Check for updates/.test(n[0]) &&
+      links.length === 1 &&
+      links[0].t === 'Update helper' &&
+      links[0].href === 'https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js',
+    'notices: a stale versions.helper (2.1) with every Chrome on 2.1: the newest-used Chrome is told to update to ' +
+      HV +
+      ', with the Update helper link (' +
+      JSON.stringify([n, links]) +
+      ')',
+  );
+  await p.close();
   /* U10: no helper (Claude injected), or a version that can't be read */
   for (const h of ['none', '', 'dev', null])
     await none(
@@ -7643,7 +7674,13 @@ async function notices() {
     );
   const noH = vers({ browsers: { Home: { helper: '1.1', at: iso(DAY) } } });
   delete noH.helper;
-  await none(withMeta(metaWith({ versions: noH })), 'U10: versions without helper shows nothing');
+  p = await open(withMeta(metaWith({ versions: noH })));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && n[0].includes("ran helper 1.1, which can't update itself. The current one is " + HV),
+    "U10: versions without helper: the page's own helper version is the current one (" + JSON.stringify(n) + ')',
+  );
+  await p.close();
   await none(
     withMeta(metaWith({ versions: vers({ browsers: { Home: 'x', Work: null, Lab: { helper: '1.1' } } }) })),
     'U10: malformed browser entries (not an object, no at) show nothing',
@@ -7716,7 +7753,7 @@ async function notices() {
   await p.evaluate(() => {
     const m = __rt.get('meta/chat');
     m.pageVersion = m.versions.page = '10.0';
-    m.versions.helper = '2.1';
+    m.versions.helper = '9.9';
     __rt.write('meta/chat', m);
   });
   await until(p, () => document.querySelectorAll('#upd p').length === 2, null, 3000);
@@ -7850,7 +7887,7 @@ async function notices() {
   );
   await p.close();
   /* U22: D (can't update itself) for a Chrome used before, worded with when it was last used */
-  p = await open(two({ 'Work Mac': { helper: '2.0', at: iso(3600000) }, Home: { helper: '1.1', at: iso(3 * DAY) } }));
+  p = await open(two({ 'Work Mac': { helper: HV, at: iso(3600000) }, Home: { helper: '1.1', at: iso(3 * DAY) } }));
   n = await noticeTexts(p);
   const homeDay = await p.evaluate(
     at => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
@@ -7869,7 +7906,7 @@ async function notices() {
   await p.close();
   /* U23: "Chrome" is what a run with no browser name writes; it may be any named Chrome, so only the newest counts */
   await none(
-    two({ 'Work Mac': { helper: '2.0', at: iso(3600000) }, Chrome: { helper: '1.1', at: iso(2 * DAY) } }),
+    two({ 'Work Mac': { helper: HV, at: iso(3600000) }, Chrome: { helper: '1.1', at: iso(2 * DAY) } }),
     'U23: an older entry under the fallback name "Chrome" shows nothing',
   );
   p = await open(two({ Chrome: { helper: '1.1', at: iso(3600000) }, Home: { helper: '1.1', at: iso(2 * DAY) } }));
@@ -7881,11 +7918,15 @@ async function notices() {
       ')',
   );
   await p.close();
-  p = await open(two({ Chrome: { helper: '2.0', at: iso(3600000) }, Home: { helper: '1.1', at: iso(2 * DAY) } }));
+  p = await open(two({ Chrome: { helper: HV, at: iso(3600000) }, Home: { helper: '1.1', at: iso(2 * DAY) } }));
   n = await noticeTexts(p);
   ok(
     n && n.length === 1 && n[0].startsWith('When Chrome “Home” was last used'),
-    'notices U23: the newest entry is "Chrome" on 2.0: an older Chrome on 1.1 still gets D (' + JSON.stringify(n) + ')',
+    'notices U23: the newest entry is "Chrome" on ' +
+      HV +
+      ': an older Chrome on 1.1 still gets D (' +
+      JSON.stringify(n) +
+      ')',
   );
   await p.close();
   /* U24: a notice's text is laid out as text, not as a message row's grid (#43: it shared the class .msg) */

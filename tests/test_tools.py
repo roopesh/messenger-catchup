@@ -113,6 +113,14 @@ class TestHelperCopies(unittest.TestCase):
         self.assertIn("found it!", urllib.parse.unquote(self.textarea(out, "jump-bm")))
         self.assertEqual(sync.generate(out, edited), out, "generate is not idempotent")
 
+    def test_page_helper_version_follows_the_helper(self):
+        """v1.35.1: the page compares each Chrome's helper with the one it shipped with, written by sync."""
+        ver = re.search(r"@version\s+(\S+)", self.src).group(1)
+        self.assertIn('const HELPER_VERSION = "%s";' % ver, self.page)
+        edited = self.src.replace("@version      " + ver, "@version      9.9")
+        self.assertNotEqual(edited, self.src)
+        self.assertIn('const HELPER_VERSION = "9.9";', sync.generate(self.page, edited))
+
     def test_check_mode_exit_code(self):
         p = subprocess.run(
             ["python3", os.path.join(ROOT, "tools", "sync.py"), "--check"], capture_output=True, text=True
@@ -331,6 +339,7 @@ class TestSkillReferences(unittest.TestCase):
                 "relink",
                 "restore",
                 "restore-summary",
+                "versions",
             ],
         )
         rare = {
@@ -339,6 +348,7 @@ class TestSkillReferences(unittest.TestCase):
             "check-day-summaries": "day-summaries.md",
             "captions": "photos.md",
             "chats": "chats.md",
+            "versions": "database.md",
         }
         for c in cmds:
             where = in_skill("references", rare[c]) if c in rare else in_skill("SKILL.md")

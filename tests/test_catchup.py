@@ -5123,6 +5123,26 @@ def chats_out(*a):
     return json.loads(quiet(catchup.chats_cmd, *a))
 
 
+class TestVersionsCmd(unittest.TestCase):
+    """v1.35.1: `catchup.py versions` prints what the skill ships, for meta/chat.versions (refreshes had kept writing a
+    stale helper version by hand)."""
+
+    def test_prints_page_and_helper_from_the_skills_files(self):
+        sk = os.path.join(ROOT, "plugin", "skills", "refresh", "assets")
+        with open(os.path.join(sk, "page.html"), encoding="utf-8") as f:
+            page = re.search(r'const PAGE_VERSION\s*=\s*"([^"]+)"', f.read()).group(1)
+        with open(os.path.join(sk, "helper.user.js"), encoding="utf-8") as f:
+            helper = re.search(r"@version\s+(\S+)", f.read()).group(1)
+        self.assertEqual(json.loads(quiet(catchup.versions_cmd)), {"page": page, "helper": helper})
+
+    def test_database_md_says_to_copy_them_from_it(self):
+        with open(
+            os.path.join(ROOT, "plugin", "skills", "refresh", "references", "database.md"), encoding="utf-8"
+        ) as f:
+            db = f.read()
+        self.assertIn("copy both from `python3 catchup.py versions`", db)
+
+
 class TestChats(unittest.TestCase):
     """F1 stage A: several chats on one page. An added chat's documents live under its key (cam_chunks, meta/chat-cam),
     catchup.py --chat=KEY reads and writes only those, a WORK belongs to one chat, and the page's first chat keeps its
