@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      2.4
+// @version      2.5
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -25,13 +25,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '2.4';
+  window.__mcHelper = '2.5';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '2.4');
+  root.setAttribute('data-mc-helper', '2.5');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -476,9 +476,9 @@
       people: [...pairs].map(([k, n]) => k.split('\u0000').concat(n)),
     };
   }
-  /* scan: scroll back from the newest message until a STOP id (or, for a first run, FIRST.count messages, or the top of
-     the chat), then settle reply parents. OPT: {base (numbers the warnings), stallMs (default 30 s), topMs (a test
-     option: the top-of-chat wait, default 12 s)}. Stops with err "stalled" when nothing new loads for stallMs, so
+  /* scan: scroll back from the newest message until a STOP id (or, for a first run, FIRST.count messages or the first
+     message older than FIRST.days days, or the top of the chat), then settle reply parents. OPT: {base (numbers the
+     warnings), stallMs (default 30 s), topMs (a test option: the top-of-chat wait, default 12 s)}. Stops with err "stalled" when nothing new loads for stallMs, so
      Claude retries instead of waiting on a hung scan. */
   async function mcScan(STOPS, FIRST, OPT) {
     STOPS = STOPS || [];
@@ -591,9 +591,33 @@
           await sleep(700);
         }
         collect();
+        /* FIRST.days (F34): the anchor is the newest message older than the cutoff, read from the time labels; a message
+           with no readable time is passed over. FIRST.count, given with it, caps the scan in case no label is readable. */
+        const cut = FIRST && FIRST.days ? Date.now() - FIRST.days * 864e5 : 0;
+        const now = new Date();
+        const tsc = new Map();
+        const tsOf = id => {
+          if (!tsc.has(id)) {
+            const w = (((R.info[id] || {}).label || '').match(AT) || [])[1];
+            const d = w && mcDate(w, now);
+            const mn = w && mcMinutes(w);
+            tsc.set(id, d && mn != null ? new Date(d + 'T00:00:00').getTime() + mn * 60000 : null);
+          }
+          return tsc.get(id);
+        };
         const hit = () => {
-          if (FIRST && FIRST.count) {
-            if (R.order.length > FIRST.count) return R.order[R.order.length - FIRST.count - 1];
+          if (FIRST && (FIRST.count || FIRST.days)) {
+            if (cut) {
+              let k = -1;
+              for (let i = 0; i < R.order.length; i++) {
+                const t = tsOf(R.order[i]);
+                if (t == null) continue;
+                if (t >= cut) break;
+                k = i;
+              }
+              if (k >= 0) return R.order[k];
+            }
+            if (FIRST.count && R.order.length > FIRST.count) return R.order[R.order.length - FIRST.count - 1];
             return R.atTop ? '__top__' : null;
           }
           return STOPS.find(m => R.order.includes(m));
@@ -1818,7 +1842,7 @@
       return { started: true };
     },
     post: (a, id) => mcPost(a, id),
-    ping: () => ({ v: '2.4' }),
+    ping: () => ({ v: '2.5' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

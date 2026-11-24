@@ -361,15 +361,18 @@ def chats_cmd(meta_file, key=None):
             "chatUrl": c.get("url"),
             "threadName": c.get("name"),
             "shortName": c.get("tag"),
-            "firstCount": c.get("start") or 300,
+            "firstCount": c.get("start") or (FIRST_DAYS_CAP if c.get("days") else 300),
             "chunkSize": 82,
             "lastI": -1,
             "anchorMids": [],
             "markerMode": None,
         }
+        if c.get("days") and not c.get("start"):
+            out["seed"]["firstDays"] = c["days"]
     print(json.dumps(out, indent=1))
 
 
+FIRST_DAYS_CAP = 5000  # F34: a first read of N days also stops at this many messages, in case no time label reads
 RUN_MINUTES = 15  # a scheduled run over every chat starts no new chat from this many minutes on (F1 stage B)
 EVERY_SLACK = 15  # How often: a chat is due this many minutes early (a chain run starts 3 minutes early each time)
 

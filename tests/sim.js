@@ -1197,6 +1197,24 @@ sim('E: nested scrolling box', { s: 20 }, async b => {
   );
   await ctx.close();
 });
+sim('F34: a first scan by days', { s: 32 }, async b => {
+  const { ctx, p } = await fresh(b);
+  let r;
+  // the clock is noon today: #20-24 are labelled Yesterday (9:20-9:24 AM), #25 on time-only (today), older ones dated
+  await mode(p, {}, 120);
+  r = await bridge(p, 'scan', { first: { days: 1 } });
+  ok(
+    r && !r.err && r.anchor === 'mid.$mock24' && r.win === 95,
+    'F34: first:{days:1} stops at the newest message older than a day and reads the 95 after it (' + short(r) + ')',
+  );
+  await mode(p, {}, 120);
+  r = await bridge(p, 'scan', { first: { days: 1, count: 50 } });
+  ok(
+    r && !r.err && r.win === 50,
+    'F34: a count given with days caps the scan, should no time label read (' + short(r) + ')',
+  );
+  await ctx.close();
+});
 sim('E: progress bars inside messages', { s: 25 }, async b => {
   const { ctx, p } = await fresh(b);
   let r;

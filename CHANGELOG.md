@@ -2,6 +2,25 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.40.0] - 2026-11-24
+**Add a chat asks for days, not messages** (BACKLOG F34; the owner's request, Nov 23). MINOR: Add a chat's history choice changed, and a first refresh of an added chat now reads back a number of days. Page **`PAGE_VERSION` 4.6** (from 4.5); helper **2.5** (from 2.4). `SKILL.md` unchanged.
+
+### Changed
+- **Settings › Add a chat:** "How far back to read first" offers The last day (the default), The last 3 days, The last week, The last 2 weeks and The last month, and writes `chats.<key>.days`, in place of a message count (`start`: 300, 1,000 or 3,000). Entries written before keep their `start` and are read as before.
+- **Helper 2.5:** a first scan takes `first:{days:D}`: it stops at the newest message older than D days, read from Messenger's time labels (a message with no readable time is passed over), or at the top of the chat. A `count` given with it caps the scan, should no label read.
+- **`catchup.py chats`** seeds an added chat's first refresh with `firstDays` from `days` and `firstCount` 5000 as that cap (`FIRST_DAYS_CAP`); an older entry's `start` seeds `firstCount` as before. `references/first-run.md` scans with `first:{days:D,count:N}` when `firstDays` is set, injecting the current helper over 2.4 or older; `references/chats.md` and `references/database.md` name the new fields. Setup's and replies' copies synced.
+
+### Fixed
+- The note after adding a chat said to ask Claude to refresh it, though a scheduled run now gives a new chat its first refresh (v1.38.0). It now says what the chat's row says: the next scheduled run, or, with no schedule, ask Claude.
+
+### Tests
+- Sim `F34`: on the mock (noon today), `first:{days:1}` stops at the last message labelled Yesterday and reads the 95 after it; `{days:1,count:50}` stops at 50.
+- Page (`multiChat`): Add a chat's options and default, the entry it writes (`days`, no `start`), and the note after adding.
+- `test_catchup`: a pending chat with `days` gets `firstDays` and the cap in its seed; one with `start` gets no `firstDays`.
+
+### Backlog
+- F34 removed: history in days shipped here; adding a chat by name with suggestions dropped at the owner's call (Nov 24: links stay, a search per check would cost tokens). L1: the stage B checks seen on the owner's page removed; a live check of a first refresh by days added.
+
 ## [1.39.0] - 2026-11-23
 **The chats' order and How often per chat** (BACKLOG F1, stage B leftovers; the owner's answers q6 and q10). MINOR: new Settings controls, and scheduled runs now skip chats that aren't due. Page **`PAGE_VERSION` 4.5** (from 4.4); helper unchanged (2.4). `SKILL.md` unchanged.
 
