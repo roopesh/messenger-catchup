@@ -16413,12 +16413,13 @@ async function multiChat2() {
 // page default `meta/chat.chatEvery` and each chat's `every`; catchup.py's run-plan reads them (TestRunPlan)
 async function multiChat3() {
   const chess = { chess: { name: 'Chess Club', tag: 'Chess', color: 4, order: 3, state: 'active', thread: '7171' } };
-  let p = await mcOpen({ chats: chess });
+  /* tall enough that Settings shows every row without scrolling, for the drag below */
+  let p = await mcOpen({ chats: chess }, { viewport: { width: 1000, height: 2400 } });
   await mcSettings(p);
   const body = await mcText(p, '#set-body');
   ok(
     body.includes(
-      "Trail Crew always refreshes first. Use Move up and Move down to set the order of the other chats: refreshes, the title's chat list and All chats follow it.",
+      "Trail Crew always refreshes first. Use Move up and Move down to set the order of the others. A run starts with any chat the last one didn't reach, and a new chat's first refresh comes after the rest.",
     ) &&
       !(await p.$('#mv-up-trail')) &&
       !(await p.$('#mv-dn-trail')),
@@ -16482,6 +16483,21 @@ async function multiChat3() {
       JSON.stringify(ch) +
       ')',
   );
+  // by mouse drag (desktop): Camera Club's handle onto Chess Club's row puts it in that place, the same write
+  const w1 = await mcNWrites(p);
+  await p.dragAndDrop('.chatrow[data-chat="cam"] .draghandle', '.chatrow[data-chat="chess"]');
+  await until(p, () => __rt.get('meta/chat').chats.cam.order === 1);
+  const wd = await p.evaluate(n => __rt.writes.slice(n), w1);
+  ok(
+    wd.length === 1 &&
+      JSON.stringify(wd[0].v.chats) ===
+        JSON.stringify({ cam: { order: 1 }, chess: { order: 2 }, book: { order: 3 } }) &&
+      (await rowsAre(['trail', 'cam', 'chess', 'book'])) &&
+      !(await p.$('.chatrow[data-chat="trail"] .draghandle')),
+    'F1 q6: dragging a row by its handle writes the whole order, as the buttons do; the first chat has no handle (' +
+      JSON.stringify(wd) +
+      ')',
+  );
   // the title's chat list and All chats follow the order; the first chat stays first
   await p.click('#settings-close');
   await p.click('#h1');
@@ -16489,8 +16505,8 @@ async function multiChat3() {
   await p.keyboard.press('Escape');
   const cards = await p.$$eval('#v-all .chatcard', cs => cs.map(c => c.dataset.chat));
   ok(
-    JSON.stringify(picks) === JSON.stringify(['all', 'trail', 'chess', 'book', 'cam', 'add']) &&
-      JSON.stringify(cards) === JSON.stringify(['trail', 'chess', 'book', 'cam']),
+    JSON.stringify(picks) === JSON.stringify(['all', 'trail', 'cam', 'chess', 'book', 'add']) &&
+      JSON.stringify(cards) === JSON.stringify(['trail', 'cam', 'chess', 'book']),
     "F1 q6: the title's chat list and All chats follow the new order (" + JSON.stringify([picks, cards]) + ')',
   );
   // How often: the page default and each chat's own, with plain labels
@@ -16521,10 +16537,25 @@ async function multiChat3() {
       (await mcText(p, '.chatrow[data-chat="book"]')).includes('How often scheduled runs refresh this chat'),
     'F1 q10: the labels, and that a refresh you ask for refreshes every chat',
   );
+  ok(
+    !(await p.$('#every-trail')) &&
+      (await mcText(p, '.chatrow[data-chat="trail"]')).includes(
+        "Scheduled runs always refresh this chat: it's the first chat.",
+      ),
+    'F1 q10: the first chat has no How often; its row says scheduled runs always refresh it',
+  );
   await p.selectOption('#every-book', '240');
   await until(p, () => __rt.get('meta/chat').chats.book.every === 240);
   await until(p, () => document.getElementById('set-st-book').textContent === 'Saved.');
   ok(true, 'F1 q10: a chat\'s How often writes its `every` (240) and says "Saved."');
+  ok(
+    await until(p, () =>
+      document
+        .querySelector('.chatrow[data-chat="book"] .chatline')
+        .textContent.includes('Scheduled runs refresh it every 4 hours.'),
+    ),
+    "F1 q10: the chat's line says its new How often at once, while the select keeps focus",
+  );
   await p.selectOption('#every-book', '');
   await until(p, () => __rt.get('meta/chat').chats.book.every === null);
   ok(true, 'F1 q10: "Same as all chats" writes `every` null');
@@ -16535,6 +16566,13 @@ async function multiChat3() {
   await until(p, () => __rt.get('meta/chat').chatEvery === 120);
   await until(p, () => document.getElementById('set-st-every').textContent === 'Saved.');
   ok(true, 'F1 q10: the page default writes meta/chat.chatEvery (120) and says "Saved."');
+  ok(
+    await until(
+      p,
+      () => document.querySelector('#every-book option[value=""]').textContent === 'Same as all chats (every 2 hours)',
+    ),
+    'F1 q10: each chat\'s "Same as all chats (…)" names the new default at once, while #set-every keeps focus',
+  );
   await p.click('#settings-close');
   await mcSettings(p);
   ok(
@@ -16542,6 +16580,22 @@ async function multiChat3() {
       (await p.inputValue('#every-cam')) === '0' &&
       (await p.inputValue('#set-every')) === '120',
     'F1 q10: reopened, Settings shows each choice, "Same as all chats" naming the default',
+  );
+  await p.evaluate(() => {
+    const m = JSON.parse(JSON.stringify(__rt.get('meta/chat')));
+    m.chats.cam.every = 60;
+    __rt.write('meta/chat', m);
+  });
+  ok(
+    await until(
+      p,
+      () =>
+        (document.querySelector('#every-cam option[value="60"]') || {}).textContent === 'Hourly' &&
+        document
+          .querySelector('.chatrow[data-chat="cam"] .chatline')
+          .textContent.includes('Scheduled runs refresh it hourly.'),
+    ),
+    'F1 q10: a How often the page doesn\'t offer (60) reads "Hourly", as the schedule says it',
   );
   // opened from an added chat, the note still names the page's own phrase (the one that refreshes every chat)
   await p.click('#settings-close');
@@ -16564,6 +16618,7 @@ async function multiChat3() {
   const sL = mcSeed();
   sL['meta/chat'].chats.book.every = 240;
   sL['meta/chat'].chats.cam.every = 1440;
+  sL['meta/chat'].chats.trail.every = 240;
   sL['meta/chat'].chatEvery = 0;
   sL['meta/chat'].schedule = {
     mode: 'chain',
@@ -16590,7 +16645,7 @@ async function multiChat3() {
     lb.endsWith(' Scheduled runs refresh it every 4 hours. Next refresh about 12:45 PM.') &&
       lc.endsWith(' Scheduled runs refresh it once a day. Next refresh about 9:57 AM.') &&
       !lt.includes('Scheduled runs refresh it'),
-    "F1 q10: a chat's line says its How often and about when it's next refreshed; one on every run says nothing more (" +
+    "F1 q10: a chat's line says its How often and about when it's next refreshed; the first chat (always every run) says nothing more (" +
       JSON.stringify([lb, lc, lt]) +
       ')',
   );
@@ -16598,7 +16653,9 @@ async function multiChat3() {
   await p.evaluate(() =>
     __rt.write(
       'refresh/skipped',
-      Object.assign({}, __rt.get('refresh/skipped'), { last: { cam: '2026-11-23T06:45:00Z' } }),
+      Object.assign({}, __rt.get('refresh/skipped'), {
+        last: { book: '2026-11-23T17:00:00Z', cam: '2026-11-23T06:45:00Z' },
+      }),
     ),
   );
   await until(
@@ -16609,7 +16666,62 @@ async function multiChat3() {
     (await line('cam')).endsWith(' Scheduled runs refresh it once a day.'),
     "F1 q10: a next refresh outside the schedule's hours is left out (" + (await line('cam')) + ')',
   );
+  // only while the schedule is healthy: missed runs leave the time out
+  const NEXT = 'Next refresh about 12:45 PM.';
+  const bookHas = (t, want) =>
+    until(p, ([t, w]) => document.querySelector('.chatrow[data-chat="book"] .chatline').textContent.includes(t) === w, [
+      t,
+      want,
+    ]);
+  await p.evaluate(() =>
+    __rt.write('refresh/schedule', Object.assign({}, __rt.get('refresh/schedule'), { misses: 2 })),
+  );
+  ok(await bookHas(NEXT, false), 'F1 q10: with missed runs (misses 2), no "Next refresh about …"');
+  await p.evaluate(() =>
+    __rt.write('refresh/schedule', Object.assign({}, __rt.get('refresh/schedule'), { misses: 0 })),
+  );
+  ok(await bookHas(NEXT, true), 'F1 q10: misses back to 0, the time is back');
+  // the minute timer drops a time that has passed (4 hours on: 1 PM, the next run at 9:57 AM long gone)
+  await p.clock.fastForward('04:00:00');
+  ok(await bookHas(NEXT, false), 'F1 q10: the minute timer rewrites the line once its time has passed');
+  // a scheduled run with no chat due still shows it ran
+  await p.evaluate(() =>
+    __rt.write('refresh/status', { state: 'done', finishedAt: new Date().toISOString(), added: 0, due: 0 }),
+  );
+  ok(
+    await until(p, () =>
+      document.getElementById('refresh-st').textContent.includes('Last scheduled run: no chat was due.'),
+    ),
+    'F1 q10: the status line says when the last scheduled run had no chat due',
+  );
   ok(!p.errors.length, 'F1 q10: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // a hidden chat has no Move buttons and gets no order; a chat without an order comes last, as in run-plan
+  const sH = mcSeed({ chats: { chess: { name: 'Chess Club', tag: 'Chess', color: 4, order: 3, state: 'hidden' } } });
+  delete sH['meta/chat'].chats.book.order;
+  p = await open(sH);
+  await p.click('#h1');
+  const picksH = await p.$$eval('#picker-list button', bs => bs.map(b => b.dataset.key));
+  await p.keyboard.press('Escape');
+  await mcSettings(p);
+  const idsH = await p.$$eval('[id^="mv-"]', bs => bs.map(b => b.id));
+  ok(
+    JSON.stringify(picksH) === JSON.stringify(['all', 'trail', 'cam', 'book', 'add']) &&
+      JSON.stringify(idsH) === JSON.stringify(['mv-up-cam', 'mv-dn-cam', 'mv-up-book', 'mv-dn-book']),
+    'F1 q6: a chat without an order comes last; a hidden chat has no Move buttons (' +
+      JSON.stringify([picksH, idsH]) +
+      ')',
+  );
+  const w2 = await mcNWrites(p);
+  await p.click('#mv-dn-cam');
+  await until(p, () => __rt.get('meta/chat').chats.cam.order === 2);
+  const wh = await p.evaluate(n => __rt.writes.slice(n), w2);
+  ok(
+    JSON.stringify(wh.map(w => w.v.chats)) === JSON.stringify([{ book: { order: 1 }, cam: { order: 2 } }]),
+    'F1 q6: a move writes no order to a hidden chat (' + JSON.stringify(wh) + ')',
+  );
+  ok(!p.errors.length, 'F1 q6: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 
   // a page with one chat shows no How often or Move buttons: its runs don't read them

@@ -398,7 +398,8 @@ def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False, sch
     chat; runAt = now, the run's start), then after each chat with the chats done so far and --started=runAt.
     --scheduled (a scheduled run; one the user asked for runs every chat to the end): from RUN_MINUTES on no new chat
     starts, and How often applies: a chat a run refreshed less than its interval (every_of) before this run's start,
-    less EVERY_SLACK, waits (`later`); refresh/skipped's `last` says when a run last refreshed each chat (that run's
+    less EVERY_SLACK, waits (`later`; never the first chat, refreshed at every run; with nothing due, `status` is
+    the done write with `due:0`); refresh/skipped's `last` says when a run last refreshed each chat (that run's
     start). --failed: chats in --done that failed, so not recorded in `last` (the next run tries them). --stop: a
     failure stops the run now. `status` is the refresh/status write for that point (step 1's lock, the lock renewed
     for the next chat, or the run's end); at the end, `skippedDoc` is the refresh/skipped write: the chats not reached
@@ -408,7 +409,9 @@ def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False, sch
     sk = _load(skipped_file)
     keys = sk.get("keys") if isinstance(sk, dict) and isinstance(sk.get("keys"), list) else []
     cs = chats_of(meta)
-    by = lambda k: (not cs[k].get("home"), cs[k].get("order") if isinstance(cs[k].get("order"), int) else 99, k)
+    # a chat without a whole-number order comes after the others, as on the page
+    num = lambda v: isinstance(v, int) and not isinstance(v, bool)
+    by = lambda k: (not cs[k].get("home"), cs[k]["order"] if num(cs[k].get("order")) else float("inf"), k)
     base = sorted((k for k in cs if cs[k].get("state", "active") == "active"), key=by)
     base += sorted((k for k in cs if cs[k].get("state") == "pending" and not cs[k].get("home")), key=by)
     home = [k for k in base if cs[k].get("home")]
@@ -423,9 +426,9 @@ def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False, sch
     minutes = (now - t0).total_seconds() / 60
     rec = sk.get("last") if isinstance(sk, dict) and isinstance(sk.get("last"), dict) else {}
 
-    def due(k):  # How often: only a scheduled run waits; a pending chat's first refresh never does
+    def due(k):  # How often: only a scheduled run waits; a pending chat's first refresh and the first chat never do
         e, t = every_of(meta, cs[k]), _utc(rec.get(k))
-        if not scheduled or not e or t is None or cs[k].get("state") == "pending":
+        if not scheduled or not e or t is None or cs[k].get("state") == "pending" or cs[k].get("home"):
             return True
         return (t0 - t).total_seconds() / 60 >= e - EVERY_SLACK
 
@@ -455,6 +458,8 @@ def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False, sch
         out["skippedDoc"]["last"] = dict(keep, **{k: run_at for k in done if k in cs and k not in failed})
         if left:  # why they weren't reached, for the page's note: the time limit, or a failure that stopped the run
             out["skippedDoc"]["why"] = "stopped" if stop else "time"
+    elif later:  # a scheduled run with no chat due still records that it ran
+        out["status"] = {"state": "done", "finishedAt": _now_iso(), "added": 0, "due": 0}
     print(json.dumps(out, indent=1))
 
 

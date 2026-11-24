@@ -5602,9 +5602,10 @@ class TestRunPlan(unittest.TestCase):
 
     def test_how_often_an_hourly_chain_refreshes_each_chat_at_its_own_interval(self):
         # a chain arms each run 57 minutes after the last started: the 2-hour chat comes every other run, the 4-hour
-        # one every fourth (228 minutes is within the slack of 240), the first chat (set to every run) every run
+        # one every fourth (228 minutes is within the slack of 240), the first chat every run: it ignores How often
+        # (its refresh writes meta/chat's lastRefresh and versions, so it's refreshed at every scheduled run)
         self.meta["chatEvery"] = 240
-        self.meta["chats"]["trail"]["every"] = 0
+        self.meta["chats"]["trail"]["every"] = 1440
         self.meta["chats"]["cam"]["every"] = 120
         self.meta["chats"]["book"]["every"] = None
         self.meta["chats"]["chess"]["state"] = "paused"
@@ -5632,15 +5633,22 @@ class TestRunPlan(unittest.TestCase):
         last = {"trail": self.at(0), "book": self.at(0), "cam": self.at(0)}
         self.at(60)
         p = self.plan({"keys": [], "last": last})
-        self.assertEqual(
-            (p["order"], p["later"], p["next"], p["status"], p["skippedDoc"]),
-            ([], ["trail", "book", "cam"], None, None, None),
-        )
-        # the first chat follows the default like the others; one not due leaves the rest in order
+        self.assertEqual((p["order"], p["later"], p["next"]), (["trail"], ["book", "cam"], "trail"))
+        # one due again joins the run in its place
         last["book"] = self.at(-110)
         self.at(60)
         p = self.plan({"keys": [], "last": last})
-        self.assertEqual((p["order"], p["later"], p["next"]), (["book"], ["trail", "cam"], "book"))
+        self.assertEqual((p["order"], p["later"], p["next"]), (["trail", "book"], ["cam"], "trail"))
+        # nothing due (the first chat paused): no next chat, but the run still records that it ran
+        self.meta["chats"]["trail"]["state"] = "paused"
+        last["book"] = self.at(0)
+        now = self.at(60)
+        p = self.plan({"keys": [], "last": last})
+        self.assertEqual((p["order"], p["later"], p["next"], p["skippedDoc"]), ([], ["book", "cam"], None, None))
+        self.assertEqual(p["status"], {"state": "done", "finishedAt": now, "added": 0, "due": 0})
+        # nothing live at all: nothing to record
+        self.meta["chats"]["book"]["state"] = self.meta["chats"]["cam"]["state"] = "paused"
+        self.assertIsNone(self.plan({"keys": [], "last": last})["status"])
 
     def test_how_often_a_run_the_user_asked_for_refreshes_every_chat_and_records_them(self):
         self.meta["chatEvery"] = 1440
@@ -5653,14 +5661,14 @@ class TestRunPlan(unittest.TestCase):
     def test_how_often_a_pending_chat_and_a_chat_never_recorded_are_due(self):
         self.meta["chatEvery"] = 1440
         self.at(10)
-        p = self.plan({"last": {"trail": self.at(0)}})
-        self.assertEqual((p["order"], p["later"]), (["book", "cam", "chess"], ["trail"]))
+        p = self.plan({"last": {"trail": self.at(0), "book": self.at(0)}})
+        self.assertEqual((p["order"], p["later"]), (["trail", "cam", "chess"], ["book"]))
 
     def test_how_often_a_failed_chat_is_not_recorded_so_the_next_run_tries_it(self):
         self.meta["chatEvery"] = 240
         self.meta["chats"]["chess"]["state"] = "paused"
         got, sk = self.runs([0, 57], failed=("cam",))
-        self.assertEqual(got, [["trail", "book", "cam"], ["cam"]])
+        self.assertEqual(got, [["trail", "book", "cam"], ["trail", "cam"]])
         self.assertNotIn("cam", sk["last"])
 
     def test_how_often_the_record_keeps_other_chats_and_drops_deleted_ones(self):
@@ -5683,6 +5691,24 @@ class TestRunPlan(unittest.TestCase):
             self.at(30)
             order = self.plan({"last": last})["order"]
             self.assertIn("book", order, (default, own))
+
+    def test_how_often_a_single_chat_refresh_records_its_start_too(self):
+        # "Refresh Book Club" alone merges its lock's startedAt into refresh/skipped.last (an update: the rest stays)
+        self.meta["chatEvery"] = 240
+        self.meta["chats"]["chess"]["state"] = "paused"
+        got, sk = self.runs([0])
+        sk = dict(sk, last=dict(sk["last"], book=self.at(100)))
+        got, sk = self.runs([228], sk)
+        self.assertEqual(got, [["trail", "cam"]])
+        self.assertEqual(sk["last"]["book"], self.at(100))
+
+    def test_a_chat_without_an_order_comes_last_as_on_the_page(self):
+        self.meta["chats"]["chess"]["state"] = "active"
+        del self.meta["chats"]["book"]["order"]
+        self.at(0)
+        self.assertEqual(self.plan({})["order"], ["trail", "cam", "chess", "book"])
+        self.meta["chats"]["book"]["order"] = "2"  # not a whole number: the same
+        self.assertEqual(self.plan({})["order"], ["trail", "cam", "chess", "book"])
 
     def test_a_reorder_on_the_page_is_the_next_runs_order(self):
         # Settings › Your chats writes each chat's order (Move up / Move down); the first chat stays first
@@ -5739,6 +5765,10 @@ class TestRunPlan(unittest.TestCase):
         self.assertIn("`every` how often a scheduled run refreshes it, in minutes", db)
         self.assertIn("`chatEvery`", db)
         self.assertIn("[--failed=KEY,KEY]", catchup.__doc__)
+        # a single "Refresh <name>" records its start too; a run with nothing due still writes its status
+        self.assertIn('`update` `refresh/skipped` with `{last:{"<key>":"<its lock\'s startedAt>"}}`', chats)
+        self.assertIn('nothing is due (`status` is `{state:"done",…,due:0}`: `set` it', chats)
+        self.assertIn("the first chat and a pending chat never wait", chats)
 
 
 if __name__ == "__main__":

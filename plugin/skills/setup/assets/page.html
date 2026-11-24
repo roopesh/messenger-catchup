@@ -2214,6 +2214,18 @@
   body.allchats #strip {
     display: none;
   }
+  /* the drag handle in Settings: a mouse only (Move up and Move down serve the keyboard and touch) */
+  .draghandle {
+    display: none;
+    cursor: grab;
+    color: var(--muted);
+    user-select: none;
+  }
+  @media (pointer: fine) {
+    .draghandle {
+      display: inline-block;
+    }
+  }
   .chathead {
     display: flex;
     flex-wrap: wrap;
@@ -10632,6 +10644,7 @@
     }
     setRS(
       (S.meta && S.meta.lastRefresh ? "Last refreshed " + refreshShown(S.meta.lastRefresh, S.meta.tz) + ". " : "") +
+        (rr && rr.state === "done" && rr.due === 0 ? "Last scheduled run: no chat was due. " : "") +
         "To pull new messages, ask Claude in chat to “" +
         RP() +
         "”. The choice above only filters what's shown; it doesn't fetch anything.",
@@ -10642,6 +10655,7 @@
     renderUpdates();
     renderSchedule();
     renderDays();
+    refreshChatLines();
   }, 60000);
 
   /* ---------- update notices (F5) ----------
@@ -13475,6 +13489,8 @@
       home: true,
     };
   }
+  /* a chat without a whole-number order comes after the others, as in catchup.py's run-plan */
+  const ordOf = c => (Number.isInteger(c.order) ? c.order : 1e9);
   function chatsOf(m) {
     m = m || {};
     const h = homeEntry(m);
@@ -13484,8 +13500,7 @@
       .map(([key, v]) => Object.assign({}, v.home ? h : {}, v, { key }));
     if (!list.some(c => c.home)) list.unshift(h);
     return list.sort(
-      (a, b) =>
-        !!b.home - !!a.home || (a.order || 0) - (b.order || 0) || String(a.addedAt).localeCompare(String(b.addedAt)),
+      (a, b) => !!b.home - !!a.home || ordOf(a) - ordOf(b) || String(a.addedAt).localeCompare(String(b.addedAt)),
     );
   }
   const isLive = c => c.state === "active" || c.state === "paused";
@@ -13585,24 +13600,26 @@
   const EVERY_SLACK = 15;
   const everyNum = v => (Number.isInteger(v) && v >= 0 ? v : null);
   const pageEvery = () => everyNum((S.page || {}).chatEvery) || 0;
-  const everyOf = c => (everyNum(c.every) ?? pageEvery()) || 0;
-  function everyLabel(n) {
-    const e = EVERY.find(x => x[0] === n);
-    return e ? e[1] : n % 60 ? "Every " + n + " minutes" : "Every " + n / 60 + " hours";
-  }
+  /* the first chat is refreshed at every scheduled run (its refresh writes meta/chat's lastRefresh and versions) */
+  const everyOf = c => (c.home ? 0 : (everyNum(c.every) ?? pageEvery()) || 0);
+  const everyLabel = n => (EVERY.find(x => x[0] === n) || [])[1] || everyText(n) || "Every " + n + " minutes";
+  const lc1 = t => t.charAt(0).toLowerCase() + t.slice(1);
+  const sameAll = n => "Same as all chats (" + lc1(everyLabel(n)) + ")";
   /* " Scheduled runs refresh it every 4 hours. Next refresh about 1:00 PM." for an active chat on a slower setting;
-     the next time is the later of when it's due and the schedule's next run, left out when unknown or outside the
-     schedule's hours */
+     the next time is the later of when it's due and the schedule's next run, shown only while the schedule is healthy
+     (no misses, its next run ahead) and the time falls inside its hours; the minute timer drops a time that passed */
   function everyLine(c) {
     const n = everyOf(c);
     if (c.state !== "active" || !n || !multi()) return "";
-    let t = " Scheduled runs refresh it " + everyLabel(n).replace(/^E/, "e").replace(/^O/, "o") + ".";
+    let t = " Scheduled runs refresh it " + lc1(everyLabel(n)) + ".";
     const last = Date.parse(((S.skipped || {}).last || {})[c.key]);
     const meta = S.page || S.meta || {};
     const sc = isObj(meta.schedule) ? meta.schedule : null;
-    const nextAt = Date.parse((S.sched || {}).nextAt);
-    if (!schedOn() || !Number.isFinite(last) || !Number.isFinite(nextAt)) return t;
+    const st = S.sched || {};
+    const nextAt = Date.parse(st.nextAt);
     const now = Date.now();
+    if (!schedOn() || !Number.isFinite(last) || !(nextAt > now) || (Number.isInteger(st.misses) && st.misses > 0))
+      return t;
     const at = Math.max(last + (n - EVERY_SLACK) * 60000, nextAt);
     const tz = validTz(sc && sc.tz) || validTz(meta.tz);
     const w = schedHours(sc && sc.hours);
@@ -14181,7 +14198,7 @@
       (ae.tagName === "INPUT" || ae.tagName === "SELECT") &&
       !/^(radio|checkbox)$/.test(ae.type)
     )
-      return;
+      return settingsInPlace();
     const keep = ae && box.contains(ae) && ae.id ? ae.id : null;
     box.textContent = "";
     if (S.canWrite === false) {
@@ -14227,6 +14244,7 @@
         try {
           await S.rawDb.doc("meta/chat").update({ chatEvery: Number(es.value) });
           setNote("every", "Saved.");
+          settingsInPlace(Number(es.value));
         } catch (e) {
           setNote("every", "Couldn't save that. Try again.", true);
         }
@@ -14244,15 +14262,16 @@
         note("every"),
       );
     }
-    /* the order: the first chat always first (run-plan's order), the others moved with Move up and Move down */
-    const movable = S.chats.filter(c => !c.home && c.state !== "deleted");
+    /* the order: the first chat always first, the others moved with Move up and Move down (or dragged); a run still
+       takes the chats the last one didn't reach first and pending chats last (run-plan) */
+    const movable = movableChats();
     if (movable.length > 1)
       box.append(
         el(
           "p",
           "note",
           homeChat().name +
-            " always refreshes first. Use Move up and Move down to set the order of the other chats: refreshes, the title's chat list and All chats follow it.",
+            " always refreshes first. Use Move up and Move down to set the order of the others. A run starts with any chat the last one didn't reach, and a new chat's first refresh comes after the rest.",
         ),
       );
     S.chats
@@ -14263,6 +14282,8 @@
         const h = el("div", "chathead");
         h.append(tagChip(c), el("h3", null, c.name));
         row.append(h, el("p", "note chatline", chatLine(c)));
+        const at = movable.indexOf(c);
+        if (at >= 0 && movable.length > 1) dragRow(row, h, c);
         const ctl = el("div", "fields");
         const ti = el("input");
         ti.type = "text";
@@ -14287,12 +14308,15 @@
           }
         };
         ctl.append(tw, field("auto-" + c.key, "Queued replies in this chat", as));
-        if (multi()) {
+        if (multi() && c.home)
+          ctl.append(el("p", "note", "Scheduled runs always refresh this chat: it's the first chat."));
+        else if (multi()) {
           const es = everySelect("every-" + c.key, everyNum(c.every), true);
           es.onchange = async () => {
             try {
               await saveChats({ [c.key]: { every: es.value === "" ? null : Number(es.value) } });
               setNote(c.key, "Saved.");
+              settingsInPlace();
             } catch (e) {
               setNote(c.key, "Couldn't save that. Try again.", true);
             }
@@ -14307,7 +14331,6 @@
           acts.append(b);
           return b;
         };
-        const at = movable.indexOf(c);
         if (at >= 0 && movable.length > 1)
           [
             ["up", "Move up", -1],
@@ -14350,7 +14373,7 @@
   function everySelect(id, val, perChat) {
     const s = el("select");
     const opts = EVERY.map(([n, t]) => [String(n), t]);
-    if (perChat) opts.unshift(["", "Same as all chats (" + everyLabel(pageEvery()).toLowerCase() + ")"]);
+    if (perChat) opts.unshift(["", sameAll(pageEvery())]);
     opts.forEach(([v, t]) => {
       const o = el("option", null, t);
       o.value = v;
@@ -14366,13 +14389,52 @@
     s.id = id;
     return s;
   }
-  /* writes order 1, 2, … to every chat after the first, in the new order: each write is the whole order. Applied here
-     at once, so a second press before the write's snapshot arrives moves from the new order, not the one shown before */
-  async function moveChat(key, d) {
-    const list = S.chats.filter(c => !c.home && c.state !== "deleted");
+  /* what changes without a rebuild (one waits while a field has focus): each chat's line, "Same as all chats (…)" */
+  function settingsInPlace(def) {
+    refreshChatLines();
+    const t = sameAll(def ?? pageEvery());
+    document.querySelectorAll('#set-body select[id^="every-"] option[value=""]').forEach(o => {
+      if (o.textContent !== t) o.textContent = t;
+    });
+  }
+  /* the chats the order moves: after the first, not hidden or deleted (pending ones too) */
+  const movableChats = () => S.chats.filter(c => !c.home && c.state !== "deleted" && c.state !== "hidden");
+  const moveChat = (key, d) => placeChat(key, movableChats().findIndex(c => c.key === key) + d);
+  /* desktop drag: a handle (a mouse only; Move up and Move down serve the keyboard and touch) onto another row puts
+     the chat in that row's place */
+  function dragRow(row, h, c) {
+    const hd = el("span", "draghandle", "⠿");
+    hd.draggable = true;
+    hd.title = "Drag to change the order";
+    hd.setAttribute("aria-hidden", "true");
+    hd.ondragstart = e => {
+      S.dragKey = c.key;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", c.key);
+    };
+    hd.ondragend = () => (S.dragKey = null);
+    h.prepend(hd);
+    row.ondragover = e => {
+      if (S.dragKey && S.dragKey !== c.key) e.preventDefault();
+    };
+    row.ondrop = e => {
+      const k = S.dragKey;
+      S.dragKey = null;
+      if (!k || k === c.key) return;
+      e.preventDefault();
+      placeChat(
+        k,
+        movableChats().findIndex(x => x.key === c.key),
+      );
+    };
+  }
+  /* writes order 1, 2, … to every chat the order moves, with KEY at place TO: each write is the whole order. Applied
+     here at once, so a second press before the write's snapshot arrives moves from the new order, not the one shown */
+  async function placeChat(key, to) {
+    const list = movableChats();
     const at = list.findIndex(c => c.key === key);
-    if (at < 0 || !list[at + d] || !isObj((S.page || {}).chats)) return;
-    [list[at], list[at + d]] = [list[at + d], list[at]];
+    if (at < 0 || to < 0 || to >= list.length || to === at || !isObj((S.page || {}).chats)) return;
+    list.splice(to, 0, list.splice(at, 1)[0]);
     const patch = Object.fromEntries(list.map((c, k) => [c.key, { order: k + 1 }]));
     const before = S.page;
     const chats = Object.assign({}, S.page.chats);
