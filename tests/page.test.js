@@ -15693,7 +15693,7 @@ async function multiChat() {
   await p.fill('#add-link', 'https://www.facebook.com/messages/e2ee/t/7171');
   await p.fill('#add-name', 'Chess Club');
   await p.fill('#add-tag', 'Chess');
-  await p.selectOption('#add-start', '1000');
+  await p.selectOption('#add-start', '7');
   await p.click('#add-go');
   await until(p, () => __rt.get('meta/chat').chats.chess2);
   const ws = await p.evaluate(n => __rt.writes.slice(n), w0);
@@ -15705,10 +15705,10 @@ async function multiChat() {
       JSON.stringify(Object.keys(ws[0].v.chats)) === '["chess2"]' &&
       JSON.stringify(Object.keys(e).sort()) ===
         JSON.stringify(
-          ['addedAt', 'color', 'name', 'order', 'photos', 'start', 'state', 'tag', 'thread', 'url'].sort(),
+          ['addedAt', 'color', 'days', 'name', 'order', 'photos', 'state', 'tag', 'thread', 'url'].sort(),
         ) &&
       e.state === 'pending' &&
-      e.start === 1000 &&
+      e.days === 7 &&
       e.thread === '7171' &&
       e.url === 'https://www.facebook.com/messages/e2ee/t/7171' &&
       (await get(p, 'meta/chat')).chats.chess.state === 'deleted',
@@ -15722,6 +15722,24 @@ async function multiChat() {
       'Waiting for its first refresh. Ask Claude to “refresh Chess Club” (or “refresh my catch-up” for every chat).',
     ),
     'F1 SET4, stage B: a pending chat on a page with no schedule says to ask Claude',
+  );
+  ok(
+    (await mcText(p, '#set-st-add')) ===
+      'Chess Club is added. Waiting for its first refresh. Ask Claude to “refresh Chess Club” (or “refresh my catch-up” for every chat).',
+    'F34: the note after adding a chat says how its first refresh comes, as its row does (' +
+      (await mcText(p, '#set-st-add')) +
+      ')',
+  );
+  ok(
+    JSON.stringify(await p.$$eval('#add-start option', os => os.map(o => o.value + ' ' + o.textContent))) ===
+      JSON.stringify([
+        '1 The last day',
+        '3 The last 3 days',
+        '7 The last week',
+        '14 The last 2 weeks',
+        '30 The last month',
+      ]),
+    'F34: Add a chat asks how far back to read in days, a day by default',
   );
   // SET12, DM4, CT7: renaming a tag: empty, too long and duplicate refused; a good one shows at once, nothing else written
   for (const [t, why] of [

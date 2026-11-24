@@ -5330,7 +5330,14 @@ class TestChats(unittest.TestCase):
                 "chunkSize": 82,
             },
         )
+        self.assertNotIn("firstDays", t["seed"])
         self.assertNotIn("seed", g)
+        # F34: a chat added on page 4.6 or later asks for days: the seed carries them, with a message cap
+        del meta["chats"]["book"]["start"]
+        meta["chats"]["book"]["days"] = 3
+        w(mp, meta)
+        t = chats_out(mp, "book")
+        self.assertEqual((t["seed"]["firstDays"], t["seed"]["firstCount"]), (3, catchup.FIRST_DAYS_CAP))
         with self.assertRaisesRegex(AssertionError, "no chat 'cam'"):
             chats_out(mp, "cam")
         self.assertIsNone(catchup.CHAT, "chats leaves no chat set")
