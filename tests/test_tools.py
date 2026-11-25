@@ -2138,10 +2138,11 @@ class TestOutboxStates(unittest.TestCase):
     ALL_STATES = ("queued", "sending", "sent", "failed", "unconfirmed", "cancelled", "dismissed")
 
     def page_writes(self):
-        """The page's four outbox writes: Queue reply and React (set), Cancel and Dismiss (update)."""
+        """The page's five outbox writes: Queue reply and React (set), Cancel, Dismiss and the react picker's cancel of a
+        queued reaction (update)."""
         page = in_skill("assets", "page.html")
         writes = re.findall(r'doc\("outbox/"\s*\+\s*[\w.]+\)\s*\.(set|update)\(\s*(\{[^{}]*\})\s*\)', page)
-        self.assertEqual(len(writes), 4, "expected exactly 4 outbox writes in page.html; the regex or the page changed")
+        self.assertEqual(len(writes), 5, "expected exactly 5 outbox writes in page.html; the regex or the page changed")
         return writes
 
     def outbox_line(self):

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      2.7
+// @version      2.8
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -25,13 +25,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '2.7';
+  window.__mcHelper = '2.8';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '2.7');
+  root.setAttribute('data-mc-helper', '2.8');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -1931,7 +1931,11 @@
      search, an English word for the emoji, into its search box). If your own reaction is already that emoji it clicks
      nothing, since picking it again would remove it. Then it waits up to 6 s for the message's reactions label to show it.
      Returns {done:true, mid, at, via, replaced, already} or {done:false, err, detail}. err "unconfirmed": it clicked the
-     emoji, but the message didn't show it, so it may be there. Every other err means nothing was clicked. */
+     emoji, but the message didn't show it, so it may be there. Every other err means nothing was clicked.
+     remove:true (F38) takes your reaction away instead: if the menu's checked reaction is that emoji it clicks it again
+     (how Messenger removes one) and waits for the message's reactions to drop it; if your reaction isn't that emoji it
+     clicks nothing ({done:true, already:true}); an emoji that isn't in the menu can't be removed here (err not-in-menu).
+     An "unconfirmed" removal may still be there. */
   async function mcReact(a) {
     a = a || {};
     const t0 = Date.now();
@@ -1940,9 +1944,13 @@
       return out({ err: 'not-approved', detail: 'react needs approved:true, only for a reaction the user approved' });
     if (
       ![a.mid, a.emoji].every(x => typeof x === 'string' && x.trim()) ||
-      (a.search != null && typeof a.search !== 'string')
+      (a.search != null && typeof a.search !== 'string') ||
+      (a.remove != null && typeof a.remove !== 'boolean')
     )
-      return out({ err: 'bad-args', detail: 'react needs mid and emoji (strings), and search (a string) if given' });
+      return out({
+        err: 'bad-args',
+        detail: 'react needs mid and emoji (strings), search (a string) and remove (true or false) if given',
+      });
     const b = busy();
     if (b) return out(b);
     window.__mcPosting = a.mid;
@@ -2023,6 +2031,50 @@
     const items = Array.from(menu.querySelectorAll('[role="menuitemradio"]'));
     const mineEl = items.find(x => x.getAttribute('aria-checked') === 'true');
     const mine = mineEl && mineEl.querySelector('img') ? mineEl.querySelector('img').alt : null;
+    if (a.remove) {
+      const l1 = label();
+      /* Messenger marks your reaction only among the menu's own emoji: one picked under "Show more emojis" isn't marked
+         there, so it can't be told apart or removed from this menu */
+      if (!items.some(x => isIt(x.querySelector('img')))) {
+        esc(menu);
+        return out({
+          err: 'not-in-menu',
+          detail:
+            a.emoji + " isn't in this message's reaction menu, so the helper can't remove it: remove it in Messenger",
+        });
+      }
+      if (!mineEl || !isIt(mineEl.querySelector('img'))) {
+        esc(menu);
+        return {
+          done: true,
+          already: true,
+          removed: false,
+          mid: a.mid,
+          at: new Date().toISOString(),
+          via: 'menu',
+          ms: Date.now() - t0,
+        };
+      }
+      mineEl.click();
+      for (let k = 0; k < 24; k++) {
+        await sleep(250);
+        const l = label();
+        if (count(l) < count(l1) || (shows(l1) && !shows(l)))
+          return {
+            done: true,
+            removed: true,
+            mid: a.mid,
+            at: new Date().toISOString(),
+            via: 'menu',
+            ms: Date.now() - t0,
+          };
+      }
+      return out({
+        err: 'unconfirmed',
+        via: 'menu',
+        detail: 'clicked your ' + a.emoji + ' to remove it, but the message still shows it after 6 s: check Messenger',
+      });
+    }
     if (mineEl && isIt(mineEl.querySelector('img'))) {
       esc(menu);
       return { done: true, already: true, mid: a.mid, at: new Date().toISOString(), via: 'menu', ms: Date.now() - t0 };
@@ -2103,7 +2155,7 @@
     },
     post: (a, id) => mcPost(a, id),
     react: a => mcReact(a),
-    ping: () => ({ v: '2.7' }),
+    ping: () => ({ v: '2.8' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
