@@ -68,6 +68,8 @@
     <div role="log" id="log"><div id="sc"></div></div>
     <div id="composer">
       <div id="replybar" hidden><span id="replytxt"></span><span id="replyx"></span></div>
+      <div id="previews"></div>
+      <input type="file" id="attach" accept="image/*" multiple hidden />
       <div id="box" role="textbox" contenteditable="true" aria-label="Message"></div>
     </div>
     <script>
@@ -527,6 +529,20 @@
         localStorage.setItem("mock_total", a + n);
         for (let i = a; i < a + n; i++) sc.append(el(spec(i)));
       };
+      /* Photos (F36), as Messenger shows them: a file set on the attach input shows a preview per photo above the box,
+         each with a "Remove attachment" button; Enter sends them with the text (or alone). */
+      const prev = document.getElementById("previews");
+      document.getElementById("attach").addEventListener("change", e => {
+        [...e.target.files].forEach(f => {
+          const d = document.createElement("div");
+          d.className = "pv";
+          d.textContent = f.name;
+          d.append(btn("Remove attachment", () => d.remove()));
+          prev.append(d);
+        });
+        e.target.value = "";
+      });
+      window.mockAttached = () => prev.querySelectorAll(".pv").length;
       /* Posting: Enter in the composer sends the text (as a reply when the bar is open); it shows up 300 ms later. */
       let sentN = sentLog().length;
       window.mockSent = [];
@@ -534,7 +550,9 @@
         const to = replyTo;
         replyTo = null;
         bar.hidden = true;
-        window.mockSent.push({ text, to: to && to.id, tags: tags || [] });
+        const photos = window.mockAttached();
+        prev.textContent = "";
+        window.mockSent.push({ text, to: to && to.id, tags: tags || [], photos });
         setTimeout(() => {
           const o = { i: -1, id: "mid.$sent" + ++sentN, f: "You", t: clock(new Date()), b: text, to };
           sc.append(el(o));
@@ -684,7 +702,7 @@
           if (!e || (e.shiftKey && !(SHIFTSENDS && !e.isTrusted))) return false;
           e.preventDefault();
           const text = editor.getEditorState().read(() => L.$getRoot().getTextContent());
-          if (!text.trim()) return true;
+          if (!text.trim() && !window.mockAttached()) return true;
           const tags = editor.getEditorState().read(() =>
             L.$getRoot()
               .getAllTextNodes()

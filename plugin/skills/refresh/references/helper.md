@@ -11,7 +11,7 @@ Start each with the bridge in SKILL.md › Helper, with a fresh id, and poll unt
 - `selfcheck` → `{ok,missing,warn,counts}` (SKILL.md › Refresh steps, step 2).
 - `jump{mid,reply}`: opens that message, with Reply open unless `reply:false` (`references/open-message.md`, `references/outbox.md`).
 - `people{count}`: `references/people.md`.
-- `post` only when `meta/chat.helperPost` is true (`references/posting-with-helper.md`); it tags `mentions` (2.7).
+- `post` only when `meta/chat.helperPost` is true (`references/posting-with-helper.md`); it tags `mentions` (2.7) and waits for `photos` Claude attaches (2.9).
 - `react{mid,emoji,search,remove,approved:true}` (2.7; `remove` 2.8): adds an approved reaction, or with `remove:true` takes it away (`references/outbox.md` › Reactions).
 
 ## Which Chrome

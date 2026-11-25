@@ -1776,6 +1776,41 @@
     border-color: var(--accent);
     background: var(--accent-soft);
   }
+  /* F36: photos waiting to go with a reply */
+  .rpics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .rpic {
+    position: relative;
+  }
+  .rpic img {
+    display: block;
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+  }
+  .rpic button {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--fg);
+    font-size: 0.75rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .compose.drop {
+    outline: 2px dashed var(--accent);
+    outline-offset: 2px;
+  }
   /* F37: the react picker under a message */
   .rxpick {
     display: flex;
@@ -2757,7 +2792,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "5.1";
+  const PAGE_VERSION = "5.2";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3798,6 +3833,24 @@
       .filter(x => text.includes("@" + x));
     return t.filter(x => !t.some(y => y !== x && y.startsWith(x + " ")));
   }
+  /* F36: a photo over 5 MB, or wider or taller than 4096 px, is shrunk to 2560 px on its long side (JPEG) before it's
+     stored, so it fits Chrome's file upload (10 MB a call) and Messenger; smaller ones are stored as they are */
+  async function shrinkPhoto(f) {
+    let bm = null;
+    try {
+      bm = await createImageBitmap(f);
+    } catch (e) {
+      return f;
+    }
+    const big = Math.max(bm.width, bm.height);
+    if (f.size <= 5e6 && big <= 4096) return f;
+    const k = Math.min(1, 2560 / big);
+    const c = document.createElement("canvas");
+    c.width = Math.round(bm.width * k);
+    c.height = Math.round(bm.height * k);
+    c.getContext("2d").drawImage(bm, 0, 0, c.width, c.height);
+    return new Promise(res => c.toBlob(b => res(b || f), "image/jpeg", 0.85));
+  }
   function composer(m, loc) {
     const box = el("div", "compose");
     box.dataset.ci = m.i;
@@ -3871,6 +3924,68 @@
         if (document.contains(ta) && S.focusI === m.i && document.activeElement !== ta) S.focusI = null;
       }, 0);
     };
+    /* F36: photos with the reply: drag and drop, paste, or Attach photo. Kept while the reply is written (a refresh
+       redraws the page), stored in the page's asset store when it's queued (photos: their ids). Claude attaches them in
+       Messenger and deletes them once the reply is sent: the next refresh stores them from the chat. */
+    if (!S.draftPics) S.draftPics = {};
+    const pics = (S.draftPics[m.i] = S.draftPics[m.i] || []);
+    const thumbs = el("div", "rpics");
+    const drawPics = () => {
+      thumbs.textContent = "";
+      pics.forEach((f, k) => {
+        const w = el("span", "rpic");
+        const im = el("img");
+        im.alt = "Photo " + (k + 1) + " for this reply";
+        im.src = URL.createObjectURL(f);
+        const x = el("button", null, "✕");
+        x.type = "button";
+        x.setAttribute("aria-label", "Remove photo " + (k + 1));
+        x.onclick = () => {
+          pics.splice(k, 1);
+          drawPics();
+        };
+        w.append(im, x);
+        thumbs.append(w);
+      });
+      thumbs.hidden = !pics.length;
+    };
+    const addFiles = list => {
+      const imgs = [...(list || [])].filter(f => /^image\//.test(f.type));
+      if (!imgs.length) return false;
+      pics.push(...imgs);
+      drawPics();
+      return true;
+    };
+    const fin = el("input");
+    fin.type = "file";
+    fin.accept = "image/*";
+    fin.multiple = true;
+    fin.hidden = true;
+    fin.onchange = () => {
+      addFiles(fin.files);
+      fin.value = "";
+    };
+    const att = el("button", "secondary", "Attach photo");
+    att.type = "button";
+    att.onclick = () => fin.click();
+    ta.addEventListener("paste", e => {
+      if (e.clipboardData && addFiles(e.clipboardData.files)) e.preventDefault();
+    });
+    box.addEventListener("dragover", e => {
+      if ([...((e.dataTransfer && e.dataTransfer.types) || [])].includes("Files")) {
+        e.preventDefault();
+        box.classList.add("drop");
+      }
+    });
+    box.addEventListener("dragleave", () => box.classList.remove("drop"));
+    box.addEventListener("drop", e => {
+      box.classList.remove("drop");
+      if (e.dataTransfer && e.dataTransfer.files.length) {
+        e.preventDefault();
+        addFiles(e.dataTransfer.files);
+      }
+    });
+    drawPics();
     const st = el("span", "note", "");
     const q = el("button", "primary", "Queue reply");
     const c = el("button", "secondary", "Cancel");
@@ -3900,12 +4015,13 @@
     c.onclick = () => {
       S.composing.delete(m.i);
       delete S.drafts[m.i];
+      delete S.draftPics[m.i];
       box.remove();
     };
     q.onclick = async () => {
       const text = ta.value.trim();
-      if (!text) {
-        st.textContent = "Type a reply first.";
+      if (!text && !pics.length) {
+        st.textContent = "Type a reply or add a photo first.";
         return;
       }
       if (!S.db) {
@@ -3916,6 +4032,17 @@
       st.textContent = "Saving…";
       const id = "r" + Date.now();
       try {
+        const photos = [];
+        if (pics.length) {
+          const a = await claude.use("assets");
+          if (!a) throw new Error("this view can't store photos");
+          for (let k = 0; k < pics.length; k++) {
+            st.textContent = "Storing photo " + (k + 1) + " of " + pics.length + "…";
+            const b = await shrinkPhoto(pics[k]);
+            photos.push((await a.upload(b, { type: b.type || "image/jpeg" })).id);
+          }
+          st.textContent = "Saving…";
+        }
         await S.db.doc("outbox/" + id).set({
           i: m.i,
           mid: m.m || null,
@@ -3923,11 +4050,13 @@
           snip: trunc(m.b || (m.p ? "[photo]" : ""), 120),
           text,
           mentions: mentionsIn(text),
+          photos,
           state: "queued",
           queuedAt: new Date().toISOString(),
         });
         S.composing.delete(m.i);
         delete S.drafts[m.i];
+        delete S.draftPics[m.i];
         st.textContent = autoFor(CUR)
           ? "Queued. Claude posts it on its next run, or now if you tell Claude “send replies” in a chat."
           : "Queued. Tell Claude “send replies” in a chat (or wait for the next refresh) and confirm it.";
@@ -3942,8 +4071,8 @@
       }
     };
     const row = el("div", "btns");
-    row.append(q, c, st);
-    box.append(ta, sug, row);
+    row.append(q, att, c, st);
+    box.append(ta, sug, thumbs, fin, row);
     if (S.focusI === m.i)
       requestAnimationFrame(() => {
         ta.focus();
@@ -4164,7 +4293,9 @@
         ),
       );
       d.append(r);
-      if (o.kind !== "react") d.append(el("p", null, o.text));
+      if (o.kind !== "react" && o.text) d.append(el("p", null, o.text));
+      if ((o.photos || []).length)
+        d.append(el("p", "note", "📷 " + o.photos.length + (o.photos.length > 1 ? " photos" : " photo")));
       if ((o.state === "failed" || o.state === "unconfirmed") && o.error) d.append(el("p", "note", o.error));
       if (o.state === "queued") {
         const x = el("button", "link", o.kind === "react" ? "Cancel this reaction" : "Cancel this reply");
@@ -10956,7 +11087,7 @@
   /* the helper this page shipped with: npm run sync writes it from assets/helper.user.js's @version. A Chrome is
      behind when its helper is older than this or than versions.helper, whichever is higher: versions.helper is
      written by Claude, and a stale one (v1.35.0 refreshes wrote 2.1 while shipping 2.3) hid every notice. */
-  const HELPER_VERSION = "2.8";
+  const HELPER_VERSION = "2.9";
   const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
   const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
   const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";

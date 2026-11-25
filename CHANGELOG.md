@@ -2,6 +2,24 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.46.0] - 2026-11-25
+**Photos in replies** (BACKLOG F36; the owner picked A on the board, with answers: several photos, a photo with no text is a reply, delete it once sent since the next refresh stores it anyway, no size limit). MINOR. Page **`PAGE_VERSION` 5.2** (from 5.1); helper **2.9** (from 2.8).
+
+### Added
+- **Add photos to a reply on the page**: drag and drop onto the reply box, paste, or Attach photo (several; each shows as a thumbnail with ✕). A reply can be a photo alone. On Queue the photos go into the page's asset store, shrunk first when over 5 MB or 4096 px (to 2560 px, so they fit Chrome's 10 MB upload), and the row lists their ids in `photos`. Your replies shows "📷 2 photos".
+- **Posting attaches them.** Helper 2.9's `post` takes `photos` (a count): after the "Replying to" check it waits (stage `attach`, up to 3 minutes) while Claude saves each photo from the page's store and puts it into Messenger's file input with Chrome's file upload, until that many previews show; then it types the text (which may be empty) and sends. Too few or too many previews: `photos-not-attached`, the previews removed, nothing sent. The photo's bytes never pass through Claude (option B would have cost 50,000–100,000 tokens per photo). After `sent`, Claude deletes the photos from the page's store.
+- A photo reply waits (stays queued, said in the report) when helper posting is off, the helper is older, or the run has no file upload. SKILL.md and the replies skill: attaching an approved reply's photos is an allowed action.
+
+### Checked (Nov 25, the owner's test chat, nothing sent)
+- The posting chain: a photo stored in a scratch page's asset store, saved with the Artifact tool's read, put into Messenger's attach input ("Attach a file up to 25 MB") with Chrome's file upload; Messenger showed one preview, and the helper's way of removing it (a click on "Remove attachment") left the box empty.
+
+### Tests
+- Sim `F36: post with photos`: the mock Messenger has an attach input with "Remove attachment" previews; post waits at `attach` until both photos show and sends them with the text; a photo alone; photos that never show are refused with nothing sent.
+- Page: two photos attached, one removed, the other stored and listed in `photos`; Queue with nothing says so; a photo alone queues with empty text. `test_tools`: open-message.md queues `photos:[]` like the page.
+
+### Backlog
+- F36 done. L1: the first real photo reply, and whether scheduled runs have file upload.
+
 ## [1.45.0] - 2026-11-25
 **Undo or change a reaction from the page** (BACKLOG F38, split from F37; the owner picked C on the board: the picker toggles, like Messenger; the "show your reaction" question was left blank, so the recommendation stands: yes). MINOR. Page **`PAGE_VERSION` 5.1** (from 5.0); helper **2.8** (from 2.7).
 
