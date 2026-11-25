@@ -1355,7 +1355,7 @@ async function pipeline() {
     'pipeline: 7 quote-matched text replies kept as rq',
   );
   // names: helper 1.6 reads each sender's full name from their avatar; the page keeps people/index and names people
-  // by the owner's rule (first name; full name when two share it; "nickname (name)")
+  // by the owner's rule (B59: "Fullname (Nickname)" wherever the full name is known)
   const pi = (await get(p, 'people/index')) || { people: {} };
   const P = pi.people;
   ok(
@@ -1371,8 +1371,8 @@ async function pipeline() {
     [0, 1, 2, 31, 38].map(i => (document.querySelector('#m' + i + ' .who') || {}).textContent),
   );
   ok(
-    JSON.stringify(who) === JSON.stringify(['Ana', 'Ben Brooks', 'You', 'Ben Ortiz', 'Captain Cy (Cy)']),
-    'names: first name; full name for the two Bens; "Captain Cy (Cy)" for a nickname (' + who.join(' | ') + ')',
+    JSON.stringify(who) === JSON.stringify(['Ana Alvarez', 'Ben Brooks', 'You', 'Ben Ortiz', 'Cy Chen (Captain Cy)']),
+    'names (B59): full names, "Cy Chen (Captain Cy)" for a nickname (' + who.join(' | ') + ')',
   );
   // summary tab
   const strip = await p.$$eval('#strip .stat', s => s.map(x => x.textContent));
@@ -2171,8 +2171,8 @@ async function names() {
     [0, 1, 6, 8, 11].map(i => (document.querySelector('#m' + i + ' .who') || {}).textContent),
   );
   ok(
-    JSON.stringify(who.slice(0, 4)) === JSON.stringify(['Ana', 'Ben Brooks', 'Ben Ortiz', 'Cy (Taylor)']),
-    'names: two Bens get full names, a nickname gets "(first name)" (' + who.join(' | ') + ')',
+    JSON.stringify(who.slice(0, 4)) === JSON.stringify(['Ana Alvarez', 'Ben Brooks', 'Ben Ortiz', 'Taylor Moss (Cy)']),
+    'names (B59): full names, a nickname as "Taylor Moss (Cy)" (' + who.join(' | ') + ')',
   );
   await msgFilter(p, 'ortiz');
   ok((await p.$$eval('#msgs .msg', r => r.length)) === 1, 'names: the filter finds people by full name');
@@ -8505,8 +8505,8 @@ async function claims() {
     return { packs: line('packs'), links, others: ['lend', 'gone', 't6', 't5'].map(line) };
   });
   ok(
-    got.packs === 'Claimed: Ben Brooks, Cy (2), DD (Dee), Dee' &&
-      JSON.stringify(got.links.map(a => a.t)) === JSON.stringify(['Ben Brooks', 'Cy', 'DD (Dee)', 'Dee']) &&
+    got.packs === 'Claimed: Ben Brooks, Cy (2), Dee Diaz (DD), Dee' &&
+      JSON.stringify(got.links.map(a => a.t)) === JSON.stringify(['Ben Brooks', 'Cy', 'Dee Diaz (DD)', 'Dee']) &&
       got.links.every(a => a.href === '#messages'),
     'claims C1: first come first, names as shown elsewhere, "(n)" only above 1, bad entries skipped (' +
       JSON.stringify(got) +
@@ -8538,7 +8538,7 @@ async function claims() {
     ['t0', null, 'Claimed: Cy'],
     ['t1', 'A:Sold:#messages', null],
     ['t5', null, null],
-    ['packs', null, 'Claimed: Ben Brooks, Cy (2), DD (Dee), Dee'],
+    ['packs', null, 'Claimed: Ben Brooks, Cy (2), Dee Diaz (DD), Dee'],
   ];
   ok(
     JSON.stringify(sts) === JSON.stringify(wantSts),
@@ -11518,7 +11518,14 @@ const ST_ALL = {
   sold: '1',
 };
 const ST_SECS = ['tiles', 'volume', 'top', 'heat', 'convs', 'deals', 'people', 'engage', 'words'];
-const ST_TOP = ['Ana 9 33.3%', 'Ben Brooks 6 22.2%', 'Dee 5 18.5%', 'Cy 3 11.1%', 'You 3 11.1%', 'Ben Ortiz 1 3.7%'];
+const ST_TOP = [
+  'Ana Alvarez 9 33.3%',
+  'Ben Brooks 6 22.2%',
+  'Dee Dalton 5 18.5%',
+  'Cy 3 11.1%',
+  'You 3 11.1%',
+  'Ben Ortiz 1 3.7%',
+];
 const stSame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 async function stats() {
@@ -11693,7 +11700,7 @@ async function stats() {
     const s = await stState(p);
     ok(
       stSame(s.top, ST_TOP),
-      'F31 ST3: the top 10 with counts and shares, Dee merged across "Dee", "Deedee" and a message without a full name: ' +
+      'F31 ST3: the top 10 with counts and shares, Dee Dalton merged across "Dee Dalton", "Deedee" and a message without a full name: ' +
         JSON.stringify(s.top),
     );
   });
@@ -11744,7 +11751,7 @@ async function stats() {
         day.seg10 === 3 &&
         day.seg11 === 2 &&
         day.seg9 === 0 &&
-        stSame(day.legend, ['Ana', 'Ben Brooks', 'Cy', 'Dee', 'Everyone else']),
+        stSame(day.legend, ['Ana Alvarez', 'Ben Brooks', 'Cy', 'Dee Dalton', 'Everyone else']),
       "F31 ST4: the day by the hour, each bar split by the day's top four and everyone else " +
         JSON.stringify([s.hours, day]),
     );
@@ -11761,16 +11768,16 @@ async function stats() {
       [...document.querySelectorAll('#st-body .st-chart[data-chart="hours"] .st-tip > *')].map(x => x.textContent),
     );
     ok(
-      stSame(tip, ['10–11 AM', '7 messages', 'Ana 4', 'Ben Brooks 2', 'Dee 1']) &&
+      stSame(tip, ['10–11 AM', '7 messages', 'Ana Alvarez 4', 'Ben Brooks 2', 'Dee Dalton 1']) &&
         stSame(tip11, ['11 AM–12 PM', '4 messages', 'Cy 2', 'You 1', 'Ben Ortiz 1']),
       "F31 ST4: an hour's tooltip names its own top three " + JSON.stringify([tip, tip11]),
     );
     ok(
       stSame(s.top, [
-        'Ana 4 30.8%',
+        'Ana Alvarez 4 30.8%',
         'Ben Brooks 3 23.1%',
         'Cy 2 15.4%',
-        'Dee 2 15.4%',
+        'Dee Dalton 2 15.4%',
         'You 1 7.7%',
         'Ben Ortiz 1 7.7%',
       ]),
@@ -11813,7 +11820,7 @@ async function stats() {
     await p.waitForTimeout(150);
     const s = await stState(p);
     ok(
-      s.head === 'Dee' &&
+      s.head === 'Dee Dalton' &&
         stSame(s.tiles, {
           messages: '5',
           share: '18.5%',
@@ -11824,8 +11831,9 @@ async function stats() {
           links: '0',
           replies: '2',
         }) &&
-        s.span === 'Dee, Oct 22 – Nov 20: 5 messages.',
-      "F31 ST6: Dee's chart: 5 messages, 18.5%, #3, busiest 10-11 AM, 2 replies " + JSON.stringify([s.head, s.tiles]),
+        s.span === 'Dee Dalton, Oct 22 – Nov 20: 5 messages.',
+      "F31 ST6: Dee Dalton's chart: 5 messages, 18.5%, #3, busiest 10-11 AM, 2 replies " +
+        JSON.stringify([s.head, s.tiles]),
     );
     ok(
       s.person.length === 30 &&
@@ -11835,7 +11843,7 @@ async function stats() {
         s.person[29] === 1 &&
         s.personHours[10] === 2 &&
         s.personHours[14] === 1 &&
-        stSame(s.replies, ['Ana 1 50.0%', 'You 1 50.0%']),
+        stSame(s.replies, ['Ana Alvarez 1 50.0%', 'You 1 50.0%']),
       'F31 ST6: her messages by day and by hour, and whom she replied to ' + JSON.stringify([s.person, s.replies]),
     );
     await p.click('#st-body .st-back');
@@ -11847,9 +11855,9 @@ async function stats() {
     ok(
       f === 'FDee Dalton' &&
         ben.head === 'Ben Brooks' &&
-        stSame(ben.replies, ['Ana 3 100.0%']) &&
+        stSame(ben.replies, ['Ana Alvarez 3 100.0%']) &&
         ben.tiles.replies === '3',
-      'F31 ST6: Back focuses her name again; Ben Brooks replied to Ana three times: by name only (#20), and by the links threading found (#6 answers her, #14 quotes her) ' +
+      'F31 ST6: Back focuses her name again; Ben Brooks replied to Ana Alvarez three times: by name only (#20), and by the links threading found (#6 answers her, #14 quotes her) ' +
         JSON.stringify([f, ben.replies]),
     );
     /* from a day, a person's chart covers that day */
@@ -11865,12 +11873,12 @@ async function stats() {
     await p.waitForTimeout(150);
     const up = await stState(p);
     ok(
-      ana.head === 'Ana' &&
+      ana.head === 'Ana Alvarez' &&
         ana.tiles.messages === '4' &&
         ana.personHours[10] === 4 &&
         ana.person.length === 24 &&
         up.head === 'Thu, Nov 19',
-      "F31 ST6: from Nov 19, Ana's chart covers that day by the hour, and Back returns to the day " +
+      "F31 ST6: from Nov 19, Ana Alvarez's chart covers that day by the hour, and Back returns to the day " +
         JSON.stringify([ana.tiles, up.head]),
     );
     ok(p.errors.length === 0, 'F31 ST6: no page errors ' + JSON.stringify(p.errors));
@@ -11892,9 +11900,9 @@ async function stats() {
         z.tiles.messages === '22' &&
         z.span === 'Nov 12 – Nov 20 (zoomed in from Oct 22 – Nov 20): 22 messages. History starts Nov 1.' &&
         stSame(z.top, [
-          'Ana 7 31.8%',
+          'Ana Alvarez 7 31.8%',
           'Ben Brooks 5 22.7%',
-          'Dee 4 18.2%',
+          'Dee Dalton 4 18.2%',
           'You 3 13.6%',
           'Cy 2 9.1%',
           'Ben Ortiz 1 4.5%',
@@ -12455,10 +12463,10 @@ async function stats2() {
       stSame(m.tiles, { started: '4', active: '4' }) &&
         stSame(m.lists.busiest, ['Topic c3 13 48.1%', 'Topic c2 5 18.5%', 'Topic c4 4 14.8%', 'Topic c1 3 11.1%']) &&
         stSame(m.subs.busiest, [
-          '6 people: Ana, Ben Brooks, Cy, Dee +2 more',
-          '4 people: Ben Brooks, Ana, Dee, You',
-          '3 people: Ana, Dee, You',
-          '2 people: Ana, Ben Brooks',
+          '6 people: Ana Alvarez, Ben Brooks, Cy, Dee Dalton +2 more',
+          '4 people: Ben Brooks, Ana Alvarez, Dee Dalton, You',
+          '3 people: Ana Alvarez, Dee Dalton, You',
+          '2 people: Ana Alvarez, Ben Brooks',
         ]) &&
         stSame(m.lists.tags, ['For sale 2 50.0%', 'Gear talk 1 25.0%', 'Trip 1 25.0%']),
       'F31 ST17: on 30 days 4 conversations started and were active; the busiest with their messages, share and people; the summary tags by conversations ' +
@@ -12476,18 +12484,18 @@ async function stats2() {
     await stTf(p, 'd30');
     await stDay(p, 28);
     const d = await stPart(p, 'convs');
-    await stPerson(p, 'Ana');
+    await stPerson(p, 'Ana Alvarez');
     const ana = await stPart(p, 'convs');
     await stBack(p);
     await stBack(p);
-    const head = await stPerson(p, 'Ana');
+    const head = await stPerson(p, 'Ana Alvarez');
     const anaAll = await stPart(p, 'convs');
     ok(
       stSame(d.tiles, { started: '1', active: '1' }) &&
         stSame(d.lists.busiest, ['Topic c3 13 100.0%']) &&
         stSame(d.lists.tags, ['Gear talk 1 100.0%']) &&
         stSame(ana.lists.busiest, ['Topic c3 4 100.0%']) &&
-        head === 'Ana' &&
+        head === 'Ana Alvarez' &&
         stSame(anaAll.tiles, { started: '4', active: '4' }) &&
         stSame(anaAll.lists.busiest, [
           'Topic c3 4 44.4%',
@@ -12495,8 +12503,8 @@ async function stats2() {
           'Topic c4 2 22.2%',
           'Topic c2 1 11.1%',
         ]) &&
-        /Where Ana posted most/.test(anaAll.text),
-      "F31 ST17: Nov 19 has its one conversation; Ana's chart, that day and over 30 days, counts her own messages " +
+        /Where Ana Alvarez posted most/.test(anaAll.text),
+      "F31 ST17: Nov 19 has its one conversation; Ana Alvarez's chart, that day and over 30 days, counts her own messages " +
         JSON.stringify([d.lists, ana.lists, anaAll.tiles, anaAll.lists]),
     );
     await stBack(p);
@@ -12519,11 +12527,11 @@ async function stats2() {
     ok(
       stSame(m.tiles, { posted: '2', claims: '3', sold: '1', pending: '1', tosold: '6 days 20 h' }) &&
         m.labels.tosold === 'posted to sold, median of 1' &&
-        stSame(m.lists.sellers, ['Ana 2 100.0%']) &&
-        stSame(m.lists.claimers, ['Dee 2 66.7%', 'You 1 33.3%']) &&
+        stSame(m.lists.sellers, ['Ana Alvarez 2 100.0%']) &&
+        stSame(m.lists.claimers, ['Dee Dalton 2 66.7%', 'You 1 33.3%']) &&
         stSame(m.lists.deals, ['For sale: Stove, $40', 'For sale: Tent, $80']) &&
-        stSame(m.subs.deals, ['Ana · Nov 20 · Pending · 1 claim', 'Ana · Nov 12 · Sold · 2 claims']),
-      'F31 ST18: on 30 days 2 posted, 3 claims, 1 sold after 6 days 20 h (Nov 12 7:30 PM to Nov 19 3 PM), 1 pending; Ana posted both, Dee claimed twice ("Deedee" is Dee) ' +
+        stSame(m.subs.deals, ['Ana Alvarez · Nov 20 · Pending · 1 claim', 'Ana Alvarez · Nov 12 · Sold · 2 claims']),
+      'F31 ST18: on 30 days 2 posted, 3 claims, 1 sold after 6 days 20 h (Nov 12 7:30 PM to Nov 19 3 PM), 1 pending; Ana Alvarez posted both, Dee Dalton claimed twice ("Deedee" is Dee Dalton) ' +
         JSON.stringify(m),
     );
     await stTf(p, 'today');
@@ -12541,7 +12549,7 @@ async function stats2() {
     await stDay(p, 28);
     const d = await stPart(p, 'deals');
     await stBack(p);
-    await stPerson(p, 'Dee');
+    await stPerson(p, 'Dee Dalton');
     const dee = await stPart(p, 'deals');
     await stBack(p);
     ok(
@@ -12550,7 +12558,7 @@ async function stats2() {
         stSame(dee.tiles, { posted: '0', claims: '2', sold: '0', pending: '0', tosold: '—' }) &&
         dee.labels.claims === 'claims made' &&
         !dee.lists.sellers,
-      'F31 ST18: Nov 19 is the day the tent sold; Dee made two claims and posted no deal ' +
+      'F31 ST18: Nov 19 is the day the tent sold; Dee Dalton made two claims and posted no deal ' +
         JSON.stringify([d.tiles, dee.tiles]),
     );
     /* a seller's name opens their chart, and Back comes back to it */
@@ -12563,7 +12571,7 @@ async function stats2() {
       return a && a.closest('[data-list]') && [a.closest('[data-list]').dataset.list, a.closest('li').dataset.pk];
     });
     ok(
-      head === 'Ana' && stSame(f, ['sellers', 'FAna Alvarez']),
+      head === 'Ana Alvarez' && stSame(f, ['sellers', 'FAna Alvarez']),
       "F31 ST18: a seller's name opens their chart; Back focuses it again " + JSON.stringify([head, f]),
     );
     await flashReset(p);
@@ -12581,10 +12589,10 @@ async function stats2() {
     ok(
       stSame(m.tiles, { new: '6', quiet: '0' }) &&
         stSame(m.lists.new, [
-          'Ana 9 33.3%',
+          'Ana Alvarez 9 33.3%',
           'Ben Brooks 6 22.2%',
           'Cy 3 11.1%',
-          'Dee 5 18.5%',
+          'Dee Dalton 5 18.5%',
           'You 3 11.1%',
           'Ben Ortiz 1 3.7%',
         ]) &&
@@ -12612,7 +12620,7 @@ async function stats2() {
         JSON.stringify([t.lists, lw.lists, d7.lists]),
     );
     await stTf(p, 'd30');
-    await stPerson(p, 'Dee');
+    await stPerson(p, 'Dee Dalton');
     const dee = await stPart(p, 'people');
     const secs = (await stState(p)).secs;
     ok(
@@ -12621,7 +12629,8 @@ async function stats2() {
           'First message #4 (Sun, Nov 1, 2:05 PM); last #25 (Fri, Nov 20, 10:20 AM). Stored history starts Nov 1, so they may have posted before.',
         ) &&
         secs[1] === 'people',
-      "F31 ST19: Dee's chart says when she was first and last seen, under her numbers " + JSON.stringify([dee, secs]),
+      "F31 ST19: Dee Dalton's chart says when she was first and last seen, under her numbers " +
+        JSON.stringify([dee, secs]),
     );
     await stBack(p);
     await stPerson(p, 'Ben Ortiz');
@@ -12631,7 +12640,7 @@ async function stats2() {
       "F31 ST19: Ben Ortiz's chart: first seen inside the span, so he's new in it " + JSON.stringify(bo),
     );
     await stBack(p);
-    await stPerson(p, 'Dee');
+    await stPerson(p, 'Dee Dalton');
     await flashReset(p);
     await p.click('#st-body > [data-sec="people"] p.note a:nth-of-type(2)');
     const at = await stAtMsg(p, 25);
@@ -12648,12 +12657,12 @@ async function stats2() {
       stSame(m.tiles, { replies: '6', share: '22.2%', asked: '5', answered: '3', wait: '10 min' }) &&
         m.labels.wait === 'to the first answer, median of 3' &&
         stSame(m.lists.pairs, [
-          'Ben Brooks → Ana 3 50.0%',
-          'Dee → Ana 1 16.7%',
-          'Dee → You 1 16.7%',
+          'Ben Brooks → Ana Alvarez 3 50.0%',
+          'Dee Dalton → Ana Alvarez 1 16.7%',
+          'Dee Dalton → You 1 16.7%',
           'Ben Ortiz → You 1 16.7%',
         ]),
-      'F31 ST20: on 30 days 6 replies, Ben Brooks to Ana most (by name, an answer link and a quote link; Cy going on is no reply); 5 questions, 3 answered after 10, 20 and 5 minutes ' +
+      'F31 ST20: on 30 days 6 replies, Ben Brooks to Ana Alvarez most (by name, an answer link and a quote link; Cy going on is no reply); 5 questions, 3 answered after 10, 20 and 5 minutes ' +
         JSON.stringify(m),
     );
     await stTf(p, 'today');
@@ -12664,17 +12673,21 @@ async function stats2() {
     ok(
       stSame(t.tiles, { replies: '1', share: '20.0%', asked: '2', answered: '1', wait: '5 min' }) &&
         stSame(d.tiles, { replies: '4', share: '30.8%', asked: '1', answered: '1', wait: '20 min' }) &&
-        stSame(d.lists.pairs, ['Ben Brooks → Ana 2 50.0%', 'Dee → Ana 1 25.0%', 'Ben Ortiz → You 1 25.0%']),
+        stSame(d.lists.pairs, [
+          'Ben Brooks → Ana Alvarez 2 50.0%',
+          'Dee Dalton → Ana Alvarez 1 25.0%',
+          'Ben Ortiz → You 1 25.0%',
+        ]),
       'F31 ST20: today and Nov 19 count their own replies and questions ' + JSON.stringify([t.tiles, d.tiles, d.lists]),
     );
     await stBack(p);
-    await stPerson(p, 'Ana');
+    await stPerson(p, 'Ana Alvarez');
     const ana = await stPart(p, 'engage');
     ok(
       stSame(ana.tiles, { got: '4', asked: '4', answered: '2', wait: '15 min' }) &&
-        stSame(ana.lists.repliedBy, ['Ben Brooks 3 75.0%', 'Dee 1 25.0%']) &&
-        ana.labels.got === 'replies to Ana',
-      "F31 ST20: Ana's chart: 4 replies to her; her 4 questions, 2 answered after a median 15 minutes " +
+        stSame(ana.lists.repliedBy, ['Ben Brooks 3 75.0%', 'Dee Dalton 1 25.0%']) &&
+        ana.labels.got === 'replies to Ana Alvarez',
+      "F31 ST20: Ana Alvarez's chart: 4 replies to her; her 4 questions, 2 answered after a median 15 minutes " +
         JSON.stringify(ana),
     );
     const text = await p.evaluate(() => document.getElementById('v-stats').textContent);
@@ -12705,7 +12718,7 @@ async function stats2() {
         w.bars[28] === 2 &&
         w.bars[29] === 2 &&
         w.bars.reduce((a, b) => a + b, 0) === 6 &&
-        stSame(w.lists.mentions, ['Ben Brooks 3 50.0%', 'Ana 1 16.7%', 'Cy 1 16.7%', 'You 1 16.7%']),
+        stSame(w.lists.mentions, ['Ben Brooks 3 50.0%', 'Ana Alvarez 1 16.7%', 'Cy 1 16.7%', 'You 1 16.7%']),
       'F31 ST21: after the pause, "tent" in 6 messages by day (TENT and tent-pole count, Tents and contents don\'t), Ben Brooks most ' +
         JSON.stringify(w),
     );
@@ -12842,7 +12855,7 @@ async function stats2() {
       NEW,
     );
     const words = await p.evaluate(() => document.getElementById('st-words').hidden);
-    await stPerson(p, 'Ana');
+    await stPerson(p, 'Ana Alvarez');
     const per = (await stState(p)).secs;
     ok(
       stSame(s1.secs, ['tiles', 'volume', 'top', 'heat']) &&
@@ -12897,7 +12910,7 @@ async function stats2() {
     const head = (await stState(p)).head;
     const fit = x => x.sw <= x.w && !x.over.length;
     ok(
-      fit(m) && fit(day) && fit(per) && head === 'Ana',
+      fit(m) && fit(day) && fit(per) && head === 'Ana Alvarez',
       'F31 ST24: at 390 px nothing runs past the right edge with the new sections (main, a day, a person) ' +
         JSON.stringify({ m, day, per }),
     );

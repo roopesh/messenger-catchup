@@ -25,6 +25,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; option C step 1 (the `reply-check` skill) in v1.34.0; measured (0.2% of a 5-hour session per check); scheduling it ("schedule reply checks") in v1.37.0; left: arm it on the owner's account (every 10 minutes, 5 AM–10 PM) and check it, then make the interval and hours changeable in the page |
 | F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
+| F35 | P3 | feature | Tag people in replies: an @mention in a reply written on the page, posted as a real Messenger mention (the owner's request, Nov 24; options and questions on the decision board) |
+| F36 | P3 | feature | Photos in replies: attach an image to a reply written on the page and post it with the reply (the owner's request, Nov 24; options and questions on the decision board) |
+| F37 | P3 | feature | Reactions: react to a message from the page (👍, ❤️, …), posted to Messenger (the owner's request, Nov 24; options and questions on the decision board) |
 
 ## Bugs
 
@@ -133,6 +136,21 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Left:**
   - **Arm it on the owner's account and check it:** in a Claude app whose tool list has the recurring tool with the device requirement (see `references/scheduling.md` › Tools), say "schedule reply checks"; confirm the result says it's tied to this computer, the approval mode, that an empty check costs about what was measured, and that a reply queued on the page goes out within 10 minutes. Watch for the task pausing after a check finds the computer asleep (LEARNINGS: a device-bound task pauses for good on `device_absent`).
 - **Later (owner, Nov 23): change the interval and hours in the page,** picked up at the next check with no re-arming. A fixed recurring task can't change its own cron, and a check that reads its settings costs a second read on every run, so this needs a design: for example a chain (each check arms the next from `meta/chat`), or a recurring task at the shortest interval offered whose checks skip cheaply when not due. Measure the skip's cost first.
+
+### F35 · P3 · Tag people in replies
+- **Asked (owner, Nov 24):** "how can we tag people in replies?"
+- **Today:** a reply written on the page is plain text; the helper types it into Messenger's box (`post`), so "@Ana" goes out as text, not a mention.
+- **What it needs, to design:** on the page, an @ in the reply box suggests people from the chat's member list, and the reply stores the mention (who, where in the text). In Messenger, a real mention needs typing "@" plus the name and picking the person from Messenger's own suggestion list; the helper would have to do that pick and check the result, the way `post` checks the reply bar today. Questions for the owner: which names to suggest (members who posted recently, or everyone), and what to do when Messenger's list doesn't offer the person (post as plain text, or hold the reply).
+
+### F36 · P3 · Photos in replies
+- **Asked (owner, Nov 24):** "how can we upload images in replies?"
+- **Today:** replies are text only.
+- **What it needs, to design:** the page keeps the image in its own asset store (as photos are today) and links it from the outbox row; at posting time the helper puts the file into Messenger's box (a paste or a drop of the file) and checks the preview before sending. Unknown until tried on the real Messenger: whether it accepts a scripted paste or drop. Measure that first (a spike on the owner's test chat, never posting), then decide. Questions for the owner: one image or several, and a size limit.
+
+### F37 · P3 · Reactions
+- **Asked (owner, Nov 24):** "how can we add reactions to the chat?"
+- **Today:** the page shows reactions it read; it can't add one.
+- **What it needs, to design:** a react control on a message on the page (a few common emoji) that queues a reaction in the outbox; the helper hovers the message in Messenger, opens its reaction menu, picks the emoji and checks it shows. Same rules as replies: shown and confirmed in chat unless replies post automatically. Questions for the owner: which emoji, and whether a reaction needs the same OK as a reply.
 
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.
