@@ -2,6 +2,27 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.44.0] - 2026-11-25
+**Tag people in replies, and react from the page** (BACKLOG F35 and F37, the owner's requests of Nov 24, decided on the board: real mentions, posters only, a plain "@Name" when Messenger doesn't offer the person; reactions through the outbox, any emoji, following "replies post automatically"). MINOR: new page features and new posting steps. Page **`PAGE_VERSION` 5.0** (from 4.9); helper **2.7** (from 2.6).
+
+### Added
+- **"@" in a reply suggests people.** Typing "@" and letters in a reply on the page lists the chat's posters ("Fullname (Nickname)", newest first). Click one, or use the arrows and Enter or Tab, and the reply gets "@Full Name". The queued row lists them in `mentions`.
+- **Real Messenger mentions.** Helper 2.7's `post` takes `mentions`: for each "@Name" it types "@" and the name, checks that Messenger's mention list highlights exactly that person (moving down to them if needed), and presses Tab, which makes a real mention. A name the list doesn't offer goes out as plain text, and the result lists it in `missed`; the report names it and says what differs. If the list is still open before Enter (it would pick a name), the helper clears the box and sends nothing (`mention-list-open`). `outbox.md`'s manual calls type mentions as plain text, and the report says so.
+- **React from the page.** Each message has React next to Reply here: 👍 ❤️ 😂 😮 😢 🙏, or any one emoji typed in "Other emoji". It queues an outbox row `{kind:"react", emoji}`, shows "👍 queued" on the message, and appears under "Your replies and reactions" with Cancel.
+- **The helper adds reactions.** New `react{mid,emoji,search,approved:true}`: it finds the message, opens "React with an emoji", and picks the emoji there, else under "Show more emojis" (its grid, else its search box with `search`). If your reaction is already that emoji, it clicks nothing (another click would remove it). It then checks the message's reactions label shows it. `outbox.md` › Reactions covers approval (as replies), settling (`sent`, `unconfirmed`, `failed`), and an older helper (the row waits).
+- SKILL.md and the replies skill: a reaction needs the same approval as a reply, and React is an allowed click for an approved one.
+
+### Checked in the owner's test chat (Nov 25, nothing sent; the owner OK'd the reaction test on the board)
+- Mentions: "@" and a full name narrow Messenger's list to that person; a scripted Tab inserts the mention as "@Full Name" with no space after; a scripted ArrowDown moves the pick; a name with no match closes the list; the helper's select-all and Backspace clears a mention.
+- Reactions: the helper's clicks on the menu's 👍 added it (the label went from 1 to 2 reactions) and removed it again; "Show more emojis" opens a picker whose search box takes typed text ("fire" lists 🔥 first).
+
+### Tests
+- Sim: the mock Messenger has a mention list (Lexical, with a mention node drawn as Messenger does) and a reactions menu with a picker and a search box. `F35: post tags people` (two mentions, one reached with ArrowDown; a miss sent as plain text; an open list refused). `F37: react` (needs approval; the menu; already yours; search, replacing yours; the picker grid; an emoji Messenger doesn't have).
+- Page: "@" suggestions narrow, Enter writes "@Full Name " and the row has `mentions`; React queues `{kind:"react"}`, shows "👍 queued", refuses text in "Other emoji", lists it on Summary, Cancel. The Tab-order test focuses a message's last action (React), and MIG4 compares Messages without the new React buttons.
+
+### Backlog
+- F35 and F37 done. L1: the first real mention and reaction on the owner's page.
+
 ## [1.43.0] - 2026-11-24
 **Every chat gets its full names** (BACKLOG B60; the owner's comment on their page, Nov 24: "fill in everyone's names"). MINOR: refreshes of added chats now run their one-time name scan, and the helper reads names more carefully. Helper **2.6** (from 2.5); page **`PAGE_VERSION` 4.9** (from 4.8: only its embedded copy of the helper).
 

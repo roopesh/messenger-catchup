@@ -1,12 +1,13 @@
-# Outbox (replies queued with "Reply here" on the page)
+# Outbox (replies and reactions queued on the page)
 
 Read this in full before handling any outbox row. The bridge is in SKILL.md › Helper, and its commands (`jump`) in `references/helper.md` › Commands. The row's fields are in `references/database.md` (the `outbox/r<ms>` line).
 
 Two kinds of run post replies: a refresh, before its scan (its step 2) and for rows queued while it ran (step 8), and a reply-only run (the `messenger-catchup:replies` skill: "send replies"), which reads no new messages.
 
 - `ArtifactData query outbox` where `state=="queued"`. For each, check `to` and `snip` against the stored message (`i`, `mid`). A reply-only run skips this read: call 1 and `post` check the "Replying to" bar against `to` and `snip` before typing.
-- If auto-posting is on for the chat (its own `auto` in `meta/chat.chats` when set, else `meta/chat.outboxAuto`), post each one. Otherwise list them for the user (who it's to, their message, the exact reply) and post only the ones they say yes to in chat. During a scheduled run with no one there, list them in the report and leave them queued.
-- Settle any row left in `state:"sending"` (by an earlier run, or by this refresh's posting before its scan) only **after this refresh's import** (its step 8). Check the **saved messages**, not the screen: the chunks are current then, and they hold anything this run posted before its scan. Before the scan, and in a reply-only run, leave `sending` rows as they are: they don't hold up posting the `queued` ones. Look for a message with `f:"You"`, `r` matching the row's `to` (the same name, or one is the start of the other: Messenger may show a first name where the chat shows the full name; "yourself" when `to` is "You"), and `b` equal to the row's `text` (ignoring whitespace), dated after `queuedAt`.
+- A row with `kind:"react"` is a reaction (its `emoji`, no `text`): post it by Reactions below. Every other row is a reply. A reply's `mentions` lists the people it tags (Mentions below).
+- If auto-posting is on for the chat (its own `auto` in `meta/chat.chats` when set, else `meta/chat.outboxAuto`), post each one. Otherwise list them for the user (who it's to, their message, the exact reply or the emoji) and post only the ones they say yes to in chat. During a scheduled run with no one there, list them in the report and leave them queued.
+- Settle any row left in `state:"sending"` (by an earlier run, or by this refresh's posting before its scan) only **after this refresh's import** (its step 8). Check the **saved messages**, not the screen: the chunks are current then, and they hold anything this run posted before its scan. Before the scan, and in a reply-only run, leave `sending` rows as they are: they don't hold up posting the `queued` ones. Look for a message with `f:"You"`, `r` matching the row's `to` (the same name, or one is the start of the other: Messenger may show a first name where the chat shows the full name; "yourself" when `to` is "You"), and `b` equal to the row's `text` (ignoring whitespace, and the "@" before a name in `mentions`: a sent mention may show without it), dated after `queuedAt`. Reactions are never settled this way (Reactions below).
   - Found: mark it `sent` with `sentMid` set to that message's `m` and `sentAt` set to that message's time (its `d` and `t`, in `meta/chat.tz`, as an ISO time).
   - Not found, but the newest saved message is older than `queuedAt`: the chat hasn't been read past the send yet, so leave the row as it is.
   - Not found, and saved messages run past `queuedAt`, or the row is more than a day old: mark it `unconfirmed` with `error:"Not found in the chat after sending; check Messenger before queueing it again"` and tell the user.
@@ -107,3 +108,20 @@ await (async () => {
   - `{pending}`: the box is empty but the message hasn't shown up, so it may have gone out. Leave the row in `sending` (the settle check above handles it after the next import: this refresh's step 8 when it posted before its scan) and **stop posting** for this run, so a second row is never left in `sending`. Never mark a reply that may have been sent as `failed`: the user would queue it again.
 - After the last row, or when you stop, write the pending outcomes in one batch, pinned. If the run stops between calls, at most one row is left in `sending`, and the settle check above finds it on the next run.
 - To clear a box: click it, cmd+a (ctrl+a), Delete.
+- These calls type a reply's `mentions` as plain text: nobody is tagged. Say so in the report (Mentions below).
+
+## Mentions
+- A reply's `mentions` holds full names that its `text` writes as "@" plus the name (the page's "@" suggestions put them there). Only helper posting (`references/posting-with-helper.md`, helper 2.7 or later) makes them real Messenger mentions: it types "@" and the name, picks that person in Messenger's mention list and presses Tab. A name the list doesn't offer exactly stays plain text, and the result lists it in `missed`.
+- In the report, name every person not tagged (in `missed`, or every name when the reply went by the calls above): "@Ana Alvarez went out as plain text: Messenger's list didn't offer that name". On that run, compare the name with `people/index` and the chat's members as Messenger lists them, and tell the user what differs (a nickname, a changed name, someone who left), so their next reply tags them.
+
+## Reactions
+A row with `kind:"react"` adds its `emoji` to the message `mid` in Messenger. Approval, the pending outcomes, pinned writes and one row at a time are the same as for replies. Only the helper's `react` (helper 2.7 or later) posts one; with an older helper leave the row `queued` and say in the report that it waits for the helper's own update (within a day, `references/helper.md` › Versions).
+1. No `mid`: add `failed` ("no Messenger id") to the pending outcomes. Next row.
+2. **ArtifactData `batch`:** the pending outcomes, plus this row updated to `{state:"sending"}`, pinned (as call 2 above, including a refused write: a cancelled row isn't posted).
+3. **Start `react` once** with `{mid, emoji, search, approved:true}`, and poll until it's no longer running. `search` is the English word Messenger's emoji search knows it by ("fire" for 🔥, "pray" for 🙏), used only when the emoji isn't in the message's reaction menu or the picker's first page. Pass `approved:true` only for a row approved as above. Never start it twice for a row.
+4. Settle it:
+   - `done:true` (also with `already:true`: your reaction there was already that emoji, so nothing was clicked): add `sent` with `sentAt` = its `at` and `sentMid` = the row's `mid`. `replaced` names the reaction of yours it replaced (Messenger keeps one per person): say so in the report. Next row.
+   - `err:"unconfirmed"`, or no result: it clicked the emoji but the message didn't show it, so it may be there. Add `unconfirmed` with `error:"Clicked, but Messenger didn't show it; check the message in Messenger"`. Next row.
+   - `post-running`, `scan-running`, `jump-running`: nothing was done. Wait until it ends (about a minute), then start `react` once.
+   - Any other `err` (`jump-failed`, `no-react-button`, `no-menu`, `emoji-not-found`, `bad-args`, `not-approved`): nothing was clicked. Add `failed` with the result's `detail` as `error`. Next row.
+- A reaction is never taken back by these steps: removing or changing one from the page is F38, not built yet.

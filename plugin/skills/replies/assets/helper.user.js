@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      2.6
+// @version      2.7
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -25,13 +25,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '2.6';
+  window.__mcHelper = '2.7';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '2.6');
+  root.setAttribute('data-mc-helper', '2.7');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -1493,7 +1493,9 @@
      reply may have gone out, so the row must stay sending. Every other err means the helper checked that nothing was sent:
      no new message from you appeared and the box still held what was typed. entered: an Enter or shift+Enter was pressed.
      Before each key it records its stage in the command's result ({running:true, stage}) and in sessionStorage mc_post,
-     so a result that never arrives can be told apart. After a refusal it cancels the reply bar it opened (barClosed). */
+     so a result that never arrives can be told apart. After a refusal it cancels the reply bar it opened (barClosed).
+     mentions (F35): full names to tag where the text has "@" plus the name; the result lists them in tagged (a real
+     mention) or missed (left as plain text, because Messenger's list didn't offer exactly that name). */
   async function mcPost(a, id) {
     a = a || {};
     const t0 = Date.now();
@@ -1504,28 +1506,45 @@
         stage: 'optin',
         detail: 'helper posting is off (meta/chat.helperPost): post by references/outbox.md instead',
       });
-    if (![a.mid, a.to, a.text].every(x => typeof x === 'string' && x.trim()) || (a.snip && typeof a.snip !== 'string'))
-      return out({ err: 'bad-args', stage: 'args', detail: 'post needs mid, to and text (strings), and snip' });
-    if (window.__mcPosting)
+    if (
+      ![a.mid, a.to, a.text].every(x => typeof x === 'string' && x.trim()) ||
+      (a.snip && typeof a.snip !== 'string') ||
+      (a.mentions != null && !Array.isArray(a.mentions))
+    )
       return out({
-        err: 'post-running',
+        err: 'bad-args',
         stage: 'args',
-        detail: 'another post (' + window.__mcPosting + ') is still running in this tab: never start a second one',
+        detail: 'post needs mid, to and text (strings), snip, and mentions (a list of names) if given',
       });
-    if (window.__rf && !window.__rf.done)
-      return out({ err: 'scan-running', stage: 'args', detail: 'a scan is running in this tab' });
+    const b = busy();
+    if (b) return out(Object.assign({ stage: 'args' }, b));
+    window.__mcPosting = a.mid;
+    a.tags = { tagged: [], missed: [] };
+    try {
+      const r = await postOne(a, out, t0, id);
+      return a.tags.tagged.length || a.tags.missed.length ? Object.assign(r, a.tags) : r;
+    } finally {
+      window.__mcPosting = null;
+    }
+  }
+  /* Another post or reaction, a scan, or a jump (a Reply link) running in this tab: post and react wait for it */
+  function busy() {
+    if (window.__mcPosting)
+      return {
+        err: 'post-running',
+        detail:
+          'another post or reaction (' +
+          window.__mcPosting +
+          ') is still running in this tab: never start a second one',
+      };
+    if (window.__rf && !window.__rf.done) return { err: 'scan-running', detail: 'a scan is running in this tab' };
     const jm = (root.getAttribute('data-mc-jumping') || '').split(' ');
     if (
       (window.__mcJumping && Date.now() - (window.__mcJumpAt || 0) < 300000) ||
       (jm[0] && Date.now() - Number(jm[1]) < 300000)
     )
-      return out({ err: 'jump-running', stage: 'args', detail: 'a jump (a Reply link) is running in this tab' });
-    window.__mcPosting = a.mid;
-    try {
-      return await postOne(a, out, t0, id);
-    } finally {
-      window.__mcPosting = null;
-    }
+      return { err: 'jump-running', detail: 'a jump (a Reply link) is running in this tab' };
+    return null;
   }
   async function postOne(a, out, t0, id) {
     const box = () => document.querySelector('[role="textbox"][contenteditable="true"]');
@@ -1541,6 +1560,60 @@
       el.dispatchEvent(new KeyboardEvent('keyup', o));
     };
     const key = (el, shift) => press(el, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, shiftKey: shift });
+    /* F35: a name in mentions written as "@Name" in the text is typed as "@" plus the name, which opens Messenger's mention
+       list; when the list offers exactly that name, ArrowDown moves the pick to it and Tab makes it a mention (a span
+       with spellcheck="false" holding "@Name"). Otherwise it stays plain text, listed in missed. */
+    const tags = (Array.isArray(a.mentions) ? a.mentions : [])
+      .filter(x => typeof x === 'string' && N(x))
+      .map(N)
+      .sort((x, y) => y.length - x.length);
+    const listEl = () => {
+      const c = box() && box().getAttribute('aria-controls');
+      return (c && document.getElementById(c)) || document;
+    };
+    const options = () =>
+      Array.from(listEl().querySelectorAll('[role="option"]')).filter(o => o.getClientRects().length);
+    const optName = o => N((o.innerText || o.textContent || '').split('\n')[0]).toLowerCase();
+    const tag = async name => {
+      document.execCommand('insertText', false, '@' + name);
+      const want = name.toLowerCase();
+      for (let k = 0; k < 10 && !options().length; k++) await sleep(200);
+      for (let n = 0, all = options().length; n <= all; n++) {
+        const on = options().find(o => o.getAttribute('aria-selected') === 'true');
+        if (on && optName(on) === want) {
+          press(box(), { key: 'Tab', code: 'Tab', keyCode: 9 });
+          await sleep(300);
+          const sp = box() && Array.from(box().querySelectorAll('[spellcheck="false"]')).pop();
+          return !!sp && N(sp.textContent) === '@' + name;
+        }
+        if (!options().some(o => optName(o) === want)) return false;
+        press(box(), { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 });
+        await sleep(120);
+      }
+      return false;
+    };
+    const typeLine = async line => {
+      let rest = line;
+      while (rest) {
+        let at = -1,
+          name = null;
+        tags.forEach(t => {
+          const k = rest.indexOf('@' + t);
+          if (k >= 0 && (at < 0 || k < at)) {
+            at = k;
+            name = t;
+          }
+        });
+        if (at < 0) {
+          document.execCommand('insertText', false, rest);
+          return;
+        }
+        if (at) document.execCommand('insertText', false, rest.slice(0, at));
+        await sleep(40);
+        a.tags[(await tag(name)) ? 'tagged' : 'missed'].push(name);
+        rest = rest.slice(at + 1 + name.length);
+      }
+    };
     /* Messenger's editor (Lexical) undoes DOM edits it didn't make, so the box is cleared with keys: select all
        (ctrl+A, or cmd+A on a Mac), then Backspace. Lexical also needs a moment after focus before it takes input. */
     const clear = async el => {
@@ -1643,17 +1716,37 @@
         if (before.has(e.getAttribute('data-message-id'))) return false;
         return nameOf(e.getAttribute('aria-label')) === 'You' || /^You replied to /.test(e.innerText || '');
       });
+    /* a sent mention may show without its "@" */
+    const bare = s => (tags.length ? s.replace(/@/g, '') : s);
     const match = () => {
-      const want = lines(a.text);
+      const want = lines(a.text).map(bare);
       return mine()
         .reverse()
         .find(e => {
-          const body = N((e.innerText || '') + ' ' + (e.getAttribute('aria-label') || ''));
+          const body = bare(N((e.innerText || '') + ' ' + (e.getAttribute('aria-label') || '')));
           return want.every(x => body.includes(x));
         });
     };
     const maybeSent = (stage, entered, detail) =>
       out({ err: 'unconfirmed', stage, entered, partial: true, detail: detail + ': leave the row sending' });
+    /* Before reporting "nothing sent", wait a moment and make sure nothing new from you appeared. */
+    const quiet = async () => {
+      await sleep(1200);
+      return !mine().length;
+    };
+    /* After a missed mention, Messenger's list may still be open, and Enter or shift+Enter would pick a name from it */
+    const listOpen = async stage => {
+      if (!tags.length || !options().length) return null;
+      if (!(await quiet())) return maybeSent(stage, entered, 'a message from you appeared while typing');
+      if (box()) await clear(box());
+      return refuse({
+        err: 'mention-list-open',
+        stage,
+        entered,
+        cleared: !box() || !N(box().innerText),
+        detail: "Messenger's mention list was still open, so Enter would have picked a name; nothing was sent",
+      });
+    };
     box().focus();
     await sleep(120);
     const parts = a.text.replace(/\r\n?/g, '\n').split('\n');
@@ -1661,6 +1754,8 @@
       typed = '';
     for (let p = 0; p < parts.length; p++) {
       if (p) {
+        const lo = await listOpen('typing');
+        if (lo) return lo;
         mark('typing');
         entered = true;
         key(box(), true);
@@ -1670,21 +1765,16 @@
         if (mine().length || !box() || !same(box().innerText, typed))
           return maybeSent('typing', true, 'a scripted shift+Enter may have sent the first line(s)');
       }
-      if (parts[p]) document.execCommand('insertText', false, parts[p]);
+      if (parts[p]) await typeLine(parts[p]);
       typed += (p ? '\n' : '') + parts[p];
       await sleep(40);
     }
     await sleep(200);
-    /* Before reporting "nothing sent", wait a moment and make sure nothing new from you appeared. */
-    const quiet = async () => {
-      await sleep(1200);
-      return !mine().length;
-    };
     if (!box() || !same(box().innerText, a.text)) {
       const now = box() ? box().innerText : '';
       if (!(await quiet())) return maybeSent('type', entered, 'a message from you appeared while typing');
-      const bare = s => String(s || '').replace(/\s+/g, '');
-      const err = bare(now) === bare(a.text) ? 'linebreak-not-accepted' : 'type-mismatch';
+      const flat = s => String(s || '').replace(/\s+/g, '');
+      const err = flat(now) === flat(a.text) ? 'linebreak-not-accepted' : 'type-mismatch';
       if (box()) await clear(box());
       return refuse({
         err,
@@ -1706,6 +1796,8 @@
         detail: 'the reply bar moved to another message while typing; nothing was sent',
       });
     }
+    const lo = await listOpen('enter');
+    if (lo) return lo;
     mark('enter');
     key(box(), false);
     for (let w = 0; w < 60; w++) {
@@ -1833,6 +1925,165 @@
     out.ms = Date.now() - p.t0;
     sessionStorage.setItem('mc_result', JSON.stringify(out));
   }
+  /* react{mid,emoji,search,approved} (F37): adds one reaction the user approved (Claude passes approved:true only for an
+     outbox row the user said yes to, or one that auto-posting covers). It finds the message (a jump without Reply), opens
+     its "React with an emoji" menu and picks the emoji there, else under "Show more emojis" (in its grid, else by typing
+     search, an English word for the emoji, into its search box). If your own reaction is already that emoji it clicks
+     nothing, since picking it again would remove it. Then it waits up to 6 s for the message's reactions label to show it.
+     Returns {done:true, mid, at, via, replaced, already} or {done:false, err, detail}. err "unconfirmed": it clicked the
+     emoji, but the message didn't show it, so it may be there. Every other err means nothing was clicked. */
+  async function mcReact(a) {
+    a = a || {};
+    const t0 = Date.now();
+    const out = o => Object.assign({ done: false, ms: Date.now() - t0 }, o);
+    if (a.approved !== true)
+      return out({ err: 'not-approved', detail: 'react needs approved:true, only for a reaction the user approved' });
+    if (
+      ![a.mid, a.emoji].every(x => typeof x === 'string' && x.trim()) ||
+      (a.search != null && typeof a.search !== 'string')
+    )
+      return out({ err: 'bad-args', detail: 'react needs mid and emoji (strings), and search (a string) if given' });
+    const b = busy();
+    if (b) return out(b);
+    window.__mcPosting = a.mid;
+    try {
+      return await reactOne(a, out, t0);
+    } finally {
+      window.__mcPosting = null;
+    }
+  }
+  async function reactOne(a, out, t0) {
+    const bare = s =>
+      String(s || '')
+        .replace(/\uFE0F/g, '')
+        .trim();
+    const want = bare(a.emoji);
+    const isIt = im => !!im && bare(im.alt) === want;
+    const esc = el => {
+      const o = { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true };
+      if (el) el.dispatchEvent(new KeyboardEvent('keydown', o));
+      document.dispatchEvent(new KeyboardEvent('keydown', o));
+    };
+    window.__mcJumpRes = null;
+    history.replaceState(
+      null,
+      '',
+      location.pathname + location.search + '#mcjump=' + encodeURIComponent(a.mid) + '&noreply',
+    );
+    jump();
+    let j = null;
+    for (let k = 0; k < 1000; k++) {
+      await sleep(250);
+      j = window.__mcJumpRes;
+      if (j && j.mid === a.mid && j.state !== 'running') break;
+    }
+    if (!j || j.state !== 'found')
+      return out({ err: 'jump-failed', detail: (j && j.tip) || 'the jump did not finish' });
+    const msg = () => document.querySelector('[role="log"] [data-message-id="' + CSS.escape(a.mid) + '"]');
+    /* the message's own block: wrappers around it that hold no other message (its toolbar and reactions sit there) */
+    const ownOf = e => {
+      let o = e;
+      for (let up = 0; up < 4 && o.parentElement; up++) {
+        if (o.parentElement.querySelectorAll('[data-message-id]').length > 1) break;
+        o = o.parentElement;
+      }
+      return o;
+    };
+    const label = () => {
+      const e = msg();
+      const p =
+        e &&
+        Array.from(ownOf(e).querySelectorAll('[aria-label]')).find(x =>
+          / reactions? with /.test(' ' + x.getAttribute('aria-label')),
+        );
+      return p ? p.getAttribute('aria-label') : '';
+    };
+    const count = l => +((l.match(/^(\d+) reactions? with/) || [])[1] || 0);
+    const shows = l => bare(l).indexOf(want) >= 0;
+    const e = msg();
+    if (!e) return out({ err: 'jump-failed', detail: 'the message is not on screen after the jump' });
+    ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(t =>
+      e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })),
+    );
+    let rb = null;
+    for (let k = 0; k < 10 && !rb; k++) {
+      await sleep(150);
+      rb = ownOf(e).querySelector('[aria-label="React with an emoji"]');
+    }
+    if (!rb) return out({ err: 'no-react-button', detail: 'the message has no "React with an emoji" button' });
+    /* Only the menu this click opens counts: a menu left open elsewhere is never used. */
+    const before = Array.from(document.querySelectorAll('[role="menu"]'));
+    rb.click();
+    let menu = null;
+    for (let k = 0; k < 14 && !menu; k++) {
+      await sleep(150);
+      menu = Array.from(document.querySelectorAll('[role="menu"]')).find(x => before.indexOf(x) < 0) || null;
+    }
+    if (!menu) return out({ err: 'no-menu', detail: 'the reactions menu did not open' });
+    const items = Array.from(menu.querySelectorAll('[role="menuitemradio"]'));
+    const mineEl = items.find(x => x.getAttribute('aria-checked') === 'true');
+    const mine = mineEl && mineEl.querySelector('img') ? mineEl.querySelector('img').alt : null;
+    if (mineEl && isIt(mineEl.querySelector('img'))) {
+      esc(menu);
+      return { done: true, already: true, mid: a.mid, at: new Date().toISOString(), via: 'menu', ms: Date.now() - t0 };
+    }
+    const l0 = label();
+    let target = items.find(x => isIt(x.querySelector('img'))) || null,
+      via = 'menu';
+    if (!target) {
+      const more = Array.from(menu.querySelectorAll('[aria-label]')).find(x =>
+        /more emoji/i.test(x.getAttribute('aria-label')),
+      );
+      if (!more) {
+        esc(menu);
+        return out({ err: 'emoji-not-found', detail: 'not in the reactions menu, which has no "Show more emojis"' });
+      }
+      more.click();
+      let inp = null;
+      for (let k = 0; k < 14 && !inp; k++) {
+        await sleep(150);
+        inp = document.querySelector('input[aria-label="Search emoji"]');
+      }
+      const dg = inp && (inp.closest('[role="dialog"]') || inp.parentElement);
+      if (!dg) {
+        esc(menu);
+        return out({ err: 'emoji-not-found', detail: '"Show more emojis" did not open the emoji picker' });
+      }
+      const pick = () => Array.from(dg.querySelectorAll('[role="gridcell"] img')).find(isIt) || null;
+      let im = pick();
+      via = 'picker';
+      if (!im && a.search) {
+        via = 'search';
+        inp.focus();
+        await sleep(120);
+        document.execCommand('insertText', false, a.search);
+        for (let k = 0; k < 10 && !(im = pick()); k++) await sleep(200);
+      }
+      if (!im) {
+        esc(dg);
+        return out({
+          err: 'emoji-not-found',
+          via,
+          detail: a.search
+            ? 'the emoji picker has no ' + a.emoji + ' for "' + a.search + '"'
+            : 'not in the emoji picker: pass search',
+        });
+      }
+      target = im.closest('[role="button"]') || im.closest('[role="gridcell"]');
+    }
+    target.click();
+    for (let k = 0; k < 24; k++) {
+      await sleep(250);
+      const l = label();
+      if (shows(l) && (!shows(l0) || count(l) > count(l0) || (mine && l !== l0)))
+        return { done: true, mid: a.mid, at: new Date().toISOString(), via, replaced: mine, ms: Date.now() - t0 };
+    }
+    return out({
+      err: 'unconfirmed',
+      via,
+      detail: 'clicked ' + a.emoji + ' but the message did not show it within 6 s: it may be there, check Messenger',
+    });
+  }
   const CMDS = {
     probe: a => probe(a.anchor),
     scan: a => mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs, topMs: a.topMs }),
@@ -1851,7 +2102,8 @@
       return { started: true };
     },
     post: (a, id) => mcPost(a, id),
-    ping: () => ({ v: '2.6' }),
+    react: a => mcReact(a),
+    ping: () => ({ v: '2.7' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
