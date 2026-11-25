@@ -2,6 +2,20 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.43.0] - 2026-11-24
+**Every chat gets its full names** (BACKLOG B60; the owner's comment on their page, Nov 24: "fill in everyone's names"). MINOR: refreshes of added chats now run their one-time name scan, and the helper reads names more carefully. Helper **2.6** (from 2.5); page **`PAGE_VERSION` 4.9** (from 4.8: only its embedded copy of the helper).
+
+### Fixed
+- **Added chats never got the one-time name scan.** SKILL.md step 8 checked only the first chat's `people/index`, so an added chat's `KEY_people/index` never got `scannedAt` and its older senders kept the names Messenger printed. `references/chats.md` › Refreshing an added chat now runs the check per chat (its own index, `chatUrl` and `lastI`), waiting for the next run when a scheduled run has reached its 15-minute limit. The owner's two added chats were scanned by hand on Nov 24 (one gained 5 full names; the other had them all).
+- **An emoji could be read as a full name.** An emoji-only message draws its emoji as an avatar-sized image at the left edge, and the helper took the first image of that size as the sender's avatar, so a scan returned pairs like "Ana = 🤣" (four in the owner's chats, skipped by hand). Helper 2.6 takes the first such image whose alt text has a letter in it, for captures (`fn`) and the name scan alike; `references/people.md` also skips any pair whose full name has no letter, for older helpers.
+- SKILL.md's naming note still described the old rule; it now says "Full Name (nickname)" (v1.42.0's change).
+
+### Tests
+- Sim `A: an emoji is not a name`: the mock (new `mock_emojiav`) draws an emoji image before one message's avatar; the scan returns no pair without a letter (it returned "Ana=🤣" with the old avatar reader). `test_tools`: the per-chat scan rule, the letter rule and the naming note.
+
+### Backlog
+- New: F38 undo a reaction (split from F37), with mockups on the decision board. F35–F37: the results of the no-send tests in the owner's test chat.
+
 ## [1.42.0] - 2026-11-24
 **Full names on the page** (BACKLOG B59; the owner's comment on their page, Nov 24: "who is this david? Why do you give me only a first name when it's vague?"). MINOR: how people are named changes everywhere. Page **`PAGE_VERSION` 4.8** (from 4.7); helper unchanged (2.5). `SKILL.md` unchanged.
 

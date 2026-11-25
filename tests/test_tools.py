@@ -2596,6 +2596,15 @@ class TestReplyCheck(unittest.TestCase):
         self.assertIn("`meta/chat` plus one outbox read per active chat", rc)
         self.assertNotIn("one outbox read;", rc)
 
+    def test_B60_each_chat_gets_its_own_name_scan(self):
+        """An added chat's step 8 reads its own people index and runs the one-time scan for it; emoji aren't names."""
+        added = section(in_skill("references", "chats.md"), "Refreshing an added chat KEY")
+        self.assertIn("`get` `KEY_people/index`, and when it has no `scannedAt`", added)
+        self.assertIn("`count` = its `lastI` + 1", added)
+        self.assertIn("(per chat: `references/chats.md`)", in_skill("SKILL.md"))
+        self.assertIn("whose `full` has a letter in it", in_skill("references", "people.md"))
+        self.assertIn('"Full Name (nickname)" when known', in_skill("SKILL.md"))
+
     def test_it_finds_the_page_as_the_replies_skill_does(self):
         self.assertIn(
             'an artifact titled "… Catch-up" whose `meta/chat` has `kind:"messenger-catchup"`', in_replies("SKILL.md")

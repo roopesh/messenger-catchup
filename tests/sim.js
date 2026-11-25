@@ -323,6 +323,18 @@ sim('A: people scan', { s: 40 }, async b => {
   );
   await ctx.close();
 });
+sim('A: an emoji is not a name', { s: 40 }, async b => {
+  const { ctx, p } = await fresh(b);
+  // B60: an emoji-only message draws its emoji as an avatar-sized image at the left edge; its alt is no full name
+  await mode(p, { emojiav: '1' }, 120);
+  const pp = await bridge(p, 'people', { count: 1000 });
+  const pairs = ((pp && pp.people) || []).map(([s, f]) => s + '=' + f);
+  ok(
+    pp && !pp.err && pairs.length > 0 && !pairs.some(x => !/\p{L}/u.test(x.split('=')[1])),
+    'A: people never takes an emoji for a full name (' + pairs.join(', ') + ')',
+  );
+  await ctx.close();
+});
 /* F1 review 6: the chat is the thread id in the address, so a reload that only changes the path (/t/<id> to
    /e2ee/t/<id>, or a query) is still the same chat; another id isn't */
 sim('HP1: the chat check compares thread ids', { s: 12 }, async b => {
