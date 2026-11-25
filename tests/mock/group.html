@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Gear Swap | Facebook</title>
+    <style>
+      body {
+        font: 15px system-ui;
+        margin: 0;
+      }
+      #feed > div.card {
+        border-bottom: 1px solid #ddd;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+      .scr span {
+        display: inline-block;
+      }
+      [role="dialog"].inner {
+        position: fixed;
+        inset: 20px;
+        background: #fff;
+        border: 1px solid #999;
+      }
+      #scroller {
+        height: 420px;
+        overflow: auto;
+      }
+      .blk {
+        margin-left: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="featured">
+      <div role="button" aria-label="Expand/Collapse featured section" aria-expanded="false">Featured</div>
+    </div>
+    <div role="feed" id="feed"></div>
+    <div id="labels" style="position: absolute; left: -9999px"></div>
+    <div role="dialog" aria-label="Notifications" style="height: 0; overflow: hidden"></div>
+    <script>
+      /* Simulated Facebook group page (F25), built from the Nov 25 survey of a real group (scratchpad notes, mock cast
+         only): the feed's post cards are plain divs under [role=feed], their content inside div[data-virtualized]
+         that is emptied about two screens away (and empty below the screen until scrolled near); the stable markers
+         are data-ad-rendering-role (profile_name, story_message, like_button, comment_button); [role=article] in the
+         feed are comment previews. The time link's text is scrambled letters, its readable time is the element named
+         by aria-labelledby, and its href is a placeholder until a pointer is over it (then /groups/G/posts/P/). The
+         comment count is the "Comment on <name>'s post, N comments" label. Posts with photos link /photo/?fbid=F&
+         set=pcb.P. Some posts hold a poll: a click on an option votes (window.mockVotes), which must never happen.
+         /groups/G/posts/P/ opens the post as a dialog: flat articles ("Comment by …", "Reply by … to …'s comment …"),
+         time links with comment_id (and reply_comment_id), "View N replies" buttons beside a comment, 10 comments at
+         first and 10 more each time the dialog's scroller reaches its end, and a "Most relevant" sort menu
+         (Newest, All comments) that resets on every post and collapses replies.
+         Modes (localStorage): mock_g_posts (number of posts, 40), mock_g_bump ("k:n,k:n": post k got n new comments,
+         minutes ago, so it rises in Recent activity), mock_g_novirt (no virtualizing). */
+      const MODE = k => localStorage.getItem("mock_" + k);
+      const P = location.pathname.match(/\/groups\/([\w.]+)\/(?:posts\/(\d+))?/) || [];
+      const G = P[1] || "1000000000000001";
+      const NAMES = ["Ana Alvarez", "Ben Brooks", "Cy Chen", "Dee Diaz"];
+      const N = +(MODE("g_posts") || 40);
+      const BUMP = {};
+      (MODE("g_bump") || "")
+        .split(",")
+        .filter(Boolean)
+        .forEach(x => {
+          const [k, n] = x.split(":");
+          BUMP[+k] = +n;
+        });
+      window.mockVotes = [];
+      const age = h =>
+        h < 1 ? Math.round(h * 60) + " minutes ago" : h < 2 ? "about an hour ago" : Math.round(h) + " hours ago";
+      const short = h => (h < 1 ? Math.round(h * 60) + "m" : Math.round(h) + "h");
+      /* post k: newest first by creation; its comments (top level, every third with two replies), plus new ones from
+         mock_g_bump, newest last */
+      function post(k) {
+        const pid = String(2000000000000000 + k);
+        const hours = k * 3 + 1;
+        const top = (k * 5) % 7;
+        const cmts = [];
+        for (let c = 0; c < top + (BUMP[k] || 0); c++) {
+          const fresh = c >= top;
+          const h = fresh ? (c - top + 1) / 60 : hours - (c + 1) * 0.2;
+          const cid = String(4000000000000000 + k * 100 + c);
+          const reps = !fresh && c % 3 === 0 ? [0, 1] : [];
+          cmts.push({
+            cid,
+            who: NAMES[(k + c + 1) % 4],
+            h,
+            text: "Comment " + c + " on post " + k,
+            replies: reps.map(j => ({
+              rid: String(5000000000000000 + k * 1000 + c * 10 + j),
+              who: NAMES[(k + c + j + 2) % 4],
+              h: h - (j + 1) * 0.05,
+              text: "Reply " + j + " to comment " + c + " on post " + k,
+            })),
+          });
+        }
+        const count = cmts.reduce((n, c) => n + 1 + c.replies.length, 0);
+        return {
+          k,
+          pid,
+          who: NAMES[k % 4],
+          uid: String(9100 + (k % 4)),
+          hours,
+          act: BUMP[k] ? 1 / 60 : hours,
+          text: "Post " + k + " about trail packs and stoves",
+          photos: k % 5 === 2 ? [0, 1].map(j => String(3000000000000000 + k * 10 + j)) : [],
+          poll: k % 9 === 4,
+          cmts,
+          count,
+        };
+      }
+      const POSTS = Array.from({ length: N }, (_, k) => post(k));
+      const SORT = new URLSearchParams(location.search).get("sorting_setting") === "RECENT_ACTIVITY" ? "act" : "new";
+      const ORDER = POSTS.slice().sort((a, b) => (SORT === "act" ? a.act - b.act : a.hours - b.hours));
+      const feed = document.getElementById("feed");
+      const labels = document.getElementById("labels");
+      let lid = 0;
+      const label = text => {
+        const s = document.createElement("span");
+        s.id = "_R_l" + ++lid + "_";
+        s.textContent = text;
+        labels.append(s);
+        return s.id;
+      };
+      const el = (tag, attrs, text) => {
+        const e = document.createElement(tag);
+        Object.entries(attrs || {}).forEach(([k, v]) => e.setAttribute(k, v));
+        if (text != null) e.textContent = text;
+        return e;
+      };
+      /* the sort control, the feed's first child */
+      const sortDiv = el("div");
+      const sortBtn = el("div", { role: "button", "aria-haspopup": "dialog" });
+      sortBtn.innerText = "sort group feed by\n" + (SORT === "act" ? "Recent activity" : "New posts");
+      sortDiv.append(sortBtn);
+      feed.append(sortDiv);
+      /* the scrambled time link: its href becomes the post's address once a pointer is over it */
+      function timeLink(p) {
+        const a = el("a", { role: "link", href: "?__cft__[0]=mock" });
+        const s = el("span", { "aria-labelledby": label(age(p.hours)) });
+        s.className = "scr";
+        "Sponsored0864".split("").forEach(ch => s.append(el("span", null, ch + "͏")));
+        a.append(s);
+        const fill = () => a.setAttribute("href", "/groups/" + G + "/posts/" + p.pid + "/?__cft__[0]=mock");
+        ["pointerover", "mouseover", "focus"].forEach(t => a.addEventListener(t, () => setTimeout(fill, 300)));
+        return a;
+      }
+      function cardContent(p) {
+        const f = document.createDocumentFragment();
+        const pn = el("div", { "data-ad-rendering-role": "profile_name" });
+        const h2 = el("h2");
+        h2.append(el("a", { href: "/groups/" + G + "/user/" + p.uid + "/" }, p.who));
+        pn.append(h2);
+        f.append(pn, timeLink(p));
+        f.append(el("div", { "data-ad-rendering-role": "story_message" }, p.text));
+        p.photos.forEach(fb => {
+          const a = el("a", { href: "/photo/?fbid=" + fb + "&set=pcb." + p.pid });
+          a.append(el("img", { src: "/mock/fbcdn/p100.jpg?g=" + fb, alt: "" }));
+          f.append(a);
+        });
+        if (p.poll)
+          ["Option A", "Option B"].forEach(o => {
+            const b = el("div", { role: "button" }, o);
+            b.onclick = () => window.mockVotes.push(p.pid + ":" + o);
+            f.append(b);
+          });
+        f.append(el("div", { "data-ad-rendering-role": "like_button", role: "button", "aria-label": "Like" }));
+        f.append(
+          el("div", {
+            "data-ad-rendering-role": "comment_button",
+            role: "button",
+            "aria-label": "Comment on " + p.who + "'s post" + (p.count ? ", " + p.count + " comments" : ""),
+          }),
+        );
+        p.cmts.slice(-2).forEach(c => {
+          const ar = el("div", { role: "article", "aria-label": "Comment by " + c.who + " " + age(c.h) });
+          ar.append(el("a", { href: "/groups/" + G + "/posts/" + p.pid + "/?comment_id=" + c.cid }, short(c.h)));
+          ar.append(el("div", { dir: "auto" }, c.text));
+          f.append(ar);
+        });
+        return f;
+      }
+      /* cards: a placeholder each (kept in order), content only while within about two screens of the viewport */
+      const cards = [];
+      function addCards(n) {
+        for (let j = 0; j < n && cards.length < ORDER.length; j++) {
+          const p = ORDER[cards.length];
+          const c = el("div");
+          c.className = "card";
+          c.style.height = "320px";
+          const v = el("div", { "data-virtualized": "true" });
+          c.append(v);
+          feed.append(c);
+          cards.push({ c, v, p });
+        }
+      }
+      function virt() {
+        const vh = innerHeight;
+        cards.forEach(({ c, v, p }) => {
+          const r = c.getBoundingClientRect();
+          const near = MODE("g_novirt") || (r.bottom > -vh * 1.5 && r.top < vh * 1.5);
+          if (near && v.getAttribute("data-virtualized") === "true") {
+            v.setAttribute("data-virtualized", "false");
+            v.append(cardContent(p));
+          } else if (!near && v.getAttribute("data-virtualized") === "false") {
+            v.setAttribute("data-virtualized", "true");
+            v.textContent = "";
+          }
+        });
+        /* more posts load when the last card comes near */
+        const last = cards[cards.length - 1];
+        if (
+          last &&
+          last.c.getBoundingClientRect().top < innerHeight * 2 &&
+          cards.length < ORDER.length &&
+          !addCards.busy
+        ) {
+          addCards.busy = true;
+          setTimeout(() => {
+            addCards(6);
+            addCards.busy = false;
+            virt();
+          }, 300);
+        }
+      }
+      addCards(8);
+      virt();
+      addEventListener("scroll", virt, { passive: true });
+      window.mockPosts = POSTS;
+
+      /* the post dialog (/groups/G/posts/P/) */
+      if (P[2]) {
+        const p = POSTS.find(x => x.pid === P[2]);
+        const outer = el("div", { role: "dialog" });
+        const inner = el("div", { role: "dialog", "aria-labelledby": label(p ? p.who + "'s post" : "Post") });
+        inner.className = "inner";
+        outer.append(inner);
+        document.body.append(outer);
+        if (p) {
+          inner.append(el("div", { "data-ad-rendering-role": "story_message" }, p.text));
+          let sort = "relevant";
+          const sb = el("div", { role: "button", "aria-haspopup": "menu" }, "Most relevant﻿");
+          sb.onclick = () => {
+            const m = el("div", { role: "menu" });
+            [
+              ["relevant", "Most relevant", "Show friends' comments and the most engaging comments first."],
+              ["newest", "Newest", "Show all comments with the newest comments first."],
+              ["all", "All comments", "Show all comments, including potential spam."],
+            ].forEach(([k, t, d]) => {
+              const it = el("div", { role: "menuitem" });
+              it.innerText = t + "\n" + d;
+              it.onclick = () => {
+                m.remove();
+                sort = k;
+                sb.textContent = t + "﻿";
+                shown = 0;
+                scroller.textContent = "";
+                more();
+              };
+              m.append(it);
+            });
+            document.body.append(m);
+          };
+          addEventListener("keydown", e => {
+            if (e.key === "Escape") document.querySelectorAll('[role="menu"]').forEach(m => m.remove());
+          });
+          inner.append(sb);
+          const scroller = el("div", { id: "scroller" });
+          inner.append(scroller);
+          const ordered = () =>
+            sort === "relevant"
+              ? p.cmts.slice().sort((a, b) => (a.cid % 3) - (b.cid % 3) || a.cid - b.cid)
+              : p.cmts.slice().sort((a, b) => a.h - b.h);
+          let shown = 0;
+          const article = (aria, who, href, short, text) => {
+            const ar = el("div", { role: "article", "aria-label": aria });
+            ar.append(el("a", { href: "/groups/" + G + "/user/" + (9100 + NAMES.indexOf(who)) + "/" }, who));
+            ar.append(el("div", { dir: "auto" }, text));
+            ar.append(el("a", { href }, short));
+            const w = el("div");
+            w.append(ar);
+            return w;
+          };
+          /* a thread block, as Facebook nests them: the comment's article in a div, then a div of reply blocks */
+          function block(c, parentWho, base) {
+            const b = el("div");
+            b.className = "blk";
+            const href = base
+              ? base + "&reply_comment_id=" + c.rid
+              : "/groups/" + G + "/posts/" + p.pid + "/?comment_id=" + c.cid;
+            const aria = parentWho
+              ? "Reply by " + c.who + " to " + parentWho + "'s comment " + age(c.h)
+              : "Comment by " + c.who + " " + age(c.h);
+            b.append(article(aria, c.who, href, short(c.h), c.text));
+            const reps = el("div");
+            b.append(reps);
+            const rs = c.replies || [];
+            if (rs.length) {
+              const v = el("div", { role: "button" }, "View " + rs.length + (rs.length > 1 ? " replies" : " reply"));
+              v.onclick = () =>
+                setTimeout(() => {
+                  v.remove();
+                  rs.forEach(r => reps.append(block(r, c.who, href)));
+                }, 200);
+              b.append(v);
+            }
+            return b;
+          }
+          function more() {
+            ordered()
+              .slice(shown, shown + 10)
+              .forEach(c => scroller.append(block(c)));
+            shown += 10;
+          }
+          more();
+          scroller.addEventListener("scroll", () => {
+            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4 && shown < p.cmts.length)
+              setTimeout(more, 200);
+          });
+        }
+      }
+    </script>
+  </body>
+</html>

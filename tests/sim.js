@@ -1689,6 +1689,123 @@ sim('F35: post tags people', { s: 15 }, async b => {
   );
   await ctx.close();
 });
+/* ---------- G1 (F25): Facebook groups, read only, on tests/mock/group.html and notifications.html ---------- */
+const GROUP = '1000000000000001';
+const gUrl = (path, q) => URL.replace(/messenger\.html$/, 'groups/' + GROUP + '/' + (path || '') + (q || ''));
+const gOpen = async (p, path, q, modes = {}) => {
+  await p.goto(gUrl(path, q));
+  await p.evaluate(m => {
+    localStorage.clear();
+    for (const [k, v] of Object.entries(m)) localStorage.setItem('mock_' + k, v);
+  }, modes);
+  await p.goto(gUrl(path, q));
+  await p.waitForTimeout(500);
+};
+sim('G1: groupFeed', { s: 40 }, async b => {
+  const { ctx, p } = await fresh(b);
+  let r;
+  // New posts, nothing known: every card read while on screen (virtualized), newest first, to the end; no click
+  await gOpen(p, '', '?sorting_setting=CHRONOLOGICAL', { g_posts: '24' });
+  r = await bridge(p, 'groupFeed', { cap: 100 });
+  const want = await p.evaluate(() => window.mockPosts.map(x => [x.pid, x.count, x.photos.length, x.who]));
+  const votes = await p.evaluate(() => window.mockVotes.length);
+  ok(
+    r &&
+      r.sort === 'new' &&
+      r.stop === 'end' &&
+      r.group === GROUP &&
+      JSON.stringify(r.posts.map(x => [x.pid, x.count, x.photos.length, x.who])) === JSON.stringify(want) &&
+      r.posts.every(x => /ago$/.test(x.age) && /^Post \d+ about/.test(x.text)) &&
+      r.changed.length === 24 &&
+      !votes,
+    'G1: groupFeed by New posts reads all 24 cards in order (ids by comment link, photo pcb or the time link after a pointer), counts, photos, authors, ages; no click in a post (polls untouched) (' +
+      JSON.stringify(r && { n: r.posts.length, stop: r.stop, first: r.posts[0], votes }) +
+      ')',
+  );
+  // New posts: stops at the first known post
+  r = await bridge(p, 'groupFeed', { known: { [want[5][0]]: want[5][1] } });
+  ok(
+    r && r.stop === 'known' && r.posts.length === 6 && r.changed.length === 5,
+    'G1: by New posts it stops at the first known post (' +
+      JSON.stringify(r && [r.stop, r.posts.length, r.changed.length]) +
+      ')',
+  );
+  // Recent activity: a post with 3 new comments comes first; 2 cards past the first unchanged known post it stops
+  await gOpen(p, '', '?sorting_setting=RECENT_ACTIVITY', { g_posts: '24', g_bump: '9:3' });
+  const all = await p.evaluate(() => window.mockPosts.map(x => [x.pid, x.count]));
+  const known = Object.fromEntries(all.map(([pid, n]) => [pid, n]));
+  known[all[9][0]] -= 3;
+  r = await bridge(p, 'groupFeed', { known });
+  ok(
+    r &&
+      r.sort === 'activity' &&
+      r.stop === 'known' &&
+      r.posts[0].pid === all[9][0] &&
+      r.posts.length === 4 &&
+      JSON.stringify(r.changed) === JSON.stringify([all[9][0]]),
+    'G1: by Recent activity the bumped post comes first and is the only change; it stops 2 cards after the first unchanged one (' +
+      JSON.stringify(r && [r.stop, r.posts.length, r.changed]) +
+      ')',
+  );
+  r = await bridge(p, 'groupFeed', { cap: 5 });
+  ok(
+    r && r.stop === 'cap' && r.changed.length === 5,
+    'G1: the cap stops it after 5 changed posts (' + JSON.stringify(r && r.stop) + ')',
+  );
+  await ctx.close();
+});
+sim('G1: groupPost', { s: 20 }, async b => {
+  const { ctx, p } = await fresh(b);
+  // post 4 has 6 comments (two with 2 replies) and 12 new ones: 18 top-level comments load 10 at a time
+  await gOpen(p, 'posts/2000000000000004/', '', { g_posts: '10', g_bump: '4:12' });
+  const r = await bridge(p, 'groupPost', {});
+  const top = (r && r.comments.filter(c => !c.rid)) || [];
+  const reps = (r && r.comments.filter(c => c.rid)) || [];
+  const votes = await p.evaluate(() => window.mockVotes.length);
+  ok(
+    r &&
+      r.pid === '2000000000000004' &&
+      r.sorted === 'newest' &&
+      top.length === 18 &&
+      reps.length === 4 &&
+      reps.every(c => c.parent === c.cid && /^Reply \d to comment \d on post 4$/.test(c.text)) &&
+      top.every(c => c.cid && c.who && /^Comment \d+ on post 4$/.test(c.text) && c.age) &&
+      !votes,
+    'G1: groupPost sorts Newest, loads all 18 comments by scrolling the dialog, opens "View 2 replies", and gives each reply its parent (' +
+      JSON.stringify(r && { top: top.length, reps: reps.length, sorted: r.sorted, rep0: reps[0] }) +
+      ')',
+  );
+  await ctx.close();
+});
+sim('G1: notifs', { s: 12 }, async b => {
+  const { ctx, p } = await fresh(b);
+  await p.goto(URL.replace(/messenger\.html$/, 'notifications/'));
+  await p.waitForTimeout(400);
+  let r = await bridge(p, 'notifs', {});
+  ok(
+    r &&
+      r.items.length === 6 &&
+      r.items[0].kind === 'group_comment_mention' &&
+      r.items[0].group === GROUP &&
+      r.items[0].post === '2000000000000000' &&
+      r.items[0].unread === true &&
+      r.items[2].reply === '5000000000000002' &&
+      r.items[3].group === null &&
+      r.items[5].group === '1000000000000002',
+    'G1: notifs reads the first six: kind (notif_t), group, post (post_id), comment and reply ids, unread (' +
+      JSON.stringify(r && r.items.slice(0, 3)) +
+      ')',
+  );
+  r = await bridge(p, 'notifs', { since: '6999999999999991', more: 3 });
+  const opened = await p.evaluate(() => window.mockOpened.length);
+  ok(
+    r && r.reachedSince && r.items.length === 9 && !opened,
+    'G1: notifs presses "See previous notifications" until the last one seen (9 newer), and never opens an item (' +
+      JSON.stringify(r && [r.items.length, r.reachedSince, opened]) +
+      ')',
+  );
+  await ctx.close();
+});
 sim('F36: post with photos', { s: 20 }, async b => {
   const { ctx, p, state, row } = await freshF(b);
   let s, r;

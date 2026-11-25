@@ -12,6 +12,7 @@ Start each with the bridge in SKILL.md › Helper, with a fresh id, and poll unt
 - `jump{mid,reply}`: opens that message, with Reply open unless `reply:false` (`references/open-message.md`, `references/outbox.md`).
 - `people{count}`: `references/people.md`.
 - `post` only when `meta/chat.helperPost` is true (`references/posting-with-helper.md`); it tags `mentions` (2.7) and waits for `photos` Claude attaches (2.9).
+- `groupFeed{known,cap,extra}`, `groupPost{newest,known}`, `notifs{since,more}` (3.0, F25): read a Facebook group's feed (post cards while on screen), an open post's comments, and the notifications page, without clicking anything in a post or any notification. No refresh calls them yet: group refreshes arrive with F25's next release.
 - `react{mid,emoji,search,remove,approved:true}` (2.7; `remove` 2.8): adds an approved reaction, or with `remove:true` takes it away (`references/outbox.md` › Reactions).
 
 ## Which Chrome
