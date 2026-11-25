@@ -2694,7 +2694,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "4.7";
+  const PAGE_VERSION = "4.8";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3287,9 +3287,8 @@
     return inWin(m.i);
   }
   /* Names. f is the name Messenger shows (a nickname, or the first name); since helper 1.6, fn is the sender's full
-     name, read from their avatar. people/index maps each full name to the names it was shown as. On the page: the first
-     name, or the full name when two people share that first name; a nickname as "nickname (first or full name)". */
-  let PEOPLE = { byShown: new Map(), firsts: new Map() };
+     name, read from their avatar. people/index maps each full name to the names it was shown as. On the page: nameOf. */
+  let PEOPLE = { byShown: new Map() };
   function indexPeople() {
     const byFull = new Map();
     const add = (full, shown) => {
@@ -3302,16 +3301,13 @@
     );
     S.msgs.forEach(m => add(m.fn, m.f));
     const byShown = new Map();
-    const firsts = new Map();
     byFull.forEach((shown, full) => {
       shown.forEach(x => {
         if (!byShown.has(x)) byShown.set(x, new Set());
         byShown.get(x).add(full);
       });
-      const first = full.split(/\s+/)[0].toLowerCase();
-      firsts.set(first, (firsts.get(first) || 0) + 1);
     });
-    PEOPLE = { byShown, firsts };
+    PEOPLE = { byShown };
   }
   function fullOf(m) {
     if (!m || m.f === "You") return null;
@@ -3319,14 +3315,18 @@
     const c = PEOPLE.byShown.get(m.f);
     return c && c.size === 1 ? [...c][0] : null;
   }
+  /* B59 (the owner's choice): "Fullname (Nickname)" wherever a full name is known, the full name alone when Messenger
+     showed the first name or the full name, and the shown name when no full name was captured */
   function nameOf(m) {
     if (!m) return "?";
     const full = fullOf(m);
     if (!full) return m.f;
-    const first = full.split(/\s+/)[0];
-    const base = (PEOPLE.firsts.get(first.toLowerCase()) || 0) > 1 ? full : first;
     const nick = !(full === m.f || full.startsWith(m.f + " "));
-    return nick ? m.f + " (" + base + ")" : base;
+    return nick ? full + " (" + m.f + ")" : full;
+  }
+  /* a "replying to" name as Messenger showed it, named by the same rule */
+  function rName(r) {
+    return r ? nameOf({ f: r }) : r;
   }
   /* s's first n characters, counted by code point, so an emoji is never cut in half */
   function cutCp(s, n) {
@@ -3336,7 +3336,7 @@
   }
   function lineFor(m) {
     let s = "#" + m.i + " [" + m.t + "] " + nameOf(m);
-    if (m.r) s += " (replying to " + m.r + (m.q ? ': "' + cutCp(m.q.replace(/\s+/g, " "), 120) + '"' : "") + ")";
+    if (m.r) s += " (replying to " + rName(m.r) + (m.q ? ': "' + cutCp(m.q.replace(/\s+/g, " "), 120) + '"' : "") + ")";
     /* R13: what its photos show, so Ask and Views can find a thing that's only in a photo */
     const cs = capsOf(m.i).map(c => cutCp(c, 200));
     s +=
@@ -3602,7 +3602,7 @@
       setPhoto(im, pics[0], ((S.photoPv && S.photoPv[i]) || [])[0]);
     } else li.style.gridTemplateColumns = "1fr";
     const tx = el("div", "tx");
-    tx.append(el("span", "meta", "#" + i + " · " + m.t + (m.r ? " · replying to " + m.r : "")));
+    tx.append(el("span", "meta", "#" + i + " · " + m.t + (m.r ? " · replying to " + rName(m.r) : "")));
     if (quote && m.q) tx.append(el("div", "quote", trunc(m.q, 120)));
     const who = el("b", null, nameOf(m) + ": ");
     tx.append(
@@ -4231,7 +4231,9 @@
       el(
         "span",
         null,
-        verb + (linked ? "#" + lk[0] : "a message from " + (m0.r || "someone")) + ", which isn't stored on this page",
+        verb +
+          (linked ? "#" + lk[0] : "a message from " + (rName(m0.r) || "someone")) +
+          ", which isn't stored on this page",
       ),
     );
     if (m0.pmid) {
@@ -4242,7 +4244,10 @@
       lab.append(a);
     }
     const q = el("div", "q");
-    q.append(el("b", null, (m0.r || "?") + ": "), document.createTextNode(m0.q || m0.pl || "[photo or attachment]"));
+    q.append(
+      el("b", null, (rName(m0.r) || "?") + ": "),
+      document.createTextNode(m0.q || m0.pl || "[photo or attachment]"),
+    );
     box.append(q);
     return box;
   }
@@ -4285,7 +4290,7 @@
       d.textContent = "#" + i;
       return d;
     }
-    const meta = el("span", "meta", "#" + i + " · " + m.t + (m.r ? " · replying to " + m.r : ""));
+    const meta = el("span", "meta", "#" + i + " · " + m.t + (m.r ? " · replying to " + rName(m.r) : ""));
     const tx = el("div");
     tx.append(
       el("b", null, nameOf(m) + ": "),
@@ -5473,7 +5478,7 @@
     const head = el("div");
     if (pos && pos.more) head.className = "sr";
     head.append(el("span", pos && pos.more ? null : "who", nameOf(m)));
-    if (m.r && !lk && !o.xr) head.append(el("span", "muted", " ↪ " + m.r));
+    if (m.r && !lk && !o.xr) head.append(el("span", "muted", " ↪ " + rName(m.r)));
     if (lk && lk[0] != null && !(pos && pos.more)) {
       const k = LK[lk[1]] || LK.i;
       const p = S.byI.get(lk[0]);
@@ -6696,7 +6701,7 @@
     cut: true,
   };
   const LINE_FMT =
-    'one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions}. Senders use group nicknames.';
+    'one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions}. Senders are named as full name (group nickname) where the full name is known, else as Messenger shows them.';
   /* "What you have": which messages are word for word, which are summaries, and what's left out */
   function haveText(P) {
     const none = "- MESSAGES: none" + (P.win ? " (the catch-up window is empty)" : "") + ".";
@@ -13720,7 +13725,7 @@
     $("#lay-flat").setAttribute("aria-pressed", "true");
     $("#lay-thread").setAttribute("aria-pressed", "false");
     missing.threading = missing.summary = 0;
-    PEOPLE = { byShown: new Map(), firsts: new Map() };
+    PEOPLE = { byShown: new Map() };
   }
   function setMeta(m) {
     keepPlace(() => {

@@ -2,6 +2,17 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.42.0] - 2026-11-24
+**Full names on the page** (BACKLOG B59; the owner's comment on their page, Nov 24: "who is this david? Why do you give me only a first name when it's vague?"). MINOR: how people are named changes everywhere. Page **`PAGE_VERSION` 4.8** (from 4.7); helper unchanged (2.5). `SKILL.md` unchanged.
+
+### Changed
+- **Names, the owner's choice: "Fullname (Nickname)".** Wherever a full name is known (read from the sender's avatar, or matched through `people/index`), the page shows it: "Ana Alvarez", or "Cy Chen (Captain Cy)" when Messenger showed a nickname. Before, it showed the first name alone unless two people shared it, and a nickname as "nickname (first name)". A sender with no captured full name still shows as Messenger showed them.
+- **"Replying to …" names follow the same rule** (message meta lines, the "↪" in threads, a reply whose original isn't stored), matched through the people the page knows.
+- Ask's message lines name senders the same way, and its format note says so.
+
+### Tests
+- Page (`pipeline`): senders read "Ana Alvarez", "Ben Brooks", "You", "Ben Ortiz", "Cy Chen (Captain Cy)".
+
 ## [1.41.0] - 2026-11-24
 **Sent replies leave Your replies** (BACKLOG B58; the owner's report, Nov 24). MINOR: the page shows less. Page **`PAGE_VERSION` 4.7** (from 4.6); helper unchanged (2.5). `SKILL.md` unchanged.
 
