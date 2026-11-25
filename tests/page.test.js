@@ -4977,7 +4977,8 @@ async function byDay() {
       p.evaluate(() => {
         const nav = document.querySelector('nav.tabs');
         const nr = nav.getBoundingClientRect();
-        const tabs = [...nav.querySelectorAll('a')].map(a => {
+        /* the tabs this chat shows (a group's Posts tab is hidden on a chat, F25) */
+        const tabs = [...nav.querySelectorAll('a:not([hidden])')].map(a => {
           const r = a.getBoundingClientRect();
           return { t: a.dataset.tab, l: Math.round(r.left), r: Math.round(r.right), h: Math.round(r.height) };
         });
@@ -12326,8 +12327,8 @@ async function stats() {
       const n = document.querySelector('nav.tabs');
       const r = n.getBoundingClientRect();
       return {
-        tabs: n.querySelectorAll('a').length,
-        fit: [...n.querySelectorAll('a')].every(a => {
+        tabs: n.querySelectorAll('a:not([hidden])').length,
+        fit: [...n.querySelectorAll('a:not([hidden])')].every(a => {
           const x = a.getBoundingClientRect();
           return x.left >= r.left && x.right <= r.left + n.clientWidth && x.height >= 32;
         }),
