@@ -2,6 +2,21 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.45.0] - 2026-11-25
+**Undo or change a reaction from the page** (BACKLOG F38, split from F37; the owner picked C on the board: the picker toggles, like Messenger; the "show your reaction" question was left blank, so the recommendation stands: yes). MINOR. Page **`PAGE_VERSION` 5.1** (from 5.0); helper **2.8** (from 2.7).
+
+### Added
+- **Your reaction shows under the message** as "👍 You" once it's in Messenger, "👍 queued" before, and "removing 👍" while a removal waits. The page knows the reactions sent from it; one made in Messenger itself isn't known.
+- **The React picker toggles.** It highlights your reaction (also one typed under "Other emoji"). Tap it again to take it away; tap another to change it (Messenger keeps one per person). A reaction still queued is just cancelled on the page; one already in Messenger gets an outbox row with `remove:true`.
+- **The helper removes a reaction.** `react{…, remove:true}` clicks your reaction again in Messenger's menu, which is how Messenger removes one, and waits for the message's reactions label to drop it. When your reaction there isn't that emoji (changed in Messenger meanwhile), it clicks nothing (`already`). Messenger marks your reaction only among the menu's own emoji, so one picked under "Show more emojis" can't be removed this way: the helper says so (`not-in-menu`) and the report asks you to remove it in Messenger. `outbox.md` › Reactions covers removal rows.
+
+### Tests
+- Sim `F37: react` goes on: removing 🙏 (a picker emoji, not in the menu) is refused with nothing clicked; remove:true takes 💙 off (the label back to the other person's ❤️ alone); removing again clicks nothing.
+- Page: picking 🔥 while 👍 is queued cancels the 👍; a sent 👍 shows "👍 You"; the picker highlights it and tapping it queues the removal ("removing 👍"); picking 😂 then cancels the removal and queues 😂; tapping the queued 😂 cancels it and queues the 👍's removal. `test_tools`: the page now has 5 outbox writes (the picker's cancel).
+
+### Backlog
+- F38 done. F36 (photos in replies) went back to the owner: option B would cost 50,000–100,000 tokens per photo per post (the photo's bytes would pass through Claude), not "the same as A" as the board said; the helper can't fetch the page's stored photo itself (tested: the page's files answer only inside the page). A is now recommended. L1: the first removal from the page.
+
 ## [1.44.0] - 2026-11-25
 **Tag people in replies, and react from the page** (BACKLOG F35 and F37, the owner's requests of Nov 24, decided on the board: real mentions, posters only, a plain "@Name" when Messenger doesn't offer the person; reactions through the outbox, any emoji, following "replies post automatically"). MINOR: new page features and new posting steps. Page **`PAGE_VERSION` 5.0** (from 4.9); helper **2.7** (from 2.6).
 

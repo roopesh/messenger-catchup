@@ -1805,6 +1805,16 @@
   .rxpick input {
     width: 7.5em;
   }
+  /* F38: your current reaction, highlighted in the picker (tap it again to remove it) */
+  .rxpick button.rx.on {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .chip.mine {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--fg);
+  }
   .item.ob.queued {
     border-left: 3px solid var(--warn);
   }
@@ -2747,7 +2757,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "5.0";
+  const PAGE_VERSION = "5.1";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3963,6 +3973,23 @@
   /* F37: React queues a reaction, an outbox row with kind "react" and its emoji. Claude adds it in Messenger the way
      replies post (on its next run, or after you confirm in chat unless replies post automatically). Any one emoji. */
   const QUICK_RX = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+  /* F38 (the owner's pick: C, the picker toggles, like Messenger): your reaction on message i as the page knows it, from
+     the reactions sent from here (cur; a row with remove took one away), and the newest one still queued or sending
+     (pend). Reactions you made in Messenger itself aren't known here. */
+  function myRx(i) {
+    let cur = null,
+      pend = null;
+    (S.outbox || [])
+      .filter(o => o.kind === "react" && o.i === i && /^(queued|sending|sent)$/.test(o.state))
+      .sort((a, b) => (a.queuedAt || "").localeCompare(b.queuedAt || ""))
+      .forEach(o => {
+        if (o.state === "sent") {
+          cur = o.remove ? null : o.emoji;
+          pend = null;
+        } else pend = o;
+      });
+    return { cur, pend, eff: pend ? (pend.remove ? null : pend.emoji) : cur };
+  }
   function oneEmoji(v) {
     if (!/^(\p{Extended_Pictographic}|\p{Regional_Indicator})/u.test(v)) return false;
     if (typeof Intl !== "undefined" && Intl.Segmenter) return [...new Intl.Segmenter().segment(v)].length === 1;
@@ -3986,6 +4013,9 @@
     box.setAttribute("role", "group");
     box.setAttribute("aria-label", "React to " + nameOf(m) + "'s message");
     const st = el("span", "note", "");
+    const now = myRx(m.i);
+    /* Tapping your reaction takes it away, another one replaces it (Messenger keeps one per person). A reaction still
+       queued is cancelled here; one already in Messenger is removed by a row with remove:true. */
     const go = async e => {
       if (!S.db) {
         st.textContent = "Can't save from this view.";
@@ -3993,28 +4023,38 @@
       }
       box.querySelectorAll("button, input").forEach(x => (x.disabled = true));
       st.textContent = "Saving…";
+      const { cur, pend, eff } = myRx(m.i);
+      const queued = pend && pend.state === "queued";
+      const base = queued ? cur : eff;
+      const want = e === eff ? null : e;
       const id = "r" + Date.now();
       try {
-        await S.db.doc("outbox/" + id).set({
-          kind: "react",
-          i: m.i,
-          mid: m.m || null,
-          to: m.f,
-          snip: trunc(m.b || (m.p ? "[photo]" : ""), 120),
-          emoji: e,
-          state: "queued",
-          queuedAt: new Date().toISOString(),
-        });
+        if (queued)
+          await S.db.doc("outbox/" + pend.id).update({ state: "cancelled", cancelledAt: new Date().toISOString() });
+        if (want !== base)
+          await S.db.doc("outbox/" + id).set({
+            kind: "react",
+            i: m.i,
+            mid: m.m || null,
+            to: m.f,
+            snip: trunc(m.b || (m.p ? "[photo]" : ""), 120),
+            emoji: want || base,
+            remove: !want,
+            state: "queued",
+            queuedAt: new Date().toISOString(),
+          });
         box.remove();
       } catch (er) {
         box.querySelectorAll("button, input").forEach(x => (x.disabled = false));
         st.textContent = "Couldn't save: " + ((er && er.message) || er);
       }
     };
-    QUICK_RX.forEach(e => {
-      const x = el("button", "rx", e);
+    (now.eff && !QUICK_RX.includes(now.eff) ? [now.eff] : []).concat(QUICK_RX).forEach(e => {
+      const on = e === now.eff;
+      const x = el("button", "rx" + (on ? " on" : ""), e);
       x.type = "button";
-      x.title = "React with " + e;
+      x.title = on ? "Remove your " + e : "React with " + e;
+      x.setAttribute("aria-pressed", String(on));
       x.onclick = () => go(e);
       box.append(x);
     });
@@ -4048,7 +4088,11 @@
     const rp = q.filter(o => o.kind !== "react");
     s.textContent = "";
     if (rp.length) s.append(el("span", "chip open", rp.length > 1 ? rp.length + " replies queued" : "reply queued"));
-    q.filter(o => o.kind === "react").forEach(o => s.append(el("span", "chip open", o.emoji + " queued")));
+    /* F38: your reaction under the message: "👍 You" once in Messenger, "👍 queued" or "removing 👍" until it goes */
+    const rx = myRx(+s.dataset.pt);
+    if (rx.pend)
+      s.append(el("span", "chip open", rx.pend.remove ? "removing " + rx.pend.emoji : rx.pend.emoji + " queued"));
+    else if (rx.cur) s.append(el("span", "chip mine", rx.cur + " You"));
   }
   function pendingTag(m) {
     const s = el("span", "pt");
@@ -4115,7 +4159,7 @@
           "span",
           "note",
           o.kind === "react"
-            ? o.emoji + " on " + rName(o.to) + "'s “" + trunc(o.snip, 70) + "”"
+            ? (o.remove ? "remove " : "") + o.emoji + " on " + rName(o.to) + "'s “" + trunc(o.snip, 70) + "”"
             : "to " + o.to + " · replying to “" + trunc(o.snip, 70) + "”",
         ),
       );
@@ -10912,7 +10956,7 @@
   /* the helper this page shipped with: npm run sync writes it from assets/helper.user.js's @version. A Chrome is
      behind when its helper is older than this or than versions.helper, whichever is higher: versions.helper is
      written by Claude, and a stale one (v1.35.0 refreshes wrote 2.1 while shipping 2.3) hid every notice. */
-  const HELPER_VERSION = "2.7";
+  const HELPER_VERSION = "2.8";
   const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
   const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
   const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";

@@ -12,7 +12,7 @@ Start each with the bridge in SKILL.md › Helper, with a fresh id, and poll unt
 - `jump{mid,reply}`: opens that message, with Reply open unless `reply:false` (`references/open-message.md`, `references/outbox.md`).
 - `people{count}`: `references/people.md`.
 - `post` only when `meta/chat.helperPost` is true (`references/posting-with-helper.md`); it tags `mentions` (2.7).
-- `react{mid,emoji,search,approved:true}` (2.7): adds an approved reaction (`references/outbox.md` › Reactions).
+- `react{mid,emoji,search,remove,approved:true}` (2.7; `remove` 2.8): adds an approved reaction, or with `remove:true` takes it away (`references/outbox.md` › Reactions).
 
 ## Which Chrome
 - Claude in Chrome's `list_connected_browsers` lists every connected Chrome with its name, and marks the one this session uses (`inUse`). One browser, or one already in use: use it.

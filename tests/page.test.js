@@ -1699,19 +1699,103 @@ async function pipeline() {
       p,
       () =>
         /Your replies and reactions/.test(document.getElementById('v-summary').textContent) &&
-        /👍 on .*'s “/.test(document.getElementById('v-summary').textContent),
+        /🔥 on .*'s “/.test(document.getElementById('v-summary').textContent) &&
+        !/👍 on /.test(document.getElementById('v-summary').textContent),
     ),
-    'F37: Summary lists queued reactions under "Your replies and reactions"',
+    'F37/F38: Summary lists the queued reaction under "Your replies and reactions"; 🔥 replaced the queued 👍',
   );
+  ok((await p.evaluate(id => __rt.get(id).state, rx1.id)) === 'cancelled', 'F38: picking 🔥 cancelled the queued 👍');
   const cx = await p.$$('#v-summary .item.ob button.link:text-is("Cancel this reaction")');
   await cx[cx.length - 1].click();
   ok(
     await until(p, () =>
       [...__rt.store.keys()].some(
-        k => k.startsWith('outbox/') && __rt.get(k).kind === 'react' && __rt.get(k).state === 'cancelled',
+        k =>
+          k.startsWith('outbox/') &&
+          __rt.get(k).kind === 'react' &&
+          __rt.get(k).emoji === '🔥' &&
+          __rt.get(k).state === 'cancelled',
       ),
     ),
     'F37: Cancel this reaction sets state cancelled',
+  );
+  // F38: a reaction already in Messenger shows as "👍 You"; the picker highlights it; tapping it queues its removal
+  await p.evaluate(
+    ([i, mid]) =>
+      __rt.write('outbox/r1000', {
+        kind: 'react',
+        i,
+        mid,
+        to: 'Ben',
+        snip: 'x',
+        emoji: '👍',
+        remove: false,
+        state: 'sent',
+        queuedAt: '2026-11-01T10:00:00.000Z',
+        sentAt: '2026-11-01T10:05:00.000Z',
+        sentMid: mid,
+      }),
+    [xi, rx1.mid],
+  );
+  await p.evaluate(() => {
+    location.hash = '#messages';
+  });
+  const chipOf = i => p.$eval('#m' + i + ' .pt', x => x.textContent).catch(() => '');
+  ok(
+    await until(p, i => /👍 You/.test(document.querySelector('#m' + i + ' .pt').textContent), xi),
+    'F38: "👍 You" under the message',
+  );
+  const openPick = async () => {
+    await p.hover('#m' + xi);
+    await p.click('#m' + xi + ' button.rh:text-is("React")');
+    return p.$$eval('#m' + xi + ' .rxpick button.rx', bs =>
+      bs.filter(b => b.classList.contains('on') && b.getAttribute('aria-pressed') === 'true').map(b => b.textContent),
+    );
+  };
+  const reacts = () =>
+    p.evaluate(
+      i =>
+        [...__rt.store.keys()]
+          .filter(
+            k =>
+              k.startsWith('outbox/') &&
+              __rt.get(k).kind === 'react' &&
+              __rt.get(k).i === i &&
+              __rt.get(k).state === 'queued',
+          )
+          .map(k => (__rt.get(k).remove ? '-' : '+') + __rt.get(k).emoji),
+      xi,
+    );
+  let on = await openPick();
+  await p.click('#m' + xi + ' .rxpick button.rx.on');
+  await p.waitForTimeout(300);
+  const r1 = await reacts();
+  const c1 = await chipOf(xi);
+  ok(
+    JSON.stringify(on) === '["👍"]' && JSON.stringify(r1) === '["-👍"]' && /removing 👍/.test(c1),
+    'F38: the picker highlights 👍; tapping it queues {emoji:"👍", remove:true}; the message says "removing 👍" (' +
+      JSON.stringify([on, r1, c1]) +
+      ')',
+  );
+  on = await openPick();
+  await p.click('#m' + xi + ' .rxpick button.rx:text-is("😂")');
+  await p.waitForTimeout(300);
+  const r2 = await reacts();
+  ok(
+    !on.length && JSON.stringify(r2) === '["+😂"]' && /😂 queued/.test(await chipOf(xi)),
+    'F38: nothing highlighted while the removal waits; picking 😂 cancels the removal and queues 😂 (' +
+      JSON.stringify([on, r2]) +
+      ')',
+  );
+  on = await openPick();
+  await p.click('#m' + xi + ' .rxpick button.rx.on');
+  await p.waitForTimeout(300);
+  const r3 = await reacts();
+  ok(
+    JSON.stringify(on) === '["😂"]' && JSON.stringify(r3) === '["-👍"]',
+    'F38: tapping the queued 😂 cancels it, and your 👍 in Messenger is queued for removal (one reaction each, as in Messenger) (' +
+      JSON.stringify([on, r3]) +
+      ')',
   );
   // ask + views (stub sample)
   await p.evaluate(() => {

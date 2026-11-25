@@ -1750,6 +1750,27 @@ sim('F37: react', { s: 20 }, async b => {
       JSON.stringify([r, s]) +
       ')',
   );
+  r = await bridge(p, 'react', { mid, emoji: '🙏', remove: true, approved: true });
+  s = await lab();
+  ok(
+    r && r.done === false && r.err === 'not-in-menu' && s.mine === '🙏' && !s.open,
+    "F38: removing an emoji that isn't in the reaction menu (Messenger marks yours only there): refused, nothing clicked (" +
+      JSON.stringify([r, s]) +
+      ')',
+  );
+  r = await bridge(p, 'react', { mid, emoji: '💙', approved: true });
+  r = await bridge(p, 'react', { mid, emoji: '💙', remove: true, approved: true });
+  s = await lab();
+  ok(
+    r && r.done === true && r.removed === true && !s.mine && /^1 reaction with ❤️;/.test(s.label) && !s.open,
+    'F38: remove:true clicks your 💙 again, and the message drops it (' + JSON.stringify([r, s]) + ')',
+  );
+  r = await bridge(p, 'react', { mid, emoji: '💙', remove: true, approved: true });
+  s = await lab();
+  ok(
+    r && r.done === true && r.already === true && !r.removed && !s.mine && !s.open,
+    'F38: removing a reaction that is not yours (any more) clicks nothing (' + JSON.stringify([r, s]) + ')',
+  );
   await ctx.close();
 });
 sim('F: Enter or line breaks not accepted', { s: 25 }, async b => {
