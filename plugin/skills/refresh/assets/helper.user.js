@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      2.5
+// @version      2.6
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -25,13 +25,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '2.5';
+  window.__mcHelper = '2.6';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '2.5');
+  root.setAttribute('data-mc-helper', '2.6');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -167,12 +167,21 @@
      the avatar once per run of messages from one sender; the scan gives the run's other messages its name (avr). */
   function avatar(e) {
     const er = e.getBoundingClientRect();
+    /* B60: a name has a letter in it; a big emoji image (an emoji-only message) can be avatar-sized too */
     const im = Array.from(e.querySelectorAll('img[alt]')).find(i => {
       const r = i.getBoundingClientRect();
-      return r.width >= 24 && r.width <= 40 && Math.abs(r.width - r.height) < 2 && r.left - er.left < 60;
+      const a = i.alt.trim();
+      return (
+        r.width >= 24 &&
+        r.width <= 40 &&
+        Math.abs(r.width - r.height) < 2 &&
+        r.left - er.left < 60 &&
+        /\p{L}/u.test(a) &&
+        !/^(GIF|Photo|Sticker|Open|Seen)\b/.test(a)
+      );
     });
     const a = im ? im.alt.trim() : '';
-    return a.length <= 80 && !/^(GIF|Photo|Sticker|Open|Seen)\b/.test(a) ? a : '';
+    return a.length <= 80 ? a : '';
   }
   /* A photo link with no Facebook CDN image in it: the capture would miss that photo. Videos are left out. */
   function photoNoImage(e) {
@@ -1842,7 +1851,7 @@
       return { started: true };
     },
     post: (a, id) => mcPost(a, id),
-    ping: () => ({ v: '2.5' }),
+    ping: () => ({ v: '2.6' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

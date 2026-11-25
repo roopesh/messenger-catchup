@@ -28,6 +28,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F35 | P3 | feature | Tag people in replies: an @mention in a reply written on the page, posted as a real Messenger mention (the owner's request, Nov 24; options and questions on the decision board) |
 | F36 | P3 | feature | Photos in replies: attach an image to a reply written on the page and post it with the reply (the owner's request, Nov 24; options and questions on the decision board) |
 | F37 | P3 | feature | Reactions: react to a message from the page (👍, ❤️, …), posted to Messenger (the owner's request, Nov 24; options and questions on the decision board) |
+| F38 | P3 | feature | Undo a reaction sent from the page, without clutter (split from F37 at the owner's request, Nov 24; mockups and options on the decision board) |
 
 ## Bugs
 
@@ -141,16 +142,24 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Asked (owner, Nov 24):** "how can we tag people in replies?"
 - **Today:** a reply written on the page is plain text; the helper types it into Messenger's box (`post`), so "@Ana" goes out as text, not a mention.
 - **What it needs, to design:** on the page, an @ in the reply box suggests people from the chat's member list, and the reply stores the mention (who, where in the text). In Messenger, a real mention needs typing "@" plus the name and picking the person from Messenger's own suggestion list; the helper would have to do that pick and check the result, the way `post` checks the reply bar today. Questions for the owner: which names to suggest (members who posted recently, or everyone), and what to do when Messenger's list doesn't offer the person (post as plain text, or hold the reply).
+- **Tested (Nov 24, test chat, nothing sent):** the helper's scripted typing of "@" plus letters opens Messenger's mention list; a scripted Tab (or a real click) picks the highlighted person and makes a real mention; a scripted click doesn't. A scripted select-all and delete leaves mentions behind, and Messenger saves unsent text as a draft at once, so a cancelled post must clear the box with real keys.
 
 ### F36 · P3 · Photos in replies
 - **Asked (owner, Nov 24):** "how can we upload images in replies?"
 - **Today:** replies are text only.
 - **What it needs, to design:** the page keeps the image in its own asset store (as photos are today) and links it from the outbox row; at posting time the helper puts the file into Messenger's box (a paste or a drop of the file) and checks the preview before sending. Unknown until tried on the real Messenger: whether it accepts a scripted paste or drop. Measure that first (a spike on the owner's test chat, never posting), then decide. Questions for the owner: one image or several, and a size limit.
+- **Tested (Nov 24, test chat, nothing sent):** Messenger shows the preview for a photo added by its attach button, by a scripted paste and by a scripted drop. So the helper can paste a photo whose bytes Claude hands it, in every posting path. Recommended on the board: that (B), with all three ways to add one on the page.
 
 ### F37 · P3 · Reactions
 - **Asked (owner, Nov 24):** "how can we add reactions to the chat?"
 - **Today:** the page shows reactions it read; it can't add one.
 - **What it needs, to design:** a react control on a message on the page (a few common emoji) that queues a reaction in the outbox; the helper hovers the message in Messenger, opens its reaction menu, picks the emoji and checks it shows. Same rules as replies: shown and confirmed in chat unless replies post automatically. Questions for the owner: which emoji, and whether a reaction needs the same OK as a reply.
+- **Read (Nov 24, test chat):** "React with an emoji" on hover opens a "Messages reactions" menu of six radio items (this chat's quick set) plus "Show more emojis"; the checked item is your reaction. Adding and removing one wasn't tried: no message of the owner's was in reach, and a reaction on someone else's notifies them.
+
+### F38 · P3 · Undo a reaction
+- **Asked (owner, Nov 24, on F37):** remove or change a reaction made from the page, as its own item, "as i don't want to clutter up the UI and you'll have some mockups to build."
+- **Mockups:** three options (tap your own reaction; Undo for a few seconds then the picker; the picker toggles like Messenger), on a private page linked from the board. Recommended: the picker toggles, with your own reaction highlighted under the message.
+- **Messenger (read Nov 24 in the test chat):** the reaction menu marks your reaction as the checked item of a radio group, so picking it again removes it. Removal is visible to everyone, like adding.
 
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.

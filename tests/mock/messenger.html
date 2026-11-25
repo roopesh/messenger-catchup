@@ -259,6 +259,14 @@
           lines.push(o.photoReply || (p.photo && !p.b) ? "Photo" : p.b.length > 30 ? p.b.slice(0, 30) + "…" : p.b);
         } else if (who !== "You" && !o.follow) lines.push(who);
         if (o.b) lines.push(o.b);
+        /* mock_emojiav: a large emoji image at the left edge, avatar-sized, as Messenger draws an emoji-only message */
+        if (MODE("emojiav") && o.i === 40) {
+          const em = document.createElement("img");
+          em.alt = "\u{1F923}";
+          em.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'/%3E";
+          em.style.cssText = "width:28px;height:28px;display:block";
+          d.append(em);
+        }
         if (o.full) {
           const av = document.createElement("img");
           av.alt = o.full;
