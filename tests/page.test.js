@@ -10231,6 +10231,19 @@ async function crossReply() {
       JSON.stringify(lend) +
       ')',
   );
+  await p.hover('#m45 > .c');
+  const xa = await p.evaluate(() => {
+    const x = document.querySelector('#m45 > .xr').getBoundingClientRect();
+    const a = document.querySelector('#m45 > .c > .acts').getBoundingClientRect();
+    return { xb: x.bottom, at: a.top, ah: a.height };
+  });
+  ok(
+    xa.ah > 0 && xa.at >= xa.xb,
+    'F23: the hover toolbar sits below the "replying to" line, never over it, whatever its width (' +
+      JSON.stringify(xa) +
+      ')',
+  );
+  await p.mouse.move(5, 5);
   await flashReset(p);
   ok(await tryClick(p, '#m45 > .xr'), 'F23: the line on #45 can be clicked');
   ok(

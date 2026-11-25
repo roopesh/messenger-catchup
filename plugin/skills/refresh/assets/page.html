@@ -836,6 +836,10 @@
     color: var(--muted);
     cursor: pointer;
   }
+  /* the hover toolbar sits on the name line, never over this line (it would take the line's clicks) */
+  .msg:has(> .xr) > .c {
+    position: relative;
+  }
   .msg > .xr b {
     font-weight: 600;
   }
