@@ -2,6 +2,16 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.41.0] - 2026-11-24
+**Sent replies leave Your replies** (BACKLOG B58; the owner's report, Nov 24). MINOR: the page shows less. Page **`PAGE_VERSION` 4.7** (from 4.6); helper unchanged (2.5). `SKILL.md` unchanged.
+
+### Changed
+- **Your replies** lists only replies that still need something: queued, sending, failed or not confirmed. A reply leaves the list once it's sent (it shows in Messages as your own message), instead of staying for a day as a full card under "Sent in the last day." With nothing waiting, the section isn't shown.
+- **Reply cards are compact:** less padding and spacing, a smaller "to … · replying to …" line, and Cancel this reply (or Dismiss) on that line, so a reply takes a few lines instead of a card's worth of space.
+
+### Tests
+- Page (`robustness`): a reply sent an hour ago isn't listed (nor "Sent in the last day"), the unconfirmed and sending ones still are, and the reply cards have the compact padding.
+
 ## [1.40.0] - 2026-11-24
 **Add a chat asks for days, not messages** (BACKLOG F34; the owner's request, Nov 23). MINOR: Add a chat's history choice changed, and a first refresh of an added chat now reads back a number of days. Page **`PAGE_VERSION` 4.6** (from 4.5); helper **2.5** (from 2.4). `SKILL.md` unchanged.
 

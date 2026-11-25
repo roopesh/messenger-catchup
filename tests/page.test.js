@@ -1123,6 +1123,16 @@ async function robustness() {
       state: 'sending',
       queuedAt: old,
     });
+    __rt.write('outbox/t1', {
+      i: 203,
+      mid: 'mid.203',
+      to: 'Cy',
+      snip: 'message 203',
+      text: 'just went out',
+      state: 'sent',
+      queuedAt: old,
+      sentAt: new Date(Date.now() - 36e5).toISOString(),
+    });
   });
   ok(
     await until(p, () => {
@@ -1130,6 +1140,14 @@ async function robustness() {
       return /not confirmed/.test(t) && /Sent\? Not found/.test(t) && /sending…/.test(t);
     }),
     'outbox: 3-day-old unconfirmed and sending replies are still shown, with the note',
+  );
+  ok(
+    await p.evaluate(() => {
+      const t = document.getElementById('v-summary').textContent;
+      const c = document.querySelector('#v-summary .item.ob');
+      return !/just went out/.test(t) && !/Sent in the last day/.test(t) && getComputedStyle(c).paddingTop === '8px';
+    }),
+    'B58: a reply sent an hour ago leaves Your replies, and the reply cards are compact',
   );
   // B36: failed/unconfirmed replies can be dismissed; the header says they need a look
   ok(
