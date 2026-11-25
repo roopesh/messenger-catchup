@@ -5440,25 +5440,45 @@ class TestRunPlan(unittest.TestCase):
         self.assertEqual(p["status"], {"state": "running", "startedAt": start, "step": "scan", "by": "refresh trail"})
         self.assertEqual((p["skipped"], p["skippedDoc"]), ([], None))
 
-    def test_a_facebook_group_is_never_planned_yet(self):
-        """F25: groups (kind "group") are read from stage G1's last release; until then no run plans them, active or
-        pending, and `chats` refuses one."""
+    def test_a_facebook_group_is_planned_like_a_chat_and_chats_gives_its_seed(self):
+        """F25: groups (kind "group") are refreshed in the same run as the chats, by order (pending ones last); `chats`
+        names a group's kind, address, first read and Read setting, and a pending group's meta/chat-KEY seed."""
         self.meta["chats"]["gear"] = {
             "kind": "group",
             "name": "Gear Swap",
             "tag": "Gear",
             "state": "active",
             "order": 1,
+            "group": "100",
+            "url": "https://www.facebook.com/groups/100/",
         }
-        self.meta["chats"]["paddle"] = {"kind": "group", "name": "Paddle", "tag": "Pad", "state": "pending", "order": 7}
+        self.meta["chats"]["paddle"] = {
+            "kind": "group",
+            "name": "Paddle",
+            "tag": "Pad",
+            "state": "pending",
+            "order": 7,
+            "group": "200",
+            "start": {"days": 3},
+            "read": "mine",
+        }
         self.at(0)
-        self.assertEqual(self.plan({"keys": ["gear"]})["order"], ["trail", "book", "cam", "chess"])
+        self.assertEqual(self.plan({})["order"], ["trail", "book", "gear", "cam", "chess", "paddle"])
         mf = os.path.join(self.t.name, "meta.json")
         with open(mf, "w") as f:
             json.dump(self.meta, f)
-        with self.assertRaises(AssertionError) as e:
-            catchup.chats_cmd(mf, "gear")
-        self.assertIn("Facebook group", str(e.exception))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            catchup.chats_cmd(mf, "paddle")
+        c = json.loads(out.getvalue())
+        self.assertEqual(
+            (c["kind"], c["group"], c["start"], c["read"], c["chatArg"]),
+            ("group", "200", {"days": 3}, "mine", "--chat=paddle"),
+        )
+        self.assertEqual(
+            c["seed"], {"kind": "group", "key": "paddle", "group": "200", "groupName": "Paddle", "nextP": 1}
+        )
+        self.assertIn("paddle_posts", c["collections"].values())
 
     def test_the_first_chat_first_then_the_skipped_ones_in_the_order_they_were_left(self):
         self.at(0)

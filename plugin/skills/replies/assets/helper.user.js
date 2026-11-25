@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      3.1
+// @version      3.2
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -27,13 +27,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '3.1';
+  window.__mcHelper = '3.2';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '3.1');
+  root.setAttribute('data-mc-helper', '3.2');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -2270,12 +2270,27 @@
     }
   };
   const gSave = (run, b) => localStorage.setItem(gKey(run), JSON.stringify(b));
+  /* a post's age in hours from Facebook's English time label ("17 hours ago", "about an hour ago", "3 days ago",
+     "Yesterday at 4:05 PM", "November 3 at 4:05 PM", "March 2, 2025"); null when it can't be read */
+  function ageHours(t) {
+    t = N(t).toLowerCase();
+    let m;
+    if (/^(just now|a few seconds ago)/.test(t)) return 0;
+    if ((m = t.match(/^(about )?(an|a|\d+) (minute|hour|day|week|month|year)s? ago/))) {
+      const n = /^\d/.test(m[2]) ? +m[2] : 1;
+      return n * { minute: 1 / 60, hour: 1, day: 24, week: 168, month: 720, year: 8760 }[m[3]];
+    }
+    if (/^yesterday/.test(t)) return 24;
+    const d = Date.parse(t.replace(/ at /, ' ') + (/\d{4}/.test(t) ? '' : ' ' + new Date().getFullYear()));
+    return isNaN(d) ? null : Math.max(0, (Date.now() - d) / 3600000);
+  }
   /* groupFeed{known, cap, extra, steps}: on a group's feed, scrolls the window and reads each post card while it's on
      screen (cards are emptied about two screens away). known: {postId: comment count when last read}. Sorted by New
      posts it stops at the first known post; by Recent activity, `extra` cards (2) after the first known post whose count
      hasn't changed (the order is approximate). It also stops after `cap` changed posts (new, or a count that rose; 50)
      or at the end of the feed. Returns {group, sort, posts:[{pid, who, uid, age, text, more, photos, count, known}],
-     changed:[pid], stop: "known" | "cap" | "end" | "steps"}. */
+     changed:[pid], stop: "known" | "cap" | "end" | "steps" | "age"}. maxDays (a first read): stops at the first post
+     older than that many days (its time label), which isn't kept. */
   async function mcGroupFeed(a) {
     a = a || {};
     const t0 = Date.now();
@@ -2305,6 +2320,11 @@
         card.dataset.mcRead = run;
         if (r.err || seen.has(r.pid)) continue;
         seen.add(r.pid);
+        const h = a.maxDays ? ageHours(r.age) : null;
+        if (h != null && h > a.maxDays * 24) {
+          stop = 'age';
+          break;
+        }
         const k = Object.prototype.hasOwnProperty.call(known, r.pid);
         r.known = k;
         posts.push(r);
@@ -2545,7 +2565,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '3.1' }),
+    ping: () => ({ v: '3.2' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

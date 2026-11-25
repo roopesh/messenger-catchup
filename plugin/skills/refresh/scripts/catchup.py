@@ -253,7 +253,19 @@ BLOCK_ID = re.compile(r"^b\d{6,}-[0-9a-f]{8}$")
 # them under those names (RUN/cam_chunks/, RUN/meta/chat-cam.json). Without it, the page's first chat: the original
 # names, so a page with one chat works exactly as before.
 CHAT = None
-CHAT_COLLS = ("chunks", "threading", "summary", "daySummaries", "digests", "reports", "photos", "captions", "people")
+CHAT_COLLS = (
+    "chunks",
+    "threading",
+    "summary",
+    "daySummaries",
+    "digests",
+    "reports",
+    "photos",
+    "captions",
+    "people",
+    "posts",
+    "comments",
+)
 CHAT_COLLS += ("outbox", "rangeSummaries")
 KEY_MAX, TAG_MAX = 6, 8
 
@@ -343,7 +355,6 @@ def chats_cmd(meta_file, key=None):
     cs = chats_of(meta)
     assert key in cs, "no chat %r on this page (its keys: %s)" % (key, ", ".join(sorted(cs)))
     c = cs[key]
-    assert not is_group(c), "%r is a Facebook group: refreshes don't read groups yet (F25 stage G1)" % key
     was = CHAT
     set_chat(None if c.get("home") else key)
     out = {
@@ -359,6 +370,21 @@ def chats_cmd(meta_file, key=None):
         "collections": {n: coll(n) for n in CHAT_COLLS},
     }
     set_chat(was)
+    if is_group(c):
+        # F25: a group is read by references/groups.md, not a Messenger scan
+        out.update(
+            {
+                "kind": "group",
+                "group": c.get("group"),
+                "url": c.get("url"),
+                "start": c.get("start") or {"days": 7},
+                "read": c.get("read") or "all",
+            }
+        )
+        if c.get("state") == "pending":
+            out["seed"] = {"kind": "group", "key": key, "group": c.get("group"), "groupName": c.get("name"), "nextP": 1}
+        print(json.dumps(out, indent=1))
+        return
     if c.get("state") == "pending" and not c.get("home"):
         out["seed"] = {
             "kind": "messenger-catchup",
@@ -421,10 +447,8 @@ def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False, sch
     # a chat without a whole-number order comes after the others, as on the page
     num = lambda v: isinstance(v, int) and not isinstance(v, bool)
     by = lambda k: (not cs[k].get("home"), cs[k]["order"] if num(cs[k].get("order")) else float("inf"), k)
-    # F25: a Facebook group (kind "group") isn't read by a refresh yet (stage G1 adds that), so no run plans it
-    read = [k for k in cs if not is_group(cs[k])]
-    base = sorted((k for k in read if cs[k].get("state", "active") == "active"), key=by)
-    base += sorted((k for k in read if cs[k].get("state") == "pending" and not cs[k].get("home")), key=by)
+    base = sorted((k for k in cs if cs[k].get("state", "active") == "active"), key=by)
+    base += sorted((k for k in cs if cs[k].get("state") == "pending" and not cs[k].get("home")), key=by)
     home = [k for k in base if cs[k].get("home")]
     last = [k for i, k in enumerate(keys) if k in base and k not in home and k not in keys[:i]]
     order = home + last + [k for k in base if k not in home and k not in last]

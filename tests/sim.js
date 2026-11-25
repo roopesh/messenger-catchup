@@ -1747,6 +1747,15 @@ sim('G1: groupFeed', { s: 40 }, async b => {
       JSON.stringify(r && [r.stop, r.posts.length, r.changed]) +
       ')',
   );
+  // a first read of 1 day: posts are 1, 4, 7 … hours old, so it keeps the 8 posts of the last 24 hours
+  await gOpen(p, '', '?sorting_setting=CHRONOLOGICAL', { g_posts: '24' });
+  r = await bridge(p, 'groupFeed', { maxDays: 1, cap: 300 });
+  ok(
+    r && r.stop === 'age' && r.posts.length === 8,
+    'G1: a first read with maxDays 1 stops at the first post older than a day, keeping 8 (' +
+      JSON.stringify(r && [r.stop, r.posts.length]) +
+      ')',
+  );
   r = await bridge(p, 'groupFeed', { cap: 5 });
   ok(
     r && r.stop === 'cap' && r.changed.length === 5,
