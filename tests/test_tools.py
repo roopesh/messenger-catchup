@@ -620,9 +620,9 @@ class TestPhotos(unittest.TestCase):
         self.assertIn("If it didn't, the tab that wrote it is gone: carry on", cleanup)
         step5 = re.search(r"^5\. .*$", self.skill, re.M).group(0)
         # B61: step 5 keeps the one page tab (helper.md › Tabs), which never closes a tab still storing photos
-        self.assertTrue(step5.startswith("5. Keep that page tab (helper.md › Tabs)"))
+        self.assertTrue(step5.startswith("5. Close the page tab unless photos still store (helper.md › Tabs);"))
         tabs = re.search(r"^## Tabs\n.*?(?=^## )", in_skill("references", "helper.md"), re.M | re.S).group(0)
-        self.assertIn("is never closed or reloaded while that lasts", tabs)
+        self.assertIn("then leave it open, never reloaded, until the upload ends", tabs)
         self.assertIn("Never close or touch any other tab of the user's", tabs)
         self.assertIn("fmtTime(L.until)", self.page)
         self.assertIn('second: "2-digit"', self.page)

@@ -2,6 +2,15 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.50.0] - 2026-11-25
+**The page tab closes at the end of a run** (B61 follow-up; the owner, Nov 25: "close the page tab at the end"). MINOR: SKILL.md's steps change. No page or helper change.
+
+### Changed
+- v1.49.0 kept one page tab open between runs; now a run opens the page tab only to import (step 4) and closes it at the end (step 5, and wherever the run stops), unless that import is still storing photos: then the tab stays, never reloaded, until the upload ends, and the next run closes it (or pastes into it while it still stores). The one Messenger tab stays between runs; every other page tab and `facebook.com` tab in Claude's group is closed at the start of a run. `references/helper.md` › Tabs, `references/chats.md` › The paste and `references/photos.md` say the same.
+
+### Tests
+- `test_tools`: step 5 closes the page tab unless photos still store; helper.md › Tabs leaves a storing tab open, never reloaded.
+
 ## [1.49.0] - 2026-11-25
 **No more pile of leftover tabs** (B61; the owner's screenshot, Nov 25: Claude's tab group full of "Messenger Catch-up" and "Messenger | Facebook" tabs). MINOR: SKILL.md's steps change. No page or helper change.
 
