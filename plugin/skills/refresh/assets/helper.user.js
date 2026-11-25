@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      3.3
+// @version      3.4
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -27,13 +27,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '3.3';
+  window.__mcHelper = '3.4';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '3.3');
+  root.setAttribute('data-mc-helper', '3.4');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -2212,34 +2212,46 @@
     }
     return null;
   }
-  /* the card's own time link: the first link holding span[aria-labelledby] before the post's text */
+  /* the card's own time link, before the post's text: one holding span[aria-labelledby] (its readable time), or, on
+     cards further down the feed (live check, Nov 25), a bare placeholder link (href "?__cft__…") that gets that span,
+     and its address, only once a pointer is over it */
   function cardTime(card) {
     const msg = card.querySelector('[data-ad-rendering-role="story_message"]');
+    const before = x => !msg || !(msg.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING);
     for (const s of card.querySelectorAll('a span[aria-labelledby]')) {
-      if (msg && msg.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING) continue;
+      if (!before(s)) continue;
       const l = document.getElementById(s.getAttribute('aria-labelledby'));
       return { a: s.closest('a'), age: l ? N(l.textContent) : '' };
     }
-    return { a: null, age: '' };
+    const a = Array.from(card.querySelectorAll('a[href^="?__cft__"]')).find(before);
+    return { a: a || null, age: '' };
   }
+  const point = a => {
+    ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(ty =>
+      a.dispatchEvent(new MouseEvent(ty, { bubbles: true, view: window })),
+    );
+    a.focus({ preventScroll: true });
+  };
   async function readCard(card) {
     const live = card.querySelector('[data-virtualized="false"]');
     const cb = card.querySelector('[data-ad-rendering-role="comment_button"]');
     if (!live || !cb) return null;
-    const t = cardTime(card);
+    let t = cardTime(card);
     let pid = cardPid(card);
-    if (!pid && t.a) {
-      ['pointerover', 'pointerenter', 'mouseover', 'mouseenter'].forEach(ty =>
-        t.a.dispatchEvent(new MouseEvent(ty, { bubbles: true, view: window })),
-      );
-      t.a.focus({ preventScroll: true });
-      for (let k = 0; k < 8 && !(pid = cardPid(card)); k++) await sleep(150);
-      t.a.blur();
+    if ((!pid || !t.age) && t.a) {
+      point(t.a);
+      for (let k = 0; k < 10 && (!(pid = pid || cardPid(card)) || !(t = cardTime(card)).age); k++) await sleep(150);
+      t.a && t.a.blur();
     }
     if (!pid) return { err: 'no-id' };
-    const au = card.querySelector('[data-ad-rendering-role="profile_name"] a[href*="/user/"]');
+    const au = Array.from(card.querySelectorAll('[data-ad-rendering-role="profile_name"] a[href*="/user/"]')).find(x =>
+      N(x.textContent),
+    );
     const msg = card.querySelector('[data-ad-rendering-role="story_message"]');
-    const lbl = cb.getAttribute('aria-label') || '';
+    /* the count is on the "Comment on <name>'s post, N comments" button (no ", N comments" when there are none); the
+       comment_button marker itself has no label (live check, Nov 25) */
+    const cl = card.querySelector('[aria-label^="Comment on"]');
+    const lbl = (cl && cl.getAttribute('aria-label')) || cb.getAttribute('aria-label') || '';
     const cm = lbl.match(/,\s*([\d,]+)\s+comments?$/);
     return {
       pid,
@@ -2274,6 +2286,7 @@
      "Yesterday at 4:05 PM", "November 3 at 4:05 PM", "March 2, 2025"); null when it can't be read */
   function ageHours(t) {
     t = N(t).toLowerCase();
+    if (!t) return null;
     let m;
     if (/^(just now|a few seconds ago)/.test(t)) return 0;
     if ((m = t.match(/^(about )?(an|a|\d+) (minute|hour|day|week|month|year)s? ago/))) {
@@ -2364,8 +2377,14 @@
     const t0 = Date.now();
     const dlg = () =>
       Array.from(document.querySelectorAll('[role="dialog"][aria-labelledby]')).find(d => d.getClientRects().length);
+    /* the dialog shows before its comments load (live check, Nov 25): wait for a comment or the sort button too */
+    const ready = x =>
+      x.querySelector('[role="article"][aria-label^="Comment by"]') ||
+      Array.from(x.querySelectorAll('[role="button"][aria-haspopup="menu"]')).some(b =>
+        /^Most relevant/.test(N(b.innerText)),
+      );
     let d = null;
-    for (let k = 0; k < 40 && !(d = dlg()); k++) await sleep(250);
+    for (let k = 0; k < 60 && !((d = dlg()) && ready(d)); k++) await sleep(250);
     if (!d) return { err: 'no-post', detail: 'no post dialog: open /groups/<g>/posts/<p>/ first' };
     const pid = (location.pathname.match(/\/posts\/(\d+)/) || [])[1] || null;
     const known = new Set(Array.isArray(a.known) ? a.known.map(String) : []);
@@ -2420,18 +2439,20 @@
       v.click();
       await sleep(500);
     }
-    /* a comment's thread block: its article's grandparent; a reply's block sits in its parent's replies box */
-    const parentOf = ar => {
-      const blk = ar.parentElement && ar.parentElement.parentElement;
-      const up = blk && blk.parentElement && blk.parentElement.parentElement;
-      const pa = up && up.firstElementChild && up.firstElementChild.querySelector('[role="article"]');
-      return pa && pa !== ar ? ids(pa) : null;
+    /* a reply answers the nearest comment above it that sits further left (Facebook indents each reply level; the
+       nesting of its boxes doesn't say it reliably: live check, Nov 25) */
+    const all = arts();
+    const lefts = all.map(ar => ar.getBoundingClientRect().left);
+    const parentOf = j => {
+      for (let k = j - 1; k >= 0; k--) if (lefts[k] < lefts[j] - 2) return ids(all[k]);
+      return null;
     };
-    const comments = arts().map(ar => {
+    const comments = all.map((ar, j) => {
       const i = ids(ar);
-      const au = ar.querySelector('a[href*="/user/"]');
+      /* the first /user/ link is the avatar (no text): the name is the first one with text */
+      const au = Array.from(ar.querySelectorAll('a[href*="/user/"]')).find(x => N(x.textContent));
       const tx = ar.querySelector('div[dir="auto"]');
-      const p = i.rid ? parentOf(ar) : null;
+      const p = i.rid ? parentOf(j) : null;
       return {
         cid: i.cid,
         rid: i.rid,
@@ -2567,7 +2588,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '3.3' }),
+    ping: () => ({ v: '3.4' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
