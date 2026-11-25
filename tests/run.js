@@ -17,10 +17,12 @@ const TYPES = {
 const LEXICAL = path.join(ROOT, '..', 'node_modules', 'lexical', 'dist');
 const server = http.createServer((req, res) => {
   /* a chat's address, as Messenger has it (/t/<id>, /e2ee/t/<id>), serves the mock too (F1 HP1) */
-  const u = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(
-    /^\/mock\/(e2ee\/)?t\/\d+\/?$/,
-    '/mock/messenger.html',
-  );
+  /* F25: a group's address (/groups/<g>/, a post /groups/<g>/posts/<p>/) serves the group mock, /notifications/ its
+     notifications page */
+  const u = decodeURIComponent(new URL(req.url, 'http://x').pathname)
+    .replace(/^\/mock\/(e2ee\/)?t\/\d+\/?$/, '/mock/messenger.html')
+    .replace(/^\/mock\/groups\/[\w.]+\/(posts\/\d+\/?)?$/, '/mock/group.html')
+    .replace(/^\/mock\/notifications\/?$/, '/mock/notifications.html');
   const lex = u.startsWith('/node_modules/lexical/dist/');
   const p = lex
     ? path.normalize(path.join(LEXICAL, u.slice('/node_modules/lexical/dist/'.length)))

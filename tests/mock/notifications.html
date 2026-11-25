@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Notifications | Facebook</title>
+  </head>
+  <body>
+    <h1>Notifications</h1>
+    <div id="list"></div>
+    <div role="button" id="prev">See previous notifications</div>
+    <script>
+      /* Simulated Facebook notifications page (F25), as surveyed Nov 25: [role=listitem] items each holding one
+         a[role=link][href*=notif_id] whose query names the kind (notif_t) and, for a group, the post and comment ids
+         (post_id as a query parameter); an unread item's link text starts with a hidden "Unread" and the item has a
+         "Mark as read …" button; times are leaf spans like "7m", "3h", "1d". Six items show at first; "See previous
+         notifications" adds six more. A click on an item would mark it read: window.mockOpened records any. */
+      window.mockOpened = [];
+      const G = "1000000000000001";
+      const KINDS = [
+        ["group_comment_mention", "Ana Alvarez mentioned you in a comment in Gear Swap.", true],
+        ["feedback_reaction_generic", "Ben Brooks likes your comment.", false],
+        ["group_comment_reply", "Cy Chen replied to your comment in Gear Swap.", true],
+        ["friend", "Dee Diaz sent you a friend request.", false],
+        ["group_post_comment", "Dee Diaz commented on your post in Gear Swap.", false],
+        ["group_comment_mention", "Ben Brooks mentioned you in a comment in Trail Club.", false],
+      ];
+      const items = [];
+      for (let n = 0; n < 18; n++) {
+        const [kind, text, unread] = KINDS[n % KINDS.length];
+        const id = String(7000000000000000 - n);
+        const post = String(2000000000000000 + n);
+        const g = /Trail Club/.test(text) ? "1000000000000002" : G;
+        const href =
+          kind === "friend"
+            ? "/friends/requests/?profile_id=9104&notif_id=" + id + "&notif_t=friend&ref=notif"
+            : "/groups/" +
+              g +
+              "/?post_id=" +
+              post +
+              "&comment_id=" +
+              (4000000000000000 + n) +
+              (kind === "group_comment_reply" ? "&reply_comment_id=" + (5000000000000000 + n) : "") +
+              "&notif_id=" +
+              id +
+              "&notif_t=" +
+              kind +
+              "&ref=notif";
+        items.push({ href, text, unread: unread && n < 6, age: n < 6 ? n * 7 + 3 + "m" : n + "h" });
+      }
+      const list = document.getElementById("list");
+      let shown = 0;
+      function more() {
+        items.slice(shown, shown + 6).forEach(it => {
+          const li = document.createElement("div");
+          li.setAttribute("role", "listitem");
+          const a = document.createElement("a");
+          a.setAttribute("role", "link");
+          a.setAttribute("href", it.href);
+          a.onclick = e => {
+            e.preventDefault();
+            window.mockOpened.push(it.href);
+          };
+          if (it.unread) {
+            const u = document.createElement("span");
+            u.textContent = "Unread";
+            u.style.cssText = "position:absolute;left:-9999px";
+            a.append(u, document.createElement("br"));
+          }
+          a.append(document.createTextNode(it.text + " "));
+          const t = document.createElement("span");
+          t.textContent = it.age;
+          a.append(t);
+          li.append(a);
+          if (it.unread) {
+            const m = document.createElement("div");
+            m.setAttribute("role", "button");
+            m.setAttribute("aria-label", "Mark as read " + it.text);
+            li.append(m);
+          }
+          list.append(li);
+        });
+        shown += 6;
+      }
+      more();
+      document.getElementById("prev").onclick = () => setTimeout(more, 300);
+    </script>
+  </body>
+</html>

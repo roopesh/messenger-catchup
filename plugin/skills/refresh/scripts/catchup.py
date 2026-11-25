@@ -320,6 +320,11 @@ def chats_of(meta):
     return {k: dict(h, **v) if v.get("home") else v for k, v in got.items()}
 
 
+def is_group(c):
+    """F25: a meta/chat.chats entry for a Facebook group; one without `kind` is a Messenger chat."""
+    return c.get("kind") == "group"
+
+
 def auto_for(meta, key):
     """Whether a reply queued in chat KEY goes out without asking: the chat's own setting, else the page default."""
     a = (chats_of(meta).get(key) or {}).get("auto")
@@ -338,6 +343,7 @@ def chats_cmd(meta_file, key=None):
     cs = chats_of(meta)
     assert key in cs, "no chat %r on this page (its keys: %s)" % (key, ", ".join(sorted(cs)))
     c = cs[key]
+    assert not is_group(c), "%r is a Facebook group: refreshes don't read groups yet (F25 stage G1)" % key
     was = CHAT
     set_chat(None if c.get("home") else key)
     out = {
@@ -415,8 +421,10 @@ def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False, sch
     # a chat without a whole-number order comes after the others, as on the page
     num = lambda v: isinstance(v, int) and not isinstance(v, bool)
     by = lambda k: (not cs[k].get("home"), cs[k]["order"] if num(cs[k].get("order")) else float("inf"), k)
-    base = sorted((k for k in cs if cs[k].get("state", "active") == "active"), key=by)
-    base += sorted((k for k in cs if cs[k].get("state") == "pending" and not cs[k].get("home")), key=by)
+    # F25: a Facebook group (kind "group") isn't read by a refresh yet (stage G1 adds that), so no run plans it
+    read = [k for k in cs if not is_group(cs[k])]
+    base = sorted((k for k in read if cs[k].get("state", "active") == "active"), key=by)
+    base += sorted((k for k in read if cs[k].get("state") == "pending" and not cs[k].get("home")), key=by)
     home = [k for k in base if cs[k].get("home")]
     last = [k for i, k in enumerate(keys) if k in base and k not in home and k not in keys[:i]]
     order = home + last + [k for k in base if k not in home and k not in last]

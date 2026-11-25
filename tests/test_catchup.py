@@ -5440,6 +5440,26 @@ class TestRunPlan(unittest.TestCase):
         self.assertEqual(p["status"], {"state": "running", "startedAt": start, "step": "scan", "by": "refresh trail"})
         self.assertEqual((p["skipped"], p["skippedDoc"]), ([], None))
 
+    def test_a_facebook_group_is_never_planned_yet(self):
+        """F25: groups (kind "group") are read from stage G1's last release; until then no run plans them, active or
+        pending, and `chats` refuses one."""
+        self.meta["chats"]["gear"] = {
+            "kind": "group",
+            "name": "Gear Swap",
+            "tag": "Gear",
+            "state": "active",
+            "order": 1,
+        }
+        self.meta["chats"]["paddle"] = {"kind": "group", "name": "Paddle", "tag": "Pad", "state": "pending", "order": 7}
+        self.at(0)
+        self.assertEqual(self.plan({"keys": ["gear"]})["order"], ["trail", "book", "cam", "chess"])
+        mf = os.path.join(self.t.name, "meta.json")
+        with open(mf, "w") as f:
+            json.dump(self.meta, f)
+        with self.assertRaises(AssertionError) as e:
+            catchup.chats_cmd(mf, "gear")
+        self.assertIn("Facebook group", str(e.exception))
+
     def test_the_first_chat_first_then_the_skipped_ones_in_the_order_they_were_left(self):
         self.at(0)
         self.assertEqual(self.plan({"keys": ["chess", "cam"]})["order"], ["trail", "chess", "cam", "book"])

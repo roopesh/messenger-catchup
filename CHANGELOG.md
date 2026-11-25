@@ -2,6 +2,20 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.47.0] - 2026-11-25
+**The helper learns to read Facebook groups** (BACKLOG F25, stage G1, part 1 of 2; the owner-reviewed design at https://claude.ai/artifact/GgfBMy76BJ4b4UQtbxf8EC). MINOR: the helper runs on group and notification pages. Nothing reads groups during a refresh yet: part 2 adds Add a group, the group views and the refresh steps. Helper **3.0** (from 2.9); page **`PAGE_VERSION` 5.3** (from 5.2: only its embedded copy of the helper).
+
+### Added
+- **Helper 3.0 runs on `facebook.com/groups/*` and `/notifications`**, with three read-only commands built from a survey of a real group page (Nov 25):
+  - `groupFeed{known, cap, extra}` reads a group's feed. Post cards are plain divs under the feed whose content Facebook empties about two screens away, so it reads each card while it's on screen: the post id (from a comment's link, a photo's `set=pcb.`, or the time link, which only gets its address once a pointer is over it), the author, the time (the readable label the scrambled time text points to), the text, photos and the comment count. Sorted by New posts it stops at the first post it already knows; by Recent activity, two cards past the first unchanged one; and after 50 changed posts.
+  - `groupPost{newest, known}` reads an open post: sorts its comments Newest (Facebook resets that per post), scrolls the dialog until no more load, opens every "View N replies", and gives each reply its parent.
+  - `notifs{since, more}` reads the notifications page without opening any (opening marks it read): kind, group, post, comment and reply ids, unread.
+  - It never clicks inside a post: polls vote on a click.
+- `catchup.py`: a group entry in `meta/chat.chats` (`kind:"group"`) is never planned by a run, and `chats` refuses one, until part 2.
+
+### Tests
+- New mocks `tests/mock/group.html` (virtualized feed, scrambled time links, comment-count labels, photos, a poll trap, the post dialog with its sort menu, 10 comments per scroll and "View N replies") and `tests/mock/notifications.html`. Sim `G1: groupFeed` (all cards in order with no click, stop at a known post, Recent activity's stop, the cap), `G1: groupPost`, `G1: notifs`. Py: a group is never planned.
+
 ## [1.46.0] - 2026-11-25
 **Photos in replies** (BACKLOG F36; the owner picked A on the board, with answers: several photos, a photo with no text is a reply, delete it once sent since the next refresh stores it anyway, no size limit). MINOR. Page **`PAGE_VERSION` 5.2** (from 5.1); helper **2.9** (from 2.8).
 

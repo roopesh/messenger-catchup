@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      2.9
-// @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
+// @version      3.0
+// @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
+// @match        https://www.facebook.com/groups/*
+// @match        https://www.facebook.com/notifications*
 // @run-at       document-idle
 // @grant        none
 // @updateURL    https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js
@@ -25,13 +27,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '2.9';
+  window.__mcHelper = '3.0';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '2.9');
+  root.setAttribute('data-mc-helper', '3.0');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -2186,6 +2188,252 @@
       detail: 'clicked ' + a.emoji + ' but the message did not show it within 6 s: it may be there, check Messenger',
     });
   }
+  /* ---------- F25: Facebook groups (read only) ----------
+     Built from the Nov 25 survey of a real group page. Never click inside a post: polls vote on a click, and like,
+     react and comment buttons sit next to everything. The only actions here: scrolling, pointer events on a post's
+     time link (they fill in its address), "View N replies", and a post's own comment-sort menu (the viewer's view
+     only). Claude opens each page (the feed with ?sorting_setting=…, a post at /groups/G/posts/P/, /notifications/);
+     a navigation ends a running command, so each command reads only the page it's started on. */
+  const qp = (href, k) => {
+    try {
+      return new URL(href, location.origin).searchParams.get(k);
+    } catch (e) {
+      return null;
+    }
+  };
+  const groupOf = () => (location.pathname.match(/\/groups\/([^/?#]+)/) || [])[1] || null;
+  /* a post card's id without any pointer: a comment preview's comment_id link, a photo's set=pcb.P, or the time link
+     once it holds /posts/P/ */
+  function cardPid(card) {
+    for (const a of card.querySelectorAll('a[href*="/posts/"], a[href*="set=pcb."]')) {
+      const h = a.getAttribute('href') || '';
+      const m = h.match(/\/posts\/(\d+)/) || h.match(/[?&]set=pcb\.(\d+)/);
+      if (m) return m[1];
+    }
+    return null;
+  }
+  /* the card's own time link: the first link holding span[aria-labelledby] before the post's text */
+  function cardTime(card) {
+    const msg = card.querySelector('[data-ad-rendering-role="story_message"]');
+    for (const s of card.querySelectorAll('a span[aria-labelledby]')) {
+      if (msg && msg.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING) continue;
+      const l = document.getElementById(s.getAttribute('aria-labelledby'));
+      return { a: s.closest('a'), age: l ? N(l.textContent) : '' };
+    }
+    return { a: null, age: '' };
+  }
+  async function readCard(card) {
+    const live = card.querySelector('[data-virtualized="false"]');
+    const cb = card.querySelector('[data-ad-rendering-role="comment_button"]');
+    if (!live || !cb) return null;
+    const t = cardTime(card);
+    let pid = cardPid(card);
+    if (!pid && t.a) {
+      ['pointerover', 'pointerenter', 'mouseover', 'mouseenter'].forEach(ty =>
+        t.a.dispatchEvent(new MouseEvent(ty, { bubbles: true, view: window })),
+      );
+      t.a.focus({ preventScroll: true });
+      for (let k = 0; k < 8 && !(pid = cardPid(card)); k++) await sleep(150);
+      t.a.blur();
+    }
+    if (!pid) return { err: 'no-id' };
+    const au = card.querySelector('[data-ad-rendering-role="profile_name"] a[href*="/user/"]');
+    const msg = card.querySelector('[data-ad-rendering-role="story_message"]');
+    const lbl = cb.getAttribute('aria-label') || '';
+    const cm = lbl.match(/,\s*([\d,]+)\s+comments?$/);
+    return {
+      pid,
+      who: au ? N(au.textContent) : '',
+      uid: au ? ((au.getAttribute('href') || '').match(/\/user\/(\d+)/) || [])[1] || null : null,
+      age: t.age,
+      text: msg ? N(msg.innerText) : '',
+      more: !!(msg && Array.from(msg.querySelectorAll('[role="button"]')).some(b => /^See more$/.test(N(b.innerText)))),
+      photos: Array.from(card.querySelectorAll('a[href*="/photo/?fbid="]')).map(a =>
+        qp(a.getAttribute('href'), 'fbid'),
+      ),
+      count: cm ? +cm[1].replace(/,/g, '') : 0,
+    };
+  }
+  /* groupFeed{known, cap, extra, steps}: on a group's feed, scrolls the window and reads each post card while it's on
+     screen (cards are emptied about two screens away). known: {postId: comment count when last read}. Sorted by New
+     posts it stops at the first known post; by Recent activity, `extra` cards (2) after the first known post whose count
+     hasn't changed (the order is approximate). It also stops after `cap` changed posts (new, or a count that rose; 50)
+     or at the end of the feed. Returns {group, sort, posts:[{pid, who, uid, age, text, more, photos, count, known}],
+     changed:[pid], stop: "known" | "cap" | "end" | "steps"}. */
+  async function mcGroupFeed(a) {
+    a = a || {};
+    const t0 = Date.now();
+    const feed = document.querySelector('[role="feed"]');
+    if (!feed) return { err: 'no-feed', detail: 'no [role="feed"] on this page: open the group (signed in) first' };
+    const known = a.known && typeof a.known === 'object' ? a.known : {};
+    const cap = a.cap || 50;
+    const extra = a.extra == null ? 2 : a.extra;
+    const st = N((feed.firstElementChild && feed.firstElementChild.innerText) || '');
+    const sort = /Recent activity/i.test(st) ? 'activity' : /New posts/i.test(st) ? 'new' : 'unknown';
+    const posts = [],
+      seen = new Set(),
+      changed = [];
+    let after = -1,
+      stop = null,
+      idle = 0;
+    /* each run reads from the top; cards it has read carry its run mark */
+    const run = 'r' + t0;
+    scrollTo(0, 0);
+    await sleep(400);
+    for (let step = 0; step < (a.steps || 400) && !stop; step++) {
+      for (const card of Array.from(feed.children).slice(1)) {
+        if (stop) break;
+        if (card.dataset.mcRead === run) continue;
+        const r = await readCard(card);
+        if (!r) continue;
+        card.dataset.mcRead = run;
+        if (r.err || seen.has(r.pid)) continue;
+        seen.add(r.pid);
+        const k = Object.prototype.hasOwnProperty.call(known, r.pid);
+        r.known = k;
+        posts.push(r);
+        if (!k || r.count > known[r.pid]) changed.push(r.pid);
+        if (sort === 'new' && k) stop = 'known';
+        else if (k && r.count <= known[r.pid] && after < 0) after = 0;
+        else if (after >= 0 && ++after >= extra) stop = 'known';
+        if (!stop && changed.length >= cap) stop = 'cap';
+      }
+      if (stop) break;
+      const y = scrollY;
+      scrollBy(0, Math.round(innerHeight * 0.7));
+      await sleep(450);
+      if (scrollY === y) {
+        if (++idle >= 6) stop = 'end';
+      } else idle = 0;
+    }
+    return { group: groupOf(), sort, posts, changed, stop: stop || 'steps', ms: Date.now() - t0 };
+  }
+  /* groupPost{newest, known, maxComments}: on an open post (/groups/G/posts/P/, a dialog), reads its comments. newest
+     (true): set the post's comment sort to Newest first (it resets on every post). Scrolls the dialog's list until no
+     more load (or, sorted Newest, a known comment id shows), opens every "View N replies", then reads each comment:
+     {cid, rid (a reply's own id), parent (the comment or reply it answers), who, uid, text, age}. */
+  async function mcGroupPost(a) {
+    a = a || {};
+    const t0 = Date.now();
+    const dlg = () =>
+      Array.from(document.querySelectorAll('[role="dialog"][aria-labelledby]')).find(d => d.getClientRects().length);
+    let d = null;
+    for (let k = 0; k < 40 && !(d = dlg()); k++) await sleep(250);
+    if (!d) return { err: 'no-post', detail: 'no post dialog: open /groups/<g>/posts/<p>/ first' };
+    const pid = (location.pathname.match(/\/posts\/(\d+)/) || [])[1] || null;
+    const known = new Set(Array.isArray(a.known) ? a.known.map(String) : []);
+    let sorted = 'relevant';
+    if (a.newest !== false) {
+      const sb = Array.from(d.querySelectorAll('[role="button"][aria-haspopup="menu"]')).find(b =>
+        /^Most relevant/.test(N(b.innerText)),
+      );
+      if (sb) {
+        sb.click();
+        let it = null;
+        for (let k = 0; k < 12 && !it; k++) {
+          await sleep(200);
+          it = Array.from(document.querySelectorAll('[role="menu"] [role="menuitem"]')).find(x =>
+            /^Newest/.test(N(x.innerText)),
+          );
+        }
+        if (it) {
+          it.click();
+          sorted = 'newest';
+          await sleep(800);
+        } else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
+    }
+    const arts = () => Array.from(d.querySelectorAll('[role="article"]'));
+    const ids = ar => {
+      const l = ar.querySelector('a[href*="comment_id"]');
+      const h = l ? l.getAttribute('href') : '';
+      return { cid: qp(h, 'comment_id'), rid: qp(h, 'reply_comment_id'), age: l ? N(l.textContent) : '' };
+    };
+    const scroller = () => {
+      const f = arts()[0];
+      for (let x = f && f.parentElement; x && x !== d; x = x.parentElement)
+        if (/(auto|scroll)/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight) return x;
+      return null;
+    };
+    const cap = a.maxComments || 400;
+    for (let still = 0, k = 0; still < 3 && k < 80 && arts().length < cap; k++) {
+      if (sorted === 'newest' && known.size && arts().some(ar => known.has(ids(ar).cid))) break;
+      const n = arts().length;
+      const sc = scroller();
+      if (!sc) break;
+      sc.scrollTop = sc.scrollHeight;
+      await sleep(500);
+      still = arts().length > n ? 0 : still + 1;
+    }
+    for (let k = 0; k < 60; k++) {
+      const v = Array.from(d.querySelectorAll('[role="button"]')).find(b =>
+        /^View \d+ repl(y|ies)$/.test(N(b.innerText)),
+      );
+      if (!v) break;
+      v.click();
+      await sleep(500);
+    }
+    /* a comment's thread block: its article's grandparent; a reply's block sits in its parent's replies box */
+    const parentOf = ar => {
+      const blk = ar.parentElement && ar.parentElement.parentElement;
+      const up = blk && blk.parentElement && blk.parentElement.parentElement;
+      const pa = up && up.firstElementChild && up.firstElementChild.querySelector('[role="article"]');
+      return pa && pa !== ar ? ids(pa) : null;
+    };
+    const comments = arts().map(ar => {
+      const i = ids(ar);
+      const au = ar.querySelector('a[href*="/user/"]');
+      const tx = ar.querySelector('div[dir="auto"]');
+      const p = i.rid ? parentOf(ar) : null;
+      return {
+        cid: i.cid,
+        rid: i.rid,
+        parent: p ? p.rid || p.cid : null,
+        who: au ? N(au.textContent) : '',
+        uid: au ? ((au.getAttribute('href') || '').match(/\/user\/(\d+)/) || [])[1] || null : null,
+        text: tx ? N(tx.innerText) : '',
+        age: i.age,
+      };
+    });
+    return { group: groupOf(), pid, sorted, comments, ms: Date.now() - t0 };
+  }
+  /* notifs{since, more}: on /notifications/, reads the items without clicking any (a click marks it read): each
+     {id (notif_id), kind (notif_t), group, post, comment, reply, unread, age, text}. Stops at the item `since` (a
+     notif_id); presses "See previous notifications" up to `more` times (0) when it isn't reached. */
+  async function mcNotifs(a) {
+    a = a || {};
+    const read = () =>
+      Array.from(document.querySelectorAll('[role="listitem"] a[href*="notif_id"]')).map(l => {
+        const h = l.getAttribute('href') || '';
+        const t = l.innerText || '';
+        const g = h.match(/\/groups\/([^/?#]+)/);
+        const ag = Array.from(l.querySelectorAll('span'))
+          .map(x => N(x.textContent))
+          .find(x => /^\d+[mhdwy]$/.test(x));
+        return {
+          id: qp(h, 'notif_id'),
+          kind: qp(h, 'notif_t'),
+          group: g ? g[1] : null,
+          post: qp(h, 'post_id') || (h.match(/\/posts\/(\d+)/) || [])[1] || null,
+          comment: qp(h, 'comment_id'),
+          reply: qp(h, 'reply_comment_id'),
+          unread: /^Unread\b/.test(t),
+          age: ag || '',
+          text: N(t.replace(/^Unread\s*/, '')),
+        };
+      });
+    for (let k = 0; k < (a.more || 0) && !(a.since && read().some(x => x.id === String(a.since))); k++) {
+      const b = Array.from(document.querySelectorAll('[role="button"]')).find(x =>
+        /^See previous notifications$/.test(N(x.innerText)),
+      );
+      if (!b) break;
+      b.click();
+      await sleep(1200);
+    }
+    const all = read();
+    const cut = a.since ? all.findIndex(x => x.id === String(a.since)) : -1;
+    return { items: cut >= 0 ? all.slice(0, cut) : all, reachedSince: cut >= 0 };
+  }
   const CMDS = {
     probe: a => probe(a.anchor),
     scan: a => mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs, topMs: a.topMs }),
@@ -2205,7 +2453,10 @@
     },
     post: (a, id) => mcPost(a, id),
     react: a => mcReact(a),
-    ping: () => ({ v: '2.9' }),
+    groupFeed: a => mcGroupFeed(a),
+    groupPost: a => mcGroupPost(a),
+    notifs: a => mcNotifs(a),
+    ping: () => ({ v: '3.0' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
