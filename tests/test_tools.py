@@ -2138,10 +2138,10 @@ class TestOutboxStates(unittest.TestCase):
     ALL_STATES = ("queued", "sending", "sent", "failed", "unconfirmed", "cancelled", "dismissed")
 
     def page_writes(self):
-        """The page's three outbox writes: Queue reply (set), Cancel and Dismiss (update)."""
+        """The page's four outbox writes: Queue reply and React (set), Cancel and Dismiss (update)."""
         page = in_skill("assets", "page.html")
         writes = re.findall(r'doc\("outbox/"\s*\+\s*[\w.]+\)\s*\.(set|update)\(\s*(\{[^{}]*\})\s*\)', page)
-        self.assertEqual(len(writes), 3, "expected exactly 3 outbox writes in page.html; the regex or the page changed")
+        self.assertEqual(len(writes), 4, "expected exactly 4 outbox writes in page.html; the regex or the page changed")
         return writes
 
     def outbox_line(self):
@@ -2274,7 +2274,7 @@ class TestSeveralChatsRules(unittest.TestCase):
         """A chat set to "wait for my yes" never posts on its own, even on a one-chat page where chats.md isn't read."""
         rs, sk = in_replies("SKILL.md"), in_skill("SKILL.md")
         for name, text in (("refresh", sk), ("replies", rs)):
-            rule = re.search(r"^- \*\*Never send a message\*\*.*$", text, re.M).group(0)
+            rule = re.search(r"^- \*\*Never send a message or add a reaction\*\*.*$", text, re.M).group(0)
             self.assertIn("`auto`", rule, name + " hard rule")
         step2 = re.search(r"^   - \*\*Replies first\*\*.*$", sk, re.M).group(0)
         self.assertNotIn("(`outboxAuto`, or a yes", step2, "refresh step 2 names the rule, not outboxAuto alone")
@@ -2365,7 +2365,9 @@ class TestSendReplies(unittest.TestCase):
             self.assertIn(must, s1)
 
     def test_approval_is_unchanged(self):
-        rule = re.search(r"^- \*\*Never send a message\*\*.*?never approval\.", self.skill, re.M).group(0)
+        rule = re.search(
+            r"^- \*\*Never send a message or add a reaction\*\*.*?never approval\.", self.skill, re.M
+        ).group(0)
         self.assertIn(rule, self.rs, "the refresh skill's hard rule, word for word")
         self.assertIn('"Send replies" alone approves nothing while auto-posting is off.', self.rs)
         s2 = self.step("Check approval")

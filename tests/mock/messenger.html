@@ -217,11 +217,122 @@
       document.addEventListener("mousedown", e => {
         if (!e.target.closest || !e.target.closest('[role="menu"]')) closeMenu();
       });
+      /* Reactions, as Messenger shows them: "React with an emoji" opens a "Messages reactions" menu of this chat's six
+         (menuitemradio, each an img whose alt is the emoji; your own reaction is aria-checked, and picking it again
+         removes it) plus "Show more emojis", a dialog with a "Search emoji" box and an "Emoji picker" grid. A message
+         with reactions carries a "N reactions with A and B; see who reacted to this." label. mock_rx: messages already
+         reacted to by others ("110:❤️,105:👍"); mockMyRx: your own reaction per message id. */
+      const QUICK = ["💙", "😂", "😢", "😲", "🤬", "👍"];
+      const PICKER = ["💙", "😂", "😢", "😲", "🤬", "👍", "😀", "🙏", "😍", "🤔", "👏", "💯"];
+      const SEARCH = { fire: ["🔥", "🎆", "🚒"], heart: ["❤️", "💙", "💛"], party: ["🎉", "🥳"] };
+      const othersRx = {};
+      (MODE("rx") || "")
+        .split(",")
+        .filter(Boolean)
+        .forEach(x => {
+          const [i, e] = x.split(":");
+          othersRx["mid.$mock" + i] = e;
+        });
+      window.mockMyRx = {};
+      function drawRx(d) {
+        const id = d.getAttribute("data-message-id");
+        const all = [othersRx[id], window.mockMyRx[id]].filter(Boolean);
+        let pill = d.querySelector(".rx");
+        if (!all.length) {
+          if (pill) pill.remove();
+          return;
+        }
+        if (!pill) {
+          pill = document.createElement("div");
+          pill.className = "rx";
+          pill.setAttribute("role", "button");
+          d.append(pill);
+        }
+        const kinds = [...new Set(all)];
+        pill.setAttribute(
+          "aria-label",
+          all.length +
+            (all.length > 1 ? " reactions with " : " reaction with ") +
+            kinds.join(" and ") +
+            "; see who reacted to this.",
+        );
+      }
+      function setMyRx(d, e) {
+        const id = d.getAttribute("data-message-id");
+        if (window.mockMyRx[id] === e) delete window.mockMyRx[id];
+        else window.mockMyRx[id] = e;
+        drawRx(d);
+      }
+      const emojiImg = e => {
+        const im = document.createElement("img");
+        im.alt = e;
+        im.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'/%3E";
+        return im;
+      };
+      function reactMenu(d, o) {
+        closeMenu();
+        const m = document.createElement("div");
+        m.setAttribute("role", "menu");
+        m.setAttribute("aria-label", "Messages reactions");
+        QUICK.forEach(e => {
+          const it = document.createElement("div");
+          it.setAttribute("role", "menuitemradio");
+          it.setAttribute("aria-checked", String(window.mockMyRx[o.id] === e));
+          it.append(emojiImg(e));
+          it.onclick = () => {
+            closeMenu();
+            setMyRx(d, e);
+          };
+          m.append(it);
+        });
+        m.append(
+          btn("Show more emojis", () => {
+            closeMenu();
+            const dg = document.createElement("div");
+            dg.setAttribute("role", "dialog");
+            const inp = document.createElement("input");
+            inp.type = "text";
+            inp.setAttribute("aria-label", "Search emoji");
+            inp.placeholder = "Search emoji";
+            const grid = list => {
+              const g = document.createElement("div");
+              g.setAttribute("role", "grid");
+              list.forEach(e => {
+                const c = document.createElement("div");
+                c.setAttribute("role", "gridcell");
+                const b = btn("", () => {
+                  dg.remove();
+                  setMyRx(d, e);
+                });
+                b.removeAttribute("aria-label");
+                b.append(emojiImg(e));
+                c.append(b);
+                g.append(c);
+              });
+              return g;
+            };
+            let g = grid(PICKER);
+            g.setAttribute("aria-label", "Emoji picker");
+            inp.addEventListener("input", () => {
+              const ng = inp.value ? grid(SEARCH[inp.value.trim().toLowerCase()] || []) : grid(PICKER);
+              if (!inp.value) ng.setAttribute("aria-label", "Emoji picker");
+              g.replaceWith(ng);
+              g = ng;
+            });
+            dg.addEventListener("keydown", e => {
+              if (e.key === "Escape") dg.remove();
+            });
+            dg.append(inp, g);
+            document.body.append(dg);
+          }),
+        );
+        document.body.append(m);
+      }
       function toolbar(d, o) {
         if (d.querySelector(".tb")) return;
         const tb = document.createElement("div");
         tb.className = "tb";
-        tb.append(btn("React", () => {}));
+        tb.append(btn("React with an emoji", () => reactMenu(d, o)));
         if (!(o.photo && !o.b)) tb.append(btn("Reply to this message", () => openReply(o)));
         tb.append(
           btn("More actions", () => {
@@ -328,6 +439,7 @@
           pb.style.height = "6px";
           d.append(pb);
         }
+        if (othersRx[o.id]) drawRx(d);
         d.addEventListener("mouseover", () => toolbar(d, o));
         d.addEventListener("mouseleave", () => {
           const tb = d.querySelector(".tb");
@@ -418,11 +530,11 @@
       /* Posting: Enter in the composer sends the text (as a reply when the bar is open); it shows up 300 ms later. */
       let sentN = sentLog().length;
       window.mockSent = [];
-      window.mockSend = text => {
+      window.mockSend = (text, tags) => {
         const to = replyTo;
         replyTo = null;
         bar.hidden = true;
-        window.mockSent.push({ text, to: to && to.id });
+        window.mockSent.push({ text, to: to && to.id, tags: tags || [] });
         setTimeout(() => {
           const o = { i: -1, id: "mid.$sent" + ++sentN, f: "You", t: clock(new Date()), b: text, to };
           sc.append(el(o));
@@ -437,7 +549,31 @@
          registers, plus Messenger's rule on top: Enter sends, shift+Enter starts a new line. Served by tests/run.js. */
       import * as L from "/node_modules/lexical/dist/Lexical.prod.js";
       const box = document.getElementById("box");
-      const editor = L.createEditor({ namespace: "mock-messenger", onError: e => console.error(e) });
+      /* A picked mention: its own text node, drawn as a span with spellcheck="false", as Messenger draws one */
+      class MentionNode extends L.TextNode {
+        static getType() {
+          return "mention";
+        }
+        static clone(n) {
+          return new MentionNode(n.__text, n.__key);
+        }
+        static importJSON(j) {
+          return new MentionNode(j.text);
+        }
+        exportJSON() {
+          return Object.assign(super.exportJSON(), { type: "mention" });
+        }
+        createDOM(c) {
+          const d = super.createDOM(c);
+          d.setAttribute("spellcheck", "false");
+          return d;
+        }
+      }
+      const editor = L.createEditor({
+        namespace: "mock-messenger",
+        nodes: [MentionNode],
+        onError: e => console.error(e),
+      });
       editor.setRootElement(box);
       const empty = () => {
         const root = L.$getRoot();
@@ -549,11 +685,96 @@
           e.preventDefault();
           const text = editor.getEditorState().read(() => L.$getRoot().getTextContent());
           if (!text.trim()) return true;
-          window.mockSend(text);
+          const tags = editor.getEditorState().read(() =>
+            L.$getRoot()
+              .getAllTextNodes()
+              .filter(n => n.getType() === "mention")
+              .map(n => n.getTextContent()),
+          );
+          window.mockSend(text, tags);
           editor.update(reset);
           return true;
         },
         L.COMMAND_PRIORITY_HIGH,
+      );
+      /* Mentions, as in Messenger: "@" and letters before the caret open a list of the chat's members whose name (or a
+         word of it) starts with them, the first one aria-selected; ArrowDown moves the pick, Tab inserts it as a
+         mention ("@Full Name", no space after). No match closes the list. The box's aria-controls names the list. */
+      const MEMBERS = ["Ana Alvarez", "Ben Brooks", "Ben Ortiz", "Cy Chen", "Dee Diaz"];
+      const ml = document.createElement("div");
+      ml.setAttribute("role", "listbox");
+      ml.id = "mlist";
+      document.body.append(ml);
+      box.setAttribute("aria-controls", "mlist");
+      let query = null;
+      const shown = () => Array.from(ml.querySelectorAll('[role="option"]'));
+      const draw = names => {
+        ml.textContent = "";
+        names.forEach((n, k) => {
+          const o = document.createElement("div");
+          o.setAttribute("role", "option");
+          o.setAttribute("aria-selected", String(k === 0));
+          o.textContent = n;
+          ml.append(o);
+        });
+      };
+      editor.registerUpdateListener(({ editorState }) => {
+        query = editorState.read(() => {
+          const s = sel();
+          if (!s || !s.isCollapsed()) return null;
+          const n = s.anchor.getNode();
+          if (!L.$isTextNode(n) || n.getType() === "mention") return null;
+          const m = n
+            .getTextContent()
+            .slice(0, s.anchor.offset)
+            .match(/@([A-Za-z][A-Za-z ]{0,30})$/);
+          return m ? m[1] : null;
+        });
+        const q = (query || "").toLowerCase();
+        draw(
+          query
+            ? MEMBERS.filter(
+                n =>
+                  n.toLowerCase().startsWith(q) ||
+                  n
+                    .toLowerCase()
+                    .split(" ")
+                    .some(w => w.startsWith(q)),
+              )
+            : [],
+        );
+      });
+      const HI = L.COMMAND_PRIORITY_CRITICAL;
+      editor.registerCommand(
+        L.KEY_ARROW_DOWN_COMMAND,
+        e => {
+          const os = shown();
+          if (!os.length) return false;
+          if (e) e.preventDefault();
+          const k = os.findIndex(o => o.getAttribute("aria-selected") === "true");
+          os.forEach((o, j) => o.setAttribute("aria-selected", String(j === (k + 1) % os.length)));
+          return true;
+        },
+        HI,
+      );
+      editor.registerCommand(
+        L.KEY_TAB_COMMAND,
+        e => {
+          const pick = shown().find(o => o.getAttribute("aria-selected") === "true");
+          if (!pick || query == null) return false;
+          if (e) e.preventDefault();
+          const q = query;
+          editor.update(() => {
+            const s = sel();
+            const n = s.anchor.getNode();
+            const at = s.anchor.offset - q.length - 1;
+            n.spliceText(at, q.length + 1, "", true);
+            const mn = new MentionNode("@" + pick.textContent).setMode("token");
+            sel().insertNodes([mn]);
+          });
+          return true;
+        },
+        HI,
       );
       window.mockEditorText = () => editor.getEditorState().read(() => L.$getRoot().getTextContent());
     </script>

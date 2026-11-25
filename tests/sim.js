@@ -1636,6 +1636,122 @@ sim('F: post to a photo-only message', async b => {
   );
   await ctx.close();
 });
+sim('F35: post tags people', { s: 15 }, async b => {
+  const { ctx, p, state, row } = await freshF(b);
+  let s, r;
+  // two mentions, the second one picked with ArrowDown (Ben Brooks comes first in the list), sent as real mentions
+  await mode(p, {});
+  const text = 'Thanks @Ana Alvarez and @Ben Ortiz!';
+  r = await bridge(
+    p,
+    'post',
+    Object.assign({}, row, { text, mentions: ['Ben Ortiz', 'Ana Alvarez'], helperPost: true }),
+  );
+  s = await state();
+  ok(
+    r &&
+      r.sent === true &&
+      s.sent.length === 1 &&
+      s.sent[0].text === text &&
+      JSON.stringify(s.sent[0].tags) === '["@Ana Alvarez","@Ben Ortiz"]' &&
+      JSON.stringify(r.tagged) === '["Ana Alvarez","Ben Ortiz"]' &&
+      !r.missed.length,
+    'F35: post types "@" and the name, picks the person in the mention list (ArrowDown when needed), Tab; both sent as mentions (' +
+      JSON.stringify([r, s.sent]) +
+      ')',
+  );
+  await mode(p, {});
+  r = await bridge(
+    p,
+    'post',
+    Object.assign({}, row, { text: 'Hi @Zed Zulu', mentions: ['Zed Zulu'], helperPost: true }),
+  );
+  s = await state();
+  ok(
+    r &&
+      r.sent === true &&
+      s.sent.length === 1 &&
+      s.sent[0].text === 'Hi @Zed Zulu' &&
+      !s.sent[0].tags.length &&
+      JSON.stringify(r.missed) === '["Zed Zulu"]',
+    'F35: a name the list does not offer goes out as plain "@Name", listed in missed (' +
+      JSON.stringify([r, s.sent]) +
+      ')',
+  );
+  await mode(p, {});
+  r = await bridge(p, 'post', Object.assign({}, row, { text: 'Hey @Ben', mentions: ['Ben'], helperPost: true }));
+  s = await state();
+  ok(
+    r && r.sent === false && r.err === 'mention-list-open' && r.cleared && !s.sent.length && !s.box && r.barClosed,
+    'F35: the mention list still open before Enter (no exact match): refused, the box cleared, nothing sent (' +
+      JSON.stringify([r, s]) +
+      ')',
+  );
+  await ctx.close();
+});
+sim('F37: react', { s: 20 }, async b => {
+  const { ctx, p } = await freshF(b);
+  const mid = 'mid.$mock110';
+  const lab = () =>
+    p.evaluate(m => {
+      const e = document.querySelector('[data-message-id="' + CSS.escape(m) + '"] .rx');
+      return {
+        label: e ? e.getAttribute('aria-label') : '',
+        mine: window.mockMyRx[m] || null,
+        open: document.querySelectorAll('[role="menu"],[role="dialog"]').length,
+      };
+    }, mid);
+  let r, s;
+  await mode(p, { rx: '110:❤️' });
+  r = await bridge(p, 'react', { mid, emoji: '👍' });
+  s = await lab();
+  ok(
+    r && r.err === 'not-approved' && !s.mine,
+    'F37: react without approved:true is refused, nothing clicked (' + JSON.stringify(r) + ')',
+  );
+  r = await bridge(p, 'react', { mid, emoji: '👍', approved: true });
+  s = await lab();
+  ok(
+    r &&
+      r.done === true &&
+      r.via === 'menu' &&
+      s.mine === '👍' &&
+      /^2 reactions with ❤️ and 👍/.test(s.label) &&
+      !s.open,
+    'F37: react picks 👍 in the reactions menu and checks the message shows it (' + JSON.stringify([r, s]) + ')',
+  );
+  r = await bridge(p, 'react', { mid, emoji: '👍', approved: true });
+  s = await lab();
+  ok(
+    r && r.done === true && r.already === true && s.mine === '👍' && !s.open,
+    'F37: your reaction is already 👍: nothing clicked (a second click would remove it), menu closed (' +
+      JSON.stringify([r, s]) +
+      ')',
+  );
+  r = await bridge(p, 'react', { mid, emoji: '🔥', search: 'fire', approved: true });
+  s = await lab();
+  ok(
+    r && r.done === true && r.via === 'search' && r.replaced === '👍' && s.mine === '🔥' && !s.open,
+    'F37: an emoji outside the menu and the picker is found by its search word, replacing yours (' +
+      JSON.stringify([r, s]) +
+      ')',
+  );
+  r = await bridge(p, 'react', { mid, emoji: '🙏', approved: true });
+  s = await lab();
+  ok(
+    r && r.done === true && r.via === 'picker' && s.mine === '🙏',
+    'F37: an emoji in the picker grid (' + JSON.stringify([r, s]) + ')',
+  );
+  r = await bridge(p, 'react', { mid, emoji: '🦄', search: 'unicorn', approved: true });
+  s = await lab();
+  ok(
+    r && r.done === false && r.err === 'emoji-not-found' && s.mine === '🙏' && !s.open,
+    'F37: an emoji Messenger does not offer: refused, nothing clicked, the picker closed (' +
+      JSON.stringify([r, s]) +
+      ')',
+  );
+  await ctx.close();
+});
 sim('F: Enter or line breaks not accepted', { s: 25 }, async b => {
   const { ctx, p, state, waitTip, row } = await freshF(b);
   let s, r;
@@ -1966,12 +2082,14 @@ const capTime = m => {
   const [y, mo, da] = m.d.split('-').map(Number);
   return new Date(y, mo - 1, da, (+h % 12) + (ap === 'PM' ? 12 : 0), +mi);
 };
+/* a sent mention may show without its "@" (F35): the settle check ignores the "@" before a name in mentions */
+const noAt = (s, r) => (r.mentions || []).reduce((t, n) => t.split('@' + n).join(n), s || '');
 const settleFind = (r, msgs) =>
   msgs.find(
     m =>
       m.f === 'You' &&
       ((n, t) => !!n && (n === t || n.startsWith(t) || t.startsWith(n)))(m.r, r.to === 'You' ? 'yourself' : r.to) &&
-      sq(m.b) === sq(r.text) &&
+      sq(noAt(m.b, r)) === sq(noAt(r.text, r)) &&
       capTime(m).getTime() >= Math.floor(Date.parse(r.queuedAt) / 60000) * 60000,
   );
 /* the refresh steps that deal with replies, run in the order refresh/SKILL.md gives them (each found by its marker):
@@ -2110,8 +2228,10 @@ sim('S: send replies: the file gives what the sims run', async b => {
   ok(
     /only \*\*after this refresh's import\*\*/.test(RS_OUTBOX) &&
       RS_OUTBOX.includes('`f:"You"`, `r` matching the row\'s `to`') &&
-      RS_OUTBOX.includes("`b` equal to the row's `text` (ignoring whitespace), dated after `queuedAt`"),
-    "S: outbox.md's settle check, as settleFind runs it: after the import, f You, r matching to, b equal to text, after queuedAt",
+      RS_OUTBOX.includes(
+        '`b` equal to the row\'s `text` (ignoring whitespace, and the "@" before a name in `mentions`: a sent mention may show without it), dated after `queuedAt`',
+      ),
+    'S: outbox.md\'s settle check, as settleFind runs it: after the import, f You, r matching to, b equal to text ("@" aside), after queuedAt',
   );
 });
 sim('S: send replies: nothing queued', async b => {

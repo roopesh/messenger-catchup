@@ -836,6 +836,10 @@
     color: var(--muted);
     cursor: pointer;
   }
+  /* the hover toolbar sits on the name line, never over this line (it would take the line's clicks) */
+  .msg:has(> .xr) > .c {
+    position: relative;
+  }
   .msg > .xr b {
     font-weight: 600;
   }
@@ -1751,6 +1755,55 @@
   }
   button.link.rh {
     font-size: 0.8rem;
+  }
+  /* F35: names suggested after "@" in a reply */
+  .sug {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .sug button {
+    font: inherit;
+    font-size: 0.84rem;
+    padding: 2px 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--bg);
+    color: var(--fg);
+    cursor: pointer;
+  }
+  .sug button[aria-selected="true"] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  /* F37: the react picker under a message */
+  .rxpick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+    padding: 6px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--surface);
+  }
+  .rxpick button.rx {
+    font-size: 1.15rem;
+    line-height: 1;
+    padding: 4px 6px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: none;
+    cursor: pointer;
+  }
+  .rxpick button.rx:hover,
+  .rxpick button.rx:focus-visible {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .rxpick input {
+    width: 7.5em;
   }
   .item.ob.queued {
     border-left: 3px solid var(--warn);
@@ -2694,7 +2747,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "4.9";
+  const PAGE_VERSION = "5.0";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3716,6 +3769,25 @@
   function queuedFor(i) {
     return (S.outbox || []).filter(o => o.i === i && o.state === "queued");
   }
+  /* F35: who "@" suggests in a reply: the chat's posters, newest first. tag is the name Messenger lists them by (the full
+     name when known), label the page's "Fullname (Nickname)". */
+  function posters() {
+    const seen = new Map();
+    for (let k = (S.msgs || []).length - 1; k >= 0; k--) {
+      const m = S.msgs[k];
+      if (!m || m.f === "You") continue;
+      const tag = fullOf(m) || m.f;
+      if (!seen.has(tag)) seen.set(tag, nameOf(m));
+    }
+    return [...seen].map(([tag, label]) => ({ tag, label }));
+  }
+  /* the posters tagged in a reply's text ("@" and their name), the longer name winning where one starts another */
+  function mentionsIn(text) {
+    const t = posters()
+      .map(p => p.tag)
+      .filter(x => text.includes("@" + x));
+    return t.filter(x => !t.some(y => y !== x && y.startsWith(x + " ")));
+  }
   function composer(m, loc) {
     const box = el("div", "compose");
     box.dataset.ci = m.i;
@@ -3724,8 +3796,62 @@
     ta.rows = 2;
     ta.placeholder = "Your reply to " + nameOf(m);
     ta.value = S.drafts[m.i] || "";
+    /* F35: "@" and letters suggest posters; a pick (click, Enter or Tab) writes "@Full Name " */
+    const sug = el("div", "sug");
+    sug.setAttribute("role", "listbox");
+    sug.setAttribute("aria-label", "Tag someone");
+    sug.hidden = true;
+    let hits = [],
+      at = 0;
+    const atQuery = () => {
+      const v = ta.value.slice(0, ta.selectionStart);
+      const mm = v.match(/(?:^|\s)@([\p{L}][\p{L}'. -]{0,30})?$/u);
+      if (!mm || /\s$/.test(mm[1] || "")) return null;
+      return { q: (mm[1] || "").toLowerCase(), start: v.length - (mm[1] || "").length - 1 };
+    };
+    const drawSug = () => {
+      const a = atQuery();
+      hits = a
+        ? posters()
+            .filter(h => {
+              const n = (h.tag + " " + h.label).toLowerCase();
+              return !a.q || n.startsWith(a.q) || n.split(/[\s(]+/).some(w => w.startsWith(a.q));
+            })
+            .slice(0, 6)
+        : [];
+      at = 0;
+      sug.textContent = "";
+      hits.forEach((h, k) => {
+        const o = el("button", null, h.label);
+        o.type = "button";
+        o.setAttribute("role", "option");
+        o.setAttribute("aria-selected", String(k === at));
+        o.onmousedown = e => e.preventDefault();
+        o.onclick = () => pickSug(k);
+        sug.append(o);
+      });
+      sug.hidden = !hits.length;
+    };
+    const moveSug = d => {
+      at = (at + d + hits.length) % hits.length;
+      sug.querySelectorAll("button").forEach((o, k) => o.setAttribute("aria-selected", String(k === at)));
+    };
+    const pickSug = k => {
+      const a = atQuery();
+      const h = hits[k];
+      if (!a || !h) return;
+      const end = ta.selectionStart;
+      ta.value = ta.value.slice(0, a.start) + "@" + h.tag + " " + ta.value.slice(end);
+      const c = a.start + h.tag.length + 2;
+      ta.setSelectionRange(c, c);
+      S.drafts[m.i] = ta.value;
+      hits = [];
+      sug.hidden = true;
+      ta.focus();
+    };
     ta.oninput = () => {
       S.drafts[m.i] = ta.value;
+      drawSug();
     };
     ta.onfocus = () => {
       S.focusI = m.i;
@@ -3739,6 +3865,23 @@
     const q = el("button", "primary", "Queue reply");
     const c = el("button", "secondary", "Cancel");
     ta.onkeydown = e => {
+      if (!sug.hidden && hits.length) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          moveSug(e.key === "ArrowDown" ? 1 : -1);
+          return;
+        }
+        if ((e.key === "Enter" && !e.metaKey && !e.ctrlKey) || e.key === "Tab") {
+          e.preventDefault();
+          pickSug(at);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          sug.hidden = true;
+          return;
+        }
+      }
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         q.click();
@@ -3769,6 +3912,7 @@
           to: m.f,
           snip: trunc(m.b || (m.p ? "[photo]" : ""), 120),
           text,
+          mentions: mentionsIn(text),
           state: "queued",
           queuedAt: new Date().toISOString(),
         });
@@ -3789,7 +3933,7 @@
     };
     const row = el("div", "btns");
     row.append(q, c, st);
-    box.append(ta, row);
+    box.append(ta, sug, row);
     if (S.focusI === m.i)
       requestAnimationFrame(() => {
         ta.focus();
@@ -3816,11 +3960,95 @@
   function composingAt(i, loc) {
     return S.composing.get(i) === loc;
   }
+  /* F37: React queues a reaction, an outbox row with kind "react" and its emoji. Claude adds it in Messenger the way
+     replies post (on its next run, or after you confirm in chat unless replies post automatically). Any one emoji. */
+  const QUICK_RX = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+  function oneEmoji(v) {
+    if (!/^(\p{Extended_Pictographic}|\p{Regional_Indicator})/u.test(v)) return false;
+    if (typeof Intl !== "undefined" && Intl.Segmenter) return [...new Intl.Segmenter().segment(v)].length === 1;
+    return Array.from(v).length <= 8;
+  }
+  function reactBtn(m, host) {
+    const b = el("button", "link rh", "React");
+    b.onclick = () => {
+      const ex = host.querySelector(":scope > .rxpick");
+      if (ex) {
+        ex.remove();
+        return;
+      }
+      host.append(reactPicker(m));
+      host.querySelector(":scope > .rxpick button").focus();
+    };
+    return b;
+  }
+  function reactPicker(m) {
+    const box = el("div", "rxpick");
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", "React to " + nameOf(m) + "'s message");
+    const st = el("span", "note", "");
+    const go = async e => {
+      if (!S.db) {
+        st.textContent = "Can't save from this view.";
+        return;
+      }
+      box.querySelectorAll("button, input").forEach(x => (x.disabled = true));
+      st.textContent = "Saving…";
+      const id = "r" + Date.now();
+      try {
+        await S.db.doc("outbox/" + id).set({
+          kind: "react",
+          i: m.i,
+          mid: m.m || null,
+          to: m.f,
+          snip: trunc(m.b || (m.p ? "[photo]" : ""), 120),
+          emoji: e,
+          state: "queued",
+          queuedAt: new Date().toISOString(),
+        });
+        box.remove();
+      } catch (er) {
+        box.querySelectorAll("button, input").forEach(x => (x.disabled = false));
+        st.textContent = "Couldn't save: " + ((er && er.message) || er);
+      }
+    };
+    QUICK_RX.forEach(e => {
+      const x = el("button", "rx", e);
+      x.type = "button";
+      x.title = "React with " + e;
+      x.onclick = () => go(e);
+      box.append(x);
+    });
+    const other = el("input");
+    other.placeholder = "Other emoji";
+    other.setAttribute("aria-label", "Other emoji");
+    const ok = el("button", "secondary", "React");
+    ok.onclick = () => {
+      const v = other.value.trim();
+      if (!oneEmoji(v)) {
+        st.textContent = "Type or paste one emoji.";
+        return;
+      }
+      go(v);
+    };
+    other.onkeydown = e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        ok.click();
+      }
+      if (e.key === "Escape") box.remove();
+    };
+    const x = el("button", "link", "Close");
+    x.onclick = () => box.remove();
+    box.append(other, ok, x, st);
+    return box;
+  }
   /* The "reply queued" chip sits in a slot that an outbox change refills in place (B39: no rebuild, so nothing moves). */
   function fillPending(s) {
     const q = queuedFor(+s.dataset.pt);
+    const rp = q.filter(o => o.kind !== "react");
     s.textContent = "";
-    if (q.length) s.append(el("span", "chip open", q.length > 1 ? q.length + " replies queued" : "reply queued"));
+    if (rp.length) s.append(el("span", "chip open", rp.length > 1 ? rp.length + " replies queued" : "reply queued"));
+    q.filter(o => o.kind === "react").forEach(o => s.append(el("span", "chip open", o.emoji + " queued")));
   }
   function pendingTag(m) {
     const s = el("span", "pt");
@@ -3865,7 +4093,7 @@
     ]
       .filter(Boolean)
       .join(" ");
-    const bo = block("Your replies", sub);
+    const bo = block(items.some(o => o.kind === "react") ? "Your replies and reactions" : "Your replies", sub);
     const l = el("div", "list");
     items.forEach(o => {
       const d = el("div", "item ob " + o.state);
@@ -3883,12 +4111,19 @@
             dismissed: "dismissed",
           }[o.state] || o.state,
         ),
-        el("span", "note", "to " + o.to + " · replying to “" + trunc(o.snip, 70) + "”"),
+        el(
+          "span",
+          "note",
+          o.kind === "react"
+            ? o.emoji + " on " + rName(o.to) + "'s “" + trunc(o.snip, 70) + "”"
+            : "to " + o.to + " · replying to “" + trunc(o.snip, 70) + "”",
+        ),
       );
-      d.append(r, el("p", null, o.text));
+      d.append(r);
+      if (o.kind !== "react") d.append(el("p", null, o.text));
       if ((o.state === "failed" || o.state === "unconfirmed") && o.error) d.append(el("p", "note", o.error));
       if (o.state === "queued") {
-        const x = el("button", "link", "Cancel this reply");
+        const x = el("button", "link", o.kind === "react" ? "Cancel this reaction" : "Cancel this reply");
         x.onclick = async () => {
           x.disabled = true;
           try {
@@ -5527,10 +5762,11 @@
     const acts = el("div", "sub acts");
     acts.append(extLink(m));
     if (S.db && !o.ctx) acts.append(replyHereBtn(m, c, "row"));
+    if (S.db && !o.ctx && m.m) acts.append(reactBtn(m, c));
     sub.append(pendingTag(m));
     c.append(sub, acts);
     r.addEventListener("click", e => {
-      if (e.target.closest("a, button, textarea, .compose") || String(getSelection())) return;
+      if (e.target.closest("a, button, textarea, input, .compose, .rxpick") || String(getSelection())) return;
       const on = !r.classList.contains("tap");
       document.querySelectorAll(".msg.tap").forEach(x => x.classList.remove("tap"));
       r.classList.toggle("tap", on);
@@ -10676,7 +10912,7 @@
   /* the helper this page shipped with: npm run sync writes it from assets/helper.user.js's @version. A Chrome is
      behind when its helper is older than this or than versions.helper, whichever is higher: versions.helper is
      written by Claude, and a stale one (v1.35.0 refreshes wrote 2.1 while shipping 2.3) hid every notice. */
-  const HELPER_VERSION = "2.6";
+  const HELPER_VERSION = "2.7";
   const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
   const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
   const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";

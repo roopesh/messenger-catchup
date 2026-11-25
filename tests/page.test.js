@@ -1606,6 +1606,113 @@ async function pipeline() {
   );
   await p.click('#v-summary .item.ob button.link');
   ok(await until(p, id => __rt.get(id).state === 'cancelled', ob.id), 'outbox: Cancel this reply sets state cancelled');
+  // F35: "@" and letters in a reply suggest the chat's posters; a pick writes "@Full Name " and the row lists it in mentions
+  await p.evaluate(() => {
+    location.hash = '#messages';
+  });
+  const mi = ri;
+  await p.waitForSelector('#m' + mi);
+  await p.hover('#m' + mi);
+  await p.click('#m' + mi + ' button.rh:text-is("Reply here")');
+  await p.click('#m' + mi + ' .compose textarea');
+  await p.keyboard.type('thanks @', { delay: 10 });
+  const allSug = await until(p, i => document.querySelectorAll('#m' + i + ' .compose .sug [role="option"]').length, mi);
+  await p.keyboard.type('Be', { delay: 10 });
+  const sugBe = await p.$$eval('#m' + mi + ' .compose .sug [role="option"]', os =>
+    os.map(o => [o.textContent, o.getAttribute('aria-selected')]),
+  );
+  await p.keyboard.press('Enter');
+  await p.keyboard.type('see you', { delay: 10 });
+  const tv = await p.$eval('#m' + mi + ' .compose textarea', t => t.value);
+  await p.click('#m' + mi + ' .compose button.primary');
+  const mo = await until(p, () => {
+    const k = [...__rt.store.keys()].find(
+      k => k.startsWith('outbox/') && __rt.get(k).text && /^thanks @/.test(__rt.get(k).text),
+    );
+    return k ? __rt.get(k) : null;
+  });
+  ok(
+    allSug > 1 &&
+      sugBe.length >= 1 &&
+      sugBe.every(x => /Be/.test(x[0])) &&
+      sugBe[0][1] === 'true' &&
+      mo &&
+      mo.text === tv &&
+      Array.isArray(mo.mentions) &&
+      mo.mentions.length === 1 &&
+      tv === 'thanks @' + mo.mentions[0] + ' see you',
+    'F35: "@" suggests posters, "@Be" narrows to Ben, Enter writes "@Full Name " and the row carries mentions (' +
+      JSON.stringify([allSug, sugBe, tv, mo && mo.mentions]) +
+      ')',
+  );
+  // F37: React opens a picker under the message; an emoji queues {kind:"react", emoji}; "Other emoji" takes one emoji
+  const xi = ri;
+  await p.hover('#m' + xi);
+  await p.click('#m' + xi + ' button.rh:text-is("React")');
+  await p.click('#m' + xi + ' .rxpick button.rx');
+  const rx1 = await until(
+    p,
+    i => {
+      const k = [...__rt.store.keys()].find(
+        k => k.startsWith('outbox/') && __rt.get(k).kind === 'react' && __rt.get(k).i === i,
+      );
+      return k ? Object.assign({ id: k }, __rt.get(k)) : null;
+    },
+    xi,
+  );
+  ok(
+    rx1 && rx1.emoji === '👍' && rx1.state === 'queued' && rx1.mid && rx1.to && rx1.queuedAt && !rx1.text,
+    'F37: React › 👍 queues {kind:"react", emoji:"👍", i, mid, to, state:queued} (' + JSON.stringify(rx1) + ')',
+  );
+  ok(
+    await until(
+      p,
+      i =>
+        /👍 queued/.test(document.querySelector('#m' + i).textContent) &&
+        !document.querySelector('#m' + i + ' .rxpick'),
+      xi,
+    ),
+    'F37: the picker closes and the message shows "👍 queued"',
+  );
+  await p.hover('#m' + xi);
+  await p.click('#m' + xi + ' button.rh:text-is("React")');
+  await p.fill('#m' + xi + ' .rxpick input', 'ok');
+  await p.press('#m' + xi + ' .rxpick input', 'Enter');
+  const bad = await p.$eval('#m' + xi + ' .rxpick .note', n => n.textContent);
+  await p.fill('#m' + xi + ' .rxpick input', '🔥');
+  await p.press('#m' + xi + ' .rxpick input', 'Enter');
+  const rx2 = await until(
+    p,
+    i =>
+      [...__rt.store.keys()].some(
+        k =>
+          k.startsWith('outbox/') && __rt.get(k).kind === 'react' && __rt.get(k).emoji === '🔥' && __rt.get(k).i === i,
+      ),
+    xi,
+  );
+  ok(/one emoji/.test(bad) && rx2, 'F37: "Other emoji" refuses text and queues one emoji (' + bad + ')');
+  await p.evaluate(() => {
+    location.hash = '#summary';
+  });
+  ok(
+    await until(
+      p,
+      () =>
+        /Your replies and reactions/.test(document.getElementById('v-summary').textContent) &&
+        /👍 on .*'s “/.test(document.getElementById('v-summary').textContent),
+    ),
+    'F37: Summary lists queued reactions under "Your replies and reactions"',
+  );
+  const cx = await p.$$('#v-summary .item.ob button.link:text-is("Cancel this reaction")');
+  await cx[cx.length - 1].click();
+  ok(
+    await until(p, () =>
+      [...__rt.store.keys()].some(
+        k => k.startsWith('outbox/') && __rt.get(k).kind === 'react' && __rt.get(k).state === 'cancelled',
+      ),
+    ),
+    'F37: Cancel this reaction sets state cancelled',
+  );
   // ask + views (stub sample)
   await p.evaluate(() => {
     location.hash = '#ask';
@@ -2458,7 +2565,7 @@ async function messagesView() {
   );
   await p.mouse.move(5, 5);
   await p.evaluate(() => {
-    const b = document.querySelector('#m34 .acts button.rh');
+    const b = [...document.querySelectorAll('#m34 .acts button.rh')].pop(); /* its last action (React, F37) */
     if (b) b.focus();
   });
   await p.keyboard.press('Tab');
@@ -10124,6 +10231,19 @@ async function crossReply() {
       JSON.stringify(lend) +
       ')',
   );
+  await p.hover('#m45 > .c');
+  const xa = await p.evaluate(() => {
+    const x = document.querySelector('#m45 > .xr').getBoundingClientRect();
+    const a = document.querySelector('#m45 > .c > .acts').getBoundingClientRect();
+    return { xb: x.bottom, at: a.top, ah: a.height };
+  });
+  ok(
+    xa.ah > 0 && xa.at >= xa.xb,
+    'F23: the hover toolbar sits below the "replying to" line, never over it, whatever its width (' +
+      JSON.stringify(xa) +
+      ')',
+  );
+  await p.mouse.move(5, 5);
   await flashReset(p);
   ok(await tryClick(p, '#m45 > .xr'), 'F23: the line on #45 can be clicked');
   ok(
@@ -15341,6 +15461,15 @@ function mcSeed(o = {}) {
 }
 const mcOpen = (o, ctx) => open(Object.assign(mcSeed(o), o && o.opts ? { __opts: o.opts } : {}), PAGE, ctx);
 const mcText = (p, sel) => p.evaluate(s => (document.querySelector(s) || {}).textContent || '', sel);
+/* Messages' text without the React buttons (new in F37), so MIG4 compares what the messages read */
+const msgsText = p =>
+  p.evaluate(() => {
+    const c = document.querySelector('#msgs');
+    if (!c) return '';
+    const x = c.cloneNode(true);
+    x.querySelectorAll('button.rh').forEach(b => b.textContent === 'React' && b.remove());
+    return x.textContent;
+  });
 async function mcPick(p, key) {
   await p.click('#h1');
   await p.click('#picker-list button[data-key="' + key + '"]');
@@ -15402,7 +15531,7 @@ async function multiChat() {
     summary: await mcText(p, '#v-summary'),
     strip: await mcText(p, '#strip'),
     window: await mcText(p, '#window'),
-    msgs: await mcText(p, '#msgs'),
+    msgs: await msgsText(p),
   };
   ok(p.errors.length === 0, 'F1: one chat, no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
@@ -15430,7 +15559,7 @@ async function multiChat() {
       summary: await mcText(p, '#v-summary'),
       strip: await mcText(p, '#strip'),
       window: await mcText(p, '#window'),
-      msgs: await mcText(p, '#msgs'),
+      msgs: await msgsText(p),
     };
     const diff = Object.keys(was).filter(k => was[k] !== oneText[k]);
     ok(
