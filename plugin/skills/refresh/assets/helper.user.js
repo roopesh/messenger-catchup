@@ -2254,6 +2254,22 @@
       count: cm ? +cm[1].replace(/,/g, '') : 0,
     };
   }
+  /* A group run's buffer (`run`: Claude's run id): each command merges its full result into localStorage on
+     facebook.com (kept across the page loads between commands) and answers Claude only with a summary, so posts and
+     comments reach the page through groupCapture's COPY CAPTURE, never through Claude's tokens. */
+  const gKey = run => 'mc_g_' + String(run).slice(0, 64);
+  const gSha = async t =>
+    Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t))))
+      .map(x => x.toString(16).padStart(2, '0'))
+      .join('');
+  const gBuf = run => {
+    try {
+      return JSON.parse(localStorage.getItem(gKey(run)) || 'null') || { posts: {}, comments: {}, notifs: [] };
+    } catch (e) {
+      return { posts: {}, comments: {}, notifs: [] };
+    }
+  };
+  const gSave = (run, b) => localStorage.setItem(gKey(run), JSON.stringify(b));
   /* groupFeed{known, cap, extra, steps}: on a group's feed, scrolls the window and reads each post card while it's on
      screen (cards are emptied about two screens away). known: {postId: comment count when last read}. Sorted by New
      posts it stops at the first known post; by Recent activity, `extra` cards (2) after the first known post whose count
@@ -2306,7 +2322,16 @@
         if (++idle >= 6) stop = 'end';
       } else idle = 0;
     }
-    return { group: groupOf(), sort, posts, changed, stop: stop || 'steps', ms: Date.now() - t0 };
+    const res = { group: groupOf(), sort, posts, changed, stop: stop || 'steps', ms: Date.now() - t0 };
+    if (!a.run) return res;
+    const b = gBuf(a.run);
+    posts.forEach(x => (b.posts[x.pid] = Object.assign(b.posts[x.pid] || {}, x)));
+    gSave(a.run, b);
+    return Object.assign({}, res, {
+      posts: undefined,
+      read: posts.length,
+      counts: Object.fromEntries(posts.filter(x => changed.includes(x.pid)).map(x => [x.pid, x.count])),
+    });
   }
   /* groupPost{newest, known, maxComments}: on an open post (/groups/G/posts/P/, a dialog), reads its comments. newest
      (true): set the post's comment sort to Newest first (it resets on every post). Scrolls the dialog's list until no
@@ -2395,7 +2420,12 @@
         age: i.age,
       };
     });
-    return { group: groupOf(), pid, sorted, comments, ms: Date.now() - t0 };
+    const res = { group: groupOf(), pid, sorted, comments, ms: Date.now() - t0 };
+    if (!a.run || !pid) return res;
+    const b = gBuf(a.run);
+    b.comments[pid] = comments;
+    gSave(a.run, b);
+    return Object.assign({}, res, { comments: undefined, read: comments.length });
   }
   /* notifs{since, more}: on /notifications/, reads the items without clicking any (a click marks it read): each
      {id (notif_id), kind (notif_t), group, post, comment, reply, unread, age, text}. Stops at the item `since` (a
@@ -2432,7 +2462,65 @@
     }
     const all = read();
     const cut = a.since ? all.findIndex(x => x.id === String(a.since)) : -1;
-    return { items: cut >= 0 ? all.slice(0, cut) : all, reachedSince: cut >= 0 };
+    const items = cut >= 0 ? all.slice(0, cut) : all;
+    if (!a.run) return { items, reachedSince: cut >= 0 };
+    const b = gBuf(a.run);
+    b.notifs = items;
+    gSave(a.run, b);
+    return {
+      reachedSince: cut >= 0,
+      read: items.length,
+      newest: items.length ? items[0].id : null,
+      groups: [...new Set(items.map(x => x.group).filter(Boolean))],
+      byGroup: items.reduce(
+        (o, x) => (x.group ? Object.assign(o, { [x.group]: (o[x.group] || []).concat(x.post || []) }) : o),
+        {},
+      ),
+    };
+  }
+  /* groupCapture{run, group}: the run's buffer as one capture for the page, {kind:"mc-gcapture", v, group, run, posts,
+     comments, notifs (this group's), sha}, behind the same COPY CAPTURE button as a chat capture; the buffer is then
+     cleared. Answers with the counts and the capture's length. */
+  async function mcGroupCapture(a) {
+    a = a || {};
+    if (!a.run || !a.group) return { err: 'bad-args', detail: 'groupCapture needs run and group' };
+    const b = gBuf(a.run);
+    const posts = Object.values(b.posts);
+    const notifs = (b.notifs || []).filter(x => x.group === String(a.group));
+    const body = { posts, comments: b.comments, notifs };
+    const cap = Object.assign(
+      { kind: 'mc-gcapture', v: 1, group: String(a.group), run: String(a.run).slice(0, 64) },
+      body,
+      { sha: await gSha(JSON.stringify(body)) },
+    );
+    const text = JSON.stringify(cap);
+    window.__capText = text;
+    localStorage.removeItem(gKey(a.run));
+    document.body.innerHTML = '';
+    const bt = document.createElement('button');
+    bt.id = '__copy';
+    bt.textContent = 'COPY CAPTURE';
+    bt.style.cssText =
+      'position:fixed;left:16px;top:16px;width:260px;height:56px;font:700 18px system-ui;z-index:2147483647;background:#0a7;color:#fff;border:0;border-radius:8px';
+    const st = document.createElement('div');
+    st.id = '__copyst';
+    st.style.cssText = 'position:fixed;left:300px;top:30px;font:16px system-ui;z-index:2147483647';
+    bt.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        st.textContent = 'COPIED ' + text.length + ' chars';
+      } catch (e) {
+        st.textContent = 'COPY FAILED: ' + e;
+      }
+    };
+    document.body.append(bt, st);
+    return {
+      posts: posts.length,
+      comments: Object.values(b.comments).reduce((n, l) => n + l.length, 0),
+      notifs: notifs.length,
+      len: text.length,
+      sha: cap.sha.slice(0, 8),
+    };
   }
   const CMDS = {
     probe: a => probe(a.anchor),
@@ -2456,6 +2544,7 @@
     groupFeed: a => mcGroupFeed(a),
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
+    groupCapture: a => mcGroupCapture(a),
     ping: () => ({ v: '3.0' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.

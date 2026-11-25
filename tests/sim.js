@@ -1777,6 +1777,56 @@ sim('G1: groupPost', { s: 20 }, async b => {
   );
   await ctx.close();
 });
+sim('G1: a run buffer and groupCapture', { s: 25 }, async b => {
+  const { ctx, p } = await fresh(b);
+  const run = 'run' + Date.now();
+  await gOpen(p, '', '?sorting_setting=CHRONOLOGICAL', { g_posts: '8' });
+  const f = await bridge(p, 'groupFeed', { run });
+  await p.goto(gUrl('posts/2000000000000004/'));
+  await p.waitForTimeout(500);
+  const g = await bridge(p, 'groupPost', { run });
+  await p.goto(URL.replace(/messenger\.html$/, 'notifications/'));
+  await p.waitForTimeout(400);
+  const n = await bridge(p, 'notifs', { run });
+  await p.goto(gUrl(''));
+  await p.waitForTimeout(400);
+  const c = await bridge(p, 'groupCapture', { run, group: GROUP });
+  const cap = JSON.parse((await p.evaluate(() => window.__capText)) || 'null');
+  const shaOk = await p.evaluate(async cp => {
+    const body = JSON.stringify({ posts: cp.posts, comments: cp.comments, notifs: cp.notifs });
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body));
+    return [...new Uint8Array(d)].map(x => x.toString(16).padStart(2, '0')).join('') === cp.sha;
+  }, cap);
+  const left = await p.evaluate(r => localStorage.getItem('mc_g_' + r), run);
+  ok(
+    f &&
+      !f.posts &&
+      f.read === 8 &&
+      Object.keys(f.counts).length === 8 &&
+      g &&
+      !g.comments &&
+      g.read > 0 &&
+      n &&
+      !n.items &&
+      n.read === 6 &&
+      JSON.stringify(n.groups.sort()) === JSON.stringify(['1000000000000001', '1000000000000002']) &&
+      cap &&
+      cap.kind === 'mc-gcapture' &&
+      cap.group === GROUP &&
+      cap.posts.length === 8 &&
+      cap.comments['2000000000000004'].length === g.read &&
+      cap.notifs.length > 0 &&
+      cap.notifs.every(x => x.group === GROUP) &&
+      shaOk &&
+      c.posts === 8 &&
+      left === null &&
+      (await p.$('#__copy')) !== null,
+    "G1: with run, the commands answer with summaries only and keep the text in a buffer; groupCapture makes one checked capture (this group's notifications) behind COPY CAPTURE and clears the buffer (" +
+      JSON.stringify({ f: f && [f.read, f.stop], g: g && g.read, n: n && n.groups, c }) +
+      ')',
+  );
+  await ctx.close();
+});
 sim('G1: notifs', { s: 12 }, async b => {
   const { ctx, p } = await fresh(b);
   await p.goto(URL.replace(/messenger\.html$/, 'notifications/'));
