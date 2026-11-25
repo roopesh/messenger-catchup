@@ -3733,6 +3733,16 @@
         if (named || (par && par.byYou)) out.push({ p, c, why: named ? "named you" : "replied to you" });
       });
     });
+    /* notifications: a mention or a reply to you, matched to the stored post (and comment) when it's there */
+    const posts = Object.values(S.gposts || {});
+    ((S.meta || {}).notifs || [])
+      .filter(x => /mention|reply/.test(String(x.kind || "")))
+      .forEach(x => {
+        const p = posts.find(y => y.pid === x.post);
+        const c = p && gCmts(p).find(y => (x.reply ? y.rid === x.reply : y.cid === x.comment && !y.rid));
+        if (c && out.some(o => o.c === c)) return;
+        out.push({ p, c, n: x, why: "notification" });
+      });
     return out;
   }
   function gCite(p, c) {
@@ -3819,28 +3829,45 @@
     const top = block(
       CUR.name,
       posts.length
-        ? posts.length +
-            " posts and " +
-            cs.length +
-            " comments stored. The last refresh brought " +
-            np +
-            " new posts and " +
-            nc +
-            " new comments."
+        ? plural(posts.length, "post") +
+            " and " +
+            plural(cs.length, "comment") +
+            " stored. The last refresh brought " +
+            plural(np, "new post") +
+            " and " +
+            plural(nc, "new comment") +
+            "."
         : CUR.state === "pending"
           ? firstRefreshText(CUR)
           : "No posts stored yet.",
     );
+    /* a first read that hasn't reached its start yet (references/groups.md › First read) */
+    if ((S.meta || {}).catchingUp)
+      top.append(
+        el(
+          "p",
+          "note",
+          "Catching up: the first read hasn't gone back " +
+            ((CUR.start || {}).days || 7) +
+            " days yet. The next refreshes read on from the oldest post stored.",
+        ),
+      );
     v.append(top);
     const needs = gNeeds();
     const nb = block("Needs you", needs.length ? null : "Nobody named you or replied to you in this group.");
     const l = el("div", "list");
     needs.forEach(x => {
       const it = el("div", "item");
-      it.append(
-        el("p", null, (x.c.who || "?") + " " + x.why + ": “" + trunc(x.c.text || "", 140) + "” "),
-        gCite(x.p, x.c),
-      );
+      if (x.n) {
+        const line = el("p", null, trunc(x.n.text || "", 160) + " ");
+        if (x.p) line.append(gCite(x.p, x.c));
+        line.append(" ", el("span", "chip open", "from notifications"));
+        it.append(line);
+      } else
+        it.append(
+          el("p", null, (x.c.who || "?") + " " + x.why + ": “" + trunc(x.c.text || "", 140) + "” "),
+          gCite(x.p, x.c),
+        );
       l.append(it);
     });
     nb.append(l);
@@ -9188,7 +9215,18 @@
       newCmts += add.length;
       if (add.length) await cref.set({ pid, comments: have.concat(add) });
     }
-    await S.db.doc("meta/chat").set(Object.assign({}, meta, { nextP, lastImport: now }));
+    /* this group's notifications (newest first, by id; the last 50 kept): Needs you lists the mentions and replies */
+    const seenN = new Set((meta.notifs || []).map(x => x.id));
+    const notifs = cap.notifs
+      .filter(x => x && x.id && !seenN.has(x.id))
+      .map(x => Object.assign({}, x, { at: now }))
+      .concat(meta.notifs || [])
+      .slice(0, 50);
+    await S.db
+      .doc("meta/chat")
+      .set(
+        Object.assign({}, meta, { nextP, lastImport: now, notifs, lastNew: { posts: newPosts, comments: newCmts } }),
+      );
     return done("IMPORT OK: " + newPosts + " new posts and " + newCmts + " new comments in " + CUR.name + ".", {
       ok: true,
       posts: newPosts,
@@ -11358,7 +11396,7 @@
   /* the helper this page shipped with: npm run sync writes it from assets/helper.user.js's @version. A Chrome is
      behind when its helper is older than this or than versions.helper, whichever is higher: versions.helper is
      written by Claude, and a stale one (v1.35.0 refreshes wrote 2.1 while shipping 2.3) hid every notice. */
-  const HELPER_VERSION = "3.2";
+  const HELPER_VERSION = "3.3";
   const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
   const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
   const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";
@@ -14200,6 +14238,8 @@
   function isGroup(c) {
     return !!c && c.kind === "group";
   }
+  /* F25: a group with Show in All off stays out of All's "need you" totals; its card still shows */
+  const inRollup = c => !(isGroup(c) && c.rollup === false);
   const isShown = c => c.state !== "hidden" && c.state !== "deleted";
   const multi = () => S.chats.filter(isLive).length > 1;
   const homeChat = () => S.chats.find(c => c.home);
@@ -14235,6 +14275,11 @@
   const chatLo = m => (m.markerMode === "own" && m.ownLastI != null ? m.ownLastI : (m.caughtUpI ?? -1));
   /* Needs you for one chat, since its catch-up start, from its summary/current (the recent items) */
   function needsOf(c) {
+    /* F25: a group's are its unread mentions and replies from notifications (meta/chat-KEY.notifs) */
+    if (isGroup(c))
+      return ((metaOf(c) || {}).notifs || [])
+        .filter(x => x.unread && /mention|reply/.test(String(x.kind || "")))
+        .map(x => ({ note: x.text, refs: [] }));
     const v = LIGHT.get(c.key),
       m = metaOf(c);
     if (!v || !v.sum || !m) return [];
@@ -14243,6 +14288,7 @@
   }
   const newOf = c => {
     const m = metaOf(c);
+    if (isGroup(c)) return ((m || {}).lastNew || {}).posts || 0;
     return m && typeof m.lastI === "number" ? Math.max(0, m.lastI - chatLo(m)) : 0;
   };
   const oldSkill = c =>
@@ -14675,7 +14721,7 @@
       out.push({
         key: "all",
         label: "All chats",
-        n: S.chats.filter(isLive).reduce((a, c) => a + needsOf(c).length, 0),
+        n: S.chats.filter(c => isLive(c) && inRollup(c)).reduce((a, c) => a + needsOf(c).length, 0),
       });
     /* F25: with a group on the page, chats and groups each get a heading */
     const shown = S.chats.filter(isShown);
@@ -14754,6 +14800,7 @@
     if (!e.target.closest || !e.target.closest("#picker-list, #h1")) closePicker(false);
   });
 
+  const showIn = c => (S.allShow || "all") === "all" || (S.allShow === "groups") === isGroup(c);
   /* All chats: each chat's new messages, Needs you and queued replies, and Mark all caught up */
   function renderAll() {
     const v = $("#v-all");
@@ -14772,57 +14819,98 @@
     st.setAttribute("role", "status");
     bt.append(b, st);
     top.append(bt);
+    /* F25: with groups on the page, show all, the chats or the groups */
+    const hasG = S.chats.some(c => isShown(c) && isGroup(c));
+    if (!hasG) S.allShow = "all";
+    if (hasG) {
+      const f = el("div", "btns");
+      f.setAttribute("role", "group");
+      f.setAttribute("aria-label", "Show");
+      f.append(el("span", "note", "Show:"));
+      [
+        ["all", "All"],
+        ["chats", "Chats"],
+        ["groups", "Groups"],
+      ].forEach(([k, t]) => {
+        const x = el("button", "link" + ((S.allShow || "all") === k ? " on" : ""), t);
+        x.dataset.show = k;
+        x.setAttribute("aria-pressed", String((S.allShow || "all") === k));
+        x.onclick = () => {
+          S.allShow = k;
+          renderAll();
+        };
+        f.append(x);
+      });
+      const tot = S.chats.filter(c => isLive(c) && inRollup(c) && showIn(c)).reduce((a, c) => a + needsOf(c).length, 0);
+      f.append(el("span", "note", tot + " need" + (tot === 1 ? "s" : "") + " you"));
+      top.append(f);
+    }
     v.append(top);
-    S.chats.filter(isShown).forEach(c => {
-      const card = el("div", "block chatcard");
-      card.dataset.chat = c.key;
-      const h = el("div", "sec-head chathead");
-      const nm = el("h2", null, c.name);
-      h.append(tagChip(c), nm);
-      if (isLive(c)) {
-        const go = el("button", "link", "Open");
-        go.onclick = () => openChat(c.key);
-        go.setAttribute("aria-label", "Open " + c.name);
-        h.append(go);
-      }
-      card.append(h, el("p", "note chatline", chatLine(c)));
-      if (isLive(c)) {
-        const ns = needsOf(c);
-        const L = LIGHT.get(c.key) || {};
-        card.append(
-          el("p", "chatnums", newOf(c) + " new · " + ns.length + " need" + (ns.length === 1 ? "s" : "") + " you"),
-        );
-        if (ns.length) {
-          const ln = el("div", "list");
-          ns.forEach(x => {
-            const d = el("div", "item mention");
-            if (x.note) d.append(el("p", null, x.note));
-            const refs = el("p", "refs");
-            (x.refs || []).forEach(r => {
-              const i = r[0] ?? r;
-              const a = el("button", "link cite", c.tag + " #" + i);
-              a.onclick = () => openChat(c.key, i);
-              refs.append(a, " ");
-            });
-            d.append(refs);
-            ln.append(d);
-          });
-          card.append(ln);
+    S.chats
+      .filter(c => isShown(c) && showIn(c))
+      .forEach(c => {
+        const card = el("div", "block chatcard");
+        card.dataset.chat = c.key;
+        const h = el("div", "sec-head chathead");
+        const nm = el("h2", null, c.name);
+        h.append(tagChip(c), nm);
+        if (isLive(c)) {
+          const go = el("button", "link", "Open");
+          go.onclick = () => openChat(c.key);
+          go.setAttribute("aria-label", "Open " + c.name);
+          h.append(go);
         }
-        const q = (L.outbox || []).filter(o => o.state === "queued" || o.state === "sending");
-        if (q.length) {
-          const ul = el("ul", "obq");
-          q.forEach(o =>
-            ul.append(el("li", null, c.tag + " #" + o.i + " · to " + (o.to || "?") + ": " + trunc(o.text || "", 80))),
-          );
+        card.append(h, el("p", "note chatline", chatLine(c)));
+        if (isLive(c)) {
+          const ns = needsOf(c);
+          const L = LIGHT.get(c.key) || {};
+          const gl = isGroup(c) ? (metaOf(c) || {}).lastNew || {} : null;
           card.append(
-            el("p", "note", q.length + " repl" + (q.length === 1 ? "y" : "ies") + " waiting to be posted:"),
-            ul,
+            el(
+              "p",
+              "chatnums",
+              (gl
+                ? plural(gl.posts || 0, "new post") + " · " + plural(gl.comments || 0, "new comment")
+                : newOf(c) + " new") +
+                " · " +
+                ns.length +
+                " need" +
+                (ns.length === 1 ? "s" : "") +
+                " you" +
+                (gl && !inRollup(c) ? " (not counted in All)" : ""),
+            ),
           );
+          if (ns.length) {
+            const ln = el("div", "list");
+            ns.forEach(x => {
+              const d = el("div", "item mention");
+              if (x.note) d.append(el("p", null, x.note));
+              const refs = el("p", "refs");
+              (x.refs || []).forEach(r => {
+                const i = r[0] ?? r;
+                const a = el("button", "link cite", c.tag + " #" + i);
+                a.onclick = () => openChat(c.key, i);
+                refs.append(a, " ");
+              });
+              d.append(refs);
+              ln.append(d);
+            });
+            card.append(ln);
+          }
+          const q = (L.outbox || []).filter(o => o.state === "queued" || o.state === "sending");
+          if (q.length) {
+            const ul = el("ul", "obq");
+            q.forEach(o =>
+              ul.append(el("li", null, c.tag + " #" + o.i + " · to " + (o.to || "?") + ": " + trunc(o.text || "", 80))),
+            );
+            card.append(
+              el("p", "note", q.length + " repl" + (q.length === 1 ? "y" : "ies") + " waiting to be posted:"),
+              ul,
+            );
+          }
         }
-      }
-      v.append(card);
-    });
+        v.append(card);
+      });
   }
   async function markAllCaughtUp() {
     const bad = [],

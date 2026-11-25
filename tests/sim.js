@@ -1756,6 +1756,19 @@ sim('G1: groupFeed', { s: 40 }, async b => {
       JSON.stringify(r && [r.stop, r.posts.length]) +
       ')',
   );
+  // catching up: known posts don't stop it or count toward the cap
+  r = await bridge(p, 'groupFeed', {
+    known: Object.fromEntries(want.slice(0, 6).map(x => [x[0], x[1]])),
+    through: true,
+    maxDays: 1,
+    cap: 300,
+  });
+  ok(
+    r && r.stop === 'age' && r.posts.length === 8 && r.changed.length === 2,
+    'G1: through: true reads past the known posts to the age stop; only the 2 unknown ones are changes (' +
+      JSON.stringify(r && [r.stop, r.posts.length, r.changed.length]) +
+      ')',
+  );
   r = await bridge(p, 'groupFeed', { cap: 5 });
   ok(
     r && r.stop === 'cap' && r.changed.length === 5,

@@ -17211,9 +17211,23 @@ async function groupsImport() {
     text: 'Agreed',
     age: '5m',
   };
-  const cap2 = gcap(G, [post(2, 0), post(0, 3)], {
-    [post(0).pid]: [reply, cmt(0, 2, 'Cy Chen'), cmt(0, 1, 'Ben Brooks')],
-  });
+  const mention = {
+    id: '7000000000000001',
+    kind: 'group_comment_mention',
+    group: G,
+    post: post(0).pid,
+    comment: cmt(0, 2).cid,
+    reply: null,
+    unread: true,
+    age: '3m',
+    text: 'Cy Chen mentioned you in a comment in Gear Swap.',
+  };
+  const cap2 = gcap(
+    G,
+    [post(2, 0), post(0, 3)],
+    { [post(0).pid]: [reply, cmt(0, 2, 'Cy Chen'), cmt(0, 1, 'Ben Brooks')] },
+    [mention],
+  );
   await mcPaste(p, cap2, 'gear');
   const c0b = await get(p, 'gear_comments/p' + post(0).pid);
   ok(
@@ -17269,11 +17283,43 @@ async function groupsImport() {
   await p.click('#v-summary a.cite');
   const jumped = await until(p, () => location.hash === '#posts' && !!document.getElementById('p1c4'));
   ok(
-    sv && /Dee Diaz replied to you: “Agreed”/.test(sv) && /Gear #p1\/c4/.test(sv) && jumped,
-    'G1-20: a group Summary counts posts and comments and lists a reply to your comment under Needs you; its citation opens #p1/c4 (' +
+    sv &&
+      /Dee Diaz replied to you: “Agreed”/.test(sv) &&
+      /Gear #p1\/c4/.test(sv) &&
+      /Cy Chen mentioned you in a comment in Gear Swap\. Gear #p1\/c3 from notifications/.test(sv) &&
+      jumped,
+    'G1-20: a group Summary counts posts and comments; Needs you lists a reply to your comment and a mention from notifications (matched to #p1/c3); a citation opens #p1/c4 (' +
       (sv || '').slice(0, 200) +
       ')',
   );
+  // All: the group's card has its new posts and comments and its unread mention; Show filters; Show in All off
+  await mcPick(p, 'all');
+  const allOf = () =>
+    p.evaluate(() => ({
+      cards: [...document.querySelectorAll('#v-all .chatcard')].map(c => c.dataset.chat),
+      gear: (document.querySelector('#v-all .chatcard[data-chat="gear"] .chatnums') || {}).textContent || '',
+      tot: (document.querySelector('#v-all [aria-label="Show"]') || {}).textContent || '',
+    }));
+  await p.click('#v-all [data-show="groups"]');
+  const a1 = await allOf();
+  await p.evaluate(() => {
+    const m = JSON.parse(JSON.stringify(__rt.get('meta/chat')));
+    m.chats.gear.rollup = false;
+    __rt.write('meta/chat', m);
+  });
+  await p.waitForTimeout(300);
+  const a2 = await allOf();
+  ok(
+    JSON.stringify(a1.cards) === '["gear"]' &&
+      /^1 new post · 2 new comments · 1 needs you$/.test(a1.gear) &&
+      /1 needs you/.test(a1.tot) &&
+      /0 need you/.test(a2.tot) &&
+      /\(not counted in All\)/.test(a2.gear),
+    'G1-30: All shows the group card (1 new post, 2 new comments, 1 needs you), Show: Groups lists only groups; with Show in All off the total drops it but its card keeps its count (' +
+      JSON.stringify({ a1, a2 }) +
+      ')',
+  );
+  await mcPick(p, 'gear');
   // a capture from another group is refused
   await mcPaste(p, gcap('999', [post(5, 0)], {}), 'gear').catch(() => null);
   ok(!(await get(p, 'gear_posts/p' + post(5).pid)), 'G1: a capture from another group is refused, nothing stored');

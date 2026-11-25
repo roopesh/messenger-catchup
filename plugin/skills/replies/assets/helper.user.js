@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      3.2
+// @version      3.3
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -27,13 +27,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '3.2';
+  window.__mcHelper = '3.3';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '3.2');
+  root.setAttribute('data-mc-helper', '3.3');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -2290,7 +2290,8 @@
      hasn't changed (the order is approximate). It also stops after `cap` changed posts (new, or a count that rose; 50)
      or at the end of the feed. Returns {group, sort, posts:[{pid, who, uid, age, text, more, photos, count, known}],
      changed:[pid], stop: "known" | "cap" | "end" | "steps" | "age"}. maxDays (a first read): stops at the first post
-     older than that many days (its time label), which isn't kept. */
+     older than that many days (its time label), which isn't kept. through (a first read catching up): known posts
+     don't stop it, and only new ones count toward the cap. */
   async function mcGroupFeed(a) {
     a = a || {};
     const t0 = Date.now();
@@ -2329,8 +2330,9 @@
         r.known = k;
         posts.push(r);
         if (!k || r.count > known[r.pid]) changed.push(r.pid);
-        if (sort === 'new' && k) stop = 'known';
-        else if (k && r.count <= known[r.pid] && after < 0) after = 0;
+        if (sort === 'new') {
+          if (k && !a.through) stop = 'known';
+        } else if (k && r.count <= known[r.pid] && after < 0) after = 0;
         else if (after >= 0 && ++after >= extra) stop = 'known';
         if (!stop && changed.length >= cap) stop = 'cap';
       }
@@ -2565,7 +2567,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '3.2' }),
+    ping: () => ({ v: '3.3' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

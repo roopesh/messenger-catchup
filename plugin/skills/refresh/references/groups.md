@@ -22,6 +22,6 @@ Use one run id (`run`, e.g. `g` + the current time in ms) for every command of t
 8. **Report** in a bullet named for the group: new posts, threads that moved, deals (item, price, sold or not), questions to the user.
 
 ## First read and big groups
-- A pending group's first read covers its `start.days` (by New posts, up to 300 posts per run): `groupFeed{cap: 300, maxDays: start.days, run}` with no `known` (helper 3.2; it stops at the first post older than that, `stop:"age"`). Comments: up to the 50 newest per post. If posts older than `start.days` weren't reached, the next runs go on from where it stopped (the oldest stored post), and the page shows "Catching up".
+- A pending group's first read covers its `start.days` (by New posts, up to 300 posts per run): `groupFeed{cap: 300, maxDays: start.days, run}` with no `known` (helper 3.2; it stops at the first post older than that, `stop:"age"`). Comments: up to the 50 newest per post. If it stopped at the cap (`stop:"cap"`), write `catchingUp:true` in `meta/chat-KEY` (the page says "Catching up"); the next runs read on with `groupFeed{known, through: true, maxDays: start.days, cap: 300, run}` (helper 3.3: known posts don't stop it or count toward the cap) until it stops by age or at the end (`stop:"age"` or `"end"`), then write `catchingUp:false`.
 - After that, 50 changed posts per run; the rest wait for the next run.
 - "Read: only mine" (`read:"mine"`): open only posts the user wrote or commented on, and the notification posts.
