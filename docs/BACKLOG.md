@@ -15,7 +15,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B55 | P3 | bug | Chrome names ("Browser 1", "Browser 2") swap when the extension reconnects, so helper notices can name the wrong Chrome |
 | B56 | P3 | bug | Several-chats page oddities: one load after activation opened on the first chat, not All chats; All chats' "need you" count disagrees with the rows |
 | B62 | P2 | bug | Summary has two ways to open a thread: a Needs you item jumps to the Messages tab (a group's to Posts), while the conversation cards open their thread in place (the owner, Nov 25: "why are we managing two different experiences??"; options and mockups on the board) |
-| B63 | P1 | bug | A capture over about 1 MB (a new chat's first read with many photos) never reaches the page: the paste is silently ignored, the chat stays pending and every run rescans it (#77; options on the board) |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -143,12 +142,6 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Today:** the helper only marks a message as a GIF (`gifs` in the photo blocks); the page shows "🎞 GIF (open in Messenger)". The owner's home chat holds about 360 (67 in its last 2,000 messages).
 - **Found (Nov 25, read-only):** a GIF is an animated image labelled "GIF Image" (about 220×268) from Facebook's image proxy (`fbsbx.com`), which the page's scripts can't fetch ("Failed to fetch"); a userscript can with a Tampermonkey permission (`GM_xmlhttpRequest`, `@connect`), which the owner approves once. Messenger's viewer holds only a still JPEG of it (56 KB), readable by any helper at about 3 s per GIF. A claude.ai page can't load outside images, so it can't show Facebook's link directly.
 - **Options (board):** A animated, B still frame, C animated on hover/tap falling back to B (recommended), with a 3 MB cap. Mockups: https://claude.ai/artifact/GNy2JcDoFbcTVknZeczQvZ. Unknowns: whether a granted helper still runs the same in the page, the real GIF sizes, and whether the proxy serves the full animation.
-
-### B63 · P1 · Big first imports never land (#77)
-- **Reported (#77, Nov 25, by a refresh run):** a pending chat's first capture (379–384 messages, 28 photos) is 1.68 MB; pasting it into the page does nothing (no toast, no `refresh/lastImport-KEY`), 8 tries over 2 runs. Captures of 1.02 MB and smaller imported in the same runs. In the Messenger tab a document `paste` listener fired for a short text but not for the 1.68 MB one: a paste above roughly 1 MiB never reaches the page.
-- **Impact:** the chat stays pending; every scheduled run rescans it (2–3 minutes) and fails again.
-- **Options (board):** A cap each capture's photos under ~800 KB, the rest owed and fetched by later runs (photos.md › Backfill), plus a "no toast" check in the skill (recommended); B split big captures into parts.
-- **Also in #77:** the first paste right after switching chats in the title is sometimes ignored; the title picker sometimes needs two clicks on a freshly loaded page.
 
 ### B62 · P2 · Needs you opens threads in place
 - **Reported (owner, Nov 25):** "when clicking something in 'needs you', it goes to the Messages tab, whereas the rest of the summary tab shows threads inline. why are we managing two different experiences??"

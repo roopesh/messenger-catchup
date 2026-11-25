@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      3.4
+// @version      3.5
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -27,13 +27,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '3.4';
+  window.__mcHelper = '3.5';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '3.4');
+  root.setAttribute('data-mc-helper', '3.5');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -1237,7 +1237,10 @@
             const r = await fetch(t.u);
             const bl = await r.blob();
             if (!/^image\/(jpeg|png|webp|gif)$/.test(bl.type)) throw bl.type;
-            photos.push(Object.assign({}, at, { type: bl.type, b64: await b64(bl) }));
+            /* B63: a line break every 76 characters (MIME style). A short run inside a photo's plain base64 can trip
+               a content filter in the browser automation, and the paste of the whole capture then never fires; the
+               page removes the breaks before anything else (the photo checksum is over the capture as pasted). */
+            photos.push(Object.assign({}, at, { type: bl.type, b64: (await b64(bl)).replace(/(.{76})/g, '$1\n') }));
           } catch (e) {
             failed.push(i);
             phfail.push(Object.assign({}, at, { e: 'fetch' }));
@@ -2588,7 +2591,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '3.4' }),
+    ping: () => ({ v: '3.5' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
