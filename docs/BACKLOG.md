@@ -25,6 +25,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; option C step 1 (the `reply-check` skill) in v1.34.0; measured (0.2% of a 5-hour session per check); scheduling it ("schedule reply checks") in v1.37.0; left: arm it on the owner's account (every 10 minutes, 5 AM–10 PM) and check it, then make the interval and hours changeable in the page |
 | F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
+| F39 | P2 | feature | GIFs on the page: show each GIF on the page instead of "🎞 GIF (open in Messenger)" (the owner's request, Nov 25: "clicking open in messenger every time is stupidly annoying"; options, mockups and questions on the decision board) |
 
 ## Bugs
 
@@ -133,6 +134,12 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Left:**
   - **Arm it on the owner's account and check it:** in a Claude app whose tool list has the recurring tool with the device requirement (see `references/scheduling.md` › Tools), say "schedule reply checks"; confirm the result says it's tied to this computer, the approval mode, that an empty check costs about what was measured, and that a reply queued on the page goes out within 10 minutes. Watch for the task pausing after a check finds the computer asleep (LEARNINGS: a device-bound task pauses for good on `device_absent`).
 - **Later (owner, Nov 23): change the interval and hours in the page,** picked up at the next check with no re-arming. A fixed recurring task can't change its own cron, and a check that reads its settings costs a second read on every run, so this needs a design: for example a chain (each check arms the next from `meta/chat`), or a recurring task at the shortest interval offered whose checks skip cheaply when not due. Measure the skip's cost first.
+
+### F39 · P2 · GIFs on the page
+- **Asked (owner, Nov 25):** "bring in gifs. There's too many of them and clicking open in messenger every time is stupidly annoying."
+- **Today:** the helper only marks a message as a GIF (`gifs` in the photo blocks); the page shows "🎞 GIF (open in Messenger)". The owner's home chat holds about 360 (67 in its last 2,000 messages).
+- **Found (Nov 25, read-only):** a GIF is an animated image labelled "GIF Image" (about 220×268) from Facebook's image proxy (`fbsbx.com`), which the page's scripts can't fetch ("Failed to fetch"); a userscript can with a Tampermonkey permission (`GM_xmlhttpRequest`, `@connect`), which the owner approves once. Messenger's viewer holds only a still JPEG of it (56 KB), readable by any helper at about 3 s per GIF. A claude.ai page can't load outside images, so it can't show Facebook's link directly.
+- **Options (board):** A animated, B still frame, C animated on hover/tap falling back to B (recommended), with a 3 MB cap. Mockups: https://claude.ai/artifact/GNy2JcDoFbcTVknZeczQvZ. Unknowns: whether a granted helper still runs the same in the page, the real GIF sizes, and whether the proxy serves the full animation.
 
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.
