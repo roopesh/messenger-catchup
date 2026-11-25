@@ -17119,8 +17119,111 @@ async function groupsAdd() {
   ok(p.errors.length === 0, 'G1: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 }
+/* F25 G1: a group capture pasted on its group: posts and comments stored with page numbers, re-paste changes nothing */
+function gcap(group, posts, comments, notifs = []) {
+  const body = { posts, comments, notifs };
+  const sha = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
+  return Object.assign({ kind: 'mc-gcapture', v: 1, group, run: 'r1' }, body, { sha });
+}
+async function groupsImport() {
+  const G = '1000000000000001';
+  let p = await mcOpen({
+    chats: {
+      gear: {
+        kind: 'group',
+        name: 'Gear Swap',
+        tag: 'Gear',
+        color: 2,
+        order: 3,
+        state: 'active',
+        group: G,
+        url: 'https://www.facebook.com/groups/' + G + '/',
+        start: { days: 7 },
+        read: 'all',
+        rollup: true,
+      },
+    },
+  });
+  await mcPick(p, 'gear');
+  const post = (k, count) => ({
+    pid: String(2000000000000000 + k),
+    who: 'Ana Alvarez',
+    uid: '9100',
+    age: k + ' hours ago',
+    text: 'Post ' + k,
+    more: false,
+    photos: [],
+    count,
+  });
+  const cmt = (k, c, who, rid) => ({
+    cid: String(4000000000000000 + k * 100 + c),
+    rid: rid || null,
+    parent: rid ? String(4000000000000000 + k * 100 + c) : null,
+    who,
+    uid: '9101',
+    text: 'Comment ' + c,
+    age: '1h',
+  });
+  const cap1 = gcap(G, [post(0, 2), post(1, 0)], { [post(0).pid]: [cmt(0, 1, 'Ben Brooks'), cmt(0, 0, 'Sam')] });
+  const li = await mcPaste(p, cap1, 'gear');
+  const p0 = await get(p, 'gear_posts/p' + post(0).pid);
+  const p1 = await get(p, 'gear_posts/p' + post(1).pid);
+  const c0 = await get(p, 'gear_comments/p' + post(0).pid);
+  const meta = await get(p, 'meta/chat-gear');
+  ok(
+    li &&
+      li.posts === 2 &&
+      li.comments === 2 &&
+      p0 &&
+      p0.n === 1 &&
+      p1 &&
+      p1.n === 2 &&
+      meta.nextP === 3 &&
+      c0 &&
+      c0.comments.length === 2 &&
+      c0.comments[0].cid === cmt(0, 0).cid &&
+      c0.comments[0].c === 1 &&
+      c0.comments[0].byYou === true &&
+      c0.comments[1].c === 2 &&
+      c0.comments[1].byYou === false,
+    'G1: a group capture stores posts p1, p2 (meta/chat-gear nextP 3) and the comments numbered oldest first, yours marked (' +
+      JSON.stringify({ li, n: [p0 && p0.n, p1 && p1.n], c: c0 && c0.comments.map(x => [x.c, x.byYou]) }) +
+      ')',
+  );
+  // the same capture again: nothing changes
+  const w0 = await mcNWrites(p);
+  await p.evaluate(t => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, JSON.stringify(cap1));
+  await p.waitForTimeout(400);
+  const again = (await mcWrites(p, w0)).filter(x => !/^refresh\/lastImport/.test(x));
+  ok(!again.length, 'G1: the same group capture pasted again changes no post or comment (' + again + ')');
+  // a later capture: a new comment on p1 keeps numbering; a new post gets p3; known posts keep their numbers
+  const cap2 = gcap(G, [post(2, 0), post(0, 3)], { [post(0).pid]: [cmt(0, 2, 'Cy Chen'), cmt(0, 1, 'Ben Brooks')] });
+  await mcPaste(p, cap2, 'gear');
+  const c0b = await get(p, 'gear_comments/p' + post(0).pid);
+  ok(
+    (await get(p, 'gear_posts/p' + post(2).pid)).n === 3 &&
+      (await get(p, 'gear_posts/p' + post(0).pid)).n === 1 &&
+      (await get(p, 'gear_posts/p' + post(0).pid)).count === 3 &&
+      c0b.comments.length === 3 &&
+      c0b.comments[2].c === 3 &&
+      c0b.comments[2].who === 'Cy Chen',
+    'G1: a later capture: the new post is p3, known posts keep their numbers, only the new comment is added (#3) (' +
+      JSON.stringify(c0b && c0b.comments.map(x => x.c)) +
+      ')',
+  );
+  // a capture from another group is refused
+  await mcPaste(p, gcap('999', [post(5, 0)], {}), 'gear').catch(() => null);
+  ok(!(await get(p, 'gear_posts/p' + post(5).pid)), 'G1: a capture from another group is refused, nothing stored');
+  ok(p.errors.length === 0, 'G1 import: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 const SECTIONS = {
   groupsAdd,
+  groupsImport,
   importer,
   multiChat,
   multiChat2,
