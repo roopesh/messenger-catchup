@@ -16,12 +16,12 @@ Start each with the bridge in SKILL.md › Helper, with a fresh id, and poll unt
 - `react{mid,emoji,search,remove,approved:true}` (2.7; `remove` 2.8): adds an approved reaction, or with `remove:true` takes it away (`references/outbox.md` › Reactions).
 
 ## Tabs
-Runs used to open a new tab on the page for every import and leave some behind, so the user found a pile of "Messenger Catch-up" tabs in Claude's tab group (B61, Nov 25). Every run keeps the group to one tab of each:
+Runs used to open a new tab on the page for every import and leave some behind, so the user found a pile of "Messenger Catch-up" tabs in Claude's tab group (B61, Nov 25). The user's rule: the page tab is open only while a run imports.
 - **Only Claude's tab group:** the tabs `tabs_context_mcp` lists. Never close or touch any other tab of the user's.
-- **At the start (step 2) and at the end of every run** (the end of step 8, or wherever the run stops): keep one Messenger tab (the one on a chat in `meta/chat.chats`, else the most recent `facebook.com` tab) and one tab on the user's page (its claude.ai artifact URL); close every other page tab and every other `facebook.com` tab in the group with `tabs_close_mcp`.
-- **Photos still storing:** a page tab whose import is still storing photos (`refresh/lastImport.state` is `uploading`, `references/photos.md` › Waiting) is the one to keep, and is never closed or reloaded while that lasts.
-- **Reuse, don't open:** step 4 pastes into the kept page tab after reloading it (it may still run an older page version; reload only when nothing is uploading); open a page tab only when there's none. A run over several chats pastes every chat's capture into that same tab, picking each chat in its title (`references/chats.md` › The paste), and uses the one Messenger tab for every chat.
-- A run that stops early still tidies the group before it stops.
+- **At the start (step 2):** keep one Messenger tab (the one on a chat in `meta/chat.chats`, else the most recent `facebook.com` tab); close every other `facebook.com` tab in the group, and every page tab except one still storing photos (below).
+- **Step 4:** paste into a page tab left storing photos by an earlier run if there is one (don't reload it), else open a page tab. A run over several chats pastes every chat's capture into that same tab, picking each chat in its title (`references/chats.md` › The paste), and uses the one Messenger tab for every chat.
+- **At the end of the run** (step 5 for each import, and wherever the run stops, early stops included): close the page tab, unless its import is still storing photos (`refresh/lastImport.state` is `uploading`, `references/photos.md` › Waiting): then leave it open, never reloaded, until the upload ends; the next run closes it once it's done.
+- Keep the one Messenger tab between runs.
 
 ## Which Chrome
 - Claude in Chrome's `list_connected_browsers` lists every connected Chrome with its name, and marks the one this session uses (`inUse`). One browser, or one already in use: use it.
