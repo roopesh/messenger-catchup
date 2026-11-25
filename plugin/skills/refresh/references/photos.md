@@ -24,7 +24,7 @@ Read this on a refresh when the capture summary shows `photos` above 0 or `FAILE
    - `no_assets`: this view can't upload. Don't paste again; tell the user to open the page on claude.ai as its owner. The photos stay owed until a run can store them.
    - If the second try is also `partial`, report how many are still owed and carry on: the next run backfills them.
 6. `refused` or `failed`: nothing about photos; do what `references/troubleshooting.md` › Import toasts says.
-7. Then go on to step 5 (close the page tab, take the Messenger tab back to the chat).
+7. Then go on to step 5 (keep the page tab, `references/helper.md` › Tabs, and take the Messenger tab back to the chat).
 
 ## Backfill (step 3, when `meta/chat.photosOwed` is set)
 `photosOwed` is `{n, fromI, toI, at}`: `n` photos owed between messages `fromI` and `toI`, left by an earlier run that stopped.

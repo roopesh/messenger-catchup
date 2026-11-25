@@ -2,6 +2,16 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.49.0] - 2026-11-25
+**No more pile of leftover tabs** (B61; the owner's screenshot, Nov 25: Claude's tab group full of "Messenger Catch-up" and "Messenger | Facebook" tabs). MINOR: SKILL.md's steps change. No page or helper change.
+
+### Fixed
+- Each refresh opened a new tab on the page to paste a capture (step 4), and step 5's "close the page tab" didn't always happen: a run stopped early, a chat's photos were still storing, or a run over several chats opened one per chat. With three chats refreshed every hour, the tabs piled up.
+- Now every run keeps Claude's tab group to one tab of each (`references/helper.md` › Tabs): at its start (step 2) and its end, and also when it stops early, it keeps one Messenger tab and one page tab and closes every other page tab and `facebook.com` tab in Claude's group. Step 4 reuses the kept page tab (reloaded first, so it runs the current page) and opens one only when there's none; a run over several chats pastes every chat's capture into that one tab (`references/chats.md` › The paste). A page tab still storing photos is the one kept, never closed or reloaded while it stores. Tabs outside Claude's group are never touched.
+
+### Tests
+- `test_tools`: step 5 keeps the page tab, and helper.md › Tabs says a storing tab is never closed and other tabs of the user's are never touched (replaces the old "close the page tab" check).
+
 ## [1.48.0] - 2026-11-25
 **Facebook groups on the page** (BACKLOG F25, stage G1, part 2 of 2; design reviewed by the owner, with their answers and comments folded in). MINOR: groups can be added and are read by refreshes. Page **`PAGE_VERSION` 5.4** (from 5.3); helper **3.4** (from 3.0).
 

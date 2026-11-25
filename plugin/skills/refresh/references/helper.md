@@ -1,6 +1,6 @@
 # Helper: commands, browsers, versions, warnings and stalls
 
-Read the part SKILL.md points you to: Commands (before your first command in each conversation), Which Chrome (more than one Chrome is connected), Versions (the installed helper is older than `assets/helper.user.js`), Warnings (`selfcheck` or a scan returned `warn`), Scan results (`err:"stalled"`, `top`, `scroller`), or Injecting (no helper installed).
+Read the part SKILL.md points you to: Commands (before your first command in each conversation), Tabs (every run, step 2), Which Chrome (more than one Chrome is connected), Versions (the installed helper is older than `assets/helper.user.js`), Warnings (`selfcheck` or a scan returned `warn`), Scan results (`err:"stalled"`, `top`, `scroller`), or Injecting (no helper installed).
 
 ## Commands
 Start each with the bridge in SKILL.md › Helper, with a fresh id, and poll until it's no longer running.
@@ -14,6 +14,14 @@ Start each with the bridge in SKILL.md › Helper, with a fresh id, and poll unt
 - `post` only when `meta/chat.helperPost` is true (`references/posting-with-helper.md`); it tags `mentions` (2.7) and waits for `photos` Claude attaches (2.9).
 - `groupFeed{known,cap,extra,run}`, `groupPost{newest,known,run}`, `notifs{since,more,run}` (3.0, F25): read a Facebook group's feed (post cards while on screen), an open post's comments, and the notifications page, without clicking anything in a post or any notification. With `run` (3.1) they keep the text in a buffer and answer with a summary; `groupCapture{run,group}` (3.1) then puts the run's posts, comments and that group's notifications behind COPY CAPTURE for the page (`references/groups.md`).
 - `react{mid,emoji,search,remove,approved:true}` (2.7; `remove` 2.8): adds an approved reaction, or with `remove:true` takes it away (`references/outbox.md` › Reactions).
+
+## Tabs
+Runs used to open a new tab on the page for every import and leave some behind, so the user found a pile of "Messenger Catch-up" tabs in Claude's tab group (B61, Nov 25). Every run keeps the group to one tab of each:
+- **Only Claude's tab group:** the tabs `tabs_context_mcp` lists. Never close or touch any other tab of the user's.
+- **At the start (step 2) and at the end of every run** (the end of step 8, or wherever the run stops): keep one Messenger tab (the one on a chat in `meta/chat.chats`, else the most recent `facebook.com` tab) and one tab on the user's page (its claude.ai artifact URL); close every other page tab and every other `facebook.com` tab in the group with `tabs_close_mcp`.
+- **Photos still storing:** a page tab whose import is still storing photos (`refresh/lastImport.state` is `uploading`, `references/photos.md` › Waiting) is the one to keep, and is never closed or reloaded while that lasts.
+- **Reuse, don't open:** step 4 pastes into the kept page tab after reloading it (it may still run an older page version; reload only when nothing is uploading); open a page tab only when there's none. A run over several chats pastes every chat's capture into that same tab, picking each chat in its title (`references/chats.md` › The paste), and uses the one Messenger tab for every chat.
+- A run that stops early still tidies the group before it stops.
 
 ## Which Chrome
 - Claude in Chrome's `list_connected_browsers` lists every connected Chrome with its name, and marks the one this session uses (`inUse`). One browser, or one already in use: use it.
