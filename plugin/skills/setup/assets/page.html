@@ -1776,6 +1776,29 @@
     border-color: var(--accent);
     background: var(--accent-soft);
   }
+  /* F25: a group's posts and comments */
+  .gpost .row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .gpost .n,
+  .gc .n {
+    font: 0.75rem var(--mono);
+    color: var(--muted);
+  }
+  .gc {
+    margin: 6px 0 0;
+    padding-left: 10px;
+    border-left: 2px solid var(--line);
+  }
+  .gc.reply {
+    margin-left: 18px;
+  }
+  .gc.new {
+    border-left-color: var(--accent);
+  }
   /* F25: the picker's Chats and Groups headings */
   .pick-head {
     margin: 8px 8px 2px;
@@ -2494,6 +2517,7 @@
 
   <nav class="tabs" aria-label="Sections">
     <a href="#summary" data-tab="summary">Summary</a>
+    <a href="#posts" data-tab="posts" hidden>Posts</a>
     <a href="#ask" data-tab="ask" aria-label="Ask Claude">Ask<span class="wide"> Claude</span></a>
     <a href="#messages" data-tab="messages">Messages</a>
     <a href="#days" data-tab="days">By day</a>
@@ -2503,6 +2527,7 @@
 
   <section class="view" id="v-all" hidden></section>
   <section class="view" id="v-summary"></section>
+  <section class="view" id="v-posts" hidden></section>
 
   <section class="view" id="v-ask" hidden>
     <div class="block">
@@ -2919,14 +2944,18 @@
   let CUR = { key: "chat", name: "", tag: "", home: true }; /* F1: the chat loaded (S.db), under All chats too */
 
   /* ---------- routing ---------- */
-  const TABS = ["summary", "ask", "messages", "days", "views", "stats"];
+  const TABS = ["summary", "posts", "ask", "messages", "days", "views", "stats"];
+  /* F25: a group has Summary and Posts; a chat has the rest */
+  const tabsFor = c => (isGroup(c) ? ["summary", "posts"] : TABS.filter(t => t !== "posts"));
   function route() {
     const h = (location.hash || "").slice(1);
-    const tab = TABS.includes(h) ? h : "summary";
+    const ok = tabsFor(CUR);
+    const tab = ok.includes(h) ? h : "summary";
     const allv = S.view === "all"; /* All chats (F1) has no tabs */
     TABS.forEach(t => {
       $("#v-" + t).hidden = allv || t !== tab;
       const a = document.querySelector('nav a[data-tab="' + t + '"]');
+      a.hidden = !ok.includes(t);
       if (t === tab) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     });
@@ -3673,7 +3702,152 @@
     b.append(h);
     return b;
   }
+  /* ---------- F25: a group's Posts and Summary ----------
+     Posts: newest activity first; a post's number #pN and a comment's #pN/cM stay the same forever. What came in with the
+     last import (firstSeen equal to meta/chat-KEY.lastImport) is marked new; a post's earlier comments are folded. */
+  const gLast = () => (S.meta || {}).lastImport || null;
+  const gIsNew = x => !!x && !!gLast() && x.firstSeen === gLast();
+  const gMe = () =>
+    [(S.page || {}).ownerName]
+      .concat((S.page || {}).ownerAliases || [])
+      .filter(Boolean)
+      .map(x => String(x).toLowerCase());
+  function gCmts(p) {
+    const d = (S.gcmts || {})["p" + p.pid];
+    return ((d && d.comments) || []).slice().sort((a, b) => a.c - b.c);
+  }
+  /* comments that need you: your name or nickname in it (not yours), or a reply to one of yours */
+  function gNeeds() {
+    const me = gMe();
+    const out = [];
+    Object.values(S.gposts || {}).forEach(p => {
+      const cs = gCmts(p);
+      const byId = new Map(cs.map(c => [c.rid || c.cid, c]));
+      cs.forEach(c => {
+        if (c.byYou) return;
+        const t = String(c.text || "").toLowerCase();
+        const named = me.some(
+          n => n && new RegExp("(^|\\W)" + n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(\\W|$)").test(t),
+        );
+        const par = c.parent && byId.get(c.parent);
+        if (named || (par && par.byYou)) out.push({ p, c, why: named ? "named you" : "replied to you" });
+      });
+    });
+    return out;
+  }
+  function gCite(p, c) {
+    const a = el("a", "cite", CUR.tag + " #p" + p.n + (c ? "/c" + c.c : ""));
+    a.href = "#posts";
+    a.onclick = e => {
+      e.preventDefault();
+      location.hash = "#posts";
+      requestAnimationFrame(() => {
+        const t = document.getElementById("p" + p.n + (c ? "c" + c.c : ""));
+        if (!t) return;
+        const d = t.closest("details");
+        if (d) d.open = true;
+        t.scrollIntoView({ block: "center" });
+      });
+    };
+    return a;
+  }
+  function gComment(p, c) {
+    const d = el("div", "gc" + (c.rid ? " reply" : "") + (gIsNew(c) ? " new" : ""));
+    d.id = "p" + p.n + "c" + c.c;
+    const h = el("div", "note");
+    h.append(el("span", "n", "#p" + p.n + "/c" + c.c + " "), el("b", null, c.who || "?"), " · " + (c.age || ""));
+    if (gIsNew(c)) h.append(" ", el("span", "chip open", "new"));
+    d.append(h, el("div", null, c.text || ""));
+    return d;
+  }
+  function renderPosts() {
+    const v = $("#v-posts");
+    if (!v) return;
+    v.textContent = "";
+    if (!isGroup(CUR)) return;
+    const posts = Object.values(S.gposts || {}).sort(
+      (a, b) => String(b.lastAct || "").localeCompare(String(a.lastAct || "")) || b.n - a.n,
+    );
+    const bo = block(
+      "Posts",
+      posts.length
+        ? "Newest activity first. What came in with the last refresh is marked new."
+        : CUR.state === "pending"
+          ? firstRefreshText(CUR)
+          : "No posts stored yet.",
+    );
+    const l = el("div", "list");
+    posts.forEach(p => {
+      const card = el("article", "item gpost" + (gIsNew(p) ? " new" : ""));
+      card.id = "p" + p.n;
+      const r = el("div", "row");
+      r.append(el("span", "n", "#p" + p.n), el("b", null, p.who || "?"), el("span", "note", p.age || ""));
+      if (gIsNew(p)) r.append(el("span", "chip open", "new post"));
+      const cs = gCmts(p);
+      const fresh = cs.filter(gIsNew);
+      if (fresh.length && !gIsNew(p))
+        r.append(el("span", "chip open", fresh.length + (fresh.length > 1 ? " new comments" : " new comment")));
+      card.append(r, el("p", null, p.text || ""));
+      if ((p.photos || []).length)
+        card.append(el("p", "note", "📷 " + p.photos.length + (p.photos.length > 1 ? " photos" : " photo")));
+      const old = cs.filter(c => !gIsNew(c));
+      if (old.length) {
+        const det = el("details");
+        det.append(el("summary", null, old.length + (old.length > 1 ? " earlier comments" : " earlier comment")));
+        old.forEach(c => det.append(gComment(p, c)));
+        card.append(det);
+      }
+      fresh.forEach(c => card.append(gComment(p, c)));
+      const fb = el("a", "note", "Open on Facebook ↗");
+      fb.href = String(CUR.url || "").replace(/\/?$/, "/") + "posts/" + p.pid + "/";
+      fb.target = "_blank";
+      fb.rel = "noopener";
+      card.append(fb);
+      l.append(card);
+    });
+    bo.append(l);
+    v.append(bo);
+  }
+  function renderGroupSummary() {
+    const v = $("#v-summary");
+    if (!v || !isGroup(CUR)) return;
+    v.textContent = "";
+    const posts = Object.values(S.gposts || {});
+    const cs = posts.flatMap(gCmts);
+    const np = posts.filter(gIsNew).length;
+    const nc = cs.filter(gIsNew).length;
+    const top = block(
+      CUR.name,
+      posts.length
+        ? posts.length +
+            " posts and " +
+            cs.length +
+            " comments stored. The last refresh brought " +
+            np +
+            " new posts and " +
+            nc +
+            " new comments."
+        : CUR.state === "pending"
+          ? firstRefreshText(CUR)
+          : "No posts stored yet.",
+    );
+    v.append(top);
+    const needs = gNeeds();
+    const nb = block("Needs you", needs.length ? null : "Nobody named you or replied to you in this group.");
+    const l = el("div", "list");
+    needs.forEach(x => {
+      const it = el("div", "item");
+      it.append(
+        el("p", null, (x.c.who || "?") + " " + x.why + ": “" + trunc(x.c.text || "", 140) + "” "),
+        gCite(x.p, x.c),
+      );
+      l.append(it);
+    });
+    nb.append(l);
+    v.append(nb);
+  }
   function renderSummary() {
+    if (isGroup(CUR)) return renderGroupSummary();
     const v = $("#v-summary");
     v.textContent = "";
     const raw = S.summary;
@@ -14023,7 +14197,9 @@
   }
   const isLive = c => c.state === "active" || c.state === "paused";
   /* F25: a Facebook group on the page (a meta/chat.chats entry with kind "group"); one without kind is a chat */
-  const isGroup = c => !!c && c.kind === "group";
+  function isGroup(c) {
+    return !!c && c.kind === "group";
+  }
   const isShown = c => c.state !== "hidden" && c.state !== "deleted";
   const multi = () => S.chats.filter(isLive).length > 1;
   const homeChat = () => S.chats.find(c => c.home);
@@ -14275,12 +14451,36 @@
   }
   function subscribeChat() {
     const db = S.db;
+    /* F25: a group's posts and comments (references/groups.md writes them through the page's import) */
+    if (isGroup(CUR)) {
+      S.gposts = {};
+      S.gcmts = {};
+      const redraw = () => {
+        renderPosts();
+        renderGroupSummary();
+      };
+      on(db.collection("posts"), q => {
+        S.gposts = {};
+        q.docs.forEach(d => (S.gposts[d.id] = d.data()));
+        redraw();
+      });
+      on(db.collection("comments"), q => {
+        S.gcmts = {};
+        q.docs.forEach(d => (S.gcmts[d.id] = d.data()));
+        redraw();
+      });
+    }
     if (CUR.home) {
       if (S.page !== undefined) setMeta(S.page);
     } else
       on(db.doc("meta/chat"), s => {
         S.chatMeta = s.exists ? s.data() : null;
         setMeta(S.chatMeta ? Object.assign(pagePart(S.page), S.chatMeta) : null);
+        /* F25: what's new in a group is what came with its last import (meta/chat-KEY.lastImport) */
+        if (isGroup(CUR)) {
+          renderPosts();
+          renderGroupSummary();
+        }
       });
     on(db.collection("summary"), q => {
       S.summary = mergeSummary(collDocs(q));

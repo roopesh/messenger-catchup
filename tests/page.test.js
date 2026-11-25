@@ -17201,18 +17201,76 @@ async function groupsImport() {
   const again = (await mcWrites(p, w0)).filter(x => !/^refresh\/lastImport/.test(x));
   ok(!again.length, 'G1: the same group capture pasted again changes no post or comment (' + again + ')');
   // a later capture: a new comment on p1 keeps numbering; a new post gets p3; known posts keep their numbers
-  const cap2 = gcap(G, [post(2, 0), post(0, 3)], { [post(0).pid]: [cmt(0, 2, 'Cy Chen'), cmt(0, 1, 'Ben Brooks')] });
+  const reply = {
+    cid: cmt(0, 0).cid,
+    rid: '5000000000000001',
+    parent: cmt(0, 0).cid,
+    who: 'Dee Diaz',
+    uid: '9103',
+    text: 'Agreed',
+    age: '5m',
+  };
+  const cap2 = gcap(G, [post(2, 0), post(0, 3)], {
+    [post(0).pid]: [reply, cmt(0, 2, 'Cy Chen'), cmt(0, 1, 'Ben Brooks')],
+  });
   await mcPaste(p, cap2, 'gear');
   const c0b = await get(p, 'gear_comments/p' + post(0).pid);
   ok(
     (await get(p, 'gear_posts/p' + post(2).pid)).n === 3 &&
       (await get(p, 'gear_posts/p' + post(0).pid)).n === 1 &&
       (await get(p, 'gear_posts/p' + post(0).pid)).count === 3 &&
-      c0b.comments.length === 3 &&
+      c0b.comments.length === 4 &&
       c0b.comments[2].c === 3 &&
-      c0b.comments[2].who === 'Cy Chen',
+      c0b.comments[2].who === 'Cy Chen' &&
+      c0b.comments[3].rid === '5000000000000001',
     'G1: a later capture: the new post is p3, known posts keep their numbers, only the new comment is added (#3) (' +
       JSON.stringify(c0b && c0b.comments.map(x => x.c)) +
+      ')',
+  );
+  // Posts: newest activity first, new post and new comments marked, earlier comments folded, the Facebook link
+  await p.evaluate(() => {
+    location.hash = '#posts';
+  });
+  const pv = await until(p, () => {
+    const cards = [...document.querySelectorAll('#v-posts article.gpost')];
+    return cards.length === 3
+      ? {
+          ids: cards.map(c => c.id),
+          chips: cards.map(c => [...c.querySelectorAll(':scope > .row .chip')].map(x => x.textContent).join('|')),
+          folded: (cards[1].querySelector('details > summary') || {}).textContent,
+          news: cards[1].querySelectorAll(':scope > .gc.new').length,
+          fb: cards[0].querySelector('a[target="_blank"]').getAttribute('href'),
+          tabs: [...document.querySelectorAll('nav.tabs a')].filter(a => !a.hidden).map(a => a.dataset.tab),
+        }
+      : null;
+  });
+  ok(
+    pv &&
+      JSON.stringify(pv.ids) === '["p3","p1","p2"]' &&
+      pv.chips[0] === 'new post' &&
+      pv.chips[1] === '2 new comments' &&
+      pv.folded === '2 earlier comments' &&
+      pv.news === 2 &&
+      pv.fb === 'https://www.facebook.com/groups/' + G + '/posts/' + post(2).pid + '/' &&
+      JSON.stringify(pv.tabs) === '["summary","posts"]',
+    'G1-18: Posts lists the group newest activity first (#p3 new, #p1 with 2 new comments, 2 earlier folded), each with its Facebook link; a group shows only Summary and Posts (' +
+      JSON.stringify(pv) +
+      ')',
+  );
+  // Summary: counts and Needs you (a reply to your comment); its citation opens the comment in Posts
+  await p.evaluate(() => {
+    location.hash = '#summary';
+  });
+  const sv = await until(p, () => {
+    const t = document.getElementById('v-summary').textContent;
+    return /3 posts and 4 comments stored/.test(t) ? t : null;
+  });
+  await p.click('#v-summary a.cite');
+  const jumped = await until(p, () => location.hash === '#posts' && !!document.getElementById('p1c4'));
+  ok(
+    sv && /Dee Diaz replied to you: “Agreed”/.test(sv) && /Gear #p1\/c4/.test(sv) && jumped,
+    'G1-20: a group Summary counts posts and comments and lists a reply to your comment under Needs you; its citation opens #p1/c4 (' +
+      (sv || '').slice(0, 200) +
       ')',
   );
   // a capture from another group is refused
