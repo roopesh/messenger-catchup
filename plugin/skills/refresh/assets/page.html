@@ -1776,6 +1776,14 @@
     border-color: var(--accent);
     background: var(--accent-soft);
   }
+  /* F25: the picker's Chats and Groups headings */
+  .pick-head {
+    margin: 8px 8px 2px;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
   /* F36: photos waiting to go with a reply */
   .rpics {
     display: flex;
@@ -13923,6 +13931,8 @@
     );
   }
   const isLive = c => c.state === "active" || c.state === "paused";
+  /* F25: a Facebook group on the page (a meta/chat.chats entry with kind "group"); one without kind is a chat */
+  const isGroup = c => !!c && c.kind === "group";
   const isShown = c => c.state !== "hidden" && c.state !== "deleted";
   const multi = () => S.chats.filter(isLive).length > 1;
   const homeChat = () => S.chats.find(c => c.home);
@@ -14376,10 +14386,15 @@
         label: "All chats",
         n: S.chats.filter(isLive).reduce((a, c) => a + needsOf(c).length, 0),
       });
-    S.chats
-      .filter(isShown)
-      .forEach(c => out.push({ key: c.key, c, label: c.name, n: isLive(c) && multi() ? needsOf(c).length : 0 }));
-    out.push({ key: "add", label: "Add a chat" });
+    /* F25: with a group on the page, chats and groups each get a heading */
+    const shown = S.chats.filter(isShown);
+    const groups = shown.filter(isGroup);
+    const item = c => out.push({ key: c.key, c, label: c.name, n: isLive(c) && multi() ? needsOf(c).length : 0 });
+    if (groups.length) out.push({ head: "Chats" });
+    shown.filter(c => !isGroup(c)).forEach(item);
+    if (groups.length) out.push({ head: "Groups" });
+    groups.forEach(item);
+    out.push({ key: "add", label: groups.length ? "Add a chat or group" : "Add a chat" });
     return out;
   }
   function renderPicker() {
@@ -14391,6 +14406,10 @@
         el("p", "note", "Storing photos or packing in this chat: switch chats once it's done (keep this tab open)."),
       );
     pickerItems().forEach(it => {
+      if (it.head) {
+        box.append(el("p", "pick-head", it.head));
+        return;
+      }
       const b = el("button", "pick" + (it.key === S.view ? " on" : ""));
       b.type = "button";
       b.setAttribute("role", "menuitem");
@@ -14538,6 +14557,13 @@
      write names one chat's fields and merges. */
   const LINK_RE =
     /^https?:\/\/(?:www\.|web\.)?(?:facebook\.com\/messages|messenger\.com)\/(e2ee\/)?t\/(\d+)\/?(?:[?#].*)?$/;
+  /* F25: a Facebook group's link (its numeric id or its name in the address; a post's link names its group too) */
+  const GROUP_RE = /^https?:\/\/(?:www\.|m\.|web\.)?facebook\.com\/groups\/([\w.]+)(?:[/?#].*)?$/;
+  const GROUP_START = [
+    [3, "Posts from the last 3 days"],
+    [7, "Posts from the last 7 days"],
+    [30, "Posts from the last 30 days"],
+  ];
   const HISTORY = [
     [1, "The last day"],
     [3, "The last 3 days"],
@@ -14783,7 +14809,7 @@
         row.append(note(c.key));
         box.append(row);
       });
-    box.append(addForm(note));
+    box.append(addForm(note), groupForm(note));
     /* a rebuild keeps keyboard focus on the button that had it (a Move button that reached the end: its pair) */
     const kept = keep && document.getElementById(keep);
     if (kept) {
@@ -15035,6 +15061,7 @@
   }
   function addForm(note) {
     const f = el("form", "addform");
+    f.noValidate = true; /* the page's own messages, not the browser's, say what's wrong with a link */
     f.append(el("h3", null, "Add a chat"));
     f.append(
       el(
@@ -15094,7 +15121,9 @@
     if (!m)
       return setNote(
         "add",
-        "That isn't a Messenger chat link. Open the chat in Messenger and copy its address: it looks like https://www.facebook.com/messages/t/1234567890.",
+        GROUP_RE.test(String(o.link || "").trim())
+          ? "That's a Facebook group: add it under Add a group below."
+          : "That isn't a Messenger chat link. Open the chat in Messenger and copy its address: it looks like https://www.facebook.com/messages/t/1234567890.",
         true,
       );
     const thread = m[2];
@@ -15138,6 +15167,141 @@
       renderSettings();
     } catch (err) {
       setNote("add", "Couldn't add it. Try again.", true);
+    }
+  }
+
+  /* a new entry's tag (given, else from its name; numbered when taken) and key, or an error line */
+  function newTagKey(name, given, fallback) {
+    let tag = String(given || "").trim() || tagFrom(name);
+    if (tag.length > TAG_MAX) return { err: "A tag has at most " + TAG_MAX + " characters." };
+    const tags = new Set(S.chats.filter(c => c.state !== "deleted").map(c => c.tag.toLowerCase()));
+    if (given && tags.has(tag.toLowerCase())) return { err: "“" + tag + "” is already another chat's tag." };
+    for (let n = 2; tags.has(tag.toLowerCase()); n++) tag = tag.slice(0, TAG_MAX - String(n).length) + n;
+    return { tag, key: freeKey(keyFrom(given || name || fallback), new Set(S.chats.map(c => c.key))) };
+  }
+  /* F25: Add a group. The page saves it (pending); the next refresh reads it with the chats (references/groups.md). */
+  function groupForm(note) {
+    const f = el("form", "addform");
+    f.noValidate = true;
+    f.append(el("h3", null, "Add a group"));
+    f.append(
+      el(
+        "p",
+        "note",
+        "Paste the Facebook group's link (facebook.com/groups/…). The next refresh reads its new posts and comments, and your notifications from it. Reading notifications clears your red badge on Facebook.",
+      ),
+    );
+    const link = el("input");
+    link.type = "url";
+    link.placeholder = "https://www.facebook.com/groups/…";
+    const nm = el("input");
+    nm.type = "text";
+    nm.maxLength = 60;
+    const tg = el("input");
+    tg.type = "text";
+    tg.maxLength = TAG_MAX;
+    const wc = el("select");
+    [["", "None"]]
+      .concat(S.chats.filter(c => !isGroup(c) && isShown(c)).map(c => [c.key, c.name]))
+      .forEach(([v, t]) => {
+        const o = el("option", null, t);
+        o.value = v;
+        wc.append(o);
+      });
+    const sd = el("select");
+    GROUP_START.forEach(([n, t]) => {
+      const o = el("option", null, t);
+      o.value = String(n);
+      if (n === 7) o.selected = true;
+      sd.append(o);
+    });
+    const rd = el("select");
+    [
+      ["all", "All new posts and comments"],
+      ["mine", "Only posts I'm in, and mentions of me"],
+    ].forEach(([v, t]) => {
+      const o = el("option", null, t);
+      o.value = v;
+      rd.append(o);
+    });
+    const ro = el("input");
+    ro.type = "checkbox";
+    ro.checked = true;
+    ro.id = "grp-rollup";
+    const rl = el("label", "chk");
+    rl.append(ro, " Show in All (its Needs you items join All's; its card shows on All either way)");
+    f.append(
+      field("grp-link", "Facebook group link", link),
+      field("grp-name", "Name (optional; Claude reads it from Facebook)", nm),
+      field("grp-tag", "Tag (optional, up to " + TAG_MAX + " letters)", tg),
+      field("grp-chat", "Goes with a chat (optional)", wc),
+      field("grp-start", "First read", sd),
+      field("grp-read", "Read", rd),
+      rl,
+    );
+    const go = el("button", "primary", "Add group");
+    go.type = "submit";
+    go.id = "grp-go";
+    f.append(go, note("grp"));
+    f.onsubmit = e => {
+      e.preventDefault();
+      addGroup({
+        link: link.value,
+        name: nm.value,
+        tag: tg.value,
+        chat: wc.value,
+        days: +sd.value,
+        read: rd.value,
+        rollup: ro.checked,
+      });
+    };
+    return f;
+  }
+  async function addGroup(o) {
+    const raw = String(o.link || "").trim();
+    const m = GROUP_RE.exec(raw);
+    if (!m || /^(joins|feed|discover|create|notifications)$/.test(m[1]))
+      return setNote(
+        "grp",
+        LINK_RE.test(raw)
+          ? "That's a Messenger chat: add it under Add a chat above."
+          : "That isn't a Facebook group link. Open the group on Facebook and copy its address: it looks like https://www.facebook.com/groups/1234567890/.",
+        true,
+      );
+    const g = m[1];
+    const dup = S.chats.find(c => isGroup(c) && c.state !== "deleted" && (c.group === g || c.slug === g));
+    if (dup)
+      return setNote(
+        "grp",
+        "That group is already on the page: " +
+          dup.name +
+          (dup.state === "hidden" ? " (hidden; bring it back above)." : "."),
+        true,
+      );
+    const name = String(o.name || "").trim() || "New group";
+    const tk = newTagKey(name === "New group" ? "" : name, o.tag, "group");
+    if (tk.err) return setNote("grp", tk.err, true);
+    const e = {
+      kind: "group",
+      name,
+      tag: tk.tag === "Chat" ? "Group" : tk.tag,
+      color: (S.chats.length % 4) + 1,
+      order: S.chats.reduce((a, c) => Math.max(a, c.order || 0), 0) + 1,
+      state: "pending",
+      url: "https://www.facebook.com/groups/" + g + "/",
+      group: g,
+      start: { days: o.days || 7 },
+      read: o.read === "mine" ? "mine" : "all",
+      rollup: o.rollup !== false,
+      addedAt: new Date().toISOString(),
+    };
+    if (o.chat) e.chat = o.chat;
+    try {
+      await saveChats({ [tk.key]: e });
+      S.setNotes.grp = { t: name + " is added. " + firstRefreshText({ name }), err: false };
+      renderSettings();
+    } catch (err) {
+      setNote("grp", "Couldn't add it. Try again.", true);
     }
   }
 

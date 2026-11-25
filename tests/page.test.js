@@ -15968,8 +15968,10 @@ async function multiChat() {
     await p.click('#add-go');
     await p.waitForTimeout(100);
     ok(
-      /isn't a Messenger chat link/.test(await mcText(p, '#set-st-add')) && (await mcNWrites(p)) === w0,
-      'F1 SET1: "' + bad + '" is refused inline and writes nothing',
+      (/groups/.test(bad) ? /That's a Facebook group: add it under Add a group/ : /isn't a Messenger chat link/).test(
+        await mcText(p, '#set-st-add'),
+      ) && (await mcNWrites(p)) === w0,
+      'F1 SET1: "' + bad + '" is refused inline and writes nothing (a group link points to Add a group)',
     );
   }
   // SET2: a chat already on the page
@@ -17045,7 +17047,80 @@ async function multiChat3() {
   await p.context().close();
 }
 
+/* F25 G1: Add a group in Settings, and the picker's Chats and Groups headings */
+async function groupsAdd() {
+  let p = await mcOpen();
+  await mcSettings(p);
+  let w0 = await mcNWrites(p);
+  for (const [bad, want] of [
+    ['https://www.facebook.com/messages/t/6161/', /That's a Messenger chat: add it under Add a chat/],
+    ['hello', /isn't a Facebook group link/],
+    ['https://www.facebook.com/groups/joins/', /isn't a Facebook group link/],
+  ]) {
+    await p.fill('#grp-link', bad);
+    await p.click('#grp-go');
+    await p.waitForTimeout(100);
+    ok(
+      want.test(await mcText(p, '#set-st-grp')) && (await mcNWrites(p)) === w0,
+      'G1-02: Add a group refuses "' + bad + '" inline and writes nothing',
+    );
+  }
+  await p.fill('#grp-link', 'https://www.facebook.com/groups/1000000000000001/posts/2000000000000003/');
+  await p.fill('#grp-name', 'Gear Swap');
+  await p.fill('#grp-tag', 'Gear');
+  await p.selectOption('#grp-chat', 'book');
+  await p.selectOption('#grp-read', 'mine');
+  await p.uncheck('#grp-rollup');
+  const startDefault = await p.$eval('#grp-start', x => x.value);
+  await p.click('#grp-go');
+  await until(p, () => __rt.get('meta/chat').chats.gear);
+  const ws = await p.evaluate(n => __rt.writes.slice(n), w0);
+  const e = (await get(p, 'meta/chat')).chats.gear;
+  ok(
+    ws.length === 1 &&
+      JSON.stringify(Object.keys(ws[0].v.chats)) === '["gear"]' &&
+      e.kind === 'group' &&
+      e.state === 'pending' &&
+      e.group === '1000000000000001' &&
+      e.url === 'https://www.facebook.com/groups/1000000000000001/' &&
+      e.chat === 'book' &&
+      e.read === 'mine' &&
+      e.rollup === false &&
+      e.start.days === 7 &&
+      startDefault === '7' &&
+      e.tag === 'Gear',
+    'G1-02/03: Add a group writes one pending kind:"group" entry: group id from a post link, goes with Book Club, Read only mine, Show in All off, first read 7 days by default (' +
+      JSON.stringify(e) +
+      ')',
+  );
+  w0 = await mcNWrites(p);
+  await p.fill('#grp-link', 'https://m.facebook.com/groups/1000000000000001');
+  await p.click('#grp-go');
+  await p.waitForTimeout(100);
+  ok(
+    /already on the page: Gear Swap/.test(await mcText(p, '#set-st-grp')) && (await mcNWrites(p)) === w0,
+    'G1-02: the same group again (another link form) is refused, naming it',
+  );
+  await p.keyboard.press('Escape');
+  await p.click('#h1');
+  const items = await p.$$eval('#picker-list > *', xs =>
+    xs.map(x => (x.classList.contains('pick-head') ? '#' + x.textContent : x.dataset.key)),
+  );
+  ok(
+    items.indexOf('#Chats') >= 0 &&
+      items.indexOf('#Groups') > items.indexOf('#Chats') &&
+      items.indexOf('gear') > items.indexOf('#Groups') &&
+      items.indexOf('trail') > items.indexOf('#Chats') &&
+      items.indexOf('trail') < items.indexOf('#Groups') &&
+      items[items.length - 1] === 'add' &&
+      /Add a chat or group/.test(await mcText(p, '#picker-list')),
+    'G1-17: the picker lists chats, then groups, under headings, and offers "Add a chat or group" (' + items + ')',
+  );
+  ok(p.errors.length === 0, 'G1: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 const SECTIONS = {
+  groupsAdd,
   importer,
   multiChat,
   multiChat2,
