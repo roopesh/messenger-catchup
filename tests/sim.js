@@ -1689,6 +1689,50 @@ sim('F35: post tags people', { s: 15 }, async b => {
   );
   await ctx.close();
 });
+sim('F36: post with photos', { s: 20 }, async b => {
+  const { ctx, p, state, row } = await freshF(b);
+  let s, r;
+  /* Claude attaches the photos while post waits at stage "attach" (Chrome's file upload in real runs) */
+  const attachWhenAsked = async files => {
+    for (let k = 0; k < 80; k++) {
+      await p.waitForTimeout(250);
+      const st = await p.evaluate(() => JSON.parse(sessionStorage.getItem('mc_post') || 'null'));
+      if (st && st.stage === 'attach') break;
+    }
+    await p.setInputFiles(
+      '#attach',
+      files.map(n => ({ name: n, mimeType: 'image/jpeg', buffer: Buffer.from('jpeg ' + n) })),
+    );
+  };
+  await mode(p, {});
+  let run = bridge(p, 'post', Object.assign({}, row, { text: 'Here it is', photos: 2, helperPost: true }));
+  await attachWhenAsked(['a.jpg', 'b.jpg']);
+  r = await run;
+  s = await state();
+  ok(
+    r && r.sent === true && s.sent.length === 1 && s.sent[0].photos === 2 && s.sent[0].text === 'Here it is' && !s.box,
+    'F36: post waits at "attach" until both photos show, then types and sends them with the text (' +
+      JSON.stringify([r, s.sent]) +
+      ')',
+  );
+  await mode(p, {});
+  run = bridge(p, 'post', Object.assign({}, row, { text: '', photos: 1, helperPost: true }));
+  await attachWhenAsked(['c.jpg']);
+  r = await run;
+  s = await state();
+  ok(
+    r && r.sent === true && s.sent.length === 1 && s.sent[0].photos === 1 && s.sent[0].text === '',
+    'F36: a photo with no text is a reply too (' + JSON.stringify([r, s.sent]) + ')',
+  );
+  await mode(p, {});
+  r = await bridge(p, 'post', Object.assign({}, row, { text: 'x', photos: 1, attachMs: 1500, helperPost: true }));
+  s = await state();
+  ok(
+    r && r.sent === false && r.err === 'photos-not-attached' && !r.entered && r.barClosed && !s.sent.length && !s.box,
+    'F36: photos that never show: refused, nothing typed or sent, the reply bar closed (' + JSON.stringify(r) + ')',
+  );
+  await ctx.close();
+});
 sim('F37: react', { s: 20 }, async b => {
   const { ctx, p } = await freshF(b);
   const mid = 'mid.$mock110';

@@ -13,7 +13,7 @@ Read this when `meta/chat.helperPost` is true and there are replies to post (a r
 The same order as outbox.md › Posting, with `post` as the browser step:
 1. A row with no `mid`: add `failed` ("no Messenger id") to the pending outcomes, as outbox.md says. Next row.
 2. **ArtifactData `batch`:** the pending outcomes, plus this row updated to `{state:"sending"}`, all pinned (outbox.md's call 2, including what to do when it's refused: a cancelled row isn't posted).
-3. **Start `post` once** with the row's `mid`, `to`, `snip` and `text` (and its `mentions`, when it has them), plus `helperPost:true`, and poll until it's no longer running. Allow a few minutes: it may have to scroll far back. **Never start `post` twice for a row**, even when its result is lost.
+3. **Start `post` once** with the row's `mid`, `to`, `snip` and `text` (and its `mentions`, when it has them; for `photos`, see Photos below), plus `helperPost:true`, and poll until it's no longer running. Allow a few minutes: it may have to scroll far back. **Never start `post` twice for a row**, even when its result is lost.
 4. Settle the row from the result. Only `unconfirmed` means some of the reply may have gone out; every other error means the helper checked that nothing was sent (no new message from you appeared, and the box still held what it typed).
    - `sent:true`: add `sent` with `sentAt` = its `at` and `sentMid` = its `mid` to the pending outcomes. Next row. With `mentions`, the result lists each name in `tagged` (a real mention) or `missed` (plain text): report the missed ones (outbox.md › Mentions).
    - `err:"unconfirmed"` (with `partial:true` when only part of a multi-line reply may be out): Leave the row in `sending` and **stop posting** for this run, as outbox.md's `{pending}` says. Its settle check after the next import (this refresh's step 8 when it posted before its scan) finds the message in the saved chat, or marks the row `unconfirmed`. Never post it again and never press Return for it.
@@ -25,6 +25,14 @@ The same order as outbox.md › Posting, with `post` as the browser step:
    - `scan-running`, `jump-running`: nothing was done, because a scan or a jump (a Reply link the user followed) is running in the tab. Wait until it ends (about a minute), then start `post` once.
    - `not-opted-in`: `meta/chat.helperPost` isn't true. Use outbox.md's calls.
 5. After the last row, or when you stop, write the pending outcomes in one pinned batch.
+
+## Photos (a row with `photos`, helper 2.9 or later)
+The helper can't fetch the page's stored photos, so Claude attaches them while `post` waits. Your file upload is the only route: never pass a photo's bytes through a browser call (tens of thousands of tokens per photo).
+1. Before step 2, save each photo: the Artifact tool's `read` with the page's `url` and `path` = the asset id saves it to a local file. A photo that can't be read: add `failed` ("photo not found in the page's store") and go to the next row.
+2. Step 3 with `photos` = how many, plus the row's `text` (it may be empty). Poll: once the result reads `{running:true, stage:"attach"}`, the helper has opened Reply and checked the bar and the box, and waits up to 3 minutes for the photos.
+3. Find Messenger's file input (the composer's `input[type=file]`, behind its attach button: use `find` or `read_page` on the Messenger tab; never click the attach button, which opens a file dialog) and put every photo into it with Claude in Chrome's `file_upload`, in order, under 10 MB a call (the page stores big photos shrunk; Messenger takes up to 25 MB each). Keep polling `post`: it waits until that many previews show, then types and sends.
+4. Settle as above. `photos-not-attached` (too few or too many previews, or none within 3 minutes): nothing was sent and the previews were removed (`unattached`): add `failed` with its `detail`.
+5. After `sent`, delete each photo from the page's store (the Artifact tool's `delete` with the page's `url` and `path` = the asset id; the user asked for it: the next refresh stores the photos from the chat). A delete that fails: say so in the report; the photo stays.
 
 ## More actions › Reply (photo-only messages)
 - A message that is only a photo has no "Reply to this message" button on its hover toolbar. Its Reply is in the **More actions** menu.

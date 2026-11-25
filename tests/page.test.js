@@ -1645,6 +1645,55 @@ async function pipeline() {
       JSON.stringify([allSug, sugBe, tv, mo && mo.mentions]) +
       ')',
   );
+  // F36: Attach photo adds a thumbnail; Queue stores the photo in the asset store and lists its id in photos
+  const PNG1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  await p.hover('#m' + mi);
+  await p.click('#m' + mi + ' button.rh:text-is("Reply here")');
+  await p.setInputFiles('#m' + mi + ' .compose input[type="file"]', [
+    { name: 'a.png', mimeType: 'image/png', buffer: PNG1 },
+    { name: 'b.png', mimeType: 'image/png', buffer: PNG1 },
+  ]);
+  const nThumbs = await p.$$eval('#m' + mi + ' .compose .rpic img', x => x.length);
+  await p.click('#m' + mi + ' .compose .rpic button'); /* remove the first */
+  await p.fill('#m' + mi + ' .compose textarea', 'the pack, as promised');
+  await p.click('#m' + mi + ' .compose button.primary');
+  const po = await until(p, () => {
+    const k = [...__rt.store.keys()].find(k => k.startsWith('outbox/') && (__rt.get(k).photos || []).length);
+    return k ? __rt.get(k) : null;
+  });
+  ok(
+    nThumbs === 2 &&
+      po &&
+      po.text === 'the pack, as promised' &&
+      po.photos.length === 1 &&
+      /^[0-9a-f]{32}$/.test(po.photos[0]),
+    'F36: two photos attached, one removed; Queue stores the other and the row lists its asset id (' +
+      JSON.stringify([nThumbs, po]) +
+      ')',
+  );
+  await p.hover('#m' + mi);
+  await p.click('#m' + mi + ' button.rh:text-is("Reply here")');
+  await p.click('#m' + mi + ' .compose button.primary');
+  const empty = await p.$eval('#m' + mi + ' .compose .note:last-child', n => n.textContent).catch(() => '');
+  await p.setInputFiles('#m' + mi + ' .compose input[type="file"]', [
+    { name: 'c.png', mimeType: 'image/png', buffer: PNG1 },
+  ]);
+  await p.click('#m' + mi + ' .compose button.primary');
+  const po2 = await until(p, () => {
+    const k = [...__rt.store.keys()].find(
+      k => k.startsWith('outbox/') && __rt.get(k).text === '' && (__rt.get(k).photos || []).length === 1,
+    );
+    return k ? __rt.get(k) : null;
+  });
+  ok(
+    /Type a reply or add a photo first/.test(empty) && po2,
+    'F36: Queue with nothing says so; a photo alone queues a reply with empty text (' +
+      JSON.stringify([empty, !!po2]) +
+      ')',
+  );
   // F37: React opens a picker under the message; an emoji queues {kind:"react", emoji}; "Other emoji" takes one emoji
   const xi = ri;
   await p.hover('#m' + xi);

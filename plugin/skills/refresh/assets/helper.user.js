@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      2.8
+// @version      2.9
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh. Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @run-at       document-idle
@@ -25,13 +25,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '2.8';
+  window.__mcHelper = '2.9';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '2.8');
+  root.setAttribute('data-mc-helper', '2.9');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -1495,7 +1495,11 @@
      Before each key it records its stage in the command's result ({running:true, stage}) and in sessionStorage mc_post,
      so a result that never arrives can be told apart. After a refusal it cancels the reply bar it opened (barClosed).
      mentions (F35): full names to tag where the text has "@" plus the name; the result lists them in tagged (a real
-     mention) or missed (left as plain text, because Messenger's list didn't offer exactly that name). */
+     mention) or missed (left as plain text, because Messenger's list didn't offer exactly that name).
+     photos (F36, 2.9): how many photos go with the reply. After the bar check it waits (stage "attach", up to attachMs,
+     3 minutes by default) while Claude puts them into Messenger's file input with Chrome's file upload, until that many
+     previews ("Remove attachment") show; then it types the text (which may be empty) and sends. Too few or too many:
+     photos-not-attached, the previews removed, nothing sent. */
   async function mcPost(a, id) {
     a = a || {};
     const t0 = Date.now();
@@ -1507,14 +1511,18 @@
         detail: 'helper posting is off (meta/chat.helperPost): post by references/outbox.md instead',
       });
     if (
-      ![a.mid, a.to, a.text].every(x => typeof x === 'string' && x.trim()) ||
+      ![a.mid, a.to].every(x => typeof x === 'string' && x.trim()) ||
+      typeof a.text !== 'string' ||
+      (a.photos != null && !(Number.isInteger(a.photos) && a.photos >= 0 && a.photos <= 10)) ||
+      !(a.text.trim() || a.photos > 0) ||
       (a.snip && typeof a.snip !== 'string') ||
       (a.mentions != null && !Array.isArray(a.mentions))
     )
       return out({
         err: 'bad-args',
         stage: 'args',
-        detail: 'post needs mid, to and text (strings), snip, and mentions (a list of names) if given',
+        detail:
+          'post needs mid, to and text (strings; text may be empty with photos), snip, mentions (a list of names) and photos (0 to 10) if given',
       });
     const b = busy();
     if (b) return out(Object.assign({ stage: 'args' }, b));
@@ -1674,14 +1682,26 @@
       }
       return !barEl();
     };
-    const refuse = async o => out(Object.assign({ barClosed: await closeBar() }, o));
+    /* F36: the photo previews in the box, each with its "Remove attachment" button */
+    const previews = () =>
+      Array.from(document.querySelectorAll('[aria-label="Remove attachment"]')).filter(e => e.getClientRects().length);
+    const nPhotos = a.photos || 0;
+    const unattach = async () => {
+      for (let k = 0; k < 12 && previews().length; k++) {
+        previews()[0].click();
+        await sleep(200);
+      }
+      return !previews().length;
+    };
+    const refuse = async o =>
+      out(Object.assign(nPhotos ? { unattached: await unattach() } : {}, { barClosed: await closeBar() }, o));
     const ids = () =>
       Array.from(document.querySelectorAll('[role="log"] [data-message-id]')).map(e =>
         e.getAttribute('data-message-id'),
       );
     if (!box())
       return out({ err: 'no-box', stage: 'check', detail: 'no message box ([role="textbox"][contenteditable])' });
-    if (N(box().innerText))
+    if (N(box().innerText) || previews().length)
       return out({
         err: 'box-not-empty',
         stage: 'check',
@@ -1709,6 +1729,26 @@
       });
     if (!box() || N(box().innerText))
       return refuse({ err: 'box-not-empty', stage: 'check', detail: 'the message box already holds text' });
+    if (nPhotos) {
+      mark('attach');
+      let n = 0;
+      for (let k = 0, lim = Math.ceil((a.attachMs || 180000) / 250); k < lim && (n = previews().length) < nPhotos; k++)
+        await sleep(250);
+      await sleep(600);
+      n = previews().length;
+      if (n !== nPhotos)
+        return refuse({
+          err: 'photos-not-attached',
+          stage: 'attach',
+          detail: n + ' of ' + nPhotos + ' photos showed in the box; nothing was sent',
+        });
+      if (!barOk())
+        return refuse({
+          err: 'wrong-reply-target',
+          stage: 'attach',
+          detail: 'the reply bar moved to another message while the photos were attached; nothing was sent',
+        });
+    }
     /* From here on, anything new from you in the chat means some of the reply went out. */
     const before = new Set(ids());
     const mine = () =>
@@ -1798,6 +1838,16 @@
     }
     const lo = await listOpen('enter');
     if (lo) return lo;
+    if (previews().length !== nPhotos) {
+      if (box()) await clear(box());
+      return refuse({
+        err: 'photos-not-attached',
+        stage: 'enter',
+        entered,
+        cleared: !box() || !N(box().innerText),
+        detail: 'the box held ' + previews().length + ' of ' + nPhotos + ' photos just before Enter; nothing was sent',
+      });
+    }
     mark('enter');
     key(box(), false);
     for (let w = 0; w < 60; w++) {
@@ -2155,7 +2205,7 @@
     },
     post: (a, id) => mcPost(a, id),
     react: a => mcReact(a),
-    ping: () => ({ v: '2.8' }),
+    ping: () => ({ v: '2.9' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
