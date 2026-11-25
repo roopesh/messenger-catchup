@@ -25,9 +25,9 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F25 | P2 | feature | Catch up with Facebook group posts too, not just Messenger group chats (the owner's request, Nov 14; to design) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; option C step 1 (the `reply-check` skill) in v1.34.0; measured (0.2% of a 5-hour session per check); scheduling it ("schedule reply checks") in v1.37.0; left: arm it on the owner's account (every 10 minutes, 5 AM–10 PM) and check it, then make the interval and hours changeable in the page |
 | F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
-| F35 | P3 | feature | Tag people in replies: an @mention in a reply written on the page, posted as a real Messenger mention (the owner's request, Nov 24; to design) |
-| F36 | P3 | feature | Photos in replies: attach an image to a reply written on the page and post it with the reply (the owner's request, Nov 24; to design) |
-| F37 | P3 | feature | Reactions: react to a message from the page (👍, ❤️, …), posted to Messenger (the owner's request, Nov 24; to design) |
+| F35 | P3 | feature | Tag people in replies: an @mention in a reply written on the page, posted as a real Messenger mention (the owner's request, Nov 24; options and questions on the decision board) |
+| F36 | P3 | feature | Photos in replies: attach an image to a reply written on the page and post it with the reply (the owner's request, Nov 24; options and questions on the decision board) |
+| F37 | P3 | feature | Reactions: react to a message from the page (👍, ❤️, …), posted to Messenger (the owner's request, Nov 24; options and questions on the decision board) |
 
 ## Bugs
 

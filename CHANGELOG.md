@@ -11,7 +11,10 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 - Ask's message lines name senders the same way, and its format note says so.
 
 ### Tests
-- Page (`pipeline`): senders read "Ana Alvarez", "Ben Brooks", "You", "Ben Ortiz", "Cy Chen (Captain Cy)".
+- Page: senders read "Ana Alvarez", "Ben Brooks", "You", "Ben Ortiz", "Cy Chen (Captain Cy)" (`pipeline`), "Taylor Moss (Cy)" for a nickname (`names`), claims and every Stats list name people the same way (`claims`, `stats`: only the expected strings changed).
+
+### Backlog
+- New: F35 tag people in replies, F36 photos in replies, F37 reactions (the owner's requests, Nov 24), each with its options, limits and questions on the decision board.
 
 ## [1.41.0] - 2026-11-24
 **Sent replies leave Your replies** (BACKLOG B58; the owner's report, Nov 24). MINOR: the page shows less. Page **`PAGE_VERSION` 4.7** (from 4.6); helper unchanged (2.5). `SKILL.md` unchanged.
