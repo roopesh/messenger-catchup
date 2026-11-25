@@ -1747,6 +1747,28 @@ sim('G1: groupFeed', { s: 40 }, async b => {
       JSON.stringify(r && [r.stop, r.posts.length, r.changed]) +
       ')',
   );
+  // a first read of 1 day: posts are 1, 4, 7 … hours old, so it keeps the 8 posts of the last 24 hours
+  await gOpen(p, '', '?sorting_setting=CHRONOLOGICAL', { g_posts: '24' });
+  r = await bridge(p, 'groupFeed', { maxDays: 1, cap: 300 });
+  ok(
+    r && r.stop === 'age' && r.posts.length === 8,
+    'G1: a first read with maxDays 1 stops at the first post older than a day, keeping 8 (' +
+      JSON.stringify(r && [r.stop, r.posts.length]) +
+      ')',
+  );
+  // catching up: known posts don't stop it or count toward the cap
+  r = await bridge(p, 'groupFeed', {
+    known: Object.fromEntries(want.slice(0, 6).map(x => [x[0], x[1]])),
+    through: true,
+    maxDays: 1,
+    cap: 300,
+  });
+  ok(
+    r && r.stop === 'age' && r.posts.length === 8 && r.changed.length === 2,
+    'G1: through: true reads past the known posts to the age stop; only the 2 unknown ones are changes (' +
+      JSON.stringify(r && [r.stop, r.posts.length, r.changed.length]) +
+      ')',
+  );
   r = await bridge(p, 'groupFeed', { cap: 5 });
   ok(
     r && r.stop === 'cap' && r.changed.length === 5,
@@ -1773,6 +1795,56 @@ sim('G1: groupPost', { s: 20 }, async b => {
       !votes,
     'G1: groupPost sorts Newest, loads all 18 comments by scrolling the dialog, opens "View 2 replies", and gives each reply its parent (' +
       JSON.stringify(r && { top: top.length, reps: reps.length, sorted: r.sorted, rep0: reps[0] }) +
+      ')',
+  );
+  await ctx.close();
+});
+sim('G1: a run buffer and groupCapture', { s: 25 }, async b => {
+  const { ctx, p } = await fresh(b);
+  const run = 'run' + Date.now();
+  await gOpen(p, '', '?sorting_setting=CHRONOLOGICAL', { g_posts: '8' });
+  const f = await bridge(p, 'groupFeed', { run });
+  await p.goto(gUrl('posts/2000000000000004/'));
+  await p.waitForTimeout(500);
+  const g = await bridge(p, 'groupPost', { run });
+  await p.goto(URL.replace(/messenger\.html$/, 'notifications/'));
+  await p.waitForTimeout(400);
+  const n = await bridge(p, 'notifs', { run });
+  await p.goto(gUrl(''));
+  await p.waitForTimeout(400);
+  const c = await bridge(p, 'groupCapture', { run, group: GROUP });
+  const cap = JSON.parse((await p.evaluate(() => window.__capText)) || 'null');
+  const shaOk = await p.evaluate(async cp => {
+    const body = JSON.stringify({ posts: cp.posts, comments: cp.comments, notifs: cp.notifs });
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body));
+    return [...new Uint8Array(d)].map(x => x.toString(16).padStart(2, '0')).join('') === cp.sha;
+  }, cap);
+  const left = await p.evaluate(r => localStorage.getItem('mc_g_' + r), run);
+  ok(
+    f &&
+      !f.posts &&
+      f.read === 8 &&
+      Object.keys(f.counts).length === 8 &&
+      g &&
+      !g.comments &&
+      g.read > 0 &&
+      n &&
+      !n.items &&
+      n.read === 6 &&
+      JSON.stringify(n.groups.sort()) === JSON.stringify(['1000000000000001', '1000000000000002']) &&
+      cap &&
+      cap.kind === 'mc-gcapture' &&
+      cap.group === GROUP &&
+      cap.posts.length === 8 &&
+      cap.comments['2000000000000004'].length === g.read &&
+      cap.notifs.length > 0 &&
+      cap.notifs.every(x => x.group === GROUP) &&
+      shaOk &&
+      c.posts === 8 &&
+      left === null &&
+      (await p.$('#__copy')) !== null,
+    "G1: with run, the commands answer with summaries only and keep the text in a buffer; groupCapture makes one checked capture (this group's notifications) behind COPY CAPTURE and clears the buffer (" +
+      JSON.stringify({ f: f && [f.read, f.stop], g: g && g.read, n: n && n.groups, c }) +
       ')',
   );
   await ctx.close();

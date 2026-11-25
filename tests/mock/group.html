@@ -137,12 +137,22 @@
       feed.append(sortDiv);
       /* the scrambled time link: its href becomes the post's address once a pointer is over it */
       function timeLink(p) {
+        /* the first two cards' time links carry their readable time; further down (as a real feed does) the link is a
+           bare placeholder that gets its labelled span, and its address, once a pointer is over it */
         const a = el("a", { role: "link", href: "?__cft__[0]=mock" });
-        const s = el("span", { "aria-labelledby": label(age(p.hours)) });
-        s.className = "scr";
-        "Sponsored0864".split("").forEach(ch => s.append(el("span", null, ch + "͏")));
-        a.append(s);
-        const fill = () => a.setAttribute("href", "/groups/" + G + "/posts/" + p.pid + "/?__cft__[0]=mock");
+        const bare = ORDER.indexOf(p) >= 2;
+        const scramble = () => {
+          const s = el("span", bare ? {} : { "aria-labelledby": label(age(p.hours)) });
+          s.className = "scr";
+          "Sponsored0864".split("").forEach(ch => s.append(el("span", null, ch + "\u034f")));
+          return s;
+        };
+        a.append(scramble());
+        const fill = () => {
+          a.setAttribute("href", "/groups/" + G + "/posts/" + p.pid + "/?__cft__[0]=mock");
+          const s = a.querySelector("span.scr");
+          if (s && !s.hasAttribute("aria-labelledby")) s.setAttribute("aria-labelledby", label(age(p.hours)));
+        };
         ["pointerover", "mouseover", "focus"].forEach(t => a.addEventListener(t, () => setTimeout(fill, 300)));
         return a;
       }
@@ -166,13 +176,15 @@
             f.append(b);
           });
         f.append(el("div", { "data-ad-rendering-role": "like_button", role: "button", "aria-label": "Like" }));
-        f.append(
+        /* the marker has no label; the count is on the "Comment on …" button beside it, as on the real page */
+        const cbw = el("div", { "data-ad-rendering-role": "comment_button" });
+        cbw.append(
           el("div", {
-            "data-ad-rendering-role": "comment_button",
             role: "button",
             "aria-label": "Comment on " + p.who + "'s post" + (p.count ? ", " + p.count + " comments" : ""),
           }),
         );
+        f.append(cbw);
         p.cmts.slice(-2).forEach(c => {
           const ar = el("div", { role: "article", "aria-label": "Comment by " + c.who + " " + age(c.h) });
           ar.append(el("a", { href: "/groups/" + G + "/posts/" + p.pid + "/?comment_id=" + c.cid }, short(c.h)));
@@ -275,7 +287,8 @@
           let shown = 0;
           const article = (aria, who, href, short, text) => {
             const ar = el("div", { role: "article", "aria-label": aria });
-            ar.append(el("a", { href: "/groups/" + G + "/user/" + (9100 + NAMES.indexOf(who)) + "/" }, who));
+            const uh = "/groups/" + G + "/user/" + (9100 + NAMES.indexOf(who)) + "/";
+            ar.append(el("a", { href: uh }), el("a", { href: uh }, who)); /* the avatar link (no text), then the name */
             ar.append(el("div", { dir: "auto" }, text));
             ar.append(el("a", { href }, short));
             const w = el("div");

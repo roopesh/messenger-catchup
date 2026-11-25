@@ -2,6 +2,24 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.48.0] - 2026-11-25
+**Facebook groups on the page** (BACKLOG F25, stage G1, part 2 of 2; design reviewed by the owner, with their answers and comments folded in). MINOR: groups can be added and are read by refreshes. Page **`PAGE_VERSION` 5.4** (from 5.3); helper **3.4** (from 3.0).
+
+### Added
+- **Add a group** (Settings): the group's Facebook link (an id or name, also from a post's link), name and tag, the chat it goes with, the first read (3, 7 or 30 days; 7), Read (all, or only posts you're in and mentions of you) and Show in All. Chat links are pointed to Add a chat and group links to Add a group. The picker lists Chats and Groups under headings.
+- **Refreshes read groups** (`references/groups.md`, named in SKILL.md): notifications once per run, the group's New posts and then its Recent activity, each changed post's comments, then one capture pasted on the page (the helper's new `groupCapture`, so post and comment text never pass through Claude's tokens). `run-plan` plans groups with the chats; `chats` gives a group's details and seed. The first read covers the chosen days (`groupFeed{maxDays}`), 300 posts per run; past that the page says "Catching up" and later runs read on (`through`).
+- **The page stores a group** in `KEY_posts` and `KEY_comments`: post numbers #pN given once, comment numbers #pN/cM in order, yours marked; a re-paste changes nothing.
+- **Group views:** Summary (counts, what the last refresh brought, Needs you: your name in a comment, a reply to your comment, or a mention or reply from notifications, each citing #pN/cM) and Posts (newest activity first, new posts and new comments marked, earlier comments folded, Open on Facebook). A group shows only those two tabs, and its header says what's stored instead of the chat's message window.
+- **All:** a group's card shows its new posts, new comments and needs; a Show filter (All, Chats, Groups) with its total; a group with Show in All off isn't counted in the totals, and its card says so.
+
+### Fixed (from a live read of a real group, Nov 25, read only)
+- Cards further down a group's feed have a bare time link that gets its readable time (and address) only after pointer events: the helper now does that for the time too. An unreadable time label was taken for January 1 (it now means "unknown"). The comment count is on the "Comment on …'s post, N comments" button, not the comment marker. A comment's author is the first profile link with a name (the first is the avatar). A reply's parent is the nearest comment above it that's indented less (the box nesting misled it). The post dialog shows before its comments: the helper waits for them. Live after the fixes: 13 posts of the last day with ids and ages; a post's 22 comments with authors; 7 of 9 replies matched to the comment they name (the 2 deepest get a reply as parent, not always the one named).
+
+### Tests
+- Page sections `groupsAdd` (G1-02/03/17) and `groupsImport` (import, re-paste, numbering, G1-18 Posts, G1-20 Summary and Needs you, G1-30 All and Show in All, another group's capture refused); F24 BD9 and F31 ST11 count only the tabs shown.
+- Sim: the group mock gains bare time links from the third card, the separate comment-count button and avatar links; new cases for a run buffer and `groupCapture`, `maxDays`, `through`.
+- Py: a group is planned like a chat; `chats` gives its seed; `references/groups.md` and the group collections are documented.
+
 ## [1.47.0] - 2026-11-25
 **The helper learns to read Facebook groups** (BACKLOG F25, stage G1, part 1 of 2; the owner-reviewed design at https://claude.ai/artifact/GgfBMy76BJ4b4UQtbxf8EC). MINOR: the helper runs on group and notification pages. Nothing reads groups during a refresh yet: part 2 adds Add a group, the group views and the refresh steps. Helper **3.0** (from 2.9); page **`PAGE_VERSION` 5.3** (from 5.2: only its embedded copy of the helper).
 

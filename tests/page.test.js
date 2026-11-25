@@ -4977,7 +4977,8 @@ async function byDay() {
       p.evaluate(() => {
         const nav = document.querySelector('nav.tabs');
         const nr = nav.getBoundingClientRect();
-        const tabs = [...nav.querySelectorAll('a')].map(a => {
+        /* the tabs this chat shows (a group's Posts tab is hidden on a chat, F25) */
+        const tabs = [...nav.querySelectorAll('a:not([hidden])')].map(a => {
           const r = a.getBoundingClientRect();
           return { t: a.dataset.tab, l: Math.round(r.left), r: Math.round(r.right), h: Math.round(r.height) };
         });
@@ -12326,8 +12327,8 @@ async function stats() {
       const n = document.querySelector('nav.tabs');
       const r = n.getBoundingClientRect();
       return {
-        tabs: n.querySelectorAll('a').length,
-        fit: [...n.querySelectorAll('a')].every(a => {
+        tabs: n.querySelectorAll('a:not([hidden])').length,
+        fit: [...n.querySelectorAll('a:not([hidden])')].every(a => {
           const x = a.getBoundingClientRect();
           return x.left >= r.left && x.right <= r.left + n.clientWidth && x.height >= 32;
         }),
@@ -15968,8 +15969,10 @@ async function multiChat() {
     await p.click('#add-go');
     await p.waitForTimeout(100);
     ok(
-      /isn't a Messenger chat link/.test(await mcText(p, '#set-st-add')) && (await mcNWrites(p)) === w0,
-      'F1 SET1: "' + bad + '" is refused inline and writes nothing',
+      (/groups/.test(bad) ? /That's a Facebook group: add it under Add a group/ : /isn't a Messenger chat link/).test(
+        await mcText(p, '#set-st-add'),
+      ) && (await mcNWrites(p)) === w0,
+      'F1 SET1: "' + bad + '" is refused inline and writes nothing (a group link points to Add a group)',
     );
   }
   // SET2: a chat already on the page
@@ -17045,7 +17048,287 @@ async function multiChat3() {
   await p.context().close();
 }
 
+/* F25 G1: Add a group in Settings, and the picker's Chats and Groups headings */
+async function groupsAdd() {
+  let p = await mcOpen();
+  await mcSettings(p);
+  let w0 = await mcNWrites(p);
+  for (const [bad, want] of [
+    ['https://www.facebook.com/messages/t/6161/', /That's a Messenger chat: add it under Add a chat/],
+    ['hello', /isn't a Facebook group link/],
+    ['https://www.facebook.com/groups/joins/', /isn't a Facebook group link/],
+  ]) {
+    await p.fill('#grp-link', bad);
+    await p.click('#grp-go');
+    await p.waitForTimeout(100);
+    ok(
+      want.test(await mcText(p, '#set-st-grp')) && (await mcNWrites(p)) === w0,
+      'G1-02: Add a group refuses "' + bad + '" inline and writes nothing',
+    );
+  }
+  await p.fill('#grp-link', 'https://www.facebook.com/groups/1000000000000001/posts/2000000000000003/');
+  await p.fill('#grp-name', 'Gear Swap');
+  await p.fill('#grp-tag', 'Gear');
+  await p.selectOption('#grp-chat', 'book');
+  await p.selectOption('#grp-read', 'mine');
+  await p.uncheck('#grp-rollup');
+  const startDefault = await p.$eval('#grp-start', x => x.value);
+  await p.click('#grp-go');
+  await until(p, () => __rt.get('meta/chat').chats.gear);
+  const ws = await p.evaluate(n => __rt.writes.slice(n), w0);
+  const e = (await get(p, 'meta/chat')).chats.gear;
+  ok(
+    ws.length === 1 &&
+      JSON.stringify(Object.keys(ws[0].v.chats)) === '["gear"]' &&
+      e.kind === 'group' &&
+      e.state === 'pending' &&
+      e.group === '1000000000000001' &&
+      e.url === 'https://www.facebook.com/groups/1000000000000001/' &&
+      e.chat === 'book' &&
+      e.read === 'mine' &&
+      e.rollup === false &&
+      e.start.days === 7 &&
+      startDefault === '7' &&
+      e.tag === 'Gear',
+    'G1-02/03: Add a group writes one pending kind:"group" entry: group id from a post link, goes with Book Club, Read only mine, Show in All off, first read 7 days by default (' +
+      JSON.stringify(e) +
+      ')',
+  );
+  w0 = await mcNWrites(p);
+  await p.fill('#grp-link', 'https://m.facebook.com/groups/1000000000000001');
+  await p.click('#grp-go');
+  await p.waitForTimeout(100);
+  ok(
+    /already on the page: Gear Swap/.test(await mcText(p, '#set-st-grp')) && (await mcNWrites(p)) === w0,
+    'G1-02: the same group again (another link form) is refused, naming it',
+  );
+  await p.keyboard.press('Escape');
+  await p.click('#h1');
+  const items = await p.$$eval('#picker-list > *', xs =>
+    xs.map(x => (x.classList.contains('pick-head') ? '#' + x.textContent : x.dataset.key)),
+  );
+  ok(
+    items.indexOf('#Chats') >= 0 &&
+      items.indexOf('#Groups') > items.indexOf('#Chats') &&
+      items.indexOf('gear') > items.indexOf('#Groups') &&
+      items.indexOf('trail') > items.indexOf('#Chats') &&
+      items.indexOf('trail') < items.indexOf('#Groups') &&
+      items[items.length - 1] === 'add' &&
+      /Add a chat or group/.test(await mcText(p, '#picker-list')),
+    'G1-17: the picker lists chats, then groups, under headings, and offers "Add a chat or group" (' + items + ')',
+  );
+  ok(p.errors.length === 0, 'G1: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
+/* F25 G1: a group capture pasted on its group: posts and comments stored with page numbers, re-paste changes nothing */
+function gcap(group, posts, comments, notifs = []) {
+  const body = { posts, comments, notifs };
+  const sha = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
+  return Object.assign({ kind: 'mc-gcapture', v: 1, group, run: 'r1' }, body, { sha });
+}
+async function groupsImport() {
+  const G = '1000000000000001';
+  let p = await mcOpen({
+    chats: {
+      gear: {
+        kind: 'group',
+        name: 'Gear Swap',
+        tag: 'Gear',
+        color: 2,
+        order: 3,
+        state: 'active',
+        group: G,
+        url: 'https://www.facebook.com/groups/' + G + '/',
+        start: { days: 7 },
+        read: 'all',
+        rollup: true,
+      },
+    },
+  });
+  await mcPick(p, 'gear');
+  const post = (k, count) => ({
+    pid: String(2000000000000000 + k),
+    who: 'Ana Alvarez',
+    uid: '9100',
+    age: k + ' hours ago',
+    text: 'Post ' + k,
+    more: false,
+    photos: [],
+    count,
+  });
+  const cmt = (k, c, who, rid) => ({
+    cid: String(4000000000000000 + k * 100 + c),
+    rid: rid || null,
+    parent: rid ? String(4000000000000000 + k * 100 + c) : null,
+    who,
+    uid: '9101',
+    text: 'Comment ' + c,
+    age: '1h',
+  });
+  const cap1 = gcap(G, [post(0, 2), post(1, 0)], { [post(0).pid]: [cmt(0, 1, 'Ben Brooks'), cmt(0, 0, 'Sam')] });
+  const li = await mcPaste(p, cap1, 'gear');
+  const p0 = await get(p, 'gear_posts/p' + post(0).pid);
+  const p1 = await get(p, 'gear_posts/p' + post(1).pid);
+  const c0 = await get(p, 'gear_comments/p' + post(0).pid);
+  const meta = await get(p, 'meta/chat-gear');
+  ok(
+    li &&
+      li.posts === 2 &&
+      li.comments === 2 &&
+      p0 &&
+      p0.n === 1 &&
+      p1 &&
+      p1.n === 2 &&
+      meta.nextP === 3 &&
+      c0 &&
+      c0.comments.length === 2 &&
+      c0.comments[0].cid === cmt(0, 0).cid &&
+      c0.comments[0].c === 1 &&
+      c0.comments[0].byYou === true &&
+      c0.comments[1].c === 2 &&
+      c0.comments[1].byYou === false,
+    'G1: a group capture stores posts p1, p2 (meta/chat-gear nextP 3) and the comments numbered oldest first, yours marked (' +
+      JSON.stringify({ li, n: [p0 && p0.n, p1 && p1.n], c: c0 && c0.comments.map(x => [x.c, x.byYou]) }) +
+      ')',
+  );
+  // the same capture again: nothing changes
+  const w0 = await mcNWrites(p);
+  await p.evaluate(t => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, JSON.stringify(cap1));
+  await p.waitForTimeout(400);
+  const again = (await mcWrites(p, w0)).filter(x => !/^refresh\/lastImport/.test(x));
+  ok(!again.length, 'G1: the same group capture pasted again changes no post or comment (' + again + ')');
+  // a later capture: a new comment on p1 keeps numbering; a new post gets p3; known posts keep their numbers
+  const reply = {
+    cid: cmt(0, 0).cid,
+    rid: '5000000000000001',
+    parent: cmt(0, 0).cid,
+    who: 'Dee Diaz',
+    uid: '9103',
+    text: 'Agreed',
+    age: '5m',
+  };
+  const mention = {
+    id: '7000000000000001',
+    kind: 'group_comment_mention',
+    group: G,
+    post: post(0).pid,
+    comment: cmt(0, 2).cid,
+    reply: null,
+    unread: true,
+    age: '3m',
+    text: 'Cy Chen mentioned you in a comment in Gear Swap.',
+  };
+  const cap2 = gcap(
+    G,
+    [post(2, 0), post(0, 3)],
+    { [post(0).pid]: [reply, cmt(0, 2, 'Cy Chen'), cmt(0, 1, 'Ben Brooks')] },
+    [mention],
+  );
+  await mcPaste(p, cap2, 'gear');
+  const c0b = await get(p, 'gear_comments/p' + post(0).pid);
+  ok(
+    (await get(p, 'gear_posts/p' + post(2).pid)).n === 3 &&
+      (await get(p, 'gear_posts/p' + post(0).pid)).n === 1 &&
+      (await get(p, 'gear_posts/p' + post(0).pid)).count === 3 &&
+      c0b.comments.length === 4 &&
+      c0b.comments[2].c === 3 &&
+      c0b.comments[2].who === 'Cy Chen' &&
+      c0b.comments[3].rid === '5000000000000001',
+    'G1: a later capture: the new post is p3, known posts keep their numbers, only the new comment is added (#3) (' +
+      JSON.stringify(c0b && c0b.comments.map(x => x.c)) +
+      ')',
+  );
+  // Posts: newest activity first, new post and new comments marked, earlier comments folded, the Facebook link
+  await p.evaluate(() => {
+    location.hash = '#posts';
+  });
+  const pv = await until(p, () => {
+    const cards = [...document.querySelectorAll('#v-posts article.gpost')];
+    return cards.length === 3
+      ? {
+          ids: cards.map(c => c.id),
+          chips: cards.map(c => [...c.querySelectorAll(':scope > .row .chip')].map(x => x.textContent).join('|')),
+          folded: (cards[1].querySelector('details > summary') || {}).textContent,
+          news: cards[1].querySelectorAll(':scope > .gc.new').length,
+          fb: cards[0].querySelector('a[target="_blank"]').getAttribute('href'),
+          tabs: [...document.querySelectorAll('nav.tabs a')].filter(a => !a.hidden).map(a => a.dataset.tab),
+        }
+      : null;
+  });
+  ok(
+    pv &&
+      JSON.stringify(pv.ids) === '["p3","p1","p2"]' &&
+      pv.chips[0] === 'new post' &&
+      pv.chips[1] === '2 new comments' &&
+      pv.folded === '2 earlier comments' &&
+      pv.news === 2 &&
+      pv.fb === 'https://www.facebook.com/groups/' + G + '/posts/' + post(2).pid + '/' &&
+      JSON.stringify(pv.tabs) === '["summary","posts"]',
+    'G1-18: Posts lists the group newest activity first (#p3 new, #p1 with 2 new comments, 2 earlier folded), each with its Facebook link; a group shows only Summary and Posts (' +
+      JSON.stringify(pv) +
+      ')',
+  );
+  // Summary: counts and Needs you (a reply to your comment); its citation opens the comment in Posts
+  await p.evaluate(() => {
+    location.hash = '#summary';
+  });
+  const sv = await until(p, () => {
+    const t = document.getElementById('v-summary').textContent;
+    return /3 posts and 4 comments stored/.test(t) ? t : null;
+  });
+  await p.click('#v-summary a.cite');
+  const jumped = await until(p, () => location.hash === '#posts' && !!document.getElementById('p1c4'));
+  ok(
+    sv &&
+      /Dee Diaz replied to you: “Agreed”/.test(sv) &&
+      /Gear #p1\/c4/.test(sv) &&
+      /Cy Chen mentioned you in a comment in Gear Swap\. Gear #p1\/c3 from notifications/.test(sv) &&
+      jumped,
+    'G1-20: a group Summary counts posts and comments; Needs you lists a reply to your comment and a mention from notifications (matched to #p1/c3); a citation opens #p1/c4 (' +
+      (sv || '').slice(0, 200) +
+      ')',
+  );
+  // All: the group's card has its new posts and comments and its unread mention; Show filters; Show in All off
+  await mcPick(p, 'all');
+  const allOf = () =>
+    p.evaluate(() => ({
+      cards: [...document.querySelectorAll('#v-all .chatcard')].map(c => c.dataset.chat),
+      gear: (document.querySelector('#v-all .chatcard[data-chat="gear"] .chatnums') || {}).textContent || '',
+      tot: (document.querySelector('#v-all [aria-label="Show"]') || {}).textContent || '',
+    }));
+  await p.click('#v-all [data-show="groups"]');
+  const a1 = await allOf();
+  await p.evaluate(() => {
+    const m = JSON.parse(JSON.stringify(__rt.get('meta/chat')));
+    m.chats.gear.rollup = false;
+    __rt.write('meta/chat', m);
+  });
+  await p.waitForTimeout(300);
+  const a2 = await allOf();
+  ok(
+    JSON.stringify(a1.cards) === '["gear"]' &&
+      /^1 new post · 2 new comments · 1 needs you$/.test(a1.gear) &&
+      /1 needs you/.test(a1.tot) &&
+      /0 need you/.test(a2.tot) &&
+      /\(not counted in All\)/.test(a2.gear),
+    'G1-30: All shows the group card (1 new post, 2 new comments, 1 needs you), Show: Groups lists only groups; with Show in All off the total drops it but its card keeps its count (' +
+      JSON.stringify({ a1, a2 }) +
+      ')',
+  );
+  await mcPick(p, 'gear');
+  // a capture from another group is refused
+  await mcPaste(p, gcap('999', [post(5, 0)], {}), 'gear').catch(() => null);
+  ok(!(await get(p, 'gear_posts/p' + post(5).pid)), 'G1: a capture from another group is refused, nothing stored');
+  ok(p.errors.length === 0, 'G1 import: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 const SECTIONS = {
+  groupsAdd,
+  groupsImport,
   importer,
   multiChat,
   multiChat2,
