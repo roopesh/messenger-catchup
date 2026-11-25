@@ -1755,8 +1755,17 @@
   .item.ob.queued {
     border-left: 3px solid var(--warn);
   }
-  .item.ob.sent {
-    opacity: 0.8;
+  /* B58: a reply takes a few lines, not a card's worth of padding */
+  .item.ob {
+    padding: 8px 12px;
+    gap: 2px;
+  }
+  .item.ob .note {
+    font-size: 0.84rem;
+  }
+  .item.ob .row > button.link {
+    margin-left: auto;
+    font-size: 0.84rem;
   }
   .toast {
     position: fixed;
@@ -2685,7 +2694,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "4.6";
+  const PAGE_VERSION = "4.7";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3832,14 +3841,9 @@
     });
   }
   function renderOutbox(v) {
-    /* queued, failed, still sending, or not confirmed: shown until resolved; sent: shown for a day */
-    const items = (S.outbox || []).filter(
-      o =>
-        o.state !== "cancelled" &&
-        o.state !== "dismissed" &&
-        (/^(queued|failed|sending|unconfirmed)$/.test(o.state) ||
-          Date.now() - Date.parse(o.sentAt || o.queuedAt || 0) < 36e5 * 24),
-    );
+    /* queued, failed, still sending, or not confirmed: shown until resolved; a sent reply leaves the list (B58: it shows in
+       Messages as your own message) */
+    const items = (S.outbox || []).filter(o => /^(queued|failed|sending|unconfirmed)$/.test(o.state));
     if (!items.length) return;
     items.sort((a, b) => (b.queuedAt || "").localeCompare(a.queuedAt || ""));
     const q = items.filter(o => o.state === "queued").length;
@@ -3858,7 +3862,6 @@
           (att === 1 ? "s" : "") +
           " a look: check Messenger, then dismiss it or tell Claude it went through."
         : "",
-      !q && !att ? "Sent in the last day." : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -3894,7 +3897,7 @@
             x.disabled = false;
           }
         };
-        d.append(x);
+        r.append(x);
       }
       if (o.state === "failed" || o.state === "unconfirmed") {
         const x = el("button", "link", "Dismiss");
@@ -3907,7 +3910,7 @@
             x.disabled = false;
           }
         };
-        d.append(x);
+        r.append(x);
       }
       l.append(d);
     });
