@@ -19,12 +19,12 @@ Files that ship with this skill, relative to its folder `${CLAUDE_SKILL_DIR}` (i
 - **"Refresh my catch-up", or a scheduled run:** the Refresh steps below.
 - **"Send replies"** (post queued replies now, without a refresh): the `messenger-catchup:replies` skill.
 - **"Check replies", or a message starting "Scheduled reply check":** `messenger-catchup:reply-check`.
-- **Several chats** (`meta/chat.chats` lists two or more, the user names a chat, or there's no `chats`): `references/chats.md`.
+- **Several chats** (`meta/chat.chats` lists two or more, the user names a chat, or there's no `chats`): `references/chats.md`; a Facebook group (`kind:"group"`): `references/groups.md`.
 - **"Reply 3232" / "open #3232":** `references/open-message.md`.
-- **The user asks for summaries of past days:** `references/day-summaries.md` › Backfill; **captions for older photos:** `references/photos.md` › Captions for older photos.
+- **Summaries of past days:** `references/day-summaries.md` › Backfill; **captions for older photos:** `references/photos.md` › Captions for older photos.
 - **The user asks about the schedule, reply checks or the requirements:** `messenger-catchup:setup`. **About questions they asked on the page, or for a note or analysis worth keeping:** `references/database.md` › What the page saves for Claude.
 - **A message linked to the wrong one** (the user says so, or you spot it): `relink` (catchup.py, below); **in the wrong conversation:** `move` (`references/writing-the-build.md` › Moving a message).
-- **An error that the steps below don't cover:** read `references/troubleshooting.md`.
+- **An error the steps below don't cover:** `references/troubleshooting.md`.
 - Every refresh needs the user's computer online, Chrome with Claude in Chrome connected (no other browser), Facebook signed in (English), and Claude's Messenger tab open and in front (setup skill › Requirements). If not, the run is skipped; the next catches up.
 
 ## Hard rules
@@ -65,8 +65,8 @@ Before each run: `ArtifactData get` `meta/chat`, `threading/current` and `refres
 3. Scan with `STOPS = reversed meta.anchorMids` and `BASE = meta.lastI` (`meta/chat.photosOwed` set: `references/photos.md` › Backfill; helper: `full` with a fresh `run` id; no helper: the injected steps). Require the scan's `err` to be null and verify `ok:true`, `gap:0`, `prefixSame:true`. If the scan's `err` is set (`"stalled"` or `"top-spinner"`: retry once, `references/helper.md` › Scan results), or verify fails twice, set the status to error and stop (tell the user unless it's a scheduled run). Put the result's `warn`, and a capture summary ending `DATES-GUESSED #…`, in the report (`references/helper.md` › Warnings). **Nothing new** (`err:null, win:0`), unless WORK is behind (its `base` below `meta/chat.lastI`: `references/troubleshooting.md`): skip steps 4–6, and in step 7 write only `meta/chat` `{lastRefresh, versions}` and `refresh/status` (by step 7's rule, with `added:0`).
 4. Import by paste:
    - Open a new tab on the user's page and wait 10 s.
-   - In the Messenger tab, click COPY CAPTURE (it's drawn at the top left; center about (146,44)) and confirm `#__copyst` reads "COPIED n chars" (COPY FAILED: `references/troubleshooting.md` › Import toasts).
-   - In the page tab, click an empty area of the page (not a text box), wait 2 s, click again, then paste (cmd+v on Mac, ctrl+v elsewhere). Wait 8–10 s.
+   - In the Messenger tab, click COPY CAPTURE (top left; center about (146,44)) and confirm `#__copyst` reads "COPIED n chars" (COPY FAILED: `references/troubleshooting.md` › Import toasts).
+   - In the page tab, click an empty area (not a text box), wait 2 s, click again, then paste (cmd+v on Mac, ctrl+v elsewhere). Wait 8–10 s.
    - A toast reads "IMPORT OK: n new messages, #a–#b (chunks …)". If there are no photos, paste once more: it should say "Nothing new". Photos or `FAILED`: never close the page tab until `references/photos.md` › Waiting says so.
    - Any other toast (REPAIRED, another import running, or a refusal): do what `references/troubleshooting.md` › Import toasts says before step 5.
 5. Close the page tab (unless photos.md › Waiting says to leave it open) and navigate the Messenger tab back to the chat (the capture blanked it). `get` the chunks named in the toast (plus the chunks holding any messages bootstrap reported as not built; `build` names them if they're missing) and `meta/chat` into a RUN folder with `out_dir` (each file holds the bare document catchup.py reads). Also `list threading` and `list summary` (limit 1000) into RUN, query `reports` and `daySummaries` (`references/reports.md`, `references/day-summaries.md`), and `get` `refresh/status`. Note every `version` these reads show: step 7 pins with them. Look at new photos: `references/photos.md` › Looking.

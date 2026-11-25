@@ -17,8 +17,8 @@ Use one run id (`run`, e.g. `g` + the current time in ms) for every command of t
 3. **New posts:** navigate to the group's `url` + `?sorting_setting=CHRONOLOGICAL`, start `groupFeed{known, cap: 50, run}`. It stops at the first known post.
 4. **New comments on older posts:** navigate to `url` + `?sorting_setting=RECENT_ACTIVITY`, start `groupFeed{known, cap: 50, run}` again. It stops two cards after the first unchanged post.
 5. **Each changed post** (in either feed result's `changed`, plus the notification posts for this group), at most 50: navigate to `https://www.facebook.com/groups/<group>/posts/<pid>/`, start `groupPost{run, known: the post's stored comment ids}`.
-6. **Capture:** start `groupCapture{run, group}`, click COPY CAPTURE, then paste on the page with that group picked (as for a chat, SKILL.md step 6). The page stores new posts (their `p` numbers) and new comments (their `c` numbers within the post) and says "IMPORT OK: N new posts and M new comments".
-7. **Write** `meta/chat-KEY` `{lastRefresh, coverage}` (pinned), and for a `pending` group `state:"active"` in `meta/chat.chats` (one pinned update).
+6. **Capture:** start `groupCapture{run, group}`, click COPY CAPTURE, then paste on the page with that group picked (as for a chat, SKILL.md step 4). The page stores new posts (their `p` numbers) and new comments (their `c` numbers within the post) and says "IMPORT OK: N new posts and M new comments".
+7. **Write** `meta/chat-KEY` `{lastRefresh, coverage, versions}` (pinned; `versions` as in `references/database.md` › Versions), and for a `pending` group `state:"active"` in `meta/chat.chats` (one pinned update).
 8. **Report** in a bullet named for the group: new posts, threads that moved, deals (item, price, sold or not), questions to the user.
 
 ## First read and big groups

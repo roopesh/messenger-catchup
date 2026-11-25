@@ -37,6 +37,7 @@ REFERENCES = [
     "database.md",
     "day-summaries.md",
     "first-run.md",
+    "groups.md",
     "helper.md",
     "open-message.md",
     "outbox.md",
