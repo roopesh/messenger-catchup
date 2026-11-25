@@ -2850,7 +2850,9 @@
     if (e)
       e.textContent = all
         ? "Messenger Catch-up · " + S.chats.filter(isLive).length + " chats"
-        : (m.threadName || "Messenger") + " · Messenger group";
+        : isGroup(CUR)
+          ? CUR.name + " · Facebook group"
+          : (m.threadName || "Messenger") + " · Messenger group";
     const h = document.getElementById("h1");
     if (h) h.textContent = all ? "All chats" : many || !CUR.home ? CUR.name : nm + " Catch-up";
     document.querySelectorAll("[data-rp]").forEach(x => {
@@ -3593,6 +3595,20 @@
 
   /* ---------- header ---------- */
   function renderHeader() {
+    /* F25: a group has no message window or catch-up marker: one line says what's stored and when it was read */
+    const grp = isGroup(CUR);
+    $("#marker").hidden = grp;
+    $("#strip").hidden = grp;
+    if (grp) {
+      const mt = S.meta || {};
+      const n = Object.keys(S.gposts || {}).length;
+      $("#window").textContent = n
+        ? plural(n, "post") + " stored. Last refreshed " + (refreshShown(mt.lastRefresh, mt.tz) || "—") + "."
+        : CUR.state === "pending"
+          ? "No posts stored yet. " + firstRefreshText(CUR, !!CUR.reason)
+          : "No posts stored yet.";
+      return;
+    }
     renderMarker();
     const mt = S.meta;
     /* a chat with nothing stored shows no counters (B56: they stayed from the chat shown before) */
@@ -11373,9 +11389,11 @@
     setRS(
       (S.meta && S.meta.lastRefresh ? "Last refreshed " + refreshShown(S.meta.lastRefresh, S.meta.tz) + ". " : "") +
         (rr && rr.state === "done" && rr.due === 0 ? "Last scheduled run: no chat was due. " : "") +
-        "To pull new messages, ask Claude in chat to “" +
-        RP() +
-        "”. The choice above only filters what's shown; it doesn't fetch anything.",
+        (isGroup(CUR)
+          ? "To read new posts and comments, ask Claude in chat to “" + RP() + "”."
+          : "To pull new messages, ask Claude in chat to “" +
+            RP() +
+            "”. The choice above only filters what's shown; it doesn't fetch anything."),
     );
   }
   setInterval(() => {
@@ -14504,6 +14522,7 @@
       const redraw = () => {
         renderPosts();
         renderGroupSummary();
+        renderHeader();
       };
       on(db.collection("posts"), q => {
         S.gposts = {};
