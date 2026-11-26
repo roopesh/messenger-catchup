@@ -18077,15 +18077,25 @@ async function multiChatAll() {
   // SD6: a chat's own By day is its own (bare numbers), and switching back to All chats redraws it
   await xsTab(p, 'days');
   const camDays = await p.evaluate(() => ({
+    head: document.querySelector('#v-days .sec-head p').textContent,
     x: document.querySelectorAll('#days-list article.xday').length,
     cites: [...document.querySelectorAll('#days-list .cite')].map(c => c.textContent),
   }));
   await mcPick(p, 'all');
   await xsTab(p, 'days');
   const back = await p.$$eval('#days-list article.xday', as => as.length);
+  const heads = await p.evaluate(() => document.querySelector('#v-days .sec-head p').textContent);
   ok(
-    camDays.x === 0 && camDays.cites.length && camDays.cites.every(c => /^#\d+$/.test(c)) && back === 2,
-    "F1 SD6: Camera Club's By day shows its own days with bare numbers; back on All chats, every chat's again " +
+    !/Copy for chat/.test(heads) && /a section per chat/.test(heads),
+    "F1 SD4: All chats' By day header describes every chat's days and doesn't offer Copy for chat (" + heads + ')',
+  );
+  ok(
+    /Copy for chat/.test(camDays.head) &&
+      camDays.x === 0 &&
+      camDays.cites.length &&
+      camDays.cites.every(c => /^#\d+$/.test(c)) &&
+      back === 2,
+    "F1 SD6: Camera Club's By day shows its own days with bare numbers (and its header offers Copy for chat); back on All chats, every chat's again " +
       JSON.stringify({ camDays, back }),
   );
   // PH: at 390 px, All chats' Stats and By day fit the screen

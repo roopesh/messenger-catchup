@@ -9457,9 +9457,6 @@
       box.append(el("div", "empty", "No day summaries in any chat yet. A refresh writes each chat's day summary."));
       return;
     }
-    box.append(
-      el("p", "note", "Each day, a section per chat with that day's summary. A number opens its message in its chat."),
-    );
     const n = XD.n || DAYS_STEP;
     days.slice(0, n).forEach(k => {
       const art = el("article", "item dg-day xday");
@@ -13761,6 +13758,16 @@
     const key = [S.daySums, S.digests, S.reports, S.msgs, S.daysN, S.meta, S.daySumsIn, S.digestsIn, dsToday()];
     key.push(S.view === "all", XD && XD.v, S.chats, XD && XD.n);
     v.classList.toggle("xall", S.view === "all");
+    /* the header says what the tab shows: a chat's days (with Copy for chat), or every chat's on All chats */
+    const hp = v.querySelector(".sec-head p");
+    if (hp) {
+      if (renderDays.head == null) renderDays.head = hp.textContent;
+      const ht =
+        S.view === "all"
+          ? "Each day, newest first, a section per chat with that day's summary: its topics, then what's still open. A number opens its message in its chat."
+          : renderDays.head;
+      if (hp.textContent !== ht) hp.textContent = ht;
+    }
     if (S.view === "all") {
       if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
       renderDays.k = key;
