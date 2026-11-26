@@ -2,6 +2,16 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.51.1] - 2026-11-26
+**A stalled verify retries itself** (B65, #81). On a busy added chat the check after the reload often ended `stalled` on the first try, and only a whole second run (about 2 minutes) passed. PATCH. Helper 3.6; page 5.7 (only its embedded copy of the helper changes); no skill procedure change.
+
+### Fixed
+- The helper (3.6): when the verify's first pass stalls, it finds the message list again, waits until the chat settles (messages shown, height steady for 2 s, at most 15 s), and scrolls once more from the bottom, which makes Messenger ask again for older messages it dropped. A stall now means nothing new and no movement: scrolling through messages already loaded no longer counts toward the 30 s, and the timer starts after the scroll to the bottom. The result adds `seen` (messages each pass saw) and `mode:"retry"`.
+- `references/helper.md` › Scan results: a verify stall from helper 3.6 has already been retried once; report `verify.seen`.
+
+### Tests
+- sim: a mock mode that loses the first request for older messages after a load (until the list is scrolled back down) reproduces #81's result (`stalled`, win 0, gap 0) on helper 3.5; 3.6 retries and passes in the same verify. The spinner case now retries once before `top-spinner`; both cases' time ceilings rose to 45 s.
+
 ## [1.51.0] - 2026-11-25
 **Needs you opens threads in place** (B62; the owner, Nov 25: "why are we managing two different experiences??"). MINOR: Summary behaves differently. Page 5.6; no helper or skill change.
 

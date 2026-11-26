@@ -1329,7 +1329,7 @@ sim('E: people scan under a spinner', async b => {
   );
   await ctx.close();
 });
-sim('E: verify under a spinner', { s: 32 }, async b => {
+sim('E: verify under a spinner', { s: 48 }, async b => {
   const { ctx, p } = await fresh(b);
   let r, t0;
   await mode(p, {}, 30);
@@ -1340,8 +1340,41 @@ sim('E: verify under a spinner', { s: 32 }, async b => {
   t0 = Date.now();
   const vr = await bridge(p, 'verify', { stallMs: 4000 });
   ok(
-    r && r.top && vr && !vr.ok && vr.err === 'top-spinner' && Date.now() - t0 < 25000,
-    'E: verify under a spinner that stays ends with err "top-spinner" in ' +
+    r && r.top && vr && !vr.ok && vr.err === 'top-spinner' && vr.mode === 'retry' && Date.now() - t0 < 45000,
+    'E: verify under a spinner that stays retries once, then ends with err "top-spinner" in ' +
+      Math.round((Date.now() - t0) / 1000) +
+      ' s (' +
+      JSON.stringify(vr) +
+      ')',
+  );
+  await ctx.close();
+});
+/* B65 (#81): on a busy chat the verify after the reload stalled on its first try and a whole new run passed. The
+   mock loses the first request for older messages until the list is scrolled back down; the helper retries a stalled
+   verify itself (finds the list again, lets it settle, scrolls from the bottom), and reports what each pass saw. */
+sim('E: verify retries a stall itself', { s: 40 }, async b => {
+  const { ctx, p } = await fresh(b);
+  await mode(p, {}, 80);
+  const r = await bridge(p, 'scan', { first: { count: 60 } });
+  await p.evaluate(() => localStorage.setItem('mock_stall', 'lost'));
+  await p.reload();
+  await p.waitForTimeout(700);
+  const t0 = Date.now();
+  const vr = await bridge(p, 'verify', { stallMs: 4000 });
+  ok(
+    r &&
+      !r.err &&
+      r.win === 60 &&
+      vr &&
+      vr.ok &&
+      !vr.err &&
+      vr.win === 60 &&
+      vr.mode === 'retry' &&
+      Array.isArray(vr.seen) &&
+      vr.seen.length === 2 &&
+      vr.seen[0] < vr.seen[1] &&
+      Date.now() - t0 < 45000,
+    'E: a verify whose first pass stalls retries itself and passes in ' +
       Math.round((Date.now() - t0) / 1000) +
       ' s (' +
       JSON.stringify(vr) +

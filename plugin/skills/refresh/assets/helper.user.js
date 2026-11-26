@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      3.5
+// @version      3.6
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -27,13 +27,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '3.5';
+  window.__mcHelper = '3.6';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '3.5');
+  root.setAttribute('data-mc-helper', '3.6');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -973,6 +973,8 @@
         async function pass(frac, ms) {
           V.order = [];
           V.gap = 0;
+          V.stalled = false;
+          V.spinner = false;
           const TOP = anchor === '__top__';
           let tops = 0,
             topSince = 0,
@@ -986,7 +988,9 @@
             await sleep(600);
           }
           collect();
-          let extra = 0;
+          grownAt = Date.now();
+          let lastTop = s.scrollTop,
+            extra = 0;
           for (let r = 0; r < 1500; r++) {
             if (TOP ? atTop : V.order.includes(anchor)) {
               if (++extra > 2) break;
@@ -997,10 +1001,10 @@
             await sleep(s.scrollTop < 5 ? 1500 : ms);
             collect();
             const grew = V.order.length > len;
-            if (grew) {
-              len = V.order.length;
-              grownAt = Date.now();
-            }
+            if (grew) len = V.order.length;
+            /* a stall is nothing new and no movement: scrolling through messages already loaded isn't one */
+            if (grew || Math.abs(s.scrollTop - lastTop) > 2) grownAt = Date.now();
+            lastTop = s.scrollTop;
             if (s.scrollTop < 5 && !grew && !loadingTop(s)) {
               if (!tops++) topSince = Date.now();
               if (tops > TOPW.tries && Date.now() - topSince >= TOPW.ms) atTop = true;
@@ -1011,6 +1015,7 @@
               break;
             }
           }
+          V.seen.push(V.order.length);
           if (TOP ? !atTop : !V.order.includes(anchor)) return false;
           const w = TOP ? V.order.slice() : V.order.slice(V.order.indexOf(anchor) + 1);
           V.win = w;
@@ -1018,11 +1023,31 @@
           V.extra = w.length - S.win.length;
           return V.gap === 0 && V.prefixSame;
         }
+        /* until the list shows messages and its height holds for 2 s (at most 15 s) */
+        async function settle() {
+          let h = -1,
+            same = 0;
+          for (let w = 0; w < 30 && same < 4; w++) {
+            await sleep(500);
+            const s = log() && sc();
+            const n = s && log().querySelector('[data-message-id]') ? s.scrollHeight : -1;
+            same = n > 0 && n === h ? same + 1 : 0;
+            h = n;
+          }
+        }
+        V.seen = [];
         for (let w = 0; w < 20 && !(log() && sc()); w++) await sleep(500);
         V.mode = 'fast';
         let ok = await pass(0.6, 500);
-        if (!ok && !V.stalled) {
-          /* a slower pass helps when Messenger skipped content, not when it stopped loading */
+        if (!ok && V.stalled) {
+          /* B65: on a busy chat Messenger can drop the first request for older messages after the reload. Find the list
+             again, let it settle, and start over from the bottom: scrolling back down makes Messenger ask again. */
+          V.mode = 'retry';
+          LOG = SC = null;
+          await settle();
+          ok = await pass(0.6, 500);
+        } else if (!ok) {
+          /* a slower pass helps when Messenger skipped content */
           V.mode = 'slow';
           ok = await pass(0.35, 900);
         }
@@ -1043,6 +1068,7 @@
       err: X.err,
       win: X.win ? X.win.length : 0,
       mode: X.mode,
+      seen: X.seen || [],
     };
   }
   /* capture: the window's messages and photos. OPT.skip (helper 2.1, references/photos.md › Backfill) = {"<i>": [k or
@@ -2591,7 +2617,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '3.5' }),
+    ping: () => ({ v: '3.6' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
