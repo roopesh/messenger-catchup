@@ -1054,6 +1054,25 @@
   .pics a {
     cursor: zoom-in;
   }
+  /* F39: a stored GIF shows its first frame with a badge, and plays while hovered, focused or tapped */
+  .pics a.gifpic {
+    position: relative;
+  }
+  .gifbadge {
+    position: absolute;
+    left: 5px;
+    bottom: 5px;
+    padding: 2px 5px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.62);
+    color: #fff;
+    font: 600 0.68rem/1.2 var(--mono);
+    letter-spacing: 0.04em;
+    pointer-events: none;
+  }
+  .gifpic.playing .gifbadge {
+    display: none;
+  }
   /* a packed photo (R13) while its pack loads, and the tile left when it can't */
   img.ph-wait {
     min-width: 80px;
@@ -2836,7 +2855,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "5.7";
+  const PAGE_VERSION = "5.8";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -6261,6 +6280,8 @@
     const pics = (S.photos && S.photos[m.i]) || [];
     const pvs = (S.photoPv && S.photoPv[m.i]) || [];
     const caps = capsFor(m.i);
+    /* F39: a GIF message's stored images are the GIF itself (the helper stores it when it can download it) */
+    const isGif = !!(S.gifs && S.gifs.has(m.i));
     if (pics.length) {
       const pw = el("div", "pics" + (pics.length > 2 ? " many" : ""));
       pics.forEach((u, k) => {
@@ -6272,11 +6293,12 @@
           lightbox(pics, k, "#" + m.i + " · " + nameOf(m) + " · " + m.t, pvs, caps);
         };
         const im = el("img");
-        im.alt = caps[k] || "Photo " + (k + 1) + " from " + nameOf(m);
+        im.alt = caps[k] || (isGif ? "GIF from " : "Photo " + (k + 1) + " from ") + nameOf(m);
         if (caps[k]) im.title = caps[k];
         im.loading = "lazy";
         a.append(im);
-        setPhoto(im, u, pvs[k]);
+        if (isGif) gifPic(a, im, u, pvs[k]);
+        else setPhoto(im, u, pvs[k]);
         pw.append(a);
       });
       c.append(pw);
@@ -10150,6 +10172,69 @@
   /* Shows stored photo v in img im: a plain /_blob/ URL as it is; a packed one from its pack: the preview (pv) inline,
      the original when big (the lightbox) or when it has no preview. A pack that can't load leaves a "Photo couldn't
      load" tile in place of the img, never a broken image. */
+  /* F39: a GIF's first frame as a still (a data URL), from its stored file; null when it won't decode */
+  const GIF_STILL = new Map();
+  function gifStill(u) {
+    if (!GIF_STILL.has(u))
+      GIF_STILL.set(
+        u,
+        (async () => {
+          const bm = await createImageBitmap(await (await fetch(u)).blob());
+          const c = document.createElement("canvas");
+          c.width = bm.width;
+          c.height = bm.height;
+          c.getContext("2d").drawImage(bm, 0, 0);
+          if (bm.close) bm.close();
+          return c.toDataURL("image/png");
+        })().catch(() => null),
+      );
+    return GIF_STILL.get(u);
+  }
+  /* F39: a stored GIF: a still (its first frame, or a packed GIF's preview) with a GIF badge; it plays while hovered
+     or focused (unless reduced motion is on), and a tap plays or stops it. A mouse click opens the viewer, animated. */
+  function gifPic(a, im, u, pv) {
+    a.classList.add("gifpic");
+    a.title = "GIF: hover or tap to play";
+    a.append(el("span", "gifbadge", "GIF"));
+    let still = null;
+    let playing = false;
+    let touch = false;
+    const play = v => {
+      if (v === playing) return;
+      playing = v;
+      a.classList.toggle("playing", v);
+      if (v) setPhoto(im, u, null, true);
+      else if (still) im.src = still;
+    };
+    if (isPacked(u)) {
+      setPhoto(im, u, pv);
+      im.addEventListener("load", function first() {
+        if (playing) return;
+        still = im.src;
+        im.removeEventListener("load", first);
+      });
+    } else
+      gifStill(u).then(d => {
+        still = d;
+        if (!playing) im.src = d || u;
+      });
+    const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+    a.addEventListener("mouseenter", () => !calm() && play(true));
+    a.addEventListener("mouseleave", () => play(false));
+    a.addEventListener("focus", () => !calm() && play(true));
+    a.addEventListener("blur", () => play(false));
+    a.addEventListener("pointerdown", e => (touch = e.pointerType === "touch"));
+    a.addEventListener(
+      "click",
+      e => {
+        if (!touch) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        play(!playing);
+      },
+      true,
+    );
+  }
   function setPhoto(im, v, pv, big) {
     if (!isPacked(v)) {
       im.src = v;
@@ -11548,7 +11633,7 @@
   /* the helper this page shipped with: npm run sync writes it from assets/helper.user.js's @version. A Chrome is
      behind when its helper is older than this or than versions.helper, whichever is higher: versions.helper is
      written by Claude, and a stale one (v1.35.0 refreshes wrote 2.1 while shipping 2.3) hid every notice. */
-  const HELPER_VERSION = "3.6";
+  const HELPER_VERSION = "3.7";
   const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
   const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
   const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";

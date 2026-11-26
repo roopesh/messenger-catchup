@@ -2,6 +2,18 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.52.0] - 2026-11-26
+**GIFs on the page** (F39; the owner, Nov 25: "bring in gifs… clicking open in messenger every time is stupidly annoying"). MINOR. Helper 3.7, page 5.8.
+
+### Added
+- The helper (3.7) asks Tampermonkey for permission to read Facebook's image servers (`@grant GM_xmlhttpRequest`, `@connect fbsbx.com`, `fbcdn.net`) and stores each new GIF (up to 3 MB) like a photo in its message's slot 0. Facebook serves GIFs as animated WebP; a test on the owner's chat (Nov 26) found them 69 KB to 1.4 MB. A GIF that won't download, is too big, or comes through an injected copy (no permission) stays "🎞 GIF (open in Messenger)" as before; older GIFs keep their link.
+- The page (5.8) shows a stored GIF as its first frame with a GIF badge; it plays while hovered or focused (not with reduced motion on), a tap plays or stops it on a touch screen, and a mouse click opens the viewer, animated. A packed GIF's still is its day pack preview.
+- Photos fall back to Tampermonkey's download when the page's own fetch fails (a helper running in the extension's world under a permission).
+
+### Tests
+- sim (H10): a GIF-only message with the download stored in slot 0 (webp, lined base64); one that fails or is over 3 MB stays a link; without the download all stay links.
+- page (gifs): a stored GIF imports like a photo, shows a still with a badge, plays on hover and stops on leave, plays and stops on taps without opening the viewer; a photo has no badge; a GIF not stored keeps its link.
+
 ## [1.51.1] - 2026-11-26
 **A stalled verify retries itself** (B65, #81). On a busy added chat the check after the reload often ended `stalled` on the first try, and only a whole second run (about 2 minutes) passed. PATCH. Helper 3.6; page 5.7 (only its embedded copy of the helper changes); no skill procedure change.
 

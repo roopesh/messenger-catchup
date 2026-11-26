@@ -919,6 +919,55 @@ sim('H1-H4, H6: photo ids and slots, the skip list, failures listed, run id', { 
   ok(L.cap.run === 'h' && Z.cap.run === 'h', 'H6: the capture carries full’s run id (' + L.cap.run + ')');
   await ctx.close();
 });
+/* F39: a GIF-only message (an img "GIF Image" from cdn.fbsbx.com, no photo link). With Tampermonkey's download
+   (stubbed here with fetch, as GM_xmlhttpRequest answers) the capture stores the GIF in slot 0 of its message, up to
+   3 MB; one that fails or is too big stays a link (in gifs only). Without it (an injected copy), GIFs stay links. */
+sim('H10: GIFs stored with Tampermonkey’s download, links without it', { s: 30 }, async b => {
+  const { ctx, p } = await fresh(b);
+  const jpg = fs.readFileSync(path.join(__dirname, 'mock', 'fbcdn', 'p100.jpg'));
+  await ctx.route('https://cdn.fbsbx.com/**', r => {
+    const u = r.request().url();
+    if (/g110/.test(u)) return r.abort();
+    if (/g115/.test(u)) return r.fulfill({ contentType: 'image/webp', body: Buffer.alloc(3 * 1024 * 1024 + 10) });
+    return r.fulfill({ contentType: 'image/webp', body: jpg });
+  });
+  const { capture } = photoKeysOn(p);
+  const without = await capture({ gif: '105,110,115' });
+  await ctx.addInitScript(() => {
+    window.GM_xmlhttpRequest = o =>
+      fetch(o.url).then(
+        async r =>
+          o.onload({
+            status: r.status,
+            responseHeaders: 'content-type: ' + r.headers.get('content-type') + '\r\n',
+            response: await r.arrayBuffer(),
+          }),
+        () => o.onerror(),
+      );
+  });
+  const withGm = await capture({ gif: '105,110,115' });
+  const g = withGm.cap.photos.filter(ph => [105, 110, 115].includes(ph.i));
+  ok(
+    without.res &&
+      without.res.stage === 'captured' &&
+      JSON.stringify(without.cap.gifs) === '[105,110,115]' &&
+      !without.cap.photos.some(ph => [105, 110, 115].includes(ph.i)) &&
+      withGm.res &&
+      withGm.res.stage === 'captured' &&
+      JSON.stringify(withGm.cap.gifs) === '[105,110,115]' &&
+      g.length === 1 &&
+      g[0].i === 105 &&
+      g[0].k === 0 &&
+      g[0].type === 'image/webp' &&
+      /\n/.test(g[0].b64) &&
+      JSON.stringify(withGm.cap.phfail) === '[]' &&
+      / \(stored 1\)/.test(withGm.res.capture),
+    'H10: with the download, #105’s GIF is stored in slot 0 (webp, lined base64); #110 (fails) and #115 (over 3 MB) stay links; without it all three stay links (' +
+      JSON.stringify([without.cap.gifs, g.map(x => [x.i, x.k, x.type]), withGm.res && withGm.res.capture]) +
+      ')',
+  );
+  await ctx.close();
+});
 sim('H7, H8: photos sharing an id, placeholder boxes', { s: 28 }, async b => {
   const { ctx, p } = await fresh(b);
   const { capture, at } = photoKeysOn(p);
