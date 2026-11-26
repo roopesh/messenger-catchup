@@ -1,6 +1,6 @@
 # Development history
 
-How this skill got here, in order. Built late Oct – Nov 6, 2026 (US Pacific time) against one real, busy group chat: roughly 3,900 messages by the end.
+How this skill got here, in order. Built from late Oct 2026 (US Pacific time) against one real, busy group chat (roughly 3,900 messages by Nov 6), then grown into a plugin for several chats and Facebook groups. Phases 1–11 are the story up to Nov 11; from Phase 12 on, CHANGELOG.md has every release. How to work in a git worktree is at the end.
 
 Related docs:
 - [STATUS.md](STATUS.md): where things stand now, and how to work on it (start here)
@@ -148,12 +148,27 @@ Related docs:
 - **v1.17.0:** threading and summary became collections of 1,000-message block documents with content-hashed ids; `catchup.py` writes only what changed through a manifest, refuses a document over 240 KiB, and never drops anything; page 2.3 merges the blocks back into the objects every view reads. Synthetic chats calibrated to the owner's page (`tests/synth.py`) keep every document at most 85 KB up to 50,000 messages.
 - **Filed with it:** B41 (full names missing on the live page) and B42 (a text and its photo shown as two rows). Backlog-only edits now wait on a branch for the next real change (CLAUDE.md).
 
+## Phase 12: one page for many chats, groups and replies (Nov 12–26)
+About 40 releases, v1.21.0 → v1.53.x, each its own PR (CHANGELOG.md has them all). The main threads:
+- **Scheduling (R6, R14):** the chain ladder with an `armId`, armed as each run starts.
+- **Photos (R2, R13):** stored as they upload, then packed into day packs that ended the 5,000-file limit, with a caption per photo for search; GIFs too from helper 3.7 (F39).
+- **Long histories (F15–F18, F29, F32):** older messages a day at a time, one summary per day with Copy for chat, and Ask and Views over the whole history with search tools.
+- **Replies (F30, F35–F38):** the `replies` skill, then `reply-check` and scheduled reply checks; "@" mentions, photos and reactions from the page.
+- **Several chats (F1 stages A and B) and Facebook groups (F25 G1):** one page and one schedule for every chat; the helper reads groups and notifications.
+- **Threads (B62, B64):** Needs you opens threads in place; replies nest with no depth limit, one conversation per item with sections.
+- **Process:** releases only on a green first-attempt `main` CI (`tools/ci-green.sh`); the decision board and GitHub issues feed the backlog.
+
+## Working in a git worktree
+Agents often work in a separate `git worktree`. Two things trip them up:
+- **Run `npm ci` in a new worktree first.** A worktree shares the repository but not the untracked `node_modules/` or `.venv/`, and the sim tests serve Lexical from `node_modules/lexical/dist/`, so without it the sims fail. Then `npm run setup:py` for the pinned Ruff (`npm run fmt` and the format check use `.venv/bin/ruff`); Playwright's Chromium is shared per user, so `npm run setup` is only needed once per machine.
+- **Don't run `npm test` in the middle of a rebase before staging the resolved files.** `test_plugin_holds_only_shipped_files` reads `git ls-files plugin`, which lists each unmerged path once per conflict stage, so the test fails on duplicates that aren't real. Resolve, `git add` the files, then test (and `git rebase --continue`).
+
 ## Version map
 | Thing | Versions |
 |---|---|
 | Helper (user-specific) | 2.0 → 2.1 → 2.2 (`cc-cmd`, `cc_result`) |
-| Helper (generic) | 1.0 → 1.1 (`mc-cmd`, `mc_result`) → … → 1.5 (self-updating) → 1.9 |
-| Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) → … → 2.2 → 2.3 (block layout) |
-| Skill | user-specific skill (named after the original chat) → generic `messenger-catchup` v1.1 |
+| Helper (generic) | 1.0 → 1.1 (`mc-cmd`, `mc_result`) → … → 1.5 (self-updating) → 1.9 → 2.0 (warnings, `post`) → … → 3.0 (groups) → 3.7 (GIFs) → 3.8; the current one is on STATUS.md's release line |
+| Page | v1 … v43 user-specific → v44 generic (`PAGE_VERSION` 1.1) → … → 2.3 (block layout) → … → 4.1 (several chats) → … → 5.4 (groups) → … → 6.x; the current one is on STATUS.md's release line |
+| Skill | user-specific skill (named after the original chat) → generic `messenger-catchup` v1.1 → a plugin (v1.15.0) with `setup` and `refresh` (v1.16.0), `replies` (v1.27.0) and `reply-check` (v1.34.0) |
 | Build tool | `cctool.py` → `catchup.py` (Phase 8, same commands and behavior) |
-| Release (`VERSION`) | v1.1.0 (tagged retroactively at `9c353de`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2) → … → v1.7.1 (Phase 9) → v1.14.1 (Phase 10). From here on, see CHANGELOG.md |
+| Release (`VERSION`) | v1.1.0 (tagged retroactively at `9c353de`) → v1.1.1 (Phases 7–8 plus the release process) → v1.1.2 (CI) → v1.2.0 (P1 fixes, page 1.2) → … → v1.7.1 (Phase 9) → v1.14.1 (Phase 10) → v1.17.0 (Phase 11) → v1.53.x (Phase 12). From here on, see CHANGELOG.md |
