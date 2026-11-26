@@ -15999,9 +15999,10 @@ async function multiChat() {
     (await mcText(p, '#h1')) === 'All chats' &&
       (await p.evaluate(() => document.body.classList.contains('allchats'))) &&
       (await p.isVisible('#v-all')) &&
-      (await p.isHidden('nav.tabs')) &&
-      (await p.isHidden('#v-summary')),
-    'F1 PG1: with several chats the page opens on All chats, without tabs',
+      (await p.isHidden('#v-summary')) &&
+      JSON.stringify(await p.$$eval('nav.tabs a', as => as.filter(a => !a.hidden).map(a => a.dataset.tab))) ===
+        '["summary","ask"]',
+    'F1 PG1: with several chats the page opens on All chats, on its Summary (a card per chat), with only its own tabs: Summary and Ask (stage C)',
   );
   // PG3: every live chat's Needs you, tagged; the picker's counts add up to All chats'
   const cards = await p.$$eval('#v-all .chatcard', cs => cs.map(c => c.dataset.chat + '|' + c.textContent));
@@ -17339,6 +17340,334 @@ async function multiChat3() {
 }
 
 /* F25 G1: Add a group in Settings, and the picker's Chats and Groups headings */
+/* F1 stage C: Ask across chats. Three chats with "tripod" in two of them; Dee goes by "Dee" in Trail Crew and by
+   "Deedee" in Camera Club, with the same full name (fn) in both. */
+const XA_CAP3 = 'a carbon tripod folded on a table';
+function xaSeed(o = {}) {
+  const tr = mcMsgs('trail', 12);
+  tr[4] = Object.assign(tr[4], { f: 'Dee', fn: 'Dee Moss', b: 'anyone have a spare tripod plate?' });
+  tr[9] = Object.assign(tr[9], { f: 'Ben', fn: 'Ben Ash', b: 'tripod legs are back from repair' });
+  const cm = mcMsgs('cam', 8);
+  cm[2] = Object.assign(cm[2], { f: 'Deedee', fn: 'Dee Moss', b: 'selling my tripod, barely used' });
+  cm[3] = Object.assign(cm[3], { f: 'Ana', fn: 'Ana Reyes', b: '', p: '7003' });
+  cm[6] = Object.assign(cm[6], { f: 'Cy', fn: 'Cy Park', b: 'which tripod head is that?' });
+  const extra = {
+    'chunks/c0000': { start: 0, msgs: tr },
+    'cam_chunks/c0000': { start: 0, msgs: cm },
+    'cam_captions/b0': { start: 0, byK: { 3: { 0: XA_CAP3 } } },
+  };
+  return Object.assign({}, o, { extra: Object.assign(extra, o.extra || {}), opts: o.opts || { tools: true } });
+}
+const XA_PLAN = [
+  { say: 'Searching every chat.', calls: [{ name: 'search_messages', input: { words: 'tripod' } }] },
+  {
+    calls: [
+      { name: 'read_messages', input: { chat: 'cam', from: '#1', to: '#4' } },
+      { name: 'day_summaries', input: { chat: 'trail', from: '#0', to: '#11' } },
+      { name: 'read_messages', input: { from: '#1' } },
+      { name: 'search_messages', input: { words: 'tripod', chat: 'cam' } },
+    ],
+  },
+  {
+    say: 'Dee Moss is selling one [cam#2] and asked about a plate [trail#4]. More: [cam#3, #6]. Bare [#9]. Unknown [zzz#1]. By tag [Book#2].',
+  },
+];
+/* Asks q on All chats' Ask; returns what hask returns, from #xchat */
+async function xask(p, q) {
+  const n0 = await p.evaluate(() => __rt.sampleLog.length);
+  await p.evaluate(q => {
+    location.hash = '#ask';
+    document.getElementById('ask-in').value = q;
+    document.getElementById('ask-go').click();
+  }, q);
+  await until(
+    p,
+    n0 =>
+      (__rt.sampleLog.length > n0 || document.getElementById('ask-note').textContent) &&
+      !document.getElementById('ask-go').disabled,
+    n0,
+  );
+  await sleep(100);
+  return p.evaluate(n0 => {
+    const ts = document.querySelectorAll('#xchat .turn.assistant');
+    const t = ts[ts.length - 1];
+    const s = __rt.samples[__rt.samples.length - 1];
+    return {
+      calls: __rt.sampleLog.slice(n0),
+      prompt: Array.isArray(s) ? s[0].content : s,
+      note: (t && t.querySelector('.sent') && t.querySelector('.sent').textContent) || '',
+      askNote: document.getElementById('ask-note').textContent,
+      answer: (t && t.querySelector('.txt').textContent) || '',
+      cites: t ? [...t.querySelectorAll('.txt .cite')].map(c => c.textContent) : [],
+    };
+  }, n0);
+}
+const xaRows = p =>
+  p.$$eval('#xchat .turn.assistant:last-of-type .xhits > li', ls =>
+    ls.map(l =>
+      l.classList.contains('xhit-h')
+        ? 'h:' + l.dataset.chat
+        : l.classList.contains('xhit')
+          ? l.dataset.chat + '#' + l.querySelector('.cite').textContent.replace(/^\S+ #/, '')
+          : 'note',
+    ),
+  );
+const xaChips = p =>
+  p.$$eval('#xchat .turn.assistant:last-of-type .xchips button', bs =>
+    bs.map(b => (b.dataset.filt || b.dataset.act) + ':' + b.textContent + (b.disabled ? ':off' : '')),
+  );
+async function multiChatAsk() {
+  let p = await mcOpen(xaSeed());
+  await p.evaluate(pl => (window.__toolPlan = pl), XA_PLAN);
+  await p.click('nav a[data-tab="ask"]');
+  ok(
+    (await mcText(p, '#v-ask .sec-head h2')) === 'Ask about your chats' &&
+      !(await p.$eval('#xchat', e => e.hidden)) &&
+      (await p.$eval('#chat', e => e.hidden)) &&
+      !(await p.$('#v-ask .composer select, #v-ask .composer input[type="checkbox"]')),
+    'F1 SR4: All chats has an Ask tab over every chat, with no chat choice before asking (the results are filtered instead)',
+  );
+  const r = await xask(p, 'Anyone have a tripod?');
+  const log = await p.evaluate(() => __rt.toolLog.map(x => Object.assign({}, x, { out: x.out && JSON.parse(x.out) })));
+  const recent = r.prompt.split('\n').filter(l => /^\[?\w*#\d+\]/.test(l) || /^#\d+ \[/.test(l));
+  ok(
+    r.calls.length === 1 &&
+      /- CHATS \(key: name\):\n {2}- trail: Trail Crew, 12 messages stored, #0 to #11/.test(r.prompt) &&
+      /\n {2}- cam: Camera Club, 8 messages/.test(r.prompt) &&
+      /\n {2}- book: Book Club, 6 messages/.test(r.prompt) &&
+      /Never write a bare \[#123\]/.test(r.prompt) &&
+      /\n- SEARCH: three tools over every stored message in every chat/.test(r.prompt) &&
+      recent.length === 26 &&
+      recent.every(l => /^\[(trail|cam|book)#\d+\] \[/.test(l)),
+    "F1 SR1/CT6: one request; the prompt lists every chat and gives each chat's newest messages, every line starting [key#n], and tells Claude to cite that way (" +
+      recent.length +
+      ' lines)',
+  );
+  const [s1, rd, days, bad, s2] = [
+    log.find(x => x.name === 'search_messages' && !x.input.chat),
+    log.find(x => x.name === 'read_messages' && x.input.chat === 'cam'),
+    log.find(x => x.name === 'day_summaries'),
+    log.find(x => x.name === 'read_messages' && !x.input.chat),
+    log.find(x => x.name === 'search_messages' && x.input.chat === 'cam'),
+  ];
+  ok(
+    s1.out.total === 5 &&
+      JSON.stringify(s1.out.byChat) === '{"trail":2,"cam":3,"book":0}' &&
+      s1.out.newestFirst &&
+      JSON.stringify(s1.out.matches.map(l => l.match(/^\[(\w+#\d+)\]/)[1])) ===
+        '["trail#9","cam#6","trail#4","cam#3","cam#2"]' &&
+      s1.out.matches[3].includes('[photo: ' + XA_CAP3 + ']'),
+    'F1 SR1: search_messages covers every chat and its photo captions: 5 matches, counted per chat, newest first across chats, each line [key#n] ' +
+      JSON.stringify(s1.out.byChat),
+  );
+  ok(
+    / Dee Moss \(Deedee\): selling my tripod/.test(s1.out.matches[4]) &&
+      / Dee Moss: anyone have a spare tripod/.test(s1.out.matches[2]),
+    "F1 SR11: Claude gets each chat's name for a person with the full name, so the same person reads the same across chats (" +
+      s1.out.matches[4].slice(0, 60) +
+      ')',
+  );
+  ok(
+    rd.out.chat === 'cam' &&
+      rd.out.lines.length === 4 &&
+      /^\[cam#1\] /.test(rd.out.lines[0]) &&
+      days.out.chat === 'trail' &&
+      days.out.cite === '[trail#n]' &&
+      days.out.days.length === 1 &&
+      bad.err &&
+      /chat must be one of: trail, cam, book/.test(bad.err) &&
+      s2.out.total === 3 &&
+      JSON.stringify(s2.out.byChat) === '{"cam":3}',
+    'F1 SR1: read_messages and day_summaries read one named chat; without a chat they say which keys there are; a search can be narrowed to one chat ' +
+      JSON.stringify([rd.out.lines[0], bad.err]),
+  );
+  ok(
+    JSON.stringify(r.cites) ===
+      '["Cam #2","Trail #4","Cam #3","Cam #6","#9 · which chat?","#1 · which chat?","Book #2"]' &&
+      /More: Cam #3 Cam #6\./.test(r.answer),
+    'F1 CT3: [cam#2] and [cam#3, #6] become tagged citations (a bare number after a keyed one is that chat\'s); a bare [#9] and an unknown key show "which chat?"; a tag works as a key ' +
+      JSON.stringify(r.cites),
+  );
+  ok(
+    /^Searched 3 chats: Trail, Cam, Book\. Read Trail #0–#11, Cam #0–#7, Book #0–#5 word for word\. Searched “tripod” \(5\), “tripod” in Cam \(3\)\. Read Cam #1–#4\. Read day summaries of Trail\.$/.test(
+      r.note,
+    ),
+    'F1: the note under the answer names the chats searched, what was read word for word and every search, with tags (' +
+      r.note +
+      ')',
+  );
+  // SR2: the match list is the page's own search over every chat, newest first, every row tagged
+  const rows = await xaRows(p);
+  const n0 = await p.evaluate(() => __rt.samples.length);
+  ok(
+    JSON.stringify(rows) === '["trail#9","cam#6","trail#4","cam#3","cam#2"]' &&
+      (await p.$$eval('#xchat .xhits .cite', cs => cs.every(c => /^(Trail|Cam|Book) #\d+$/.test(c.textContent)))) &&
+      /Dee Moss \(Deedee\)/.test(await mcText(p, '#xchat .xhits li[data-chat="cam"]:last-child')),
+    'F1 SR2/CT2/SR10: the match list holds every match in every chat, newest first, each row tagged and named with the full name ' +
+      JSON.stringify(rows),
+  );
+  ok(
+    JSON.stringify(await xaChips(p)) ===
+      '["all:All 5","trail:Trail 2","cam:Cam 3","book:Book 0:off","photos:Photos only"]',
+    'F1 SR3: a chip per chat with its count (none: disabled), All, and Photos only ' + JSON.stringify(await xaChips(p)),
+  );
+  await p.click('#xchat .xchips button[data-filt="cam"]');
+  const camRows = await xaRows(p);
+  await p.click('#xchat .xchips button[data-act="photos"]');
+  const camPh = await xaRows(p);
+  await p.click('#xchat .xorder button[data-order="chat"]');
+  const camPhChat = await xaRows(p);
+  await p.click('#xchat .xchips button[data-act="photos"]');
+  await p.click('#xchat .xchips button[data-filt="all"]');
+  const byChat = await xaRows(p);
+  ok(
+    JSON.stringify(camRows) === '["cam#6","cam#3","cam#2"]' &&
+      JSON.stringify(camPh) === '["cam#3"]' &&
+      JSON.stringify(camPhChat) === '["h:cam","cam#3"]' &&
+      JSON.stringify(byChat) === '["h:trail","trail#9","trail#4","h:cam","cam#6","cam#3","cam#2"]' &&
+      (await p.evaluate(() => __rt.samples.length)) === n0,
+    "F1 SR3/SR12: the chips and Photos only filter, By chat groups each chat's matches under it in the chats' order, together, and none of it asks Claude anything " +
+      JSON.stringify([camRows, camPh, camPhChat, byChat]),
+  );
+  const kept = await p.evaluate(() => {
+    const v = localStorage.getItem('mcAskOrder');
+    const g = Storage.prototype.getItem;
+    Storage.prototype.getItem = () => {
+      throw new Error('blocked');
+    };
+    const off = xOrder();
+    Storage.prototype.getItem = g;
+    return [v, off];
+  });
+  ok(
+    JSON.stringify(kept) === '["chat","new"]',
+    'F1 SR12: the order is remembered in this browser, and without browser storage it is Newest first ' +
+      JSON.stringify(kept),
+  );
+  // SR4: the answer is saved with the chats it searched
+  const row = await until(p, () => (S.qaAll || []).find(r => r.scope === 'chats'));
+  ok(
+    row &&
+      row.q === 'Anyone have a tripod?' &&
+      JSON.stringify(row.chats) === '["trail","cam","book"]' &&
+      JSON.stringify(row.toI) === '{"trail":11,"cam":7,"book":5}' &&
+      row.sent.searches.length === 2 &&
+      row.sent.searches[1].chat === 'cam' &&
+      !row.chat,
+    'F1 SR4: the answer is saved in qa with scope "chats", the chats searched and each one\'s newest message ' +
+      JSON.stringify(row && { chats: row.chats, toI: row.toI, s: row.sent && row.sent.searches }),
+  );
+  // PH5: at phone width the chips and order switch wrap, and nothing pushes the page wider
+  await p.setViewportSize({ width: 390, height: 844 });
+  await sleep(150);
+  const ph = await p.evaluate(() => {
+    const cites = [...document.querySelectorAll('#xchat .xhits .cite')];
+    return {
+      wide: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      oneLine: cites.every(c => c.getClientRects().length === 1),
+    };
+  });
+  ok(
+    ph.wide <= 0 && ph.oneLine,
+    'F1 PH5: at 390 px the match list fits the screen and each tag and number stays on one line ' + JSON.stringify(ph),
+  );
+  await p.setViewportSize({ width: 1000, height: 900 });
+  // CT9-like: a citation in the answer switches to its chat and opens the message
+  await flashReset(p);
+  await p.click('#xchat .turn.assistant:last-of-type .txt button.cite[data-chat="cam"][data-i="2"]');
+  await until(p, () => document.querySelector('#m2[data-flashed]'), null, 3000);
+  ok(
+    (await mcText(p, '#h1')) === 'Camera Club' &&
+      (await p.isVisible('#v-messages')) &&
+      (await mcText(p, '#m2')).includes('selling my tripod'),
+    "F1 CT4: an answer's Cam #2 switches to Camera Club and opens its #2",
+  );
+  // single chat unchanged: Camera Club's Ask asks about Camera Club alone, as before, and lists only its own questions
+  await p.click('nav a[data-tab="ask"]');
+  const one = {
+    h: await mcText(p, '#v-ask .sec-head h2'),
+    chat: !(await p.$eval('#chat', e => e.hidden)),
+    xchat: !(await p.$eval('#xchat', e => e.hidden)),
+    list: await mcText(p, '#qa-list'),
+  };
+  await p.evaluate(() => (window.__toolPlan = [{ say: 'Deedee sells one [#2].' }]));
+  const r1 = await hask(p, 'Who is selling a tripod in here?');
+  ok(
+    one.h === 'Ask about the chat' &&
+      one.chat &&
+      !one.xchat &&
+      !one.list.includes('Anyone have a tripod?') &&
+      /- MESSAGES: every stored message, #0 to #7, word for word/.test(r1.prompt) &&
+      !/\[cam#/.test(r1.prompt) &&
+      /^Deedee sells one #2\.$/.test(r1.answer),
+    "F1: inside a chat, Ask is that chat's alone, as before: its own header, conversation, questions, prompt and bare citations " +
+      JSON.stringify([one, r1.answer]),
+  );
+  // back on All chats: the answer and its conversation are still there; a chat added since shows as not searched
+  await mcPick(p, 'all');
+  await p.evaluate(() =>
+    S.rawDb.doc('meta/chat').update({
+      chats: { pine: { name: 'Pine Club', tag: 'Pine', color: 4, order: 3, state: 'active', thread: '7171' } },
+    }),
+  );
+  await sleep(200);
+  await p.click('nav a[data-tab="ask"]');
+  const back = {
+    turns: await p.$$eval('#xchat .turn', ts => ts.length),
+    list: await mcText(p, '#qa-list'),
+  };
+  ok(
+    back.turns === 2 &&
+      /Anyone have a tripod\?/.test(back.list) &&
+      !/in here\?/.test(back.list) &&
+      /across 3 chats \(Trail, Cam, Book\) · not searched: Pine/.test(back.list),
+    "F1 SR4/SR6: All chats' Ask keeps its conversation; its saved question says which chats it searched, and a chat added since as not searched " +
+      JSON.stringify(back),
+  );
+  ok(p.errors.length === 0, 'F1 Ask across chats: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // SR5/SR9: a paused chat is searched, a hidden one isn't; without tools the question's words go to every chat
+  p = await mcOpen(
+    xaSeed({
+      opts: {},
+      chats: {
+        cam: {
+          name: 'Camera Club',
+          tag: 'Cam',
+          color: 2,
+          order: 1,
+          state: 'paused',
+          thread: '5151',
+          url: MC_URL('cam'),
+        },
+        book: {
+          name: 'Book Club',
+          tag: 'Book',
+          color: 3,
+          order: 2,
+          state: 'hidden',
+          thread: '6161',
+          url: MC_URL('book'),
+        },
+      },
+    }),
+  );
+  await p.click('nav a[data-tab="ask"]');
+  const r2 = await xask(p, 'tripod');
+  ok(
+    /\n {2}- cam: Camera Club \(paused: not refreshed now\)/.test(r2.prompt) &&
+      !/book#|Book Club/.test(r2.prompt) &&
+      /\nMATCHES \(5 of 5, newest first\):\n\[trail#9\] /.test(r2.prompt) &&
+      !/- SEARCH:/.test(r2.prompt) &&
+      JSON.stringify(r2.cites) === '["#1 · which chat?","#0 · which chat?","#2 · which chat?"]' &&
+      /^Searched 2 chats: Trail, Cam\./.test(r2.note),
+    'F1 SR5/SR9: a paused chat is searched (and says so), a hidden one is not; without tools the prompt carries every chat\'s matches; bare numbers show "which chat?" ' +
+      JSON.stringify([r2.cites, r2.note.slice(0, 60)]),
+  );
+  ok(p.errors.length === 0, 'F1 Ask across chats without tools: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 async function groupsAdd() {
   let p = await mcOpen();
   await mcSettings(p);
@@ -17627,6 +17956,7 @@ const SECTIONS = {
   multiChat,
   multiChat2,
   multiChat3,
+  multiChatAsk,
   robustness,
   pipeline,
   variants,

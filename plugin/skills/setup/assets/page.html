@@ -2444,7 +2444,6 @@
   .ctag.c4 {
     border-color: var(--c4);
   }
-  body.allchats nav.tabs,
   body.allchats #window,
   body.allchats #marker,
   body.allchats #strip {
@@ -2571,6 +2570,59 @@
   .set-st.err {
     color: var(--warn);
   }
+  /* Ask across chats (F1 stage C): a citation names its chat; one with no chat, or a chat that's gone, opens nothing */
+  .cite.bad,
+  .cite.gone {
+    color: var(--muted);
+    background: none;
+    border: 1px dashed var(--line);
+    cursor: default;
+  }
+  button.cite {
+    border: 0;
+    white-space: nowrap;
+  }
+  .xbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 12px;
+  }
+  .xhits .snip {
+    grid-template-columns: minmax(0, 1fr);
+    cursor: default;
+  }
+  .xhits .snip:hover {
+    background: var(--bg);
+  }
+  .xhits .meta .who {
+    overflow-wrap: anywhere;
+  }
+  .xhit-h {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .xhit-h .nm {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  /* a chat's chip carries its colour as a bar under the tag; the tag text carries the meaning */
+  .xchips button.c1 {
+    box-shadow: inset 0 -3px 0 var(--c1);
+  }
+  .xchips button.c2 {
+    box-shadow: inset 0 -3px 0 var(--c2);
+  }
+  .xchips button.c3 {
+    box-shadow: inset 0 -3px 0 var(--c3);
+  }
+  .xchips button.c4 {
+    box-shadow: inset 0 -3px 0 var(--c4);
+  }
 </style>
 
 <div class="wrap">
@@ -2637,6 +2689,7 @@
         </p>
       </div>
       <div class="chat" id="chat"></div>
+      <div class="chat" id="xchat" hidden></div>
       <div class="composer">
         <label for="ask-in" class="note">Your question</label>
         <textarea
@@ -2923,7 +2976,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "6.0";
+  const PAGE_VERSION = "6.3";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3047,18 +3100,27 @@
   const TABS = ["summary", "posts", "ask", "messages", "days", "views", "stats"];
   /* F25: a group has Summary and Posts; a chat has the rest */
   const tabsFor = c => (isGroup(c) ? ["summary", "posts"] : TABS.filter(t => t !== "posts"));
+  /* F1 stage C: All chats has its own tabs: Summary (a card per chat) and Ask (across every chat) */
+  const ALL_TABS = ["summary", "ask"];
   function route() {
     const h = (location.hash || "").slice(1);
-    const ok = tabsFor(CUR);
+    const allv = S.view === "all";
+    const ok = allv ? ALL_TABS : tabsFor(CUR);
     const tab = ok.includes(h) ? h : "summary";
-    const allv = S.view === "all"; /* All chats (F1) has no tabs */
     TABS.forEach(t => {
-      $("#v-" + t).hidden = allv || t !== tab;
+      $("#v-" + t).hidden = t !== tab || (allv && t === "summary");
       const a = document.querySelector('nav a[data-tab="' + t + '"]');
       a.hidden = !ok.includes(t);
       if (t === tab) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     });
+    const va = $("#v-all");
+    if (va) {
+      const was = va.hidden;
+      va.hidden = !(allv && tab === "summary");
+      if (was && !va.hidden && typeof renderAll === "function") renderAll();
+    }
+    if (typeof askMode === "function") askMode(allv);
     /* Older messages switched on only to show one jumped-to message are switched off again when you leave Messages. */
     if (tab !== "messages" && S.autoOlder) backToWindow();
     /* By day and Stats are drawn only while they're open (F24, F31) */
@@ -3525,16 +3587,18 @@
      name, read from their avatar. people/index maps each full name to the names it was shown as. On the page: nameOf. */
   let PEOPLE = { byShown: new Map() };
   function indexPeople() {
+    PEOPLE = peopleOf(S.people, S.msgs);
+  }
+  /* one chat's names: its people/index and its messages' fn (F1: each chat has its own) */
+  function peopleOf(people, msgs) {
     const byFull = new Map();
     const add = (full, shown) => {
       if (!full || !shown || shown === "You") return;
       if (!byFull.has(full)) byFull.set(full, new Set());
       byFull.get(full).add(shown);
     };
-    Object.entries((S.people && S.people.people) || {}).forEach(([full, p]) =>
-      (p.shown || []).forEach(x => add(full, x)),
-    );
-    S.msgs.forEach(m => add(m.fn, m.f));
+    Object.entries((people && people.people) || {}).forEach(([full, p]) => (p.shown || []).forEach(x => add(full, x)));
+    msgs.forEach(m => add(m.fn, m.f));
     const byShown = new Map();
     byFull.forEach((shown, full) => {
       shown.forEach(x => {
@@ -3542,7 +3606,7 @@
         byShown.get(x).add(full);
       });
     });
-    PEOPLE = { byShown };
+    return { byShown };
   }
   function fullOf(m) {
     if (!m || m.f === "You") return null;
@@ -7943,8 +8007,9 @@
   function newRec(on) {
     return { searches: [], reads: [], text: "", cut: 0, bytes: 0, on: on || (() => {}) };
   }
-  /* The tools for one request, within budget bytes of results in all */
-  function toolSet(rec, budget) {
+  /* What every tool of one request shares: give (a result, counted against budget bytes), fit (message lines within a
+     result's cap) and mark (where the answer starts) */
+  function toolKit(rec, budget) {
     let left = Math.max(0, budget);
     const give = s => {
       const b = u8(s);
@@ -7956,11 +8021,11 @@
       rec.bytes += b;
       return s;
     };
-    const fit = (ms, cap) => {
+    const fit = (ms, cap, line = lineFor) => {
       const out = [];
       let n = 0;
       for (const m of ms) {
-        const s = clipBytes(lineFor(m), 2048);
+        const s = clipBytes(line(m), 2048);
         const b = u8(s) + 1;
         if (n + b > cap) break;
         out.push(s);
@@ -7973,6 +8038,11 @@
       rec.cut = rec.text.length;
       rec.shown = false;
     };
+    return { give, fit, mark };
+  }
+  /* The tools for one request, within budget bytes of results in all */
+  function toolSet(rec, budget) {
+    const { give, fit, mark } = toolKit(rec, budget);
     const range = {
       from: { type: "string", description: "#number or YYYY-MM-DD" },
       to: { type: "string", description: "#number or YYYY-MM-DD" },
@@ -8061,6 +8131,7 @@
     (s.q || "") +
     "”" +
     (s.sender ? " by " + s.sender : "") +
+    (s.chat ? " in " + tagOfKey(s.chat) : "") +
     (s.from || s.to ? " (" + (s.from || "…") + " to " + (s.to || "…") + ")" : "");
   /* While Claude searches: what it did last */
   function recStatus(rec) {
@@ -8226,8 +8297,8 @@
   }
   /* The earlier chat turns sent with a question: at most the last 9 (starting and ending on a question), the oldest
      pairs dropped while they take more than a quarter of the cap */
-  function chatTurns(cap) {
-    let h = turns.slice(-9);
+  function chatTurns(cap, list = turns) {
+    let h = list.slice(-9);
     if (h.length && h[0].role !== "user") h = h.slice(1);
     const lim = cap * 0.25;
     while (h.length > 2 && h.reduce((n, t) => n + u8(t.content), 0) > lim) h = h.slice(2);
@@ -8255,13 +8326,13 @@
     }
     container.append(text.slice(last));
   }
-  function addTurn(role, text) {
+  function addTurn(role, text, box = $("#chat"), render = renderCites) {
     const d = el("div", "turn " + role);
     d.append(el("span", "role", role === "user" ? "You" : "Claude"));
     const t = el("div", "txt");
-    renderCites(t, text);
+    render(t, text);
     d.append(t);
-    $("#chat").append(d);
+    box.append(d);
     return t;
   }
   $("#ask-stop").onclick = () => ctl && ctl.abort();
@@ -8275,7 +8346,8 @@
     }
     asking = true;
     try {
-      await ask(q);
+      /* F1 stage C: on All chats, one question over every chat */
+      await (S.view === "all" ? askAcross(q) : ask(q));
     } finally {
       asking = false;
     }
@@ -8374,6 +8446,743 @@
       $("#ask-stop").hidden = true;
       ctl = null;
     }
+  }
+  /* ---------- Ask across chats (F1 stage C) ----------
+     On All chats, Ask is one question over every chat it can read: active and paused chats (not pending, hidden,
+     removed, or a Facebook group). Each ask reads every such chat fresh (its chunks, captions, people/index,
+     daySummaries and threading; the chat loaded on the page from memory), so a chat added or refreshed meanwhile is in
+     the next question. Claude reads each chat's newest messages word for word and gets the same three tools, over every
+     chat (search_messages, optionally one chat) or one chat (read_messages, day_summaries). Every line Claude reads
+     starts [key#n] and it cites the same way; the page shows each citation as the chat's tag and number ("Cam #412"),
+     which opens that chat at that message (openChat, as All chats' Needs you does). A bare [#n] isn't guessed: it shows
+     "#n · which chat?" and opens nothing. Names come from each chat's own people (people stay separate per chat): the
+     full name, with the chat's nickname in brackets where it differs, so the same person reads the same in every chat.
+     Under the answer, the page's own search lists every exact match across chats, with a chip per chat, Photos only and
+     Newest first / By chat (remembered in this browser); all of it redraws on the page and sends nothing. The answer is
+     saved in qa with scope "chats" and the chats it searched, so a chat added later shows as not searched. */
+  const tagOfKey = k => (S.chats.find(c => c.key === k) || {}).tag || k;
+  const xChats = () => S.chats.filter(c => isLive(c) && !isGroup(c));
+  let xturns = [];
+  const X_WAIT = 20000; /* a chat whose data doesn't come within this is left out of the question */
+  /* the first snapshot of a listener, then it stops: what the page's own listeners would read */
+  function snapOnce(ref) {
+    return new Promise((res, rej) => {
+      let done = false,
+        un = null;
+      const end = (s, e) => {
+        if (done) return;
+        done = true;
+        clearTimeout(t);
+        setTimeout(() => typeof un === "function" && un(), 0);
+        if (e) rej(e);
+        else res(s);
+      };
+      const t = setTimeout(() => end(null, new Error("timed out")), X_WAIT);
+      un = ref.onSnapshot(
+        s => end(s),
+        e => end(null, e || new Error("read failed")),
+      );
+    });
+  }
+  /* what one chat gives a question across chats: {c, key, msgs, byI, caps, P, daySums, digests, threading, err?} */
+  async function xLoadChat(c) {
+    const base = { c, key: c.key };
+    if (c.key === CUR.key && S.msgs.length)
+      return Object.assign(base, {
+        msgs: S.msgs,
+        byI: S.byI,
+        caps: S.caps,
+        P: PEOPLE,
+        daySums: S.daySums,
+        digests: S.digests,
+        threading: S.threading,
+      });
+    const db = chatDb(S.rawDb, c);
+    const opt = f =>
+      Promise.resolve()
+        .then(f)
+        .catch(() => null);
+    try {
+      const [ch, cp, pp, ds, th] = await Promise.all([
+        snapOnce(db.collection("chunks")),
+        opt(() => snapOnce(db.collection("captions"))),
+        opt(() => db.doc("people/index").get()),
+        opt(() => snapOnce(db.collection("daySummaries"))),
+        opt(() => snapOnce(db.collection("threading"))),
+      ]);
+      const msgs = msgsOf(collDocs(ch));
+      return Object.assign(base, {
+        msgs,
+        byI: new Map(msgs.map(m => [m.i, m])),
+        caps: cp ? mergeCaps(collDocs(cp)) : null,
+        P: peopleOf(pp && pp.exists ? pp.data() : null, msgs),
+        daySums: ds ? daySumMap(ds) : new Map(),
+        digests: new Map(),
+        threading: th ? mergeThreading(collDocs(th)) : null,
+      });
+    } catch (e) {
+      return Object.assign(base, { err: e });
+    }
+  }
+  const xLoad = () => Promise.all(xChats().map(xLoadChat));
+  /* runs fn with chat x as the page's chat, so the one-chat helpers (searchMsgs, lineFor, nameOf, capsOf, dayLines)
+     read that chat; fn is synchronous, so nothing else runs before everything is put back */
+  function inCtx(x, fn) {
+    const keep = [S.msgs, S.byI, S.caps, S.daySums, S.digests, S.threading, PEOPLE];
+    S.msgs = x.msgs;
+    S.byI = x.byI;
+    S.caps = x.caps;
+    S.daySums = x.daySums;
+    S.digests = x.digests;
+    S.threading = x.threading;
+    PEOPLE = x.P;
+    try {
+      return fn();
+    } finally {
+      [S.msgs, S.byI, S.caps, S.daySums, S.digests, S.threading, PEOPLE] = keep;
+    }
+  }
+  /* a message line for Claude: "[cam#412] [Nov 20 Fri 9:10 AM] Name: text …" (lineFor, with the chat and the day) */
+  function xLine(x, m) {
+    const head = "#" + m.i + " [" + m.t + "]";
+    const s = lineFor(m);
+    const day = dayOf(m.d);
+    return "[" + x.key + "#" + m.i + "] [" + (day ? day + " " : "") + m.t + "]" + s.slice(head.length);
+  }
+  /* a match as the page shows it, worked out in its own chat (its names and captions) */
+  function xHit(x, m) {
+    const cs = capsOf(m.i);
+    return {
+      key: x.key,
+      i: m.i,
+      ts: m.ts || "",
+      d: m.d || "",
+      t: m.t || "",
+      who: nameOf(m),
+      b: m.b || "",
+      photo: !!m.p || cs.length > 0,
+      caps: cs,
+    };
+  }
+  const xOrd = k => S.chats.findIndex(c => c.key === k);
+  /* newest first across chats: by time, then by chat order and number */
+  const xNewest = (a, b) => (b.ts || "").localeCompare(a.ts || "") || xOrd(a.key) - xOrd(b.key) || b.i - a.i;
+  /* the chat a key (or, as Claude may write it, a tag) names */
+  function xChatOf(k) {
+    const s = String(k == null ? "" : k).trim();
+    if (!s) return null;
+    return S.chats.find(c => c.key === s) || S.chats.find(c => String(c.tag).toLowerCase() === s.toLowerCase()) || null;
+  }
+  /* every stored message in the chats searched holding all the words: [{x, m, hit}], newest first */
+  function xSearch(ctxs, q, o = {}) {
+    const out = [];
+    ctxs.forEach(x =>
+      inCtx(x, () =>
+        searchMsgs(q, o).forEach(m => out.push({ x, m, hit: xHit(x, m), ts: m.ts || "", key: x.key, i: m.i })),
+      ),
+    );
+    return out.sort(xNewest);
+  }
+  function xToolSet(rec, budget, ctxs) {
+    const { give, fit, mark } = toolKit(rec, budget);
+    const keys = ctxs.map(x => x.key);
+    const one = k => {
+      const c = xChatOf(k == null || k === "" ? (ctxs.length === 1 ? keys[0] : "") : k);
+      const x = c && ctxs.find(y => y.key === c.key);
+      if (!x) throw new Error("chat must be one of: " + keys.join(", ") + ".");
+      return x;
+    };
+    const range = {
+      from: { type: "string", description: "#number or YYYY-MM-DD" },
+      to: { type: "string", description: "#number or YYYY-MM-DD" },
+    };
+    const chat = { type: "string", description: "the chat's key: " + keys.join(", ") };
+    return [
+      {
+        name: "search_messages",
+        description:
+          "Search every stored message in every chat (or one chat), however old: text, sender names, link previews, quoted messages and photo captions. All words must appear (case-insensitive; part of a word counts, so 'pouch' finds 'pouches'). Optional chat (a key, to search only that chat), from/to (YYYY-MM-DD; a #number only with a chat, since numbers restart in each chat) and sender. Returns the total, the count per chat and the newest matches as message lines starting [key#n].",
+        inputSchema: {
+          type: "object",
+          properties: Object.assign({ words: { type: "string", description: "words that must all appear" } }, range, {
+            sender: { type: "string", description: "a name or part of one" },
+            chat: { type: "string", description: "a chat's key to search only that chat; leave out for every chat" },
+          }),
+        },
+        execute: input => {
+          mark();
+          const q = String(input.words == null ? "" : input.words).trim();
+          const o = { from: input.from, to: input.to, sender: input.sender };
+          const ck = String(input.chat == null ? "" : input.chat).trim();
+          const scope = ck ? [one(ck)] : ctxs;
+          const found = q || String(o.sender || "").trim() ? xSearch(scope, q, o) : [];
+          const r = { q, ms: found.map(f => f.hit) };
+          ["from", "to", "sender"].forEach(k => {
+            if (o[k] != null && String(o[k]).trim()) r[k] = String(o[k]).trim();
+          });
+          if (ck) r.chat = scope[0].key;
+          rec.searches.push(r);
+          rec.lastKind = "search";
+          rec.on();
+          if (!q && !r.sender) throw new Error("Give some words, a sender, or both.");
+          const byChat = {};
+          scope.forEach(x => (byChat[x.key] = 0));
+          found.forEach(f => byChat[f.key]++);
+          const shown = fit(found, TOOL_BYTES - 512, f => inCtx(f.x, () => xLine(f.x, f.m)));
+          const out = { total: found.length, byChat, shown: shown.length, newestFirst: true, matches: shown };
+          if (found.length > shown.length)
+            out.more = "Narrow it with chat, from/to, a sender or more words to see the rest.";
+          return give(JSON.stringify(out));
+        },
+      },
+      {
+        name: "read_messages",
+        description:
+          "Read one chat's stored messages word for word, oldest first, from one #number or date (YYYY-MM-DD: the whole day) to another. Use it to read around a search hit (say from #n-10 to #n+15) or a whole day. Returns as many lines as fit and where to continue.",
+        inputSchema: { type: "object", properties: Object.assign({ chat }, range), required: ["chat", "from"] },
+        execute: input => {
+          mark();
+          const x = one(input.chat);
+          const res = inCtx(x, () => {
+            const a = boundOf(input.from, false);
+            if (a == null) throw new Error("from must be a #number or a date (YYYY-MM-DD).");
+            let b = boundOf(input.to == null || input.to === "" ? input.from : input.to, true);
+            if (b == null || (b === a && /^#?\d+$/.test(String(input.from).trim()))) b = Math.max(b ?? a, a + 30);
+            const ms = S.msgs.slice(idxOf(a), idxOf(b + 1));
+            if (!ms.length) throw new Error("No stored messages in that range of " + x.key + ".");
+            const ls = fit(ms, TOOL_BYTES - 256, m => xLine(x, m));
+            const out = { chat: x.key, from: ms[0].i, to: ms[Math.max(0, ls.length - 1)].i, lines: ls };
+            if (ls.length < ms.length) out.next = "#" + ms[ls.length].i;
+            return out;
+          });
+          rec.reads.push([res.from, res.to, x.key]);
+          rec.lastKind = "read";
+          rec.on();
+          return give(JSON.stringify(res));
+        },
+      },
+      {
+        name: "day_summaries",
+        description:
+          "One line per day of one chat, between two dates (YYYY-MM-DD) or message numbers: its message numbers, how many messages, and the day's summary where it has one, else its busiest topics. The numbers in these lines are that chat's: cite them as [key#n]. For an overview of a long stretch before searching or reading it; ask for one day alone to get its whole summary. Returns as many days as fit and where to continue.",
+        inputSchema: { type: "object", properties: Object.assign({ chat }, range), required: ["chat", "from"] },
+        execute: input => {
+          mark();
+          const x = one(input.chat);
+          const res = inCtx(x, () => {
+            const a = boundOf(input.from, false),
+              b = boundOf(input.to == null || input.to === "" ? input.from : input.to, true);
+            if (a == null || b == null) throw new Error("from and to must be dates (YYYY-MM-DD) or #numbers.");
+            const day1 = (S.byI.get(a) || {}).d && (S.byI.get(a) || {}).d === (S.byI.get(b) || {}).d;
+            const ls = dayLines(a, b, day1 ? TOOL_BYTES - 512 : DAYSUM_LINE, TOOL_BYTES - 384);
+            if (!ls.length) throw new Error("No stored messages in that range of " + x.key + ".");
+            const out = { chat: x.key, cite: "[" + x.key + "#n]", days: ls.map(l => l.text) };
+            if (ls.next) out.next = ls.next;
+            return out;
+          });
+          rec.reads.push(["days", String(input.from), String(input.to || input.from), x.key]);
+          rec.lastKind = "read";
+          rec.on();
+          return give(JSON.stringify(res));
+        },
+      },
+    ];
+  }
+  const X_SEARCH_HAVE =
+    "\n- SEARCH: three tools over every stored message in every chat, photo captions included: search_messages (by words, dates, sender; every chat, or one), read_messages (one chat, word for word: a range of numbers or a whole day) and day_summaries (one chat, a line per day, with its summary where it has one). Use them for whatever the lines above don't settle: older messages, things only in photos, exact wording, and anything in a chat whose newest messages don't cover it.";
+  const X_FMT =
+    'one per line: [key#number] [day time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions}. The key names the chat. Numbers restart in each chat, so cam#412 and tea#412 are different messages. Senders are named as full name (that chat\'s nickname) where the full name is known, else as Messenger shows them. People are kept separately in each chat: the same full name in two chats is the same person, so say so when it helps.';
+  function xRules(tools) {
+    return (
+      "- Answer only from these chats. If they don't contain the answer, say so plainly.\n- Cite every claim with the chat's key and the message number in square brackets, like [cam#123] or [cam#12, tea#15]. Never write a bare [#123]: the same number is in every chat.\n- Say which chat something is in when it matters.\n- When asked whether something needs a reply, check later messages in that chat for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble." +
+      (tools ? SEARCH_RULES.replace("isn't in the chat", "isn't in the chats") : "")
+    );
+  }
+  /* The prompt for a question across chats, within cap: who and what, each chat's span, then (without tools) the
+     question's own words found in every chat, so the answer still rests on each chat's matches, and each chat's newest
+     messages word for word, an equal share each (what a chat doesn't need goes to the others). */
+  function xPrompt(q, ctxs, hist, cap, tools) {
+    const extra = hist.reduce((n, t) => n + u8(t.content), 0);
+    const room0 = Math.floor(upfront(cap, tools)) - MARGIN - extra;
+    const chatLine = x => {
+      const ms = x.msgs;
+      if (!ms.length) return "  - " + x.key + ": " + x.c.name + " (no messages stored yet)";
+      const a = ms[0],
+        z = ms[ms.length - 1];
+      const span = daySpan(a.d, z.d);
+      return (
+        "  - " +
+        x.key +
+        ": " +
+        x.c.name +
+        (x.c.state === "paused" ? " (paused: not refreshed now)" : "") +
+        ", " +
+        plural(ms.length, "message") +
+        " stored, #" +
+        a.i +
+        " to #" +
+        z.i +
+        (span ? " (" + span + ")" : "")
+      );
+    };
+    const head =
+      "You are helping " +
+      OWNER() +
+      ' (shown as "You" in the data) catch up on their Facebook Messenger group chats. This question covers every chat below.\n\nWhat you have:\n- CHATS (key: name):\n' +
+      ctxs.map(chatLine).join("\n") +
+      "\n- MESSAGES: " +
+      X_FMT +
+      "\n- RECENT: each chat's newest messages, word for word." +
+      (tools ? X_SEARCH_HAVE : "\n- MATCHES: messages in any chat holding the question's own words, newest first.") +
+      "\n\nRules:\n" +
+      xRules(tools);
+    let room = room0 - u8(head) - 512;
+    const parts = [];
+    const read = {};
+    if (!tools) {
+      const ws = sigWords(q);
+      const found = ws.length ? xSearch(ctxs, ws.join(" ")) : [];
+      const ls = [];
+      let n = 0;
+      for (const f of found) {
+        const s = clipBytes(
+          inCtx(f.x, () => xLine(f.x, f.m)),
+          2048,
+        );
+        if (n + u8(s) + 1 > room / 2) break;
+        ls.push(s);
+        n += u8(s) + 1;
+      }
+      if (ls.length) {
+        parts.push("MATCHES (" + ls.length + " of " + found.length + ", newest first):\n" + ls.join("\n"));
+        room -= n + 64;
+      }
+    }
+    /* each chat's newest lines, oldest first; a chat with less than its share gives the rest to the others */
+    const lines = new Map(ctxs.map(x => [x.key, []]));
+    let left = ctxs.filter(x => x.msgs.length);
+    while (left.length && room > 256) {
+      const share = Math.floor(room / left.length);
+      const next = [];
+      left.forEach(x => {
+        const L = lines.get(x.key);
+        let used = 0,
+          k = x.msgs.length - 1 - L.length;
+        inCtx(x, () => {
+          for (; k >= 0; k--) {
+            const s = clipBytes(xLine(x, x.msgs[k]), 2048);
+            const b = u8(s) + 1;
+            if (used + b > share) break;
+            L.unshift(s);
+            used += b;
+          }
+        });
+        room -= used;
+        if (k >= 0 && used > 0) next.push(x);
+      });
+      /* every chat filled its share, or none could add a line: nothing is left to hand on */
+      if (next.length === left.length || !next.length) break;
+      left = next;
+    }
+    ctxs.forEach(x => {
+      const L = lines.get(x.key);
+      if (!L.length) return;
+      read[x.key] = [x.msgs[x.msgs.length - L.length].i, x.msgs[x.msgs.length - 1].i];
+      parts.push("RECENT, " + x.key + " (" + x.c.name + ", oldest first):\n" + L.join("\n"));
+    });
+    const text = head + "\n\n" + parts.join("\n\n");
+    return { text, bytes: u8(text) + extra, fits: u8(text) <= room0, P: { read } };
+  }
+  /* "Read Trail #3–#11, Cam #0–#7 word for word." */
+  const xReadNote = P =>
+    Object.keys(P.read).length
+      ? "Read " +
+        Object.entries(P.read)
+          .map(([k, [a, b]]) => tagOfKey(k) + " #" + a + (b !== a ? "–#" + b : ""))
+          .join(", ") +
+        " word for word."
+      : "";
+  function xSearchNote(rec) {
+    if (!rec || (!rec.searches.length && !rec.reads.length)) return "";
+    const ss = rec.searches.map(s => searchLabel(s) + " (" + s.ms.length + ")");
+    const rs = rec.reads
+      .filter(r => r[0] !== "days")
+      .map(([a, b, k]) => tagOfKey(k) + " #" + a + (b !== a ? "–#" + b : ""));
+    const ds = [...new Set(rec.reads.filter(r => r[0] === "days").map(r => tagOfKey(r[3])))];
+    return (
+      (ss.length ? "Searched " + ss.join(", ") + "." : "") +
+      (rs.length ? " Read " + rs.join(", ") + "." : "") +
+      (ds.length ? " Read day summaries of " + ds.join(", ") + "." : "")
+    ).trim();
+  }
+  function xRecStatus(rec) {
+    const r = rec.reads[rec.reads.length - 1];
+    if (r && (!rec.searches.length || rec.lastKind === "read"))
+      return r[0] === "days"
+        ? "Reading " + tagOfKey(r[3]) + "'s day summaries…"
+        : "Reading " + tagOfKey(r[2]) + " #" + r[0] + "–#" + r[1] + "…";
+    return recStatus(rec);
+  }
+  /* A citation across chats: "Cam #412", opening that chat at that message; a chat that's gone says so and opens
+     nothing; a number with no chat (or an unknown one) is "#412 · which chat?" */
+  function xCite(c, n) {
+    if (!c) {
+      const s = el("span", "cite bad", "#" + n + " · which chat?");
+      s.title = "Claude didn't say which chat this message is in";
+      return s;
+    }
+    if (!isShown(c) || !isLive(c)) {
+      const s = el("span", "cite gone", c.tag + " #" + n + " · " + (c.state === "deleted" ? "deleted" : "removed"));
+      s.dataset.chat = c.key;
+      return s;
+    }
+    const b = el("button", "link cite", c.tag + " #" + n);
+    b.type = "button";
+    b.dataset.chat = c.key;
+    b.dataset.i = n;
+    b.title = "Open " + c.name + " at #" + n;
+    b.onclick = () => openChat(c.key, n);
+    return b;
+  }
+  /* Claude's [cam#412] and [cam#412, tea#15] (a key or a tag) as citations; a bare number after a keyed one in the
+     same brackets is that chat's; anything else in brackets stays text */
+  function renderXCites(container, text) {
+    container.textContent = "";
+    const re = /\[([^[\]]*#\s*\d+[^[\]]*)\]/g;
+    const part = /^\s*([A-Za-z0-9_.~:@+-]*)\s*#\s*(\d+)\s*$/;
+    let last = 0,
+      m;
+    while ((m = re.exec(text))) {
+      const ps = m[1].split(",").map(p => part.exec(p));
+      if (ps.some(p => !p)) continue;
+      container.append(text.slice(last, m.index));
+      let prev = null;
+      ps.forEach((p, k) => {
+        const c = p[1] ? xChatOf(p[1]) : prev;
+        if (p[1]) prev = c;
+        if (k) container.append(" ");
+        container.append(xCite(c, parseInt(p[2], 10)));
+      });
+      last = re.lastIndex;
+    }
+    container.append(text.slice(last));
+  }
+  /* a saved answer's scope line: the chats it searched, and any it can read now that it didn't */
+  function xScopeNote(x) {
+    const ks = Array.isArray(x.chats) ? x.chats : [];
+    const not = xChats().filter(c => !ks.includes(c.key));
+    return (
+      "across " +
+      plural(ks.length, "chat") +
+      (ks.length ? " (" + ks.map(tagOfKey).join(", ") + ")" : "") +
+      (not.length ? " · not searched: " + not.map(c => c.tag).join(", ") : "")
+    );
+  }
+  /* Under an answer across chats: the page's own matches in every chat it searched, one list at a time (the question's
+     words, or one of Claude's searches), with a chip per chat (its count; none: disabled), Photos only, and Newest
+     first or By chat. Every change redraws here; nothing goes to Claude. */
+  const X_ORDER = "mcAskOrder";
+  function xOrder(v) {
+    try {
+      if (v) localStorage.setItem(X_ORDER, v);
+      else v = localStorage.getItem(X_ORDER);
+    } catch (e) {}
+    return v === "chat" ? "chat" : "new";
+  }
+  const nMatches = n => n.toLocaleString("en-US") + (n === 1 ? " match" : " matches");
+  function xMatchBox(q, rec, ctxs) {
+    const lists = [];
+    const seen = new Set();
+    const ws = sigWords(q);
+    if (ws.length) {
+      const hs = xSearch(ctxs, ws.join(" ")).map(f => f.hit);
+      if (hs.length) lists.push({ label: "Your words", title: ws.join(" "), hs });
+    }
+    (rec ? rec.searches : []).forEach(s => {
+      const k = JSON.stringify([s.q, s.from, s.to, s.sender, s.chat]);
+      if (seen.has(k) || (!s.q && !s.sender)) return;
+      seen.add(k);
+      lists.push({ label: searchLabel(s), title: "Claude searched " + searchLabel(s), hs: s.ms });
+    });
+    if (!lists.length) return null;
+    const keys = ctxs.map(x => x.key);
+    const st = { cur: null, filt: "all", photos: false, order: xOrder(), shown: 0, last: null };
+    const box = el("div", "matches xmatches");
+    const head = el("div", "seg filt");
+    head.setAttribute("role", "group");
+    head.setAttribute("aria-label", "Matching messages");
+    const chips = el("div", "seg filt xchips");
+    chips.setAttribute("role", "group");
+    chips.setAttribute("aria-label", "Filter matches by chat");
+    const bar = el("div", "xbar");
+    const count = el("span", "note", "");
+    const ord = el("div", "seg xorder");
+    ord.setAttribute("role", "group");
+    ord.setAttribute("aria-label", "Order of matches");
+    const list = el("ul", "snips xhits");
+    const more = el("button", "link", "");
+    more.type = "button";
+    const chatOfKey = k => S.chats.find(y => y.key === k);
+    const pass = h => (st.filt === "all" || h.key === st.filt) && (!st.photos || h.photo);
+    const ordered = () => {
+      const hs = st.cur.hs.filter(pass).sort(xNewest);
+      return st.order === "chat" ? S.chats.flatMap(c => hs.filter(h => h.key === c.key)) : hs;
+    };
+    const row = h => {
+      const li = el("li", "snip xhit");
+      li.dataset.chat = h.key;
+      const tx = el("span", "tx");
+      const meta = el("span", "meta");
+      meta.append(xCite(chatOfKey(h.key), h.i), " · " + (dayOf(h.d) ? dayOf(h.d) + " " : "") + h.t + " · ");
+      meta.append(el("span", "who", h.who));
+      tx.append(meta);
+      tx.append(document.createTextNode(trunc(h.b.replace(/\s+/g, " "), 220) || (h.photo ? "[photo]" : "")));
+      if (h.caps.length) tx.append(el("span", "meta", "📷 " + trunc(h.caps.join(" · "), 200)));
+      li.append(tx);
+      return li;
+    };
+    const fill = () => {
+      const hs = ordered();
+      hs.slice(st.shown, st.shown + MATCH_ROWS).forEach(h => {
+        if (st.order === "chat" && h.key !== st.last) {
+          const c = chatOfKey(h.key);
+          const hh = el("li", "xhit-h");
+          hh.dataset.chat = h.key;
+          hh.append(
+            tagChip(c),
+            el("span", "nm", c.name),
+            el("span", "note", nMatches(hs.filter(x => x.key === h.key).length)),
+          );
+          list.append(hh);
+        }
+        st.last = h.key;
+        list.append(row(h));
+      });
+      st.shown = Math.min(hs.length, st.shown + MATCH_ROWS);
+      more.hidden = st.shown >= hs.length;
+      more.textContent = "Show " + Math.min(MATCH_ROWS, hs.length - st.shown) + " more of " + hs.length;
+      count.textContent = hs.length.toLocaleString("en-US") + " shown";
+      if (!hs.length) list.append(el("li", "note", "No matches with this filter."));
+    };
+    const draw = () => {
+      st.shown = 0;
+      st.last = null;
+      list.textContent = "";
+      chips.textContent = "";
+      const hs = st.cur.hs;
+      const chip = (label, filt, n, c) => {
+        const b = el("button", null, label + " " + n.toLocaleString("en-US"));
+        b.type = "button";
+        if (c) {
+          b.className = "c" + ((((c.color || 1) - 1) % 4) + 1);
+          b.title = c.name;
+        }
+        b.dataset.filt = filt;
+        b.disabled = !n && filt !== "all";
+        b.onclick = () => {
+          st.filt = filt;
+          draw();
+        };
+        chips.append(b);
+      };
+      chip("All", "all", hs.length);
+      keys.forEach(k => {
+        const n = hs.filter(h => h.key === k).length;
+        if (!n && st.filt === k) st.filt = "all";
+        chip(chatOfKey(k).tag, k, n, chatOfKey(k));
+      });
+      chips.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.filt === st.filt)));
+      const ph = el("button", null, "Photos only");
+      ph.type = "button";
+      ph.dataset.act = "photos";
+      ph.setAttribute("aria-pressed", String(st.photos));
+      ph.onclick = () => {
+        st.photos = !st.photos;
+        draw();
+      };
+      chips.append(ph);
+      ord.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.order === st.order)));
+      fill();
+    };
+    [
+      ["new", "Newest first"],
+      ["chat", "By chat"],
+    ].forEach(([v, t]) => {
+      const b = el("button", null, t);
+      b.type = "button";
+      b.dataset.order = v;
+      b.onclick = () => {
+        st.order = xOrder(v);
+        draw();
+      };
+      ord.append(b);
+    });
+    bar.append(count, ord);
+    lists.forEach(x => {
+      const b = el("button", null, x.label + " · " + x.hs.length);
+      b.type = "button";
+      b.title = x.title;
+      b.onclick = () => {
+        st.cur = x;
+        head.querySelectorAll("button").forEach(y => y.setAttribute("aria-pressed", String(y === b)));
+        draw();
+      };
+      head.append(b);
+    });
+    more.onclick = fill;
+    box.append(
+      el("div", "note", "Matching messages in every chat searched (found by the page, so every match is listed):"),
+    );
+    if (lists.length > 1) box.append(head);
+    box.append(chips, bar, list, more);
+    const first = Math.max(
+      0,
+      lists.findIndex(x => x.hs.length),
+    );
+    st.cur = lists[first];
+    head.querySelectorAll("button").forEach((y, k) => y.setAttribute("aria-pressed", String(k === first)));
+    draw();
+    return box;
+  }
+  async function askAcross(q) {
+    await capWait();
+    if (u8(q) > S.promptCap / 2) {
+      $("#ask-note").textContent = "That question is too long to send. Shorten it.";
+      return;
+    }
+    const box = $("#xchat");
+    addTurn("user", q, box);
+    $("#ask-in").value = "";
+    const out = addTurn("assistant", "Reading your chats…", box, renderXCites);
+    xturns.push({ role: "user", content: q });
+    ctl = new AbortController();
+    const sig = ctl.signal;
+    $("#ask-go").disabled = true;
+    $("#ask-stop").hidden = false;
+    $("#ask-note").textContent = "";
+    try {
+      const all = await xLoad();
+      if (sig.aborted) throw Object.assign(new Error("stopped"), { code: "cancelled" });
+      const ctxs = all.filter(x => !x.err);
+      const bad = all.filter(x => x.err);
+      if (!ctxs.length) throw Object.assign(new Error("no chat could be read"), { code: "no_chats" });
+      out.textContent = "Thinking…";
+      const send = tools => {
+        const rec = newRec(() => {
+          if (!rec.shown) out.textContent = xRecStatus(rec);
+        });
+        return sendFitted(
+          cap => {
+            const hist = chatTurns(cap, xturns);
+            return Object.assign(xPrompt(q, ctxs, hist, cap, tools), { hist, cap });
+          },
+          m =>
+            S.sample(
+              [{ role: "user", content: m.text }, ...m.hist],
+              Object.assign(
+                {
+                  cache: false,
+                  signal: sig,
+                  onText: ({ text }) => {
+                    rec.text = text;
+                    const a = answerOf(text, rec);
+                    if (rec.cut && a === text && rec.cut >= text.length) return;
+                    rec.shown = true;
+                    renderXCites(out, a);
+                  },
+                },
+                tools ? { tools: xToolSet(rec, m.cap - MARGIN - m.bytes - TOOL_SPARE, ctxs) } : {},
+              ),
+            ),
+        ).then(r => Object.assign(r, { rec, tools }));
+      };
+      let r;
+      try {
+        r = await send(!!S.tools);
+      } catch (e) {
+        if (!(e && e.code === "tools_unavailable") || !S.tools) throw e;
+        S.tools = false;
+        out.textContent = "Thinking…";
+        r = await send(false);
+      }
+      const { res, P, retried, rec } = r;
+      const text = answerOf(res.text, rec);
+      renderXCites(out, text);
+      const note = [
+        "Searched " + plural(ctxs.length, "chat") + ": " + ctxs.map(x => x.c.tag).join(", ") + ".",
+        bad.length
+          ? "Couldn't read " +
+            bad.map(x => x.c.name).join(", ") +
+            ", so " +
+            (bad.length === 1 ? "it wasn't" : "they weren't") +
+            " searched."
+          : "",
+        xReadNote(P) + (retried ? " (sent a smaller set: the first was too large)" : ""),
+        xSearchNote(rec),
+      ]
+        .filter(Boolean)
+        .join(" ");
+      out.parentNode.append(el("div", "note sent", note));
+      const mb = xMatchBox(q, rec, ctxs);
+      if (mb) out.parentNode.append(mb);
+      xturns.push({ role: "assistant", content: text });
+      if (S.rawDb) {
+        try {
+          const row = {
+            q,
+            a: text,
+            at: new Date().toISOString(),
+            scope: "chats",
+            chats: ctxs.map(x => x.key),
+            toI: Object.fromEntries(ctxs.map(x => [x.key, x.msgs.length ? x.msgs[x.msgs.length - 1].i : null])),
+          };
+          const sr = recSent(rec);
+          if (sr) {
+            sr.searches.forEach((s, k) => {
+              if (rec.searches[k].chat) s.chat = rec.searches[k].chat;
+            });
+            row.sent = sr;
+          }
+          await S.rawDb.collection("qa").add(row);
+        } catch (e) {
+          $("#ask-note").textContent = "Answer shown but not saved.";
+        }
+      }
+    } catch (e) {
+      xturns.pop();
+      if (e.text) renderXCites(out, e.text);
+      else out.textContent = "";
+      $("#ask-note").textContent =
+        e && e.code === "no_chats" ? "Couldn't read any chat's messages here. Try again." : errCopy(e);
+    } finally {
+      $("#ask-go").disabled = false;
+      $("#ask-stop").hidden = true;
+      ctl = null;
+    }
+  }
+  /* The Ask tab names what it covers: the chat on screen, or every chat on All chats (each keeps its own conversation).
+     route() runs it before the rest of the script has, so it touches the page's elements only. */
+  function askMode(all) {
+    const v = document.getElementById("v-ask");
+    const h = v && v.querySelector(".sec-head h2"),
+      p = v && v.querySelector(".sec-head p"),
+      t = document.getElementById("ask-in");
+    if (!h || !p || !t) return;
+    const H = askMode.head || (askMode.head = { h: h.textContent, p: p.textContent, ph: t.placeholder });
+    const set = (n, k, s) => {
+      if (n[k] !== s) n[k] = s;
+    };
+    set(h, "textContent", all ? "Ask about your chats" : H.h);
+    set(
+      p,
+      "textContent",
+      all
+        ? "One question over every chat: Claude reads each chat's newest messages and searches all their messages and photo captions. Every message it cites names its chat (Cam #412) and opens it there. Under the answer, the page lists every exact match: filter them by chat, or put them in chat order."
+        : H.p,
+    );
+    set(t, "placeholder", all ? "Who's selling a tripod? What's planned for Saturday?" : H.ph);
+    document.getElementById("chat").hidden = all;
+    document.getElementById("xchat").hidden = !all;
   }
   /* ---------- look deeper (F17) ----------
      Under an answer that saw part of the history only as summary lines (P.before, P.after: what packHistory sent,
@@ -8820,13 +9629,19 @@
             "note",
             (x.at || "").replace("T", " ").slice(0, 16) +
               " · " +
-              (x.scope === "all" ? "all stored messages" : x.scope === "deeper" ? "looked deeper" : "catch-up window") +
+              (x.scope === "chats"
+                ? xScopeNote(x)
+                : x.scope === "all"
+                  ? "all stored messages"
+                  : x.scope === "deeper"
+                    ? "looked deeper"
+                    : "catch-up window") +
               (sentShort(x) ? " · " + sentShort(x) : ""),
           ),
         );
         const t = el("div", "txt");
         t.style.whiteSpace = "pre-wrap";
-        renderCites(t, x.a || "");
+        (x.scope === "chats" ? renderXCites : renderCites)(t, x.a || "");
         d.append(s, t);
         const rm = el("button", "link qa-rm", "Remove");
         rm.type = "button";
@@ -14879,7 +15694,10 @@
   }
   function filterRows() {
     const k = CUR.key;
-    S.qa = (S.qaAll || []).filter(r => chatOf(r) === k);
+    /* stage C: questions asked across chats (scope "chats") show on All chats' Ask, a chat's own on its Ask */
+    S.qa = (S.qaAll || []).filter(r =>
+      S.view === "all" ? r.scope === "chats" : r.scope !== "chats" && chatOf(r) === k,
+    );
     S.views = (S.viewsAll || []).filter(r => r.kind === "idea" || chatOf(r) === k);
   }
   function loadChat(c) {
@@ -14899,6 +15717,16 @@
     rebuild();
     renderHeader();
     if (S.db) subscribeChat();
+  }
+  /* daySummaries/d<YYYY-MM-DD> documents as "YYYY-MM-DD" -> summary */
+  function daySumMap(q) {
+    const m = new Map();
+    q.docs.forEach(d => {
+      const k = /^d(\d{4}-\d\d-\d\d)$/.exec(d.id);
+      const v = d.data();
+      if (k && v && typeof v === "object" && Array.isArray(v.sections)) m.set(k[1], v);
+    });
+    return m;
   }
   function subscribeChat() {
     const db = S.db;
@@ -14964,13 +15792,7 @@
     on(
       db.collection("daySummaries"),
       q => {
-        const m = new Map();
-        q.docs.forEach(d => {
-          const k = /^d(\d{4}-\d\d-\d\d)$/.exec(d.id);
-          const v = d.data();
-          if (k && v && typeof v === "object" && Array.isArray(v.sections)) m.set(k[1], v);
-        });
-        S.daySums = m;
+        S.daySums = daySumMap(q);
         S.daySumsIn = true;
         renderDays();
       },
@@ -15095,9 +15917,10 @@
   function showView() {
     const all = S.view === "all";
     document.body.classList.toggle("allchats", all);
-    $("#v-all").hidden = !all;
     route();
     applyCfg();
+    filterRows();
+    renderQA();
     renderChats();
   }
   /* opens a chat (and its message i) from the picker, All chats or a citation */
@@ -16091,12 +16914,16 @@
   }
 
   /* ---------- boot ---------- */
-  function rebuild() {
+  /* a chat's messages from its chunks/* documents, by number */
+  function msgsOf(chunks) {
     const all = [];
-    Object.keys(S.chunks)
+    Object.keys(chunks)
       .sort()
-      .forEach(k => (S.chunks[k].msgs || []).forEach(m => all.push(Object.assign({}, m, { ts: tsOf(m) }))));
-    all.sort((a, b) => a.i - b.i);
+      .forEach(k => ((chunks[k] || {}).msgs || []).forEach(m => all.push(Object.assign({}, m, { ts: tsOf(m) }))));
+    return all.sort((a, b) => a.i - b.i);
+  }
+  function rebuild() {
+    const all = msgsOf(S.chunks);
     S.msgs = all;
     S.byI = new Map(all.map(m => [m.i, m]));
     indexPeople();
