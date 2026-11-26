@@ -1,0 +1,25 @@
+# Every change considers the docs (F42, #96): the PR body's `Docs:` line names the docs it updated, or says
+# `Docs: none needed — <reason>`; tools/docs_check.py checks it against the PR's changed files. A workflow of its own,
+# so editing the PR body re-runs this check without cancelling the test run (ci's concurrency cancels in progress).
+name: docs
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The PR body's Docs line
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: git diff --name-only "$BASE"...HEAD | python3 tools/docs_check.py

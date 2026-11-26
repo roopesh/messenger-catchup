@@ -2,6 +2,20 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.57.1] - 2026-11-26
+**Every change considers the docs** (F42, #96; the owner, Nov 26: "every work item updates documentation… it should be considered and/or updated"). PATCH: tooling and process. No page, helper or skill change.
+
+### Added
+- A `docs` CI workflow on every PR (`tools/docs_check.py`). The PR body needs a `Docs:` line that either names the docs the PR updated or says `Docs: none needed — <reason>`.
+  - The check fails when the line is missing, still the template's placeholder, or "none needed" without a reason.
+  - It also fails when a doc the line names wasn't changed in the PR.
+  - It runs in its own workflow, so editing the PR body re-runs it without cancelling the tests.
+- The PR template has a Docs section listing the docs to consider. CLAUDE.md's "Every change" and STATUS's enforcement line say the same.
+- Backlog: F40 (reply checks every 10 minutes) and F41 (comment answers check the real data, #95) filed.
+
+### Tests
+- Python (TestDocsCheck): named docs must be in the diff; "none needed" needs a reason; a missing or placeholder line fails; the template, the workflow and CLAUDE.md ask for it.
+
 ## [1.57.0] - 2026-11-26
 **Stats, By day and a summary across chats** (F1 stage C, part 2; the owner, Nov 22: "comparison and summaries for all chats too"). MINOR: All chats gains By day and Stats, and a run over every chat writes a summary across chats (`references/chats.md` changes: a behavior change; SKILL.md unchanged). Page 6.6; no helper change. F1's stage C is done.
 

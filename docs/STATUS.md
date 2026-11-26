@@ -3,7 +3,7 @@
 **Read this first** when picking the project up. Last updated Nov 26, 2026 (US Pacific). What changed in each release is in [CHANGELOG.md](../CHANGELOG.md); what's open is in [BACKLOG.md](BACKLOG.md). Every PR updates the release line below (a test checks it names `VERSION`), and a release that changes what users see or how the project works updates the rest of this file too.
 
 ## Where things stand
-- **Release: v1.57.0** (page `PAGE_VERSION` 6.6, helper 3.8). It's a plugin, `messenger-catchup`, installed from this repo as a marketplace (`rando-tools`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached; installed helpers (1.5+) update themselves from the latest release.
+- **Release: v1.57.1** (page `PAGE_VERSION` 6.6, helper 3.8). It's a plugin, `messenger-catchup`, installed from this repo as a marketplace (`rando-tools`); installs update when the plugin's version changes. Every release is a git tag plus a GitHub release with the plugin ZIP and `helper.user.js` attached; installed helpers (1.5+) update themselves from the latest release.
 - **Four skills:** `setup` (once per page: requirements, the page, the questions, the schedule; also changes the schedule and schedules reply checks), `refresh` (every run; posts approved replies first, then refreshes every chat and group), `replies` ("send replies": posts what's queued and stops) and `reply-check` ("check replies": one read of `meta/chat` plus one outbox query per active chat, handing a waiting reply to `replies`; schedulable every few minutes). A skill can only count on its own folder, so setup and replies carry copies that `npm run sync` makes.
 
 ### What each area does now
@@ -24,7 +24,7 @@ Everything open is in [BACKLOG.md](BACKLOG.md) (its "At a glance" table), with t
 
 ### Workflow and enforcement
 - **Workflow:** every change goes branch → PR → version bump → CI → squash-merge → `main`'s CI → `tools/release.sh`. Nothing is committed to `main` directly. The steps are in [CLAUDE.md](../CLAUDE.md) and below.
-- **Enforcement:** GitHub branch protection on `main`: changes only through a PR, `test` and `version-bump` must pass, the branch must be up to date, linear history, no force-push or deletion, admins included. CI's `pr-only` job flags any commit on `main` that didn't come from a merged PR, and a local `pre-push` hook (`npm run setup`) blocks direct pushes. `tools/release.sh` refuses to tag unless `main`'s CI for that commit passed on its first attempt (`tools/ci-green.sh`).
+- **Enforcement:** GitHub branch protection on `main`: changes only through a PR, `test` and `version-bump` must pass, the branch must be up to date, linear history, no force-push or deletion, admins included. CI's `pr-only` job flags any commit on `main` that didn't come from a merged PR, and a local `pre-push` hook (`npm run setup`) blocks direct pushes. `tools/release.sh` refuses to tag unless `main`'s CI for that commit passed on its first attempt (`tools/ci-green.sh`). Every PR's body carries a `Docs:` line (the docs it updated, or `none needed — <reason>`), and the `docs` workflow (`tools/docs_check.py`) fails without it or when a named doc wasn't changed.
 
 ### In use
 - The owner's page runs the released plugin from the marketplace on a schedule. It picks up a new page or skill at its next refresh after a merge: check `meta/chat.pageVersion` and `meta/chat.versions` there (read-only) before saying a release works for them.

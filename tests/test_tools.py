@@ -129,6 +129,39 @@ class TestHelperCopies(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
 
 
+_d = importlib.util.spec_from_file_location("docs_check", os.path.join(ROOT, "tools", "docs_check.py"))
+docs_check = importlib.util.module_from_spec(_d)
+_d.loader.exec_module(docs_check)
+
+
+class TestDocsCheck(unittest.TestCase):
+    """F42 (#96): every PR's body says which docs it updated, or that none needed changing and why"""
+
+    def test_named_docs_must_be_changed(self):
+        self.assertEqual(
+            docs_check.check("Docs: README.md, docs/STATUS.md", ["README.md", "docs/STATUS.md", "x.py"]), []
+        )
+        p = docs_check.check("Docs: README.md, docs/DECISIONS.md", ["README.md"])
+        self.assertTrue(p and "docs/DECISIONS.md" in p[0], p)
+        self.assertEqual(docs_check.check("**Docs:** SKILL.md", ["plugin/skills/refresh/SKILL.md"]), [])
+
+    def test_none_needed_needs_a_reason(self):
+        self.assertEqual(docs_check.check("Docs: none needed — a test-only change, no behavior", ["tests/a.js"]), [])
+        self.assertEqual(docs_check.check("- Docs: None needed: CI wording only, nothing user-facing", []), [])
+        self.assertTrue(docs_check.check("Docs: none needed", []))
+        self.assertTrue(docs_check.check("Docs: none", []))
+
+    def test_missing_or_placeholder_line_fails(self):
+        self.assertTrue(docs_check.check("## What and why\nstuff", ["README.md"]))
+        self.assertTrue(docs_check.check("Docs: <which docs you updated, or none needed — why>", ["README.md"]))
+        self.assertTrue(docs_check.check("Docs: updated the readme", ["README.md"]))
+
+    def test_template_and_rules_ask_for_it(self):
+        self.assertIn("Docs:", read(".github", "pull_request_template.md"))
+        self.assertIn("docs_check.py", read(".github", "workflows", "docs.yml"))
+        self.assertIn("`Docs:", read("CLAUDE.md"))
+
+
 class TestVersions(unittest.TestCase):
     def test_helper_version_strings_agree(self):
         src = in_skill("assets", "helper.user.js")
