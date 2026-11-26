@@ -44,6 +44,7 @@ REFERENCES = [
     "people.md",
     "photos.md",
     "posting-with-helper.md",
+    "reactions.md",
     "reports.md",
     "restoring-a-summary.md",
     "scheduling.md",
@@ -2147,6 +2148,92 @@ class TestScheduling(unittest.TestCase):
         """L1: a recurring task isn't called quiet just because the night had no runs."""
         quiet = bullet(self.after(), "Recurring task quiet:")
         self.assertIn("since the later of `lastRunAt` and the start of the current window", quiet)
+
+
+class TestReactions(unittest.TestCase):
+    """B67 (the owner's pick: C): one managed meaning table in references/reactions.md, copied into the page by sync,
+    corrections in meta/chat.reactionMeanings, and the helper reading who reacted (xw)."""
+
+    def setUp(self):
+        self.md = in_skill("references", "reactions.md")
+        self.page = in_skill("assets", "page.html")
+
+    def page_copy(self):
+        lit = re.search(r"const REACTIONS_MD = `((?:\\.|[^`\\])*)`;", self.page, re.S).group(1)
+        return re.sub(r"\\(.)", r"\1", lit, flags=re.S)
+
+    def test_the_page_carries_the_table_and_rules_word_for_word(self):
+        self.assertEqual(self.page_copy(), sync.reactions_part(self.md), "run npm run sync")
+
+    def test_sync_follows_an_edit_to_the_table(self):
+        src = in_skill("assets", "helper.user.js")
+        md = self.md.replace("| 👎 | no, disagree | no |", "| 👎 | no, disagree, `not` ${me} | no |")
+        self.assertNotEqual(md, self.md)
+        out = sync.generate(self.page, src, md)
+        self.assertIn("| 👎 | no, disagree, \\`not\\` \\${me} | no |", out)
+        self.assertEqual(sync.generate(out, src, md), out, "generate is not idempotent")
+        with self.assertRaises(AssertionError):
+            sync.generate(self.page, src, md.replace("<!-- the page's copy ends here -->", ""))
+
+    def test_the_owners_table(self):
+        part = sync.reactions_part(self.md)
+        rows = {
+            tuple(c.strip() for c in l.split("|")[1:-1])
+            for l in part.splitlines()
+            if l.startswith("| ") and not l.startswith("| Reaction")
+        }
+        must = {
+            ("👍 💯 ✅ 👌", "yes, agree, OK, done", "yes"),
+            ("👎", "no, disagree", "no"),
+            ("❤️ 😍", "like it, warm thanks; on an item for sale: interest, not a claim", "only in context"),
+            ("🔥", 'strong approval, "want"', "yes"),
+            ("🙏", "thanks", "only in context"),
+            ("😂 😆 🤣", "funny", "never"),
+            ("😮 😯", "surprised", "never"),
+            ("😢", "sympathy", "never"),
+            ("😡", "annoyed, objects", "no"),
+            ("👀", "interested, watching", "never"),
+            ("🤔", "unsure", "never"),
+        }
+        self.assertEqual(rows, must)
+        for rule in (
+            "A reaction answers the message it's on",
+            "Your 👍 on a yes/no question to you means yes; on a plan or a time, agreed.",
+            "A reaction on an offer (an item for sale, a spot) is interest, not a claim.",
+            "The asker's 👍 on an answer closes their question; a bystander's doesn't.",
+            "A laugh never closes a question.",
+            "Several 👍 on a proposal: the group agrees.",
+            "Skin-tone variants (👍🏽) count as the base emoji.",
+        ):
+            self.assertIn(rule, part)
+
+    def test_corrections_and_xw_are_documented(self):
+        db = in_skill("references", "database.md")
+        self.assertIn("- `meta/chat.reactionMeanings`", db)
+        self.assertIn("`xw` (who reacted, helper 4.0+", db)
+        self.assertIn("## Corrections: `meta/chat.reactionMeanings`", self.md)
+        self.assertIn('"reactionMeanings",', self.page)
+        self.assertIn('"xw",', self.page)
+
+    def test_skill_says_when_to_read_it(self):
+        skill = in_skill("SKILL.md")
+        open_rule = re.search(r"^- `open`:.*$", skill, re.M).group(0)
+        self.assertIn("A reaction can answer, or settle a mention: `references/reactions.md`.", open_rule)
+        self.assertIn('"see who reacted" (closed with Escape; never a click inside it)', skill)
+        self.assertIn("`full` with a fresh `run` id and `me` (`ownerName`, `ownerAliases`)", skill)
+        self.assertIn("`references/reactions.md`", section(in_skill("references", "writing-the-build.md"), "Reactions"))
+
+    def test_the_helper_reads_only_the_reactions_dialog_and_closes_it_with_escape(self):
+        src = in_skill("assets", "helper.user.js")
+        body = src[src.index("R.phase = 'reactions';") : src.index("R.tReactions")]
+        self.assertIn("dlgName(d) === 'Message reactions'", body)
+        self.assertIn("key: 'Escape'", body)
+        self.assertEqual(body.count(".click()"), 1, "the only click is the one that opens the list")
+        self.assertIn("pill.click()", body)
+        self.assertIn("if (m.xw && m.xw.length) o.xw = m.xw;", src)
+        helper = in_skill("references", "helper.md")
+        self.assertIn("- `me`, `rxw`, `rxwMs` (4.0; for `full` and `scan`)", helper)
+        self.assertIn("**`who reacted: … didn't close with Escape`**", section(helper, "Warnings"))
 
 
 class TestPrePushHook(unittest.TestCase):

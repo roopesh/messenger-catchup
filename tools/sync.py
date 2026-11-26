@@ -2,6 +2,8 @@
 """Generated copies, kept in sync (npm run sync; npm test runs --check):
 1. The page's bookmarklet and its HELPER_VERSION, from the refresh skill's assets/helper.user.js. (The userscript itself is installed from the
    GitHub release and updates itself; the page only links to it.)
+1b. The page's REACTIONS_MD: the meaning table and rules from the refresh skill's references/reactions.md, between its
+   two markers (B67), so the page's Ask and the summary build read the same ones.
 2. The setup and replies skills' copies of the refresh skill's shared files (SHARED, REPLIES_SHARED). A skill can only
    count on its own folder, so each carries its own copy. Edit the refresh skill's file; never a copy.
   tools/sync.py          rewrite the #jump-bm bookmarklet textarea, then refresh the copies
@@ -17,6 +19,7 @@ SETUP = os.path.join(ROOT, "plugin", "skills", "setup")
 REPLIES = os.path.join(ROOT, "plugin", "skills", "replies")
 HELPER = os.path.join(SKILL, "assets", "helper.user.js")
 PAGE = os.path.join(SKILL, "assets", "page.html")
+REACTIONS = os.path.join(SKILL, "references", "reactions.md")
 SHARED = [
     os.path.join("assets", "page.html"),
     os.path.join("references", "database.md"),
@@ -41,8 +44,23 @@ def bookmarklet(src):
     return "javascript:" + enc
 
 
-def generate(page, src):
+def reactions_part(md):
+    """The part of references/reactions.md the page carries (B67): the meaning table and the rules for reading them."""
+    m = re.search(r"<!-- the page's copy starts here -->\n(.*?)\n<!-- the page's copy ends here -->", md, re.S)
+    assert m, "the page's copy markers not found in references/reactions.md"
+    return m.group(1)
+
+
+def generate(page, src, rx=None):
     out = page
+    # B67: the reaction meanings, as a JS template literal (Prettier leaves its text alone)
+    if rx is None:
+        with open(REACTIONS, encoding="utf-8") as f:
+            rx = f.read()
+    js = reactions_part(rx).replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    pat = re.compile(r"(const REACTIONS_MD = `)((?:\\.|[^`\\])*)(`;)", re.S)
+    assert len(pat.findall(out)) == 1, "expected one REACTIONS_MD in the page"
+    out = pat.sub(lambda m: m.group(1) + js + m.group(3), out)
     for tid, val in (("jump-bm", bookmarklet(src)),):
         pat = re.compile(r'(<textarea id="%s"[^>]*>)(.*?)(</textarea>)' % tid, re.S)
         assert len(pat.findall(out)) == 1, "expected one #%s textarea" % tid
@@ -82,10 +100,10 @@ if __name__ == "__main__":
     new = generate(page, src)
     if "--check" in sys.argv:
         if new != page:
-            sys.exit("page.html bookmarklet is out of date: run npm run sync")
+            sys.exit("page.html is out of date (bookmarklet, HELPER_VERSION or REACTIONS_MD): run npm run sync")
         if stale_copies():
             sys.exit("skill copies out of date (%s): run npm run sync" % ", ".join(stale_copies()))
-        print("bookmarklet and skill copies in sync")
+        print("page and skill copies in sync")
         sys.exit(0)
     if new != page:
         with open(PAGE, "w", encoding="utf-8") as f:

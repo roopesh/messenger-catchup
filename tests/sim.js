@@ -2177,6 +2177,154 @@ sim('F37: react', { s: 20 }, async b => {
   );
   await ctx.close();
 });
+/* B67: who reacted. In the window #100-#119: #105 replies to you (Ben Brooks 👍, you 👍🏽), #111 asks a question (Cy
+   Chen 😂, you 👍), #117 names you ("Sam", passed as me), #113 has a ❤️ but none of those, so only its count is kept */
+const RXW_MODE = {
+  rx: '105:👍,111:😂,113:❤️,117:👍',
+  rxwho: JSON.stringify({ 105: 'Ben Brooks' }),
+  myrx: '105:👍🏽,111:👍',
+  ask: JSON.stringify({ 111: 'Is the trailhead lot open?', 117: 'Sam can bring the map' }),
+  rxdecoy: '1',
+};
+const rxState = p =>
+  p.evaluate(() => ({
+    opened: window.__rxOpened,
+    inside: window.__rxInside,
+    open: document.querySelectorAll('.who').length,
+    mine: Object.assign({}, window.mockMyRx),
+  }));
+sim('B67: who reacted', { s: 20 }, async b => {
+  const { ctx, p, capOf } = await fresh(b);
+  await mode(p, RXW_MODE);
+  const r = await bridge(p, 'scan', { stops: STOPS99, base: 99, me: ['Sam'] });
+  const s = await rxState(p);
+  ok(
+    r &&
+      !r.err &&
+      r.win === 20 &&
+      JSON.stringify(r.rxw) === JSON.stringify({ want: 3, read: 3, noopen: 0, empty: 0, cap: false, stuck: false }) &&
+      !r.warn.length,
+    'B67: the scan reads who reacted on the three messages that reply to you, ask, or name you, with no warnings (' +
+      JSON.stringify(r && [r.err, r.rxw, r.warn]) +
+      ')',
+  );
+  ok(
+    s.opened === 3 &&
+      s.inside === 0 &&
+      s.open === 0 &&
+      s.mine['mid.$mock105'] === '👍🏽' &&
+      s.mine['mid.$mock111'] === '👍',
+    'B67: three "Message reactions" lists opened, each closed with Escape, nothing inside clicked, your reactions still there (' +
+      JSON.stringify(s) +
+      ')',
+  );
+  await bridge(p, 'capture', { base: 99 });
+  const cap = await capOf();
+  const at = i => cap.msgs.find(m => m.i === i) || {};
+  ok(
+    JSON.stringify(at(105).xw) ===
+      JSON.stringify([
+        ['Ben Brooks', '👍'],
+        ['You', '👍🏽'],
+      ]) &&
+      JSON.stringify(at(111).xw) ===
+        JSON.stringify([
+          ['Cy Chen', '😂'],
+          ['You', '👍'],
+        ]) &&
+      JSON.stringify(at(117).xw) === JSON.stringify([['Cy Chen', '👍']]),
+    'B67: the capture carries who reacted (xw), your own row ("Click to remove") as You (' +
+      JSON.stringify([105, 111, 117].map(i => at(i).xw)) +
+      ')',
+  );
+  ok(
+    at(113).x === '1 ❤️' && !at(113).xw && at(105).x === '2 👍 and 👍🏽' && cap.msgs.filter(m => m.xw).length === 3,
+    'B67: a message with reactions that asks nothing of you keeps only its count (x) (' + JSON.stringify(at(113)) + ')',
+  );
+  ok(
+    !/Dee Diaz|Ana Alvarez|😮|❤️/.test(JSON.stringify(cap.msgs.map(m => m.xw || []))),
+    'B67: the hidden Notifications dialog (Dee Diaz 😮, Ana Alvarez ❤️) is never read',
+  );
+  await ctx.close();
+});
+/* B67 under Tampermonkey's sandbox (B68's mode): the list opens, is read and closes with Escape there too */
+sim('B67: who reacted in Tampermonkey’s sandbox', { s: 20 }, async b => {
+  const { ctx, p, capOf } = await fresh(b, 'sandbox');
+  await mode(p, RXW_MODE);
+  const r = await bridge(p, 'scan', { stops: STOPS99, base: 99, me: ['Sam'] });
+  const s = await rxState(p);
+  await bridge(p, 'capture', { base: 99 });
+  const cap = await capOf();
+  const at = i => cap.msgs.find(m => m.i === i) || {};
+  ok(
+    r &&
+      !r.err &&
+      r.rxw &&
+      r.rxw.read === 3 &&
+      !r.rxw.stuck &&
+      s.opened === 3 &&
+      s.inside === 0 &&
+      s.open === 0 &&
+      JSON.stringify(at(105).xw) ===
+        JSON.stringify([
+          ['Ben Brooks', '👍'],
+          ['You', '👍🏽'],
+        ]),
+    'B67: in the sandbox the scan reads who reacted on all three, closes each list with Escape and clicks nothing inside (' +
+      JSON.stringify([r && [r.err, r.rxw], s, at(105).xw]) +
+      ')',
+  );
+  await ctx.close();
+});
+sim('B67: who reacted: the cap, a list that stays open, a list that never opens', { s: 30 }, async b => {
+  const { ctx, p } = await fresh(b);
+  await mode(p, RXW_MODE);
+  let r = await bridge(p, 'scan', { stops: STOPS99, base: 99, me: ['Sam'], rxw: 2 });
+  let s = await rxState(p);
+  let info = await p.evaluate(
+    () => Object.values(JSON.parse(sessionStorage.getItem('__mcsave')).info).filter(m => m.xw).length,
+  );
+  ok(
+    r && !r.err && r.rxw.read === 2 && r.rxw.cap === true && s.opened === 2 && info === 2 && !r.warn.length,
+    'B67: rxw caps the lists opened in a run (2 of 3, newest first) (' + JSON.stringify([r && r.rxw, s, info]) + ')',
+  );
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99, me: ['Sam'], rxw: 0 });
+  s = await rxState(p);
+  ok(
+    r && !r.err && r.rxw.read === 0 && s.opened === 2,
+    'B67: rxw 0 opens none (' + JSON.stringify([r && r.rxw, s]) + ')',
+  );
+  await mode(p, Object.assign({ rxstuck: '1' }, RXW_MODE));
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99, me: ['Sam'] });
+  s = await rxState(p);
+  ok(
+    r &&
+      !r.err &&
+      r.rxw.stuck === true &&
+      r.rxw.read === 1 &&
+      s.opened === 1 &&
+      s.inside === 0 &&
+      has(r.warn, "didn't close with Escape"),
+    'B67: a list Escape does not close: the helper reads no more, clicks nothing inside, and warns (' +
+      JSON.stringify([r && r.rxw, s, r && r.warn]) +
+      ')',
+  );
+  await mode(p, Object.assign({ rxnodlg: '1' }, RXW_MODE));
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99, me: ['Sam'] });
+  s = await rxState(p);
+  ok(
+    r &&
+      !r.err &&
+      r.rxw.noopen === 3 &&
+      r.rxw.read === 0 &&
+      s.opened === 0 &&
+      has(r.warn, "didn't open for 3 message(s)"),
+    'B67: no list opens: the scan goes on, keeps the counts and warns (' +
+      JSON.stringify([r && r.rxw, r && r.warn]) +
+      ')',
+  );
+  await ctx.close();
+});
 sim('F: Enter or line breaks not accepted', { s: 25 }, async b => {
   const { ctx, p, state, waitTip, row } = await freshF(b);
   let s, r;
