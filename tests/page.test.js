@@ -17850,6 +17850,15 @@ async function multiChatAsk() {
     "F1: the refresh line names the chat's phrase in Camera Club and the page's on All chats, also after switching back " +
       JSON.stringify([camRefresh.slice(0, 90), allRefresh.slice(0, 90)]),
   );
+  // B71: the chat loaded last has its own refreshPhrase (a group's run wrote "refresh pa"): All chats still says the page's
+  const b71 = await p.evaluate(() => {
+    S.meta = Object.assign({}, S.meta, { refreshPhrase: 'refresh pa' });
+    return RP();
+  });
+  ok(
+    b71 === 'refresh my catch-up',
+    "B71: on All chats the refresh phrase is the page's, not the last chat's (" + b71 + ')',
+  );
   await p.evaluate(() =>
     S.rawDb.doc('meta/chat').update({
       chats: { pine: { name: 'Pine Club', tag: 'Pine', color: 4, order: 3, state: 'active', thread: '7171' } },

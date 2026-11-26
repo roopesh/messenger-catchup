@@ -2,6 +2,15 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.58.2] - 2026-11-26
+**All chats names the page's refresh phrase** (B71, seen on the owner's page Nov 26). PATCH. Page 7.0.
+
+### Fixed
+- On All chats, the refresh hint ("ask Claude in chat to …") took the phrase of the chat or group loaded last, and showed "refresh pa" after the owner's first group was added. It now uses the page's own phrase, from the first chat's settings. A chat's own view is unchanged ("refresh <chat name>").
+
+### Tests
+- page (B71): with the chat loaded last carrying its own phrase, All chats still says the page's.
+
 ## [1.58.1] - 2026-11-26
 **A quick second Move press is never lost** (B70). PATCH. Page 6.9. This release also carries v1.58.0, which has no release of its own: main's CI failed on it in the test this fixes.
 
