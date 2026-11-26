@@ -1799,6 +1799,17 @@
   .gc.new {
     border-left-color: var(--accent);
   }
+  .gc.flash,
+  .gthread.flash {
+    background: var(--hl);
+  }
+  .gthread {
+    margin-top: 8px;
+  }
+  .gthread .n {
+    font: 0.75rem var(--mono);
+    color: var(--muted);
+  }
   /* F25: the picker's Chats and Groups headings */
   .pick-head {
     margin: 8px 8px 2px;
@@ -2706,9 +2717,9 @@
         always cover the whole history.
       </li>
       <li>
-        <b>Reply in Messenger ↗</b> (on every card, open question and message) opens Messenger at that exact message
-        with the Reply box ready, once the helper below is set up. Without it, the link just opens the chat. Older
-        messages take 10–20 seconds while it scrolls back.
+        <b>Reply in Messenger ↗</b> (on every message and open question) opens Messenger at that exact message with the
+        Reply box ready, once the helper below is set up. Without it, the link just opens the chat. Older messages take
+        10–20 seconds while it scrolls back.
       </li>
       <li>
         <b>Reply here</b> (works from your phone): type your reply on this page. It waits under “Your replies” at the
@@ -2825,7 +2836,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "5.5";
+  const PAGE_VERSION = "5.6";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3761,11 +3772,12 @@
       });
     return out;
   }
-  function gCite(p, c) {
+  function gCite(p, c, onGo) {
     const a = el("a", "cite", CUR.tag + " #p" + p.n + (c ? "/c" + c.c : ""));
     a.href = "#posts";
     a.onclick = e => {
       e.preventDefault();
+      if (onGo) return onGo();
       location.hash = "#posts";
       requestAnimationFrame(() => {
         const t = document.getElementById("p" + p.n + (c ? "c" + c.c : ""));
@@ -3834,6 +3846,53 @@
     bo.append(l);
     v.append(bo);
   }
+  /* B62: a Needs you item opens its post and comments in place (as a chat's Summary opens a thread), the cited
+     comment marked; the Posts tab keeps the full list */
+  function gThread(p) {
+    const thr = el("details", "thr");
+    const cs = gCmts(p);
+    const label = "Show the post (" + plural(cs.length, "comment") + ")";
+    const ts = el("summary", null, label);
+    thr.append(ts);
+    let built = null;
+    const build = () => {
+      if (built) return;
+      built = el("div", "gthread");
+      const r = el("div", "row");
+      r.append(el("span", "n", "#p" + p.n), el("b", null, p.who || "?"), el("span", "note", p.age || ""));
+      built.append(r, el("p", null, p.text || ""));
+      if ((p.photos || []).length)
+        built.append(el("p", "note", "📷 " + p.photos.length + (p.photos.length > 1 ? " photos" : " photo")));
+      cs.forEach(c => {
+        const g = gComment(p, c);
+        g.removeAttribute("id");
+        g.dataset.c = c.c;
+        built.append(g);
+      });
+      const close = el("button", "thr-close", "Close the post");
+      close.type = "button";
+      close.addEventListener("click", () => (thr.open = false));
+      thr.append(built, close);
+    };
+    thr.addEventListener("toggle", () => {
+      if (thr.open) build();
+      ts.textContent = thr.open ? "Hide the post" : label;
+    });
+    return {
+      thr,
+      show: c => {
+        build();
+        thr.open = true;
+        requestAnimationFrame(() => {
+          const t = c ? built.querySelector('.gc[data-c="' + c.c + '"]') : built;
+          if (!t) return;
+          t.classList.add("flash");
+          setTimeout(() => t.classList.remove("flash"), 2400);
+          t.scrollIntoView({ block: "center", behavior: "smooth" });
+        });
+      },
+    };
+  }
   function renderGroupSummary() {
     const v = $("#v-summary");
     if (!v || !isGroup(CUR)) return;
@@ -3874,16 +3933,19 @@
     const l = el("div", "list");
     needs.forEach(x => {
       const it = el("div", "item");
+      const t = x.p ? gThread(x.p) : null;
+      const go = t ? () => t.show(x.c) : null;
       if (x.n) {
         const line = el("p", null, trunc(x.n.text || "", 160) + " ");
-        if (x.p) line.append(gCite(x.p, x.c));
+        if (x.p) line.append(gCite(x.p, x.c, go));
         line.append(" ", el("span", "chip open", "from notifications"));
         it.append(line);
       } else
         it.append(
           el("p", null, (x.c.who || "?") + " " + x.why + ": “" + trunc(x.c.text || "", 140) + "” "),
-          gCite(x.p, x.c),
+          gCite(x.p, x.c, go),
         );
+      if (t) it.append(t.thr);
       l.append(it);
     });
     nb.append(l);
@@ -3907,7 +3969,7 @@
     s = (s || "").replace(/\s+/g, " ").trim();
     return s.length > n ? cutCp(s, n - 1) + "…" : s;
   }
-  function snip(i, { quote = false, len = 200 } = {}) {
+  function snip(i, { quote = false, len = 200, go: goTo } = {}) {
     const m = S.byI.get(i);
     const li = el("li", "snip");
     li.tabIndex = 0;
@@ -3943,7 +4005,7 @@
       ),
     );
     li.append(tx);
-    const go = () => goMsg(i);
+    const go = () => (goTo ? goTo(i) : goMsg(i));
     li.onclick = go;
     li.onkeydown = e => {
       if (e.key === "Enter") go();
@@ -4995,6 +5057,64 @@
     });
     return p;
   }
+  /* B62: a conversation's thread opens in one place at a time on Summary (its card, or under a Needs you item):
+     opening it in one closes it in the other */
+  const THR_HOSTS = new Map();
+  function thrHost(conv, det) {
+    if (!THR_HOSTS.has(conv)) THR_HOSTS.set(conv, new Set());
+    THR_HOSTS.get(conv).add(det);
+  }
+  /* hosts are registered while Summary is built, before it's on the page: only an open one drops the others, and
+     those from an earlier render (no longer on the page) go then */
+  function thrOnly(conv, det) {
+    const hs = THR_HOSTS.get(conv) || new Set();
+    hs.forEach(x => {
+      if (!x.isConnected) hs.delete(x);
+      else if (x !== det && x.open) x.open = false;
+    });
+  }
+  /* B62: a Needs you item's thread, in place: the conversation its messages are in, the cited ones marked */
+  function needThread(conv, ids, after, named) {
+    const mem = convMembers(conv).filter(after);
+    /* an item whose messages are in several conversations names each thread */
+    const label = "Show the thread" + (named ? ": " + convTitle(conv) : "") + " (" + mem.length + ")";
+    const thr = el("details", "thr");
+    const ts = el("summary", null, label);
+    thr.append(ts);
+    let built = null;
+    const key = "n:" + conv;
+    /* built on first open, or by show() before it opens: the toggle event comes after the open */
+    const build = () => {
+      if (!built) {
+        built = threadTree(mem);
+        const close = el("button", "thr-close", "Close the thread");
+        close.type = "button";
+        close.addEventListener("click", () => (thr.open = false));
+        thr.append(built, close);
+      }
+    };
+    thrHost(conv, thr);
+    thr.addEventListener("toggle", () => {
+      if (thr.open) {
+        build();
+        thrOnly(conv, thr);
+        S.openThr.add(key);
+        ts.textContent = "Hide the thread" + (named ? ": " + convTitle(conv) : "");
+      } else {
+        S.openThr.delete(key);
+        ts.textContent = label;
+      }
+    });
+    if (S.openThr.has(key)) thr.open = true;
+    return {
+      thr,
+      show: at => {
+        build();
+        thr.open = true;
+        requestAnimationFrame(() => flashIn(built, at));
+      },
+    };
+  }
   function convCard(c, ctx) {
     const mem = convMembers(c.id).filter(ctx.after);
     const a = S.byI.get(mem[0]),
@@ -5040,15 +5160,7 @@
           (who.length > 5 ? " +" + (who.length - 5) + " more" : ""),
       ),
     );
-    const act = el("div", "cv-act");
-    act.append(replyLink(z, "Reply in Messenger ↗"));
-    const zOpen = opens.some(o => o.ask === z.i);
-    if (S.db && !zOpen) act.append(replyHereBtn(z, h, "card:" + c.id));
-    act.append(el("span", "note", " to the latest message (" + nameOf(z) + ", " + z.t + ")"));
-    const pz = zOpen ? null : pendingTag(z);
-    if (pz) act.append(pz);
-    h.append(act);
-    if (!zOpen && composingAt(z.i, "card:" + c.id)) h.append(composer(z, "card:" + c.id));
+    /* B62: no reply row in the head: the actions stay with each message, in the thread */
     d.append(h);
     /* what the conversation replies to: above the summary while the thread is closed; the open thread starts with it */
     const cx = ctxLine(mem, c.id);
@@ -5082,10 +5194,12 @@
       const y = r.height + 16 <= room ? r.top - nav - 8 : ts.getBoundingClientRect().top - nav - room * 0.6;
       if (Math.abs(y) > 1) scrollBy(0, y);
     };
+    thrHost(c.id, thr);
     thr.addEventListener("toggle", () => {
       if (thr.open) {
         build();
         if (cx) built.before(cx);
+        thrOnly(c.id, thr);
         S.openThr.add(c.id);
         ts.textContent = "Hide the thread";
       } else {
@@ -5229,7 +5343,22 @@
       ments.forEach(x => {
         const d = el("div", "item mention");
         if (x.note) d.append(el("p", null, x.note));
-        d.append(snips((x.refs || []).map(r => r[0] ?? r)));
+        const ids = (x.refs || []).map(r => r[0] ?? r);
+        /* B62: a snippet opens its conversation's thread here, not in Messages */
+        const byConv = new Map();
+        const cvs = [...new Set(ids.map(i => (convOfMsg(i) || {}).id).filter(Boolean))];
+        cvs.forEach(cv => byConv.set(cv, needThread(cv, ids, after, cvs.length > 1)));
+        d.append(
+          snips(ids, {
+            go: i => {
+              const cv = convOfMsg(i);
+              const t = cv && byConv.get(cv.id);
+              if (t) t.show([i]);
+              else goMsg(i);
+            },
+          }),
+        );
+        byConv.forEach(t => d.append(t.thr));
         ln.append(d);
       });
       bn.append(ln);
