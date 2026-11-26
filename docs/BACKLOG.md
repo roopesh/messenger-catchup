@@ -13,7 +13,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 |---|---|---|---|
 | B66 | P3 | bug | Under All chats, the refresh note (`#refresh-st`) still says "The choice above only filters what's shown", though the Show messages box it refers to is hidden there |
 | B69 | P2 | bug | Reactions added after a message was captured are never read: a 👍 the owner gives a question after the refresh that stored it never reaches `x` or `xw`, so the question still reads as open (found building B67) |
-| F40 | P3 | feature | Reply checks every 10 minutes: the scheduler the reply check uses runs at most hourly (armed Nov 26 at :33), so a queued reply can wait about 30 minutes; find a faster way |
+| F40 | P3 | feature | Reply checks every 10 minutes: the scheduler the reply check uses runs at most hourly (armed Nov 26 at :33), so a queued reply can wait about 30 minutes; find a faster way (#92) |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -131,7 +131,7 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Found (building B67, Nov 26):** the helper reads a message's reactions (`x`, and since 4.0 who reacted, `xw`) only while that message is new in a scan, and the page stores only new messages: a stored message is checked against the capture but never updated. So when the owner reads a question on the page and answers it with a 👍 in Messenger afterwards, which is how B67 was reported, the reaction never reaches the store, and Ask and the build still read the question as open. B67's rules work only for reactions that were there when the message was captured.
 - **Options to research:** A, the scan re-reads reactions on the stored messages it passes on the way to the anchor (a screen or so) and the capture carries them by Messenger id for the page to update in place (cheap, covers minutes-old questions only); B, a reactions pass over the open questions and Needs you messages of the last few days, finding each by id as `jump` does (covers the reported case, costs a scroll per message); C, the page's own reactions (sent from the page, F37/F38) counted as the owner's for Ask, which needs no Messenger read but covers only reactions given on the page. Measure how far back the owner's late reactions go first.
 
-### F40 · P3 · Reply checks every 10 minutes
+### F40 · P3 · Reply checks every 10 minutes (#92)
 - **Found (Nov 26):** the owner armed reply checks (F30, decided every 10 minutes 5 AM–10 PM), but `create_trigger`'s minimum interval is 1 hour, so it runs hourly at :33; with refreshes at :12 a queued reply waits about 30 minutes at most.
 - **To research:** whether the Desktop app's own scheduled tasks allow shorter intervals, a chain of one-time follow-ups every 10 minutes (each a turn in one conversation: cost and length), or the page asking for a run when a reply is queued.
 
