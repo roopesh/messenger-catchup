@@ -55,7 +55,7 @@ An installed helper reports its version in `data-mc-helper` (and `ping`). When i
 - **`top:true`**: the scan reached the start of the chat. On a first run that means the chat is shorter than the count asked for, and `win` is all of it. A run with stops that reaches the top fails with "None of the stored anchor messages was found … (reached the top of the chat)" (`references/troubleshooting.md`).
 - **`scroller`**: which element was scrolled. `message` (the nearest scrollable ancestor of a message that holds nearly all the messages) is normal. `first-div` (helper 1.9's rule: the first scrollable element in the chat log), `message-short` or `message-outside-log` mean Messenger's layout changed: mention it, and on a first run check that `win` is what you asked for.
 - **`err:"top-spinner"`**: at the top of what loaded, Messenger's loading spinner stayed for 30 s and nothing older came. Handle it like `stalled` (reload, retry once), and if it happens again, say so in the report: Messenger may be failing to load that chat's history.
-- **`verify.err:"stalled"`** or **`"top-spinner"`**: as for the scan: run the whole `full` once more.
+- **`verify.err:"stalled"`** or **`"top-spinner"`**: as for the scan: run the whole `full` once more. Helper 3.6 and later have already retried the verify once themselves (`verify.mode:"retry"`); put `verify.seen` (how many messages each pass saw) in the report.
 - **`people`** stops early with `stalled` (and `spinner`) when nothing older loads for 30 s; treat it like `top:false` (`references/people.md`).
 
 ## Injecting (no helper installed)

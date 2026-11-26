@@ -85,7 +85,8 @@
    mock_trusted (the composer ignores Enter and shift+Enter that a script sends), mock_shiftsends (it reads a scripted
    shift+Enter as Enter, so it sends), mock_nested (the first message sits in its own small scrolling box),
    mock_msgbar (a progress bar inside message 0, a poll or voice clip, and a hidden one at the top of the list),
-   mock_stall=stuck (the list snaps back to the bottom, no spinner), mock_noreplymenu (a photo's More actions menu has
+   mock_stall=stuck (the list snaps back to the bottom, no spinner), mock_stall=lost (the first request for older
+   messages after a load never answers, with no spinner, until the list is scrolled back down: B65), mock_noreplymenu (a photo's More actions menu has
    no Reply), mock_stalemenu (an open menu stays open when another opens), mock_retarget (the reply bar moves to #105 on
    the first keystroke), mock_twobens (grouped: Ben Brooks posts #105-#107, then Ben Ortiz #108-#110), mock_nofocus
    (Reply doesn't focus the composer), mock_photos=N (every Nth message carries 1-3 photos with its text), mock_lazy=
@@ -474,7 +475,7 @@
         lo = Math.max(0, n - 25);
         for (let i = lo; i < n; i++) if (!sk.has(i)) sc.append(el(spec(i)));
         for (const o of sentLog()) sc.append(el(Object.assign({}, o, { to: o.toI == null ? null : spec(o.toI) })));
-        if (MODE("stall") !== "stuck") spinner();
+        if (MODE("stall") !== "stuck" && MODE("stall") !== "lost") spinner();
         if (MODE("nested")) {
           /* the first loaded message in its own small scrolling box (2 px of overflow) */
           const m = sc.querySelector("[data-message-id]");
@@ -497,6 +498,7 @@
       }
       render();
       let loading = false;
+      let lost = MODE("stall") === "lost";
       function loadOlder(nlo) {
         nlo = Math.max(0, Math.min(nlo, lo));
         const h0 = sc.scrollHeight;
@@ -515,8 +517,14 @@
           if (sc.scrollTop < sc.scrollHeight - sc.clientHeight - 2) sc.scrollTop = sc.scrollHeight;
           return;
         }
-        if (sc.scrollTop < 40 && lo > 0 && !loading && !MODE("stall")) {
+        if (lost && loading && sc.scrollTop > sc.scrollHeight - sc.clientHeight - 200) {
+          /* scrolled back down: the lost request is given up, and the next one answers */
+          loading = false;
+          lost = false;
+        }
+        if (sc.scrollTop < 40 && lo > 0 && !loading && (!MODE("stall") || MODE("stall") === "lost")) {
           loading = true;
+          if (lost) return;
           setTimeout(() => {
             loadOlder(lo - 20);
             loading = false;
