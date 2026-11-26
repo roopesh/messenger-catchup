@@ -15,6 +15,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B55 | P3 | bug | Chrome names ("Browser 1", "Browser 2") swap when the extension reconnects, so helper notices can name the wrong Chrome |
 | B56 | P3 | bug | Several-chats page oddities: one load after activation opened on the first chat, not All chats; All chats' "need you" count disagrees with the rows |
 | B64 | P2 | feature | Refine threading: what becomes one conversation (one item's talk split into two cards) and how deep and how replies show inside a card (options and mockups on the board) |
+| B65 | P2 | bug | A busy added chat's verify after the reload often ends `stalled` on the first try; a second `full` always passes (#81) |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -147,6 +148,11 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Asked (owner, Nov 25):** "refine our threading logic. Including how many levels deep we show threading and how we show them." Example: a sold item and a "worth trying?" talk about the same item became two cards with overlapping times.
 - **Today:** every new message joins one conversation, and SKILL.md's `join` rule says "split a busy thread into sub-topics" (the cause of the split cards). Inside a card, `convTree` nests replies (links r/rq/rg/i) up to 3 levels, with same-person continuations (c) kept level; a two-person back-and-forth staircases.
 - **Options (board):** grouping G1 one card per item with sub-topic sections (recommended) or G2 linked cards; depth D1 one level with flat reply runs (recommended), D2 two levels, D3 no nesting with Messenger-style quotes. Question: regroup existing cards once, or new messages only. Mockups: https://claude.ai/artifact/1wwmFYoyZuDR6pZMN6MiZh.
+
+### B65 · P2 · Verify stalls on a busy chat's first try (#81)
+- **Reported (owner, #81, Nov 25):** on a busy added chat (50 to 130 new messages an hour in the evening), `full` returned `stage:"verify-failed"` with `verify:{ok:false, gap:0, prefixSame:false, err:"stalled", win:0}` in 3 of 5 runs, always on the first try; running `full` again passed every time. The other chats never stall. Each stall costs about 2 minutes, and a second one would fail the chat for that run.
+- **Today:** after the reload the helper waits a fixed 5 s, waits up to 10 s for the message list, and keeps that list's scroller. A stall means 30 s with no new message ids before the anchor shows up. On a stall it skips the slow pass (which is meant for skipped content). The result doesn't say how many messages loaded, so a scroller that went dead and Messenger that stopped loading look the same.
+- **Options (board):** A, the helper retries itself: on a verify stall it drops the kept list and scroller, waits for the chat to settle, runs one slow pass, and reports how many messages it saw (recommended, helper 3.6). B, a settle wait before verify only. C, the skill retries `full` a second time (no fix, about 2 minutes each).
 
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.
