@@ -15065,6 +15065,87 @@ const CAP31 = 'green Ultra Monolith pack, side view, coyote straps, price tag $1
 const CAP40 = 'red two-person tent, pitched, rain fly off';
 const CAP41 = 'green Ultra pack, front view, red zip';
 const CAPS_DOC = () => ({ start: 0, byK: { 31: { 0: CAP31 }, 40: { 1: CAP40 }, 41: { 0: CAP41 } } });
+/* F39: a GIF message whose GIF the helper stored (slot 0, with the message in gifs) shows a still with a GIF badge and
+   plays while hovered; one without a stored GIF keeps "open in Messenger"; a photo is unchanged. */
+async function gifs() {
+  const p = await open(SEED(), PAGE);
+  const ms = range(0, 9, i => mk(i, i === 3 || i === 5 || i === 7 ? { p: 'a' + i, b: '' } : {}));
+  const r = await paste(
+    p,
+    JSON.stringify(
+      cap(ms, {
+        photos: [
+          { i: 3, k: 0, type: 'image/png', b64: PNG },
+          { i: 5, k: 0, type: 'image/png', b64: PNG },
+        ],
+        gifs: [5, 7],
+      }),
+    ),
+  );
+  ok(
+    r && r.ok && /2 photos stored/.test(r.msg),
+    'F39: a capture with a stored GIF imports like a photo (' + (r && r.msg) + ')',
+  );
+  await p.evaluate(() => {
+    location.hash = '#messages';
+  });
+  await until(p, () => document.querySelector('#m5 .pics img') && document.querySelector('#m3 .pics img'));
+  await p.click('#lay-flat').catch(() => {});
+  await until(p, () => /^data:image\/png/.test((document.querySelector('#m5 .pics img') || {}).src || ''));
+  const id5 = await p.evaluate(() => __rt.uploads[1].id);
+  const st = () =>
+    p.evaluate(() => {
+      const a = document.querySelector('#m5 .pics a');
+      const im = a && a.querySelector('img');
+      return {
+        gif: !!a && a.classList.contains('gifpic'),
+        badge: ((a && a.querySelector('.gifbadge')) || {}).textContent || '',
+        playing: !!a && a.classList.contains('playing'),
+        src: im ? im.getAttribute('src') : '',
+        alt: im ? im.alt : '',
+        photo3: !!document.querySelector('#m3 .pics a.gifpic'),
+        link7: (document.querySelector('#m7') || {}).textContent || '',
+      };
+    });
+  let s0 = await st();
+  ok(
+    s0.gif &&
+      s0.badge === 'GIF' &&
+      !s0.playing &&
+      /^data:image\/png/.test(s0.src) &&
+      /^GIF from /.test(s0.alt) &&
+      !s0.photo3 &&
+      s0.link7.includes('GIF (open in Messenger)'),
+    'F39: a stored GIF shows a still (its first frame) with a GIF badge; a photo has no badge; a GIF not stored keeps "open in Messenger" ' +
+      JSON.stringify(Object.assign({}, s0, { src: s0.src.slice(0, 22), link7: s0.link7.slice(0, 60) })),
+  );
+  await p.hover('#m5 .pics a');
+  await until(p, () => document.querySelector('#m5 .pics a.playing'));
+  const s1 = await st();
+  await p.mouse.move(0, 0);
+  await until(p, () => !document.querySelector('#m5 .pics a.playing'));
+  const s2 = await st();
+  ok(
+    s1.playing && s1.src === '/_blob/' + id5 && !s2.playing && /^data:image\/png/.test(s2.src),
+    'F39: hovering plays the GIF (its stored file, animated) and leaving shows the still again ' +
+      JSON.stringify([s1.src, s2.src.slice(0, 22)]),
+  );
+  const tap = () =>
+    p.evaluate(() => {
+      const a = document.querySelector('#m5 .pics a');
+      a.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', bubbles: true }));
+      a.click();
+      return { playing: a.classList.contains('playing'), lb: !!document.getElementById('lb') };
+    });
+  const t1 = await tap();
+  const t2 = await tap();
+  ok(
+    t1.playing && !t1.lb && !t2.playing && !t2.lb,
+    'F39: on a touch screen a tap plays the GIF and a second tap stops it, without opening the viewer ' +
+      JSON.stringify([t1, t2]),
+  );
+  await p.close();
+}
 async function capPage(o = {}) {
   const V = viewSeed();
   V.msgs[40] = mk(40, { f: 'Cy', b: '', p: 'att40' });
@@ -17456,6 +17537,7 @@ const SECTIONS = {
   packs4,
   captions,
   askSearch,
+  gifs,
 };
 /* The sections run in parallel, each in its own node process with its own browser, PAGE_JOBS at a time (default: the
    CPU count); a section's lines are printed together under a "--- name (seconds)" header when it ends. PAGE_JOBS=1

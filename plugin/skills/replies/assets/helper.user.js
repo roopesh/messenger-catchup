@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      3.6
-// @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on.
+// @version      3.7
+// @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on. It downloads GIFs from Facebook's image servers for your page (the permission Tampermonkey asks for).
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
 // @match        https://www.facebook.com/notifications*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      fbsbx.com
+// @connect      fbcdn.net
 // @updateURL    https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js
 // @downloadURL  https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js
 // ==/UserScript==
@@ -27,13 +29,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '3.6';
+  window.__mcHelper = '3.7';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '3.6');
+  root.setAttribute('data-mc-helper', '3.7');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -237,6 +239,14 @@
         srcs: [...new Set(big.map(i => i.currentSrc))],
         raw,
         gif: !!e.querySelector('img[alt="GIF Image"]') || (imgs.length > 0 && big.length === 0),
+        /* F39: the GIF's own image (Facebook serves an animated WebP from cdn.fbsbx.com) */
+        gu: [
+          ...new Set(
+            Array.from(e.querySelectorAll('img[alt="GIF Image"]'))
+              .map(i => i.currentSrc || i.getAttribute('src') || '')
+              .filter(u => /^https:\/\//.test(u)),
+          ),
+        ],
       },
       tilesOf(raw),
     );
@@ -264,7 +274,12 @@
       raw = known(br) > known(ar) || (known(br) === known(ar) && br.length >= ar.length) ? br : ar;
     }
     return Object.assign(
-      { srcs: a.srcs.length > b.srcs.length ? a.srcs : b.srcs, raw, gif: !!(a.gif || b.gif) },
+      {
+        srcs: a.srcs.length > b.srcs.length ? a.srcs : b.srcs,
+        raw,
+        gif: !!(a.gif || b.gif),
+        gu: ((a.gu || []).length >= (b.gu || []).length ? a.gu : b.gu) || [],
+      },
       tilesOf(raw),
     );
   }
@@ -1232,6 +1247,40 @@
           fr.onerror = rej;
           fr.readAsDataURL(blob);
         });
+      /* F39: Tampermonkey's download, which the helper's @connect lets read Facebook's image servers; an injected
+         copy has none, and then GIFs stay links as before */
+      const gmGet = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : null;
+      const gmBlob = u =>
+        new Promise((res, rej) =>
+          gmGet({
+            method: 'GET',
+            url: u,
+            responseType: 'arraybuffer',
+            timeout: 30000,
+            onload: r => {
+              const ty = ((r.responseHeaders || '').match(/content-type:\s*([^;\r\n]+)/i) || [])[1] || '';
+              if (r.status === 200 && r.response) res(new Blob([r.response], { type: ty.trim().toLowerCase() }));
+              else rej(r.status);
+            },
+            onerror: () => rej('error'),
+            ontimeout: () => rej('timeout'),
+          }),
+        );
+      /* a photo: the page's own fetch, else Tampermonkey's (a helper running in the extension's own world) */
+      const getBlob = async u => {
+        try {
+          return await (await fetch(u)).blob();
+        } catch (e) {
+          if (gmGet) return gmBlob(u);
+          throw e;
+        }
+      };
+      /* B63: a line break every 76 characters (MIME style). A short run inside a photo's plain base64 can trip a
+         content filter in the browser automation, and the paste of the whole capture then never fires; the page
+         removes the breaks before anything else (the photo checksum is over the capture as pasted). */
+      const lined = t => t.replace(/(.{76})/g, '$1\n');
+      const GIF_MAX = 3 * 1024 * 1024;
+      let gifStored = 0;
       const photos = [];
       const gifs = [];
       const failed = [];
@@ -1243,11 +1292,22 @@
         if (!m || !m.ph) continue;
         const i = BASE + 1 + k;
         const tiles = m.ph.tiles || m.ph.srcs.map(u => ({ u, aid: '' }));
+        const sk = Array.isArray(SKIP[i]) ? SKIP[i] : [];
         if (!tiles.length) {
-          if (m.ph.gif) gifs.push(i);
+          if (!m.ph.gif) continue;
+          gifs.push(i);
+          /* F39: the GIF itself, stored like a photo (slot k), up to 3 MB; one that won't download stays a link */
+          for (const [j, u] of (gmGet ? m.ph.gu || [] : []).slice(0, 4).entries()) {
+            if (sk.includes(j)) continue;
+            try {
+              const bl = await gmBlob(u);
+              if (!/^image\/(webp|gif|png|jpeg)$/.test(bl.type) || bl.size > GIF_MAX) continue;
+              photos.push({ i, k: j, type: bl.type, b64: lined(await b64(bl)) });
+              gifStored++;
+            } catch (e) {}
+          }
           continue;
         }
-        const sk = Array.isArray(SKIP[i]) ? SKIP[i] : [];
         for (const [j, t] of tiles.entries()) {
           const at = t.aid ? { i, k: j, aid: t.aid } : { i, k: j };
           if (sk.some(x => x === j || (t.aid && x === t.aid))) {
@@ -1260,13 +1320,9 @@
             continue;
           }
           try {
-            const r = await fetch(t.u);
-            const bl = await r.blob();
+            const bl = await getBlob(t.u);
             if (!/^image\/(jpeg|png|webp|gif)$/.test(bl.type)) throw bl.type;
-            /* B63: a line break every 76 characters (MIME style). A short run inside a photo's plain base64 can trip
-               a content filter in the browser automation, and the paste of the whole capture then never fires; the
-               page removes the breaks before anything else (the photo checksum is over the capture as pasted). */
-            photos.push(Object.assign({}, at, { type: bl.type, b64: (await b64(bl)).replace(/(.{76})/g, '$1\n') }));
+            photos.push(Object.assign({}, at, { type: bl.type, b64: lined(await b64(bl)) }));
           } catch (e) {
             failed.push(i);
             phfail.push(Object.assign({}, at, { e: 'fetch' }));
@@ -1328,6 +1384,7 @@
         (phskip.length ? ' skipped ' + phskip.length : '') +
         ' gifs ' +
         gifs +
+        (gifStored ? ' (stored ' + gifStored + ')' : '') +
         ' you ' +
         out.filter(o => o.f === 'You').map(o => o.i) +
         (guessed.length ? ' DATES-GUESSED ' + guessed : '')
@@ -2617,7 +2674,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '3.6' }),
+    ping: () => ({ v: '3.7' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
