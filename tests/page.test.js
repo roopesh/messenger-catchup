@@ -17603,8 +17603,17 @@ async function multiChatAsk() {
     "F1: inside a chat, Ask is that chat's alone, as before: its own header, conversation, questions, prompt and bare citations " +
       JSON.stringify([one, r1.answer]),
   );
+  const camRefresh = await mcText(p, '#refresh-st');
   // back on All chats: the answer and its conversation are still there; a chat added since shows as not searched
   await mcPick(p, 'all');
+  const allRefresh = await mcText(p, '#refresh-st');
+  ok(
+    /refresh Camera Club/.test(camRefresh) &&
+      !/refresh Camera Club/.test(allRefresh) &&
+      /refresh my catch-up/.test(allRefresh),
+    "F1: the refresh line names the chat's phrase in Camera Club and the page's on All chats, also after switching back " +
+      JSON.stringify([camRefresh.slice(0, 90), allRefresh.slice(0, 90)]),
+  );
   await p.evaluate(() =>
     S.rawDb.doc('meta/chat').update({
       chats: { pine: { name: 'Pine Club', tag: 'Pine', color: 4, order: 3, state: 'active', thread: '7171' } },
@@ -17664,6 +17673,15 @@ async function multiChatAsk() {
       /^Searched 2 chats: Trail, Cam\./.test(r2.note),
     'F1 SR5/SR9: a paused chat is searched (and says so), a hidden one is not; without tools the prompt carries every chat\'s matches; bare numbers show "which chat?" ' +
       JSON.stringify([r2.cites, r2.note.slice(0, 60)]),
+  );
+  // the page's matches need no Claude: a declined request still lists them
+  await p.evaluate(() => (window.__sampleError = 'not_granted'));
+  const r3 = await xask(p, 'tripod plate');
+  const r3rows = await xaRows(p);
+  ok(
+    r3.answer === '' && r3.askNote.length > 0 && JSON.stringify(r3rows) === '["trail#4"]',
+    'F1 SR2: when the request is refused, the note says so and the page still lists its own matches ' +
+      JSON.stringify([r3.askNote.slice(0, 40), r3rows]),
   );
   ok(p.errors.length === 0, 'F1 Ask across chats without tools: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();

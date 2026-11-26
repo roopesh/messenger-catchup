@@ -9060,10 +9060,11 @@
     $("#ask-go").disabled = true;
     $("#ask-stop").hidden = false;
     $("#ask-note").textContent = "";
+    let ctxs = null;
     try {
       const all = await xLoad();
       if (sig.aborted) throw Object.assign(new Error("stopped"), { code: "cancelled" });
-      const ctxs = all.filter(x => !x.err);
+      ctxs = all.filter(x => !x.err);
       const bad = all.filter(x => x.err);
       if (!ctxs.length) throw Object.assign(new Error("no chat could be read"), { code: "no_chats" });
       out.textContent = "Thinking…";
@@ -9154,6 +9155,9 @@
       else out.textContent = "";
       $("#ask-note").textContent =
         e && e.code === "no_chats" ? "Couldn't read any chat's messages here. Try again." : errCopy(e);
+      /* the page's own matches need no Claude: they show even when the request failed or was declined */
+      const mb = ctxs && ctxs.length && e.code !== "cancelled" ? xMatchBox(q, null, ctxs) : null;
+      if (mb) out.parentNode.append(mb);
     } finally {
       $("#ask-go").disabled = false;
       $("#ask-stop").hidden = true;
@@ -9183,6 +9187,9 @@
     set(t, "placeholder", all ? "Who's selling a tripod? What's planned for Saturday?" : H.ph);
     document.getElementById("chat").hidden = all;
     document.getElementById("xchat").hidden = !all;
+    /* a note from the other mode's last question doesn't belong here */
+    if (askMode.all !== undefined && askMode.all !== all) document.getElementById("ask-note").textContent = "";
+    askMode.all = all;
   }
   /* ---------- look deeper (F17) ----------
      Under an answer that saw part of the history only as summary lines (P.before, P.after: what packHistory sent,
@@ -15919,6 +15926,7 @@
     document.body.classList.toggle("allchats", all);
     route();
     applyCfg();
+    renderRefresh(); /* its line names what to ask Claude: this chat's phrase, or the page's on All chats */
     filterRows();
     renderQA();
     renderChats();
@@ -16037,7 +16045,7 @@
     v.textContent = "";
     const top = block(
       "All chats",
-      "What's new in each chat since you last caught up there. Pick a chat in the title for its messages, By day, Stats, Views and Ask.",
+      "What's new in each chat since you last caught up there. Pick a chat in the title for its messages, By day, Stats and Views; Ask here covers every chat.",
     );
     const bt = el("div", "btns");
     const b = el("button", "secondary", "Mark all caught up");

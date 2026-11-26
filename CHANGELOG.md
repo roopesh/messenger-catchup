@@ -8,15 +8,19 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 ### Added
 - All chats has tabs: Summary (the card per chat, as before) and Ask. A chat's own tabs are unchanged.
 - All chats' Ask: one question over every active and paused chat (not pending, hidden, removed or a group). Claude reads each chat's newest messages word for word and has the search tools over every chat: `search_messages` (every chat, or one by its key; counts per chat), `read_messages` and `day_summaries` (one chat). Every line Claude reads starts `[key#n]` and it cites the same way; the page shows each citation as the chat's tag and number ("Cam #412"), which opens that chat at that message. A bare `[#412]` or an unknown key shows "#412 · which chat?" and opens nothing; a citation of a hidden or removed chat says so. Without the tools, the question's own words are searched in every chat and those matches go in the prompt.
-- Under the answer, the page's own search lists every exact match in every chat searched: a chip per chat with its count (none: disabled), All, Photos only, and Newest first or By chat (remembered in this browser). Filtering sends nothing to Claude.
+- Under the answer, the page's own search lists every exact match in every chat searched: a chip per chat with its count (none: disabled), All, Photos only, and Newest first or By chat (remembered in this browser). Filtering sends nothing to Claude. The list needs no Claude, so it shows even when the request fails or Claude isn't allowed on the page yet.
 - Names: each chat keeps its own people, and lines across chats name a person by full name with that chat's nickname (B59's rule), so the same person reads the same in every chat; Claude is told the same full name is the same person.
 - The answer is saved in `qa` with `scope: "chats"`, the chats it searched and each one's newest message; All chats' Earlier questions lists only these (a chat's Ask only its own) and names any chat added since as not searched.
 
 ### Changed
 - `references/database.md` and `references/chats.md`: the `qa` row of a question across chats.
+- All chats' intro says Ask there covers every chat.
+
+### Fixed
+- On All chats, the refresh line named the last chat opened ("refresh Camera Club") instead of the page's phrase; found in the claude.ai check.
 
 ### Tests
-- page (section `multiChatAsk`): the prompt and every tool result give `[key#n]` (CT6, SR1), a search across chats counts each chat and orders by time, captions included, and can be narrowed to one chat; read and day summaries need a chat; citations and "which chat?" (CT3); the match list's rows, chips, Photos only and By chat with no request to Claude (SR2, SR3, SR12), the order kept and its default without browser storage; the full name across chats (SR10, SR11); the saved row and "not searched" for a chat added later (SR4, SR6); a paused chat searched and a hidden one not, and the no-tools prompt (SR5, SR9); 390 px (PH5); a citation switching chats; a chat's own Ask unchanged. PG1 now expects All chats' Summary and Ask tabs.
+- page (section `multiChatAsk`): the prompt and every tool result give `[key#n]` (CT6, SR1), a search across chats counts each chat and orders by time, captions included, and can be narrowed to one chat; read and day summaries need a chat; citations and "which chat?" (CT3); the match list's rows, chips, Photos only and By chat with no request to Claude (SR2, SR3, SR12), the order kept and its default without browser storage; the full name across chats (SR10, SR11); the saved row and "not searched" for a chat added later (SR4, SR6); a paused chat searched and a hidden one not, and the no-tools prompt (SR5, SR9); 390 px (PH5); a citation switching chats; a chat's own Ask unchanged; a refused request still listing the page's matches; the refresh line after switching back to All chats. PG1 now expects All chats' Summary and Ask tabs.
 
 ## [1.53.1] - 2026-11-26
 **A pause at the top is no longer the top of the chat** (B53). A first scan with a count of 400 once returned `top:true` with 90 messages, although a 200-message scan minutes earlier had read further back, so a refresh would have stored 90 messages as the chat's whole history. PATCH. Helper 3.8; page 6.0 (only its embedded copy of the helper changes); no skill procedure change.
