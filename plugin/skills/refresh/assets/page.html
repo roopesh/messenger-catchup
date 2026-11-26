@@ -2976,7 +2976,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "6.4";
+  const PAGE_VERSION = "6.5";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3134,13 +3134,22 @@
     if (all) all.checked = false;
     if (typeof renderMessages === "function" && S.msgs.length) renderMessages();
   }
-  addEventListener("hashchange", route);
-  addEventListener("popstate", route);
+  /* a tab or message you went to is a view you picked: a chat turning active then doesn't take you to All chats (B56) */
+  const picked = () => (S.viewPicked = true);
+  addEventListener("hashchange", () => {
+    picked();
+    route();
+  });
+  addEventListener("popstate", () => {
+    picked();
+    route();
+  });
   /* The tabs switch in code, as goMsg does: claude.ai's artifact viewer can take a link's #hash onto its own address
      instead of the page's, and then hashchange never fires here and a tab click does nothing. */
   document.querySelectorAll("nav a[data-tab]").forEach(a =>
     a.addEventListener("click", e => {
       e.preventDefault();
+      picked();
       if (location.hash !== "#" + a.dataset.tab) history.pushState(null, "", "#" + a.dataset.tab);
       route();
       /* scrolled down a long tab, the new one would open at the page's foot: bring its start up under the nav */
@@ -3729,6 +3738,7 @@
     restorePlace(a);
   }
   function goMsg(i) {
+    picked();
     if (location.hash !== "#messages") history.pushState(null, "", "#messages");
     route();
     const all = $("#msg-all");
@@ -3826,12 +3836,11 @@
     const people = new Set(win.map(m => fullOf(m) || m.f));
     const sm = S.summary || {};
     const sm2 = activeSummary() || sm;
-    const live = it => (it.refs || []).some(r => inWin(r[0] ?? r));
     const open = (sm2.open || []).filter(o => inWin(o.ask)).length;
     [
       [win.length, "new messages"],
       [people.size, "people posting"],
-      [(sm2.mentions || []).filter(live).length, "mentions of you"],
+      [needsIn(sm2, inWin).length, "mentions of you"],
       [open, "open questions"],
     ].forEach(([n, l]) => {
       const s = el("div", "stat");
@@ -5552,6 +5561,12 @@
     if (S.openThr.has(c.id)) thr.open = true;
     return d;
   }
+  /* Needs you: the mentions (your name, or a reply to you) with a message in the window. One rule for a chat's Summary,
+     its counter strip, its All chats card and the picker (B56: All chats read only summary/current, not the older
+     blocks, and counted fewer than the chats showed) */
+  function needsIn(sm, inW) {
+    return ((sm || {}).mentions || []).filter(x => (x.refs || []).some(r => inW(r[0] ?? r)));
+  }
   function renderSummaryV2(v, sm) {
     const R = winRange();
     const ws = R.lo;
@@ -5586,7 +5601,7 @@
     v.append(slot);
     renderOutbox(slot);
     /* Needs you: only messages that name you or reply to you */
-    const ments = (sm.mentions || []).filter(x => (x.refs || []).some(r => after(r[0] ?? r)));
+    const ments = needsIn(sm, after);
     const bn = block("Needs you", null);
     if (ments.length) {
       const ln = el("div", "list");
@@ -12982,13 +12997,14 @@
       box.hidden = false;
     }, MISSING_MS);
   }
-  function layoutParts(docs, kind) {
+  /* quiet: another chat's documents (All chats and the picker, B56), which the missing-parts note isn't about */
+  function layoutParts(docs, kind, quiet) {
     const cur = docs.current;
     if (!cur || cur.layout !== 2) {
-      noteMissing(kind, 0);
+      if (!quiet) noteMissing(kind, 0);
       return null;
     }
-    noteMissing(kind, (cur.blocks || []).filter(id => !docs[id]).length);
+    if (!quiet) noteMissing(kind, (cur.blocks || []).filter(id => !docs[id]).length);
     const out = {};
     Object.keys(cur).forEach(k => {
       if (!LAYOUT_KEYS.includes(k)) out[k] = cur[k];
@@ -13022,8 +13038,8 @@
     });
     return Object.assign(L.out, { convs, links });
   }
-  function mergeSummary(docs) {
-    const L = layoutParts(docs, "summary");
+  function mergeSummary(docs, quiet) {
+    const L = layoutParts(docs, "summary", quiet);
     if (!L) return docs.current || null;
     const s = L.out,
       newestFirst = L.bs.slice().reverse();
@@ -15501,13 +15517,14 @@
   }
   S.chats = [homeEntry({})];
   S.view = null; /* "all", or the key of the chat on screen */
+  S.viewPicked = false; /* set once you pick a chat, All chats, a tab or a message (PG1, B56) */
   CUR = S.chats[0];
   let GEN = 0; /* a chat's listeners answer only while it's the one loaded */
   let chatSubs = [];
   const LIGHT = new Map(); /* key -> {meta, sum, outbox, unsub}: what All chats and the picker show of each chat */
   const metaOf = c => (c.home ? S.page : (LIGHT.get(c.key) || {}).meta) || null;
   const chatLo = m => (m.markerMode === "own" && m.ownLastI != null ? m.ownLastI : (m.caughtUpI ?? -1));
-  /* Needs you for one chat, since its catch-up start, from its summary/current (the recent items) */
+  /* Needs you for one chat, since its catch-up start, from its whole summary (current and the older blocks, merged) */
   function needsOf(c) {
     /* F25: a group's are its unread mentions and replies from notifications (meta/chat-KEY.notifs) */
     if (isGroup(c))
@@ -15518,7 +15535,7 @@
       m = metaOf(c);
     if (!v || !v.sum || !m) return [];
     const lo = chatLo(m);
-    return (v.sum.mentions || []).filter(x => (x.refs || []).some(r => (r[0] ?? r) > lo));
+    return needsIn(v.sum, i => i > lo);
   }
   const newOf = c => {
     const m = metaOf(c);
@@ -15888,7 +15905,7 @@
       renderStats();
     });
   }
-  /* All chats and the picker: each live chat's meta, summary/current and outbox, only while there are two or more */
+  /* All chats and the picker: each live chat's meta, summary and outbox, only while there are two or more */
   function lightSubs() {
     const want = multi() ? S.chats.filter(isLive) : [];
     for (const [k, v] of LIGHT)
@@ -15907,8 +15924,9 @@
           v.meta = s.exists ? s.data() : null;
           renderChats();
         });
-      sub(db.doc("summary/current"), s => {
-        v.sum = s.exists ? s.data() : null;
+      /* the whole collection: a mention older than summary/current's activeFrom sits in a block (B56) */
+      sub(db.collection("summary"), q => {
+        v.sum = q.docs.length ? mergeSummary(collDocs(q), true) : null;
         renderChats();
       });
       sub(db.collection("outbox"), q => {
@@ -15923,7 +15941,9 @@
     const same = S.chats.find(c => (CUR.home ? c.home : c.key === CUR.key));
     if (same && isShown(same)) CUR = same;
     else loadChat(homeChat());
-    if (S.view === null) S.view = multi() ? "all" : CUR.key;
+    /* PG1: until you pick a view, the page shows what a fresh load would: All chats once two chats are live. B56: a chat
+       that turned active after the page opened (its first refresh) left it on the first chat until a reload */
+    if (S.view === null || !S.viewPicked) S.view = multi() ? "all" : CUR.key;
     else if (S.view !== "all" || !multi()) S.view = CUR.key;
     lightSubs();
     showView();
@@ -15944,6 +15964,7 @@
   function openChat(key, i) {
     const c = S.chats.find(x => x.key === key);
     if (!c || !isShown(c) || (CUR.key !== key && switchBusy())) return;
+    S.viewPicked = true;
     S.view = key;
     if (CUR.key !== key) loadChat(c);
     showView();
@@ -16005,6 +16026,7 @@
         closePicker();
         if (it.key === "add") openSettings(true);
         else if (it.key === "all") {
+          S.viewPicked = true;
           S.view = "all";
           showView();
         } else openChat(it.key);

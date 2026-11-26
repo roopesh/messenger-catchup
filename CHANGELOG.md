@@ -2,6 +2,18 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.56.1] - 2026-11-26
+**All chats' "need you" counts match the chats, and a chat's first refresh brings All chats** (B56). PATCH: two page fixes. Page **`PAGE_VERSION` 6.5** (from 6.4); helper and skill procedure unchanged.
+
+### Fixed
+- **The "need you" counts** in All chats (each card, and the total in the picker) read only a chat's `summary/current`, while the chat's own Summary › Needs you and its "mentions of you" counter read the whole summary, older blocks included. A mention older than `summary/current`'s `activeFrom` but still after the chat's catch-up point counted in the chat and not in All chats: the owner's page said "6 need you" for All chats while the chats showed 5 and 3. All chats now listens to each chat's whole `summary` collection and merges it as the chat does, and one function (`needsIn`) picks the Needs you items for all four places. In the time-span catch-up mode, All chats still counts from the chat's last Mark caught up (it has no messages loaded to place the span), as before.
+- **The opening view:** with one live chat the page opens on that chat, and it kept that view when a second chat turned active while the page was open (a pending chat's first refresh), until a reload. Until you pick a view (a chat or All chats in the picker, a tab, a message), the page now follows what a fresh load would show, so it turns to All chats then. A view you picked stays.
+
+### Tests
+- **Page `multiChatB56`** (new section): Trail and Cam each with mentions in an older summary block: the All chats cards say 3, 2 and 1, the picker 6 for All chats and 3, 2 and 1 in its rows, and each chat's Needs you and strip match its card (page 6.4: cards 1, 1, 1 and a total of 3 while the chats showed 3, 2 and 1). A page opened with Cam pending turns to All chats when Cam becomes active (page 6.4 stayed on Trail Crew); with the Messages tab picked first it stays there. Page `multiChat` DM9 now expects the light listener on `cam_summary`, not `cam_summary/current`.
+- **On claude.ai** (a scratch page, synthetic chats with summary blocks): opened with one live chat, it turned to All chats the moment a second chat was set active; the picker said 6 for All chats, 4 and 2 for the chats, matching their cards, Summaries and counters.
+- **Backlog:** B56 removed. Filed B66 (P3): under All chats the refresh note still says "The choice above only filters what's shown", though that box is hidden there (seen on the scratch check).
+
 ## [1.56.0] - 2026-11-26
 **Helper notices name the right Chrome** (B55). Claude in Chrome names connected Chromes "Browser 1", "Browser 2", and those names can swap when the extension reconnects, so a notice keyed by the name could say the wrong Chrome is behind. MINOR: the refresh writes `versions.browsers` in a new shape, and the page reads it. Page 6.4; helper unchanged (3.8).
 
