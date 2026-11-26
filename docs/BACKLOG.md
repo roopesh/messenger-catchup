@@ -14,6 +14,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | B53 | P2 | bug | A first scan with a count can stop at a false "top of chat" and store a short history as the whole chat |
 | B55 | P3 | bug | Chrome names ("Browser 1", "Browser 2") swap when the extension reconnects, so helper notices can name the wrong Chrome |
 | B56 | P3 | bug | Several-chats page oddities: one load after activation opened on the first chat, not All chats; All chats' "need you" count disagrees with the rows |
+| B64 | P2 | feature | Refine threading: what becomes one conversation (one item's talk split into two cards) and how deep and how replies show inside a card (options and mockups on the board) |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -141,6 +142,11 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Today:** the helper only marks a message as a GIF (`gifs` in the photo blocks); the page shows "🎞 GIF (open in Messenger)". The owner's home chat holds about 360 (67 in its last 2,000 messages).
 - **Found (Nov 25, read-only):** a GIF is an animated image labelled "GIF Image" (about 220×268) from Facebook's image proxy (`fbsbx.com`), which the page's scripts can't fetch ("Failed to fetch"); a userscript can with a Tampermonkey permission (`GM_xmlhttpRequest`, `@connect`), which the owner approves once. Messenger's viewer holds only a still JPEG of it (56 KB), readable by any helper at about 3 s per GIF. A claude.ai page can't load outside images, so it can't show Facebook's link directly.
 - **Options (board):** A animated, B still frame, C animated on hover/tap falling back to B (recommended), with a 3 MB cap. Mockups: https://claude.ai/artifact/GNy2JcDoFbcTVknZeczQvZ. Unknowns: whether a granted helper still runs the same in the page, the real GIF sizes, and whether the proxy serves the full animation.
+
+### B64 · P2 · Refine threading: grouping, depth, display
+- **Asked (owner, Nov 25):** "refine our threading logic. Including how many levels deep we show threading and how we show them." Example: a sold item and a "worth trying?" talk about the same item became two cards with overlapping times.
+- **Today:** every new message joins one conversation, and SKILL.md's `join` rule says "split a busy thread into sub-topics" (the cause of the split cards). Inside a card, `convTree` nests replies (links r/rq/rg/i) up to 3 levels, with same-person continuations (c) kept level; a two-person back-and-forth staircases.
+- **Options (board):** grouping G1 one card per item with sub-topic sections (recommended) or G2 linked cards; depth D1 one level with flat reply runs (recommended), D2 two levels, D3 no nesting with Messenger-style quotes. Question: regroup existing cards once, or new messages only. Mockups: https://claude.ai/artifact/1wwmFYoyZuDR6pZMN6MiZh.
 
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.
