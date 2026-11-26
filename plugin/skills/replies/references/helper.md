@@ -24,10 +24,10 @@ Runs used to open a new tab on the page for every import and leave some behind, 
 - Keep the one Messenger tab between runs.
 
 ## Which Chrome
-- Claude in Chrome's `list_connected_browsers` lists every connected Chrome with its name, and marks the one this session uses (`inUse`). One browser, or one already in use: use it.
+- Claude in Chrome's `list_connected_browsers` lists every connected Chrome with its `deviceId` and display name, and marks the one this session uses (`inUse`). One browser, or one already in use: use it.
 - Several and none in use: the Chrome tools ask the user to choose, and you must never pick one yourself. When you ask, recommend the Chrome whose Messenger tab has the newest helper (`data-mc-helper`; older helpers lack checks: `selfcheck` came in 1.8, full names in 1.6, warnings, More actions › Reply and `post` in 2.0). If the user asks you to pick the one with the newest helper, you may select each in turn (`select_browser`), read `data-mc-helper` on its Messenger tab, and keep the newest.
 - During a scheduled run with no one to ask: don't choose. Set `refresh/status` `{state:"error",message:"several Chrome browsers connected: choose one"}`, keep the schedule, and say so in the report.
-- Every report names the browser used and its helper version, for example "Chrome 'Work Mac', helper 2.1". The same name and version go into `meta/chat.versions.browsers` (`references/database.md` › Versions), with `"none"` when you injected the helper.
+- Every report names the browser used and its helper version, for example "Chrome 'Work Mac', helper 2.1". The same version goes into `meta/chat.versions.browsers` under that Chrome's `deviceId`, with its name alongside (`references/database.md` › Versions), and `"none"` when you injected the helper. The names ("Browser 1", "Browser 2") can swap when the extension reconnects; the `deviceId` doesn't.
 
 ## Versions
 Install link (also on the page; steps in the setup skill): https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js

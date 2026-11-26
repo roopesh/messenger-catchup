@@ -2976,7 +2976,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "6.3";
+  const PAGE_VERSION = "6.4";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -12691,38 +12691,45 @@
        itself (D); from 1.5 on it should have (E). "none" (no helper: Claude injected the current one) is never behind.
        E only for the Chrome of the last refresh (the newest `at`): one used before has most likely updated itself
        since. D for an older one says when it was used. An older NO_NAME entry may be any named Chrome, so it shows
-       nothing; when the newest is NO_NAME, an older entry on the same helper is probably that Chrome and shows nothing. */
+       nothing; when the newest is NO_NAME, an older entry on the same helper is probably that Chrome and shows nothing.
+       B55: an entry is keyed by the extension's deviceId, with the display name it had then in `name` ("Browser 1"
+       and "Browser 2" can swap when the extension reconnects); one written before v1.54 is keyed by that name and has
+       no `name`, so its key is the name. Shown by name; a dismissal is kept under the key. */
     const H = [V.helper, ships]
       .filter(v => vcmp(v, v) === 0)
       .reduce((a, v) => (a == null || vcmp(v, a) === 1 ? String(v) : a), null);
     if (H == null) return out;
     const browsers = isObj(V.browsers) ? V.browsers : {};
     const seen = Object.keys(browsers)
-      .sort()
-      .map(name => ({ name, b: browsers[name] }))
-      .filter(({ b }) => isObj(b) && now - Date.parse(b.at) <= VERSIONS_FRESH_DAYS * 864e5);
+      .map(key => {
+        const b = browsers[key];
+        const name = isObj(b) && typeof b.name === "string" && b.name.trim() ? b.name.trim() : key;
+        return { key, name, b };
+      })
+      .filter(({ b }) => isObj(b) && now - Date.parse(b.at) <= VERSIONS_FRESH_DAYS * 864e5)
+      .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
     const last = seen.reduce((x, e) => (!x || Date.parse(e.b.at) > Date.parse(x.b.at) ? e : x), null);
     seen.forEach(e => {
-      const { name, b } = e;
+      const { key, name, b } = e;
       const isLast = e === last;
       if (vcmp(b.helper, H) !== -1) return;
-      if (!isLast && (name === NO_NAME || (last.name === NO_NAME && b.helper === last.b.helper))) return;
+      if (!isLast && (key === NO_NAME || (last.key === NO_NAME && b.helper === last.b.helper))) return;
       const cant = vcmp(b.helper, SELF_UPDATE_FROM) === -1;
       if (!isLast && !cant) return;
-      const label = name === NO_NAME ? "Chrome" : "Chrome “" + name + "”";
+      const label = key === NO_NAME ? "Chrome" : "Chrome “" + name + "”";
       const day = new Date(b.at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
       const chrome = isLast
         ? "At the last refresh, " + label + " ran helper " + b.helper
         : "When " + label + " was last used for a refresh (" + day + "), it ran helper " + b.helper;
       const link = { t: "Update helper", href: install };
       if (cant)
-        add("D:" + H + ":" + name, [
+        add("D:" + H + ":" + key, [
           chrome + ", which can't update itself. The current one is " + H + ". In that Chrome, open ",
           link,
           " and press Install; it keeps itself up to date after that.",
         ]);
       else
-        add("E:" + H + ":" + name, [
+        add("E:" + H + ":" + key, [
           chrome + "; the current one is " + H + ". It updates itself, usually within a day. To update now, open ",
           link,
           " in that Chrome and press Install (or Update), or use the extension's menu › Check for updates.",

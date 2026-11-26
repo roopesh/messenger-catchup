@@ -11,7 +11,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 | ID | P | Type | Title |
 |---|---|---|---|
-| B55 | P3 | bug | Chrome names ("Browser 1", "Browser 2") swap when the extension reconnects, so helper notices can name the wrong Chrome |
 | B56 | P3 | bug | Several-chats page oddities: one load after activation opened on the first chat, not All chats; All chats' "need you" count disagrees with the rows |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
@@ -26,10 +25,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
 
 ## Bugs
-
-### B55 · P3 · Chrome names swap on reconnect
-- **Seen (Nov 23):** when the Claude in Chrome extension reconnected, the Chrome named "Browser 1" became "Browser 2" and the other took "Browser 1". `versions.browsers` is keyed by these names, so the page's helper notices can name the wrong Chrome.
-- **To do:** key by something stable (the extension's device id, with the display name alongside) or tell the user the names can change.
 
 ### B56 · P3 · Several-chats page oddities
 - **Seen (Nov 23, owner's page 4.2):** one load after activation opened on the first chat instead of All chats (a reload fixed it); All chats in the picker said "6 need you" while the rows said 5 and 3. (The pending chat's view showing the previous chat's stat row was fixed in v1.38.0.)
