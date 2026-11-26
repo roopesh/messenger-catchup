@@ -16103,8 +16103,8 @@ async function multiChat() {
       (await p.isVisible('#v-all')) &&
       (await p.isHidden('#v-summary')) &&
       JSON.stringify(await p.$$eval('nav.tabs a', as => as.filter(a => !a.hidden).map(a => a.dataset.tab))) ===
-        '["summary","ask"]',
-    'F1 PG1: with several chats the page opens on All chats, on its Summary (a card per chat), with only its own tabs: Summary and Ask (stage C)',
+        '["summary","ask","days","stats"]',
+    'F1 PG1: with several chats the page opens on All chats, on its Summary (a card per chat), with only its own tabs: Summary, Ask, By day and Stats (stage C)',
   );
   // PG3: every live chat's Needs you, tagged; the picker's counts add up to All chats'
   const cards = await p.$$eval('#v-all .chatcard', cs => cs.map(c => c.dataset.chat + '|' + c.textContent));
@@ -17554,7 +17554,7 @@ async function multiChatB56() {
   await until(p, () => document.querySelector('#h1').textContent === 'All chats');
   const v1 = await viewNow();
   ok(
-    v0.h1 === 'Trail Catch-up' && !v0.all && v1.h1 === 'All chats' && v1.all && v1.tabs === 'summary,ask',
+    v0.h1 === 'Trail Catch-up' && !v0.all && v1.h1 === 'All chats' && v1.all && v1.tabs === 'summary,ask,days,stats',
     'B56/PG1: a page opened with one live chat turns to All chats when a second chat becomes active, as a reload would (' +
       JSON.stringify({ v0, v1 }) +
       ')',
@@ -17922,6 +17922,219 @@ async function multiChatAsk() {
   ok(p.errors.length === 0, 'F1 Ask across chats without tools: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 }
+/* F1 stage C, part 2: All chats' Stats (the chats compared), By day (a section per chat) and the summary across
+   chats (allchats/summary), on part 1's three chats */
+const XS_YDAY = (() => {
+  const d = new Date(TODAY);
+  d.setDate(d.getDate() - 1);
+  return ymd(d);
+})();
+const xsDay = (h, t, refs, open) => ({
+  sections: [{ h, bullets: [{ t, refs }] }],
+  open: open || [],
+  fromI: 0,
+  toI: 11,
+  at: new Date().toISOString(),
+});
+function xsSeed(o = {}) {
+  const extra = {
+    ['daySummaries/d' + ymd(TODAY)]: xsDay(
+      'Gear',
+      'Dee asked for a tripod plate',
+      [4],
+      [{ t: 'Who has a plate?', refs: [4] }],
+    ),
+    ['cam_daySummaries/d' + ymd(TODAY)]: xsDay('Selling', 'A tripod is for sale', [2, 3]),
+    ['cam_daySummaries/d' + XS_YDAY]: xsDay('Meetup', 'Photo walk planned', [1]),
+  };
+  if (!o.noSum)
+    extra['allchats/summary'] = {
+      at: new Date(Date.now() - 3600000).toISOString(),
+      run: new Date(Date.now() - 3700000).toISOString(),
+      points: [
+        { h: 'Needs you', t: 'Dee Moss asked about a tripod in two chats [cam#2, trail#4].' },
+        { t: 'Bare [#3] and gone [zzz#1].' },
+      ],
+      chats: { trail: 'new', cam: 'new', book: 'failed' },
+    };
+  return xaSeed(Object.assign({}, o, { extra: Object.assign(extra, o.extra || {}) }));
+}
+const xsRows = p =>
+  p.$$eval('#v-stats table.xcmp tbody tr', trs =>
+    trs.map(tr => [
+      tr.dataset.chat || 'all',
+      ...[...tr.querySelectorAll('td.num')].map(td => +td.textContent.replace(/,/g, '')),
+    ]),
+  );
+async function xsTab(p, tab) {
+  await p.click('nav a[data-tab="' + tab + '"]');
+  await p.waitForTimeout(150);
+}
+async function multiChatAll() {
+  let p = await mcOpen(xsSeed());
+  // SD7: the summary across chats, above the cards
+  const sum = await p.evaluate(() => {
+    const b = document.querySelector('#v-all .xsum');
+    return b
+      ? {
+          first:
+            b.compareDocumentPosition(document.querySelector('#v-all .chatcard')) & Node.DOCUMENT_POSITION_FOLLOWING,
+          pts: [...b.querySelectorAll('.xsum-points li')].map(li => li.textContent),
+          cites: [...b.querySelectorAll('.cite')].map(c => c.textContent),
+          stale: [...b.querySelectorAll('.xsum-stale')].map(x => x.dataset.chat + ':' + x.textContent),
+          note: b.querySelector('.note').textContent,
+        }
+      : null;
+  });
+  ok(
+    sum &&
+      sum.first &&
+      sum.pts.length === 2 &&
+      /^Needs you: Dee Moss asked about a tripod in two chats Cam #2 Trail #4\.$/.test(sum.pts[0]) &&
+      JSON.stringify(sum.cites) === '["Cam #2","Trail #4","#3 · which chat?","#1 · which chat?"]' &&
+      sum.stale.length === 1 &&
+      /^book:Book Club wasn't refreshed in that run \(it failed\), so its part is from its last refresh \(Fri 9:10 AM\)\.$/.test(
+        sum.stale[0],
+      ) &&
+      /^Written at the end of the refresh at /.test(sum.note),
+    'F1 SD7/CT2: All chats opens with "Across your chats" above the cards: the points with tagged citations ("which chat?" for a bare or unknown one), and the chat that run failed named as from its last refresh ' +
+      JSON.stringify(sum),
+  );
+  // SD2: Stats compares the chats; each chat's numbers are its own Stats', and All is their sum, in every timeframe
+  await xsTab(p, 'stats');
+  await until(p, () => document.querySelectorAll('#v-stats table.xcmp tbody tr').length === 4);
+  const hidden = await p.evaluate(() => getComputedStyle(document.querySelector('#v-stats .st-show')).display);
+  const sums = {};
+  for (const tf of ['today', 'wk', 'lastwk', 'd7', 'd30', 'd90', 'all']) {
+    await p.click('#v-stats [data-tf="' + tf + '"]');
+    await p.waitForTimeout(60);
+    const rs = await xsRows(p);
+    const all = rs.find(r => r[0] === 'all');
+    const each = rs.filter(r => r[0] !== 'all');
+    sums[tf] = {
+      ok: [1, 2, 3].every(c => all[c] === each.reduce((n, r) => n + r[c], 0)),
+      msgs: each.map(r => r[0] + ':' + r[1]).join(','),
+    };
+  }
+  ok(
+    hidden === 'none' && Object.values(sums).every(x => x.ok) && sums.all.msgs === 'trail:12,cam:8,book:6',
+    "F1 SD2: All chats › Stats has a row per chat (messages, people, photos) and an All row that is their sum in every timeframe; the switches for one chat's sections are hidden " +
+      JSON.stringify(sums),
+  );
+  const bars = await p.$$eval('#v-stats ul.xbars li', ls =>
+    ls.map(l => l.dataset.chat + ':' + l.querySelector('.v').textContent),
+  );
+  const cmp = await xsRows(p);
+  ok(
+    JSON.stringify(bars) === '["trail:12","cam:8","book:6"]',
+    "F1 SD2: a bar per chat, in the chats' order " + JSON.stringify(bars),
+  );
+  // SD1 with SD2: each chat's own Stats tiles say the same (same timeframe: All)
+  const own = {};
+  for (const k of ['trail', 'cam', 'book']) {
+    await mcPick(p, k);
+    await xsTab(p, 'stats');
+    own[k] = await p.evaluate(() =>
+      ['messages', 'people', 'photos'].map(
+        t => +document.querySelector('#st-body .st-tile[data-k="' + t + '"] .n').textContent.replace(/,/g, ''),
+      ),
+    );
+  }
+  ok(
+    ['trail', 'cam', 'book'].every(k => JSON.stringify(own[k]) === JSON.stringify(cmp.find(r => r[0] === k).slice(1))),
+    "F1 SD1/SD2: each chat's row on All chats equals that chat's own Stats (messages, people posting, photos) " +
+      JSON.stringify({ own, cmp }),
+  );
+  // SD4: By day on All chats: a card per day, a section per chat, tagged citations; a day only one chat has shows it alone
+  await mcPick(p, 'all');
+  await xsTab(p, 'days');
+  await until(p, () => document.querySelectorAll('#days-list article.xday').length === 2);
+  const days = await p.$$eval('#days-list article.xday', as =>
+    as.map(a => ({
+      day: a.dataset.day,
+      chats: [...a.querySelectorAll('.xday-chat')].map(s => s.dataset.chat),
+      cites: [...a.querySelectorAll('.cite')].map(c => c.textContent),
+    })),
+  );
+  ok(
+    days.length === 2 &&
+      days[0].day > days[1].day &&
+      JSON.stringify(days[0].chats) === '["trail","cam"]' &&
+      JSON.stringify(days[0].cites) === '["Trail #4","Trail #4","Cam #2","Cam #3"]' &&
+      JSON.stringify(days[1].chats) === '["cam"]' &&
+      JSON.stringify(days[1].cites) === '["Cam #1"]',
+    "F1 SD4/CT2: By day on All chats: newest day first, a section per chat in the chats' order (Still open too), every number tagged; a day only Camera Club has shows it alone " +
+      JSON.stringify(days),
+  );
+  // a By day number opens its message in its chat
+  await flashReset(p);
+  await p.click('#days-list article.xday .xday-chat[data-chat="cam"] button.cite[data-i="3"]');
+  await until(p, () => document.querySelector('#m3[data-flashed]'), null, 3000);
+  ok(
+    (await mcText(p, '#h1')) === 'Camera Club' && (await p.isVisible('#v-messages')),
+    'F1 SD4: Cam #3 in By day opens Camera Club at #3',
+  );
+  // SD6: a chat's own By day is its own (bare numbers), and switching back to All chats redraws it
+  await xsTab(p, 'days');
+  const camDays = await p.evaluate(() => ({
+    head: document.querySelector('#v-days .sec-head p').textContent,
+    x: document.querySelectorAll('#days-list article.xday').length,
+    cites: [...document.querySelectorAll('#days-list .cite')].map(c => c.textContent),
+  }));
+  await mcPick(p, 'all');
+  await xsTab(p, 'days');
+  const back = await p.$$eval('#days-list article.xday', as => as.length);
+  const heads = await p.evaluate(() => document.querySelector('#v-days .sec-head p').textContent);
+  ok(
+    !/Copy for chat/.test(heads) && /a section per chat/.test(heads),
+    "F1 SD4: All chats' By day header describes every chat's days and doesn't offer Copy for chat (" + heads + ')',
+  );
+  ok(
+    /Copy for chat/.test(camDays.head) &&
+      camDays.x === 0 &&
+      camDays.cites.length &&
+      camDays.cites.every(c => /^#\d+$/.test(c)) &&
+      back === 2,
+    "F1 SD6: Camera Club's By day shows its own days with bare numbers (and its header offers Copy for chat); back on All chats, every chat's again " +
+      JSON.stringify({ camDays, back }),
+  );
+  // PH: at 390 px, All chats' Stats and By day fit the screen
+  await p.setViewportSize({ width: 390, height: 844 });
+  const wide = {};
+  for (const t of ['days', 'stats', 'summary']) {
+    await xsTab(p, t);
+    await p.waitForTimeout(100);
+    wide[t] = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  }
+  ok(
+    Object.values(wide).every(x => x <= 0),
+    "F1 PH: at 390 px All chats' Summary, By day and Stats fit the screen " + JSON.stringify(wide),
+  );
+  await p.setViewportSize({ width: 1000, height: 900 });
+  // SD7: once every chat is marked caught up after it was written, it says so instead of the points
+  await p.click('#caught-all');
+  await until(p, () =>
+    /caught up in every chat since/.test((document.querySelector('#v-all .xsum') || {}).textContent || ''),
+  );
+  ok(
+    !(await p.$('#v-all .xsum .xsum-points')),
+    'F1 SD7: after Mark all caught up, the summary across chats says you are caught up everywhere since it was written',
+  );
+  ok(p.errors.length === 0, 'F1 All chats Stats, By day and summary: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // before Claude has written one: a line says where it comes from
+  p = await mcOpen(xsSeed({ noSum: true }));
+  const none = await mcText(p, '#v-all .xsum');
+  ok(
+    /Claude writes a short summary across your chats here at the end of each refresh/.test(none),
+    'F1 SD7: with no summary across chats yet, All chats says Claude writes one at the end of each refresh (' +
+      none.slice(0, 80) +
+      ')',
+  );
+  ok(p.errors.length === 0, 'F1 All chats with no summary: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 async function groupsAdd() {
   let p = await mcOpen();
   await mcSettings(p);
@@ -18212,6 +18425,7 @@ const SECTIONS = {
   multiChat3,
   multiChatAsk,
   multiChatB56,
+  multiChatAll,
   robustness,
   pipeline,
   variants,

@@ -72,6 +72,12 @@
                                      a scheduled run also leaves chats not due by How often (`later`). The
                                      refresh/status write for that point, and at the end the refresh/skipped write.
                                      references/chats.md › A run over every chat.
+  catchup.py allchats META.json DRAFT.json --done=KEY,KEY [--new=KEY,KEY] [--failed=KEY,KEY] [--later=KEY,KEY]
+                     [--started=ISO] The summary across chats (F1 stage C) at the end of a run over every chat: checks
+                                     DRAFT.json {"points":[{"h","t"}]} (1-10 points, each citing [key#n] of a chat on the
+                                     page, no bare [#n]) and prints the allchats/summary document to write, with each
+                                     chat's state in that run; {"doc": null} when no chat brought new messages.
+                                     references/chats.md › The summary across chats.
   catchup.py versions [TZ]           `versions.page` and `versions.helper` for meta/chat (references/database.md ›
                                      Versions), read from this skill's assets/page.html and assets/helper.user.js.
                                      With TZ (meta/chat.tz): {lastRefresh, versions:{page, helper, refresh}}, lastRefresh
@@ -500,6 +506,78 @@ def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False, sch
     elif later:  # a scheduled run with no chat due still records that it ran
         out["status"] = {"state": "done", "finishedAt": _now_iso(), "added": 0, "due": 0}
     print(json.dumps(out, indent=1))
+
+
+ALLSUM_POINTS = 10  # the summary across chats: at most this many points
+ALLSUM_WORDS = 45  # words in one point
+ALLSUM_HEAD = 30  # characters in a point's heading
+_CITE_GROUP = re.compile(r"\[([^\[\]]*#\s*\d+[^\[\]]*)\]")
+_CITE_PART = re.compile(r"^\s*([A-Za-z0-9_.~:@+-]*)\s*#\s*(\d+)\s*$")
+
+
+def allchats_cmd(meta_file, draft_file, done=(), new=(), failed=(), later=(), started=None):
+    """`catchup.py allchats META.json DRAFT.json --done=K,K [--new=K,K] [--failed=K,K] [--later=K,K] [--started=ISO]`:
+    the summary across chats (allchats/summary) at the end of a run over every chat that brought new messages. --done:
+    the chats the run refreshed or tried (run-plan's --done), --new: those of them with new messages, --failed: those
+    that failed, --later: chats not due yet (run-plan's `later`). DRAFT.json {"points": [{"h": short heading, "t": the
+    point, citing [key#n]}]}: 1 to ALLSUM_POINTS points, each at most ALLSUM_WORDS words with at least one citation, every
+    citation [key#n] (or [key#n, key#m]) with the key of a chat on the page, never a bare [#n] (numbers restart in each
+    chat). Prints {"doc": the document to set, "write": "allchats/summary"}; each chat's state in that run: "new",
+    "nothing" (refreshed, nothing new), "failed", "later" (not due), "paused", or "skipped" (not reached: the time limit,
+    or a failure that stopped the run). With no chat in --new: {"doc": null} (the summary stays as it is)."""
+    meta = _load(meta_file)
+    draft = _load(draft_file)
+    cs = {k: c for k, c in chats_of(meta).items() if not is_group(c)}
+    done, new, failed, later = (list(dict.fromkeys(k for k in x if k)) for x in (done, new, failed, later))
+    for k in done + new + failed + later:
+        assert k in cs, "allchats: no chat %r on this page (its keys: %s)" % (k, ", ".join(sorted(cs)))
+    assert set(new) <= set(done) and set(failed) <= set(done), "allchats: --new and --failed must be chats in --done"
+    assert not set(new) & set(failed), "allchats: a chat can't be both --new and --failed"
+    if not new:
+        print(json.dumps({"doc": None, "why": "no chat brought new messages: leave allchats/summary as it is"}))
+        return
+    pts = draft.get("points") if isinstance(draft, dict) else None
+    assert isinstance(pts, list) and 1 <= len(pts) <= ALLSUM_POINTS, (
+        "allchats: DRAFT needs 1 to %d points" % ALLSUM_POINTS
+    )
+    out = []
+    for n, x in enumerate(pts, 1):
+        assert isinstance(x, dict) and isinstance(x.get("t"), str) and x["t"].strip(), "allchats: point %d has no t" % n
+        t = " ".join(x["t"].split())
+        assert len(t.split()) <= ALLSUM_WORDS, "allchats: point %d is over %d words" % (n, ALLSUM_WORDS)
+        groups = _CITE_GROUP.findall(t)
+        assert groups, "allchats: point %d cites no message ([key#n])" % n
+        for g in groups:
+            for part in g.split(","):
+                m = _CITE_PART.match(part)
+                assert m, "allchats: point %d: %r isn't a citation like [cam#412]" % (n, "[" + g + "]")
+                assert m.group(1), "allchats: point %d: a bare #%s; write [key#%s]" % (n, m.group(2), m.group(2))
+                assert m.group(1) in cs, "allchats: point %d cites %s, not a chat on this page" % (n, m.group(1))
+        p = {"t": t}
+        h = x.get("h")
+        if h is not None:
+            assert isinstance(h, str) and 0 < len(h.strip()) <= ALLSUM_HEAD, (
+                "allchats: point %d's h must be 1 to %d characters" % (n, ALLSUM_HEAD)
+            )
+            p["h"] = h.strip()
+        out.append(p)
+
+    def state(k):
+        if k in failed:
+            return "failed"
+        if k in new:
+            return "new"
+        if k in done:
+            return "nothing"
+        if k in later:
+            return "later"
+        return "paused" if cs[k].get("state") == "paused" else "skipped"
+
+    keys = [k for k in cs if cs[k].get("state", "active") in ("active", "paused") or k in done]
+    doc = {"at": _now_iso(), "points": out, "chats": {k: state(k) for k in keys}}
+    if started:
+        doc["run"] = started
+    print(json.dumps({"doc": doc, "write": "allchats/summary"}, indent=1))
 
 
 FIXED_IDS = ("daySummaries", "reports", "captions")  # collections whose documents keep their ids (a day, a block)
@@ -3473,6 +3551,13 @@ if __name__ == "__main__":
             "--scheduled" in flags,
             fl[0].split(",") if fl else (),
         )
+    elif cmd == "allchats":
+        a = [x for x in sys.argv[2:] if not x.startswith("--")]
+        if len(a) != 2:
+            sys.exit(__doc__)
+        opt = lambda f: [k for x in sys.argv[2:] if x.startswith(f + "=") for k in x.split("=", 1)[1].split(",")]
+        sa = opt("--started")
+        allchats_cmd(a[0], a[1], opt("--done"), opt("--new"), opt("--failed"), opt("--later"), sa[0] if sa else None)
     elif cmd == "versions":
         versions_cmd(sys.argv[2] if len(sys.argv) > 2 else None)
     elif cmd == "restore-summary":

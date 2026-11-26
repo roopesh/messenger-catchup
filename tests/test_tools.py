@@ -343,6 +343,7 @@ class TestSkillReferences(unittest.TestCase):
         self.assertEqual(
             sorted(cmds),
             [
+                "allchats",
                 "bootstrap",
                 "build",
                 "captions",
@@ -364,6 +365,7 @@ class TestSkillReferences(unittest.TestCase):
             "captions": "photos.md",
             "chats": "chats.md",
             "run-plan": "chats.md",
+            "allchats": "chats.md",
             "versions": "database.md",
         }
         for c in cmds:
