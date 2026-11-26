@@ -132,9 +132,14 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Options to research:** A, the scan re-reads reactions on the stored messages it passes on the way to the anchor (a screen or so) and the capture carries them by Messenger id for the page to update in place (cheap, covers minutes-old questions only); B, a reactions pass over the open questions and Needs you messages of the last few days, finding each by id as `jump` does (covers the reported case, costs a scroll per message); C, the page's own reactions (sent from the page, F37/F38) counted as the owner's for Ask, which needs no Messenger read but covers only reactions given on the page. Measure how far back the owner's late reactions go first.
 
 ### F40 · P3 · Reply checks every 10 minutes (#92)
-- **Found (Nov 26):** the owner armed reply checks (F30, decided every 10 minutes 5 AM–10 PM), but `create_trigger`'s minimum interval is 1 hour, so it runs hourly at :33; with refreshes at :12 a queued reply waits about 30 minutes at most.
-- **To research:** whether the Desktop app's own scheduled tasks allow shorter intervals, a chain of one-time follow-ups every 10 minutes (each a turn in one conversation: cost and length), or the page asking for a run when a reply is queued.
-
+- **Found (Nov 26):** the owner armed reply checks (F30, decided every 10 minutes, 5 AM–10 PM), but `create_trigger` refused intervals under an hour, so they run hourly at :33.
+- **Research (Nov 26, official docs):**
+  - `create_trigger` is the cloud scheduler (routines): 1-hour minimum ("Expressions that run more often than once per hour are rejected"), and cloud runs have no local access, so they can't drive the owner's Chrome. Today's hourly reply check may not be able to post; to confirm.
+  - Claude Desktop's local scheduled tasks run on the owner's Mac while the app is open: the form allows hourly at most, but "Claude isn't held to the once-per-hour limit" when it sets one up in a Desktop chat (down to 1 minute).
+  - Claude Code's `/loop 10m` works only while its session is open (30-day expiry).
+  - Unconfirmed: Claude in Chrome in an unattended scheduled run (a site-permission prompt could stall it).
+  - Sources: code.claude.com/docs/en/desktop-scheduled-tasks, scheduled-tasks, routines.
+- **Options (board):** A, a Desktop local task every 10 minutes set up in a Desktop chat, after one test run (recommended); B, `/loop 10m` in a Chrome-enabled terminal; C, stay hourly but move it to a local Desktop task. `references/scheduling.md`'s "5–30 minutes" note for `create_trigger` is wrong and changes with whichever ships.
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.
 - **Scheduling (R6):** `send_later` in a Desktop chat with a 2-minute delay, with Desktop open and with it quit; the longest `delay_minutes` it takes (an overnight arm needs 8 h or more; if it's shorter, arm in steps); whether `send_later` from inside a follow-up asks for approval; `create_trigger`'s exact result text under each approval mode; a `CronCreate` chain in the CLI firing twice; a second delivery taking the stale path; the owner's `mode:"loop"` page switching when the owner types a refresh in a new chat (its old chain should then end at its next follow-up).
