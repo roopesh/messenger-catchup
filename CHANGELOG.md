@@ -2,6 +2,12 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.56.3] - 2026-11-26
+**CI: the merged-PR check waits for GitHub's link** (tooling). PATCH. No page, helper or skill change. This release also carries v1.56.2 (the docs refresh), which has no release of its own: its post-merge `pr-only` run asked GitHub for the commit's pull request 6 s after the merge and got none yet, so `tools/release.sh` refused it.
+
+### Fixed
+- `pr-only` (main's check that every commit came from a merged PR) asks again every 15 s for up to about 2 minutes before failing, since GitHub links a merge commit to its PR a few seconds after the merge.
+
 ## [1.56.2] - 2026-11-26
 **The docs catch up with the plugin.** README, STATUS and the developer docs still described one group chat, three skills, page 2.5 and helper 2.0 (STATUS was last updated at v1.21.0). They now cover everything through v1.56.1, B55 and B56 included. PATCH: docs, a test and the plugin's listing text. Page and helper unchanged (`PAGE_VERSION` 6.5, helper 3.8); no skill procedure change.
 
