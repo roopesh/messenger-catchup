@@ -13,6 +13,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 |---|---|---|---|
 | B66 | P3 | bug | Under All chats, the refresh note (`#refresh-st`) still says "The choice above only filters what's shown", though the Show messages box it refers to is hidden there |
 | F40 | P3 | feature | Reply checks every 10 minutes: the scheduler the reply check uses runs at most hourly (armed Nov 26 at :33), so a queued reply can wait about 30 minutes; find a faster way |
+| F41 | P2 | feature | Comment answers on the page check the real data: hover cards on Ask citations (who, when, start of the message, reactions) and data-checked follow-ups to automatic replies (#95) |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -129,6 +130,11 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 ### F40 · P3 · Reply checks every 10 minutes
 - **Found (Nov 26):** the owner armed reply checks (F30, decided every 10 minutes 5 AM–10 PM), but `create_trigger`'s minimum interval is 1 hour, so it runs hourly at :33; with refreshes at :12 a queued reply waits about 30 minutes at most.
 - **To research:** whether the Desktop app's own scheduled tasks allow shorter intervals, a chain of one-time follow-ups every 10 minutes (each a turn in one conversation: cost and length), or the page asking for a run when a reply is queued.
+
+### F41 · P2 · Comment answers check the real data (#95)
+- **Reported (owner, Nov 26):** two automatic replies to page comments answered without checking the stored messages. One said it couldn't tell about a reaction the data has; the other admitted a mistake the data shows wasn't one. Both were corrected afterwards. The owner: keep auto-replies on, make them better.
+- **Decided:** hover only. Hovering or tapping an Ask citation (a chat's `[#n]`, across chats "Key #n") shows the sender's full name, day and time, the first ~100 characters (or photo or caption), and its reactions with who reacted when known (B67's `xw`). The same text goes in the link's title and aria-label; on touch the first tap shows the card. Building in B67's PR (v1.58.0), which closes #95.
+- **In place since Nov 26 (process):** every automatic reply on the page gets a data-checked follow-up from the main session that confirms or corrects it with message numbers. Upstream: a feedback draft asks for automatic replies to read the artifact's data.
 
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.
