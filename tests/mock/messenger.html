@@ -191,6 +191,9 @@
         } else if (i % 7 === 0 && i > 3) {
           o.reply = i - 3;
         }
+        /* mock_ask='{"111":"Is the lot open?"}': those messages' text (B67: questions, and messages naming the owner) */
+        const ask = JSON.parse(MODE("ask") || "{}");
+        if (ask[i] != null) o.b = ask[i];
         return o;
       }
       const btn = (label, onclick) => {
@@ -244,6 +247,92 @@
           othersRx["mid.$mock" + i] = e;
         });
       window.mockMyRx = {};
+      (MODE("myrx") || "")
+        .split(",")
+        .filter(Boolean)
+        .forEach(x => {
+          const [i, e] = x.split(":");
+          window.mockMyRx["mid.$mock" + i] = e;
+        });
+      /* B67: "see who reacted" (a click on a message's reactions) opens a dialog headed "Message reactions" with a tab
+         row ("All 2", "👍 1") and a row per person: avatar, name and emoji; your own row says "Click to remove", and a
+         click on it removes your reaction, as in Messenger. Escape closes it. mock_rxwho='{"105":"Ben Brooks"}': who
+         gave the others' reaction (default Cy Chen); mock_rxstuck: Escape doesn't close it; mock_rxnodlg: the click
+         opens nothing; mock_rxdecoy: a hidden "Notifications" dialog with names and emoji sits in the page first, as on
+         Facebook. window.__rxOpened counts dialogs opened, window.__rxInside clicks inside one. */
+      window.__rxOpened = 0;
+      window.__rxInside = 0;
+      const rxWho = JSON.parse(MODE("rxwho") || "{}");
+      if (MODE("rxdecoy")) {
+        const dc = document.createElement("div");
+        dc.setAttribute("role", "dialog");
+        dc.setAttribute("aria-label", "Notifications");
+        dc.style.display = "none";
+        dc.innerHTML =
+          "<div><img alt='Dee Diaz'><span>Dee Diaz</span><img alt='😮'></div><div><span>Ana Alvarez reacted</span> ❤️</div>";
+        document.body.prepend(dc);
+      }
+      function closeWho() {
+        if (MODE("rxstuck")) return;
+        document.querySelectorAll(".who").forEach(x => x.remove());
+      }
+      function openWho(d) {
+        if (MODE("rxnodlg")) return;
+        closeWho();
+        const id = d.getAttribute("data-message-id");
+        const people = [];
+        if (othersRx[id]) people.push([rxWho[id.replace("mid.$mock", "")] || "Cy Chen", othersRx[id]]);
+        if (window.mockMyRx[id]) people.push(["Sam Smith", window.mockMyRx[id], true]);
+        const dg = document.createElement("div");
+        dg.className = "who";
+        dg.setAttribute("role", "dialog");
+        dg.setAttribute("aria-labelledby", "who-h");
+        dg.style.cssText = "position:fixed;left:200px;top:100px;background:#fff;border:1px solid #999;padding:8px";
+        const h = document.createElement("h2");
+        h.id = "who-h";
+        h.textContent = "Message reactions";
+        const tabs = document.createElement("div");
+        tabs.setAttribute("role", "tablist");
+        const tab = t => {
+          const x = document.createElement("div");
+          x.setAttribute("role", "tab");
+          x.textContent = t;
+          return x;
+        };
+        tabs.append(tab("All " + people.length));
+        [...new Set(people.map(x => x[1]))].forEach(e =>
+          tabs.append(tab(e + " " + people.filter(x => x[1] === e).length)),
+        );
+        dg.append(
+          h,
+          btn("Close", () => dg.remove()),
+          tabs,
+        );
+        people.forEach(([name, e, mine]) => {
+          const row = document.createElement("div");
+          const av = document.createElement("img");
+          av.alt = name;
+          const who = document.createElement("div");
+          const nm = document.createElement("span");
+          nm.textContent = name;
+          who.append(nm);
+          if (mine) {
+            const rm = document.createElement("div");
+            rm.setAttribute("role", "button");
+            rm.textContent = "Click to remove";
+            rm.onclick = () => setMyRx(d, e);
+            who.append(rm);
+          }
+          row.append(av, who, emojiImg(e));
+          dg.append(row);
+        });
+        dg.addEventListener("click", () => window.__rxInside++, true);
+        document.body.append(dg);
+        window.__rxOpened++;
+      }
+      document.addEventListener("keydown", e => {
+        if (e.key === "Escape") closeWho();
+      });
       function drawRx(d) {
         const id = d.getAttribute("data-message-id");
         const all = [othersRx[id], window.mockMyRx[id]].filter(Boolean);
@@ -256,6 +345,7 @@
           pill = document.createElement("div");
           pill.className = "rx";
           pill.setAttribute("role", "button");
+          pill.onclick = () => openWho(d);
           d.append(pill);
         }
         const kinds = [...new Set(all)];
@@ -457,7 +547,7 @@
           pb.style.height = "6px";
           d.append(pb);
         }
-        if (othersRx[o.id]) drawRx(d);
+        if (othersRx[o.id] || window.mockMyRx[o.id]) drawRx(d);
         d.addEventListener("mouseover", () => toolbar(d, o));
         d.addEventListener("mouseleave", () => {
           const tb = d.querySelector(".tb");

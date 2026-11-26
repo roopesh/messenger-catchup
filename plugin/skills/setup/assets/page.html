@@ -1492,6 +1492,25 @@
     text-decoration: none;
     cursor: pointer;
   }
+  /* F41: a citation's card (who, when, the start of the message, its reactions) */
+  .citecard {
+    position: fixed;
+    z-index: 25;
+    max-width: min(320px, calc(100vw - 32px));
+    padding: 8px 11px;
+    border-radius: 6px;
+    background: var(--fg);
+    color: var(--bg);
+    font-size: 0.84rem;
+    line-height: 1.4;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+  }
+  .citecard[hidden] {
+    display: none;
+  }
   .note {
     font-size: 0.88rem;
     color: var(--muted);
@@ -3033,7 +3052,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "6.7";
+  const PAGE_VERSION = "6.8";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3700,6 +3719,132 @@
     const a = Array.from(s);
     return a.length <= n ? s : a.slice(0, n).join("");
   }
+  /* B67: what reactions mean. The skill's references/reactions.md keeps the table and the rules for reading them in
+     context, and npm run sync copies them here (a test checks), so Ask and the summary build read the same ones. The
+     owner's corrections (meta/chat.reactionMeanings, {emoji: meaning}, written by Claude) win over the table. */
+  const REACTIONS_MD = `## Meanings
+| Reaction | Means | As an answer |
+|---|---|---|
+| 👍 💯 ✅ 👌 | yes, agree, OK, done | yes |
+| 👎 | no, disagree | no |
+| ❤️ 😍 | like it, warm thanks; on an item for sale: interest, not a claim | only in context |
+| 🔥 | strong approval, "want" | yes |
+| 🙏 | thanks | only in context |
+| 😂 😆 🤣 | funny | never |
+| 😮 😯 | surprised | never |
+| 😢 | sympathy | never |
+| 😡 | annoyed, objects | no |
+| 👀 | interested, watching | never |
+| 🤔 | unsure | never |
+
+Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in the table is read in context, and never as an answer on its own.
+
+## Reading them in context
+- A reaction answers the message it's on, never a later one.
+- Your 👍 on a yes/no question to you means yes; on a plan or a time, agreed.
+- A reaction on an offer (an item for sale, a spot) is interest, not a claim.
+- The asker's 👍 on an answer closes their question; a bystander's doesn't.
+- A laugh never closes a question.
+- Several 👍 on a proposal: the group agrees.
+- A reaction from You on a message addressed to you (a reply to you, or one that names you) counts as your answer.`;
+  const RX_EMOJI = /\p{Extended_Pictographic}(?:️|\p{Emoji_Modifier}|‍\p{Extended_Pictographic})*/gu;
+  /* an emoji as the table lists it: no skin tone, no variation selector (👍🏽 is 👍) */
+  const rxBase = e => String(e).replace(/[\u{1F3FB}-\u{1F3FF}️]/gu, "");
+  const RX_TABLE = REACTIONS_MD.split("\n")
+    .filter(l => /^\|/.test(l) && !/^\|\s*(Reaction\b|-)/.test(l))
+    .map(l =>
+      l
+        .split("|")
+        .slice(1, -1)
+        .map(c => c.trim()),
+    )
+    .map(([e, means, ans]) => ({ shown: e, es: e.split(/\s+/).map(rxBase), means, ans }));
+  const RX_RULES = REACTIONS_MD.split("\n").filter(l => /^- /.test(l));
+  const RX_NOTE = (REACTIONS_MD.match(/^Skin-tone.*$/m) || [""])[0];
+  /* the owner's corrections, [[base emoji, meaning], ...]; anything malformed is left out */
+  function rxFixes() {
+    const o = (S.page || S.meta || {}).reactionMeanings;
+    if (!o || typeof o !== "object" || Array.isArray(o)) return [];
+    return Object.entries(o)
+      .filter(([e, v]) => /^\p{Extended_Pictographic}/u.test(e) && e.length <= 16 && typeof v === "string" && v.trim())
+      .slice(0, 40)
+      .map(([e, v]) => [rxBase(e), cutCp(v.trim().replace(/\s+/g, " "), 160)]);
+  }
+  /* a correction's answer: one that starts with yes, agree, OK or done is a yes; no or disagree, a no */
+  const rxAnsOf = v => (/^(yes|agrees?|ok|okay|done)\b/i.test(v) ? "yes" : /^(no|disagrees?)\b/i.test(v) ? "no" : "");
+  /* what emoji e says as an answer: "yes", "no" or "" (never, or only in context), the owner's correction first */
+  function rxAnswer(e, fx = rxFixes()) {
+    const b = rxBase(e);
+    const f = fx.find(x => x[0] === b);
+    if (f) return rxAnsOf(f[1]);
+    const row = RX_TABLE.find(r => r.es.includes(b));
+    return row && /^(yes|no)$/.test(row.ans) ? row.ans : "";
+  }
+  /* does message m ask or name the owner: a reply to You, or their name or a nickname in it */
+  function toOwner(m) {
+    if (/^you$/i.test(m.r || "")) return true;
+    const t = String(m.b || "").toLowerCase();
+    return gMe().some(n => new RegExp("(^|\\W)" + n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(\\W|$)").test(t));
+  }
+  /* a message's reactions in its line: who reacted with what when the helper read it (xw: "👍🏽 You; 😂 Ben"), else the
+     count (x), with "probably answered" when it asks or names the owner and has an answering reaction */
+  function rxLine(m) {
+    if (Array.isArray(m.xw) && m.xw.length) return m.xw.map(w => w[1] + " " + w[0]).join("; ");
+    const s = String(m.x || "");
+    if (m.f === "You" || !toOwner(m)) return s;
+    const fx = rxFixes();
+    const e = (s.match(RX_EMOJI) || []).find(x => rxAnswer(x, fx));
+    return e ? s + "; probably answered (a " + e + " on it, likely yours)" : s;
+  }
+  /* a capture's xw (helper 4.0): [[name or "You", emoji], ...]; the importer drops one of any other shape */
+  const xwOk = a =>
+    Array.isArray(a) &&
+    a.length > 0 &&
+    a.length <= 60 &&
+    a.every(
+      w =>
+        Array.isArray(w) &&
+        w.length === 2 &&
+        typeof w[0] === "string" &&
+        w[0].trim() &&
+        w[0].length <= 80 &&
+        typeof w[1] === "string" &&
+        /^\p{Extended_Pictographic}/u.test(w[1]) &&
+        w[1].length <= 24,
+    );
+  /* under a message: who reacted when known ("👍🏽 You · 😂 Ben Brooks"), else the count */
+  const rxShown = m => (Array.isArray(m.xw) && m.xw.length ? m.xw.map(w => w[1] + " " + w[0]).join(" · ") : m.x);
+  /* does any of these messages carry reactions (remembered per list and length: prompts are built several times) */
+  const rxSeen = new WeakMap();
+  function hasRx(ms) {
+    if (!Array.isArray(ms)) return false;
+    const k = rxSeen.get(ms);
+    if (k && k[0] === ms.length) return k[1];
+    const v = ms.some(m => m && (m.x || m.xw));
+    rxSeen.set(ms, [ms.length, v]);
+    return v;
+  }
+  /* Ask's rules for reactions: the table, the owner's corrections, and how to read them in context; only for chats
+     whose messages carry reactions (on, else nothing: the table is about 2 KB of every prompt) */
+  function rxRules(on) {
+    if (!on) return "";
+    const fx = rxFixes();
+    return (
+      "\n- Reactions can be answers. In these rules, you and your mean " +
+      OWNER() +
+      ' ("You" in the data). What each reaction means:\n' +
+      RX_TABLE.map(r => "  " + r.shown + ": " + r.means + " (as an answer: " + r.ans + ")").join("\n") +
+      (RX_NOTE ? "\n  " + RX_NOTE : "") +
+      (fx.length
+        ? "\n- The owner's corrections, which win over that table: " +
+          fx.map(f => f[0] + " means " + f[1]).join("; ") +
+          "."
+        : "") +
+      "\n" +
+      RX_RULES.join("\n") +
+      '\n- {reactions: 👍🏽 You; 😂 Ben} names who reacted. {reactions: 1 👍🏽} is only the count; "probably answered (a 👍 on it, likely yours)" after it marks a message that asks or names You with an answering reaction: say "probably" when you rely on it.'
+    );
+  }
   function lineFor(m) {
     let s = "#" + m.i + " [" + m.t + "] " + nameOf(m);
     if (m.r) s += " (replying to " + rName(m.r) + (m.q ? ': "' + cutCp(m.q.replace(/\s+/g, " "), 120) + '"' : "") + ")";
@@ -3711,7 +3856,7 @@
       (cs.length ? " [photo: " + cs.join(" | ") + "]" : m.p ? " [photo]" : "") +
       (m.a ? " [link preview: " + cutCp(m.a.replace(/\s+/g, " "), 240) + "]" : "") +
       (m.l ? " " + m.l.join(" ") : "") +
-      (m.x ? " {reactions: " + m.x + "}" : "");
+      (m.x || m.xw ? " {reactions: " + rxLine(m) + "}" : "");
     return s;
   }
   /* B39: the reader's place survives a rebuild. New data (a refresh's chunks, threading, the summary, photos, names)
@@ -6612,7 +6757,7 @@
       sub.append(el("span", null, S.gifs && S.gifs.has(m.i) ? "🎞 GIF (open in Messenger)" : "📷 photo"));
     if (m.a) sub.append(el("span", null, "🔗 " + m.a.split("\n")[0].slice(0, 90)));
     (m.l || []).forEach(u => sub.append(outLink(hostOf(u), u)));
-    if (m.x) sub.append(el("span", null, m.x));
+    if (m.x || m.xw) sub.append(el("span", null, rxShown(m)));
     /* a message's actions sit apart from what it says, and show when you hover, tap or tab to it, as in Messenger */
     const acts = el("div", "sub acts");
     acts.append(extLink(m));
@@ -7793,7 +7938,7 @@
     cut: true,
   };
   const LINE_FMT =
-    'one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions}. Senders are named as full name (group nickname) where the full name is known, else as Messenger shows them.';
+    'one per line: #number [time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions} (who reacted, when known). Senders are named as full name (group nickname) where the full name is known, else as Messenger shows them.';
   /* "What you have": which messages are word for word, which are summaries, and what's left out */
   function haveText(P) {
     const none = "- MESSAGES: none" + (P.win ? " (the catch-up window is empty)" : "") + ".";
@@ -7868,7 +8013,8 @@
             ? "- If the answer depends on messages you only see summarized, read them with read_messages first.\n"
             : "- If the answer probably depends on messages you only see summarized, say so and give the numbers to open.\n")
         : "- Answer only from these messages. If they don't contain the answer, say so plainly.\n- Cite every claim with message numbers in square brackets, like [#123] or [#12, #15].\n") +
-      "- When asked whether something needs a reply, check later messages for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble."
+      "- When asked whether something needs a reply, check later messages for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble." +
+      rxRules(hasRx(S.msgs))
     );
   }
   function sections(P) {
@@ -8389,16 +8535,127 @@
         if (k) container.append(" ");
         const a = el("a", "cite", "#" + n);
         a.href = "#messages";
-        a.onclick = e => {
-          e.preventDefault();
-          goMsg(n);
-        };
+        citeHook(
+          a,
+          () => citeText(S.byI.get(n)),
+          () => goMsg(n),
+        );
         container.append(a);
       });
       last = re.lastIndex;
     }
     container.append(text.slice(last));
   }
+  /* F41 (#95): a citation's card, shown while it's hovered or focused, or after a first tap on a touch screen (a
+     second tap follows it): who (named by the B59 rule), when, the start of the message (or its photo's caption) and
+     its reactions, who reacted when known (xw). The same text is the link's title and part of its aria-label. */
+  function citeText(m) {
+    if (!m) return "";
+    const b = String(m.b || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const cs = capsOf(m.i);
+    const cut = s => (Array.from(s).length > 100 ? cutCp(s, 100) + "…" : s);
+    const body = b ? cut(b) : m.p || cs.length ? "📷 " + (cs[0] ? cut(cs[0]) : "photo") : "";
+    const day = dayOf(m.d);
+    const L = [nameOf(m) + " · " + (day ? day + " " : "") + m.t];
+    if (body) L.push(body);
+    if (m.x || m.xw) L.push("Reactions: " + (Array.isArray(m.xw) && m.xw.length ? rxLine({ xw: m.xw }) : m.x));
+    return L.join("\n");
+  }
+  let citeTouch = false;
+  addEventListener("pointerdown", e => (citeTouch = e.pointerType === "touch" || e.pointerType === "pen"), true);
+  const citeCard = () => {
+    let c = document.getElementById("citecard");
+    if (!c) {
+      c = el("div", "citecard");
+      c.id = "citecard";
+      c.setAttribute("role", "tooltip");
+      c.hidden = true;
+      document.body.append(c);
+    }
+    return c;
+  };
+  function citeShow(a) {
+    const t = citeLabel(a);
+    if (!t) return false;
+    const c = citeCard();
+    c.textContent = t;
+    c.hidden = false;
+    c.citeFor = a;
+    a.setAttribute("aria-describedby", "citecard");
+    const r = a.getBoundingClientRect();
+    const w = c.offsetWidth,
+      h = c.offsetHeight;
+    const left = Math.max(8, Math.min(r.left, innerWidth - w - 8));
+    const top = r.bottom + 6 + h > innerHeight - 8 ? Math.max(8, r.top - h - 6) : r.bottom + 6;
+    c.style.left = left + "px";
+    c.style.top = top + "px";
+    return true;
+  }
+  function citeHide(a) {
+    const c = document.getElementById("citecard");
+    if (!c || c.hidden || (a && c.citeFor !== a)) return;
+    c.hidden = true;
+    if (c.citeFor) c.citeFor.removeAttribute("aria-describedby");
+    c.citeFor = null;
+  }
+  /* the card's text, worked out again when the message wasn't loaded yet (a chat across chats still loading) */
+  function citeLabel(a) {
+    if (!a.citeTitle) {
+      const t = a.citeGet ? a.citeGet() : "";
+      if (t) {
+        a.citeTitle = t;
+        a.title = t;
+        a.setAttribute("aria-label", a.textContent + ": " + t.replace(/\n/g, "; "));
+      }
+    }
+    return a.citeTitle || "";
+  }
+  function citeHook(a, get, go) {
+    a.citeGet = get;
+    const keep = a.title;
+    citeLabel(a);
+    if (!a.citeTitle && keep) a.title = keep;
+    a.addEventListener("pointerenter", e => e.pointerType === "mouse" && citeShow(a));
+    a.addEventListener("pointerleave", e => e.pointerType === "mouse" && citeHide(a));
+    a.addEventListener("focus", () => citeShow(a));
+    a.addEventListener("blur", () => citeHide(a));
+    /* whether this link's card was already up when the tap began (a tap's focus shows it before the click) */
+    a.addEventListener("pointerdown", () => {
+      const c = document.getElementById("citecard");
+      a.citeWas = !!(c && !c.hidden && c.citeFor === a);
+    });
+    a.onclick = e => {
+      e.preventDefault();
+      if (citeTouch && !a.citeWas && citeShow(a)) {
+        a.citeWas = true;
+        return;
+      }
+      citeHide();
+      go();
+    };
+  }
+  addEventListener("keydown", e => e.key === "Escape" && citeHide());
+  /* a scroll moves the card with its citation (hiding it here would make a second tap show it again, not follow) */
+  addEventListener(
+    "scroll",
+    () => {
+      const c = document.getElementById("citecard");
+      if (c && !c.hidden && c.citeFor) {
+        if (c.citeFor.isConnected) citeShow(c.citeFor);
+        else citeHide();
+      }
+    },
+    true,
+  );
+  addEventListener(
+    "pointerdown",
+    e => {
+      if (!(e.target.closest && e.target.closest(".cite"))) citeHide();
+    },
+    true,
+  );
   function addTurn(role, text, box = $("#chat"), render = renderCites) {
     const d = el("div", "turn " + role);
     d.append(el("span", "role", role === "user" ? "You" : "Claude"));
@@ -8770,10 +9027,11 @@
   const X_SEARCH_HAVE =
     "\n- SEARCH: three tools over every stored message in every chat, photo captions included: search_messages (by words, dates, sender; every chat, or one), read_messages (one chat, word for word: a range of numbers or a whole day) and day_summaries (one chat, a line per day, with its summary where it has one). Use them for whatever the lines above don't settle: older messages, things only in photos, exact wording, and anything in a chat whose newest messages don't cover it.";
   const X_FMT =
-    'one per line: [key#number] [day time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions}. The key names the chat. Numbers restart in each chat, so cam#412 and tea#412 are different messages. Senders are named as full name (that chat\'s nickname) where the full name is known, else as Messenger shows them. People are kept separately in each chat: the same full name in two chats is the same person, so say so when it helps.';
-  function xRules(tools) {
+    'one per line: [key#number] [day time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions} (who reacted, when known). The key names the chat. Numbers restart in each chat, so cam#412 and tea#412 are different messages. Senders are named as full name (that chat\'s nickname) where the full name is known, else as Messenger shows them. People are kept separately in each chat: the same full name in two chats is the same person, so say so when it helps.';
+  function xRules(tools, rx = true) {
     return (
       "- Answer only from these chats. If they don't contain the answer, say so plainly.\n- Cite every claim with the chat's key and the message number in square brackets, like [cam#123] or [cam#12, tea#15]. Never write a bare [#123]: the same number is in every chat.\n- Say which chat something is in when it matters.\n- When asked whether something needs a reply, check later messages in that chat for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble." +
+      rxRules(rx) +
       (tools ? SEARCH_RULES.replace("isn't in the chat", "isn't in the chats") : "")
     );
   }
@@ -8814,7 +9072,10 @@
       "\n- RECENT: each chat's newest messages, word for word." +
       (tools ? X_SEARCH_HAVE : "\n- MATCHES: messages in any chat holding the question's own words, newest first.") +
       "\n\nRules:\n" +
-      xRules(tools);
+      xRules(
+        tools,
+        ctxs.some(x => hasRx(x.msgs)),
+      );
     let room = room0 - u8(head) - 512;
     const parts = [];
     const read = {};
@@ -8904,6 +9165,7 @@
   }
   /* A citation across chats: "Cam #412", opening that chat at that message; a chat that's gone says so and opens
      nothing; a number with no chat (or an unknown one) is "#412 · which chat?" */
+  var XA_LAST = null; /* the chats the last question across chats read (F41) */
   function xCite(c, n) {
     if (!c) {
       const s = el("span", "cite bad", "#" + n + " · which chat?");
@@ -8920,7 +9182,17 @@
     b.dataset.chat = c.key;
     b.dataset.i = n;
     b.title = "Open " + c.name + " at #" + n;
-    b.onclick = () => openChat(c.key, n);
+    citeHook(
+      b,
+      () => {
+        if (!XD.ctxs) xCtxs(); /* starts loading every chat; a later hover finds it */
+        const x = (XA_LAST || []).concat(XD.ctxs || []).find(y => y.key === c.key && y.byI);
+        const live = c.key === CUR.key && S.msgs.length;
+        if (!x && !live) return "";
+        return live ? citeText(S.byI.get(n)) : inCtx(x, () => citeText(x.byI.get(n)));
+      },
+      () => openChat(c.key, n),
+    );
     return b;
   }
   /* Claude's [cam#412] and [cam#412, tea#15] (a key or a tag) as citations; a bare number after a keyed one in the
@@ -9142,6 +9414,7 @@
     let ctxs = null;
     try {
       const all = await xLoad();
+      XA_LAST = all; /* F41: the citations in its answer read their messages from these */
       if (sig.aborted) throw Object.assign(new Error("stopped"), { code: "cancelled" });
       ctxs = all.filter(x => !x.err);
       const bad = all.filter(x => x.err);
@@ -12765,13 +13038,32 @@
       .filter(m => m.i > lastI)
       .map(m => {
         const o = {};
-        ["i", "t", "f", "fn", "b", "m", "r", "q", "x", "l", "a", "p", "d", "pi", "pq", "pmid", "pl", "perr"].forEach(
-          k => {
-            if (m[k] != null && m[k] !== "") o[k] = m[k];
-          },
-        );
+        [
+          "i",
+          "t",
+          "f",
+          "fn",
+          "b",
+          "m",
+          "r",
+          "q",
+          "x",
+          "xw",
+          "l",
+          "a",
+          "p",
+          "d",
+          "pi",
+          "pq",
+          "pmid",
+          "pl",
+          "perr",
+        ].forEach(k => {
+          if (m[k] != null && m[k] !== "") o[k] = m[k];
+        });
         if (o.b == null) o.b = "";
         if (typeof o.fn !== "string" || o.fn.length > 80 || o.f === "You") delete o.fn;
+        if (o.xw != null && !xwOk(o.xw)) delete o.xw;
         return o;
       });
     for (const m of fresh)
@@ -13023,7 +13315,7 @@
   /* the helper this page shipped with: npm run sync writes it from assets/helper.user.js's @version. A Chrome is
      behind when its helper is older than this or than versions.helper, whichever is higher: versions.helper is
      written by Claude, and a stale one (v1.35.0 refreshes wrote 2.1 while shipping 2.3) hid every notice. */
-  const HELPER_VERSION = "3.9";
+  const HELPER_VERSION = "4.0";
   const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
   const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
   const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";
@@ -15845,6 +16137,7 @@
     "aliasesAskedAt",
     "chats",
     "chatEvery",
+    "reactionMeanings",
   ];
   const TAG_MAX = 8,
     KEY_MAX = 6;

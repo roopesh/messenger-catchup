@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      3.9
+// @version      4.0
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on. It downloads GIFs from Facebook's image servers for your page (the permission Tampermonkey asks for).
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -39,13 +39,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '3.9';
+  window.__mcHelper = '4.0';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '3.9');
+  root.setAttribute('data-mc-helper', '4.0');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -884,6 +884,142 @@
           R.steps++;
         }
         R.tReplies = Date.now() - R.t0;
+        /* B67: who reacted, read from Messenger's "see who reacted" list, for the new messages where it can answer
+           something: a reply to you, one that names you (OPT.me) or a question (a "?" at the end of a sentence). A
+           click on the message's reactions opens a dialog headed "Message reactions"; the helper reads each row's name
+           and emoji (your own row says "Click to remove": "You"), then closes it with Escape and checks that it closed.
+           It never clicks inside the dialog: a click on your row would remove your reaction. Only that dialog counts,
+           found by its own label or heading (Facebook keeps a hidden Notifications dialog in the page). At most
+           OPT.rxw (30, 0 = none) messages and OPT.rxwMs (45 s) a run; the rest keep only their count (x). */
+        R.phase = 'reactions';
+        const RXW_MAX = OPT && OPT.rxw != null ? Math.max(0, +OPT.rxw || 0) : 30;
+        const RXW_MS = +((OPT && OPT.rxwMs) || 45000);
+        const EMO = /\p{Extended_Pictographic}(?:️|\p{Emoji_Modifier}|‍\p{Extended_Pictographic})*/u;
+        const EMOG = new RegExp(EMO.source, 'gu');
+        const ME = ((OPT && OPT.me) || [])
+          .filter(n => typeof n === 'string' && n.trim().length >= 2)
+          .map(
+            n =>
+              new RegExp(
+                '(^|[^\\p{L}\\p{N}])' + n.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^\\p{L}\\p{N}])',
+                'iu',
+              ),
+          );
+        const rxWorth = id => {
+          const m = R.info[id];
+          if (!m || !m.rx.length) return false;
+          const lab = (m.label || '').replace(AT, '');
+          if (/^.* replied to you$/i.test((m.text || '').split('\n')[0] || '')) return true;
+          if (/\?+["')\]]*(\s|$)/.test(lab)) return true;
+          return ME.some(re => re.test(lab));
+        };
+        const dlgName = d => {
+          const lab = (d.getAttribute('aria-label') || '').trim();
+          if (lab) return lab;
+          const by = d.getAttribute('aria-labelledby');
+          const le = by && document.getElementById(by);
+          if (le) return (le.textContent || '').trim();
+          const h = d.querySelector('h1,h2,h3,h4,[role="heading"]');
+          return h ? (h.textContent || '').trim() : '';
+        };
+        const rxDialog = () =>
+          Array.from(document.querySelectorAll('[role="dialog"]')).find(
+            d => dlgName(d) === 'Message reactions' && d.getBoundingClientRect().height > 0,
+          ) || null;
+        const rxEsc = async () => {
+          for (let t = 0; t < 2; t++) {
+            const d = rxDialog();
+            if (!d) return true;
+            const at = document.activeElement && d.contains(document.activeElement) ? document.activeElement : d;
+            const k = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true };
+            at.dispatchEvent(new KeyboardEvent('keydown', k));
+            at.dispatchEvent(new KeyboardEvent('keyup', k));
+            for (let w = 0; w < 10; w++) {
+              await sleep(150);
+              if (!rxDialog()) return true;
+            }
+          }
+          return false;
+        };
+        const rowEmoji = n => {
+          const t = (n.innerText || n.textContent || '').match(EMO);
+          if (t) return t[0];
+          for (const x of n.querySelectorAll('img[alt],[aria-label]')) {
+            const v = (x.getAttribute('alt') || x.getAttribute('aria-label') || '').trim();
+            const mm = v.match(EMO);
+            if (mm && mm[0] === v) return v;
+          }
+          return '';
+        };
+        const rowName = n =>
+          (n.innerText || n.textContent || '')
+            .split('\n')
+            .map(s => s.replace(EMOG, '').trim())
+            .filter(s => s && !/^click to remove$/i.test(s) && !/^\d+$/.test(s) && s !== 'Message reactions')[0] || '';
+        /* the rows: the smallest elements holding a name and an emoji (never the tab row); "Click to remove" is looked
+           for in the widest block around a row that holds no other row */
+        const rxRows = d => {
+          const ok = n => !n.closest('[role="tablist"],[role="tab"]') && n !== d && !!rowEmoji(n) && !!rowName(n);
+          const all = Array.from(d.querySelectorAll('*')).filter(ok);
+          const rows = all.filter(n => !all.some(o => o !== n && n.contains(o)));
+          const out = [];
+          for (const n of rows) {
+            let w = n;
+            while (
+              w.parentElement &&
+              w.parentElement !== d &&
+              rows.filter(r => w.parentElement.contains(r)).length === 1
+            )
+              w = w.parentElement;
+            const you = /(^|\n)\s*click to remove\s*($|\n)/i.test(w.innerText || w.textContent || '');
+            const row = [you ? 'You' : rowName(n).slice(0, 80), rowEmoji(n)];
+            if (!out.some(x => x[0] === row[0] && x[1] === row[1])) out.push(row);
+          }
+          return out.slice(0, 60);
+        };
+        const want = R.win.filter(rxWorth);
+        const RW = (R.rxw = { want: want.length, read: 0, noopen: 0, empty: 0, cap: false, stuck: false });
+        R.xw = {};
+        if (want.length && RXW_MAX) {
+          const t0 = Date.now();
+          if (rxDialog() && !(await rxEsc())) RW.stuck = true;
+          for (const id of want.slice().reverse()) {
+            if (RW.stuck) break;
+            if (RW.read + RW.noopen + RW.empty >= RXW_MAX || Date.now() - t0 > RXW_MS) {
+              RW.cap = true;
+              break;
+            }
+            const e = await bring(id);
+            const pill = e && e.querySelector('[aria-label*="see who reacted"]');
+            if (!pill) {
+              RW.noopen++;
+              continue;
+            }
+            if (document.activeElement) document.activeElement.blur();
+            pill.click();
+            let d = null;
+            for (let w = 0; w < 20 && !d; w++) {
+              await sleep(150);
+              d = rxDialog();
+            }
+            if (!d) {
+              RW.noopen++;
+              continue;
+            }
+            let rows = [];
+            for (let w = 0; w < 10 && !rows.length; w++) {
+              await sleep(200);
+              rows = rxRows(rxDialog() || d);
+            }
+            if (rows.length) {
+              R.xw[id] = rows;
+              RW.read++;
+            } else RW.empty++;
+            if (!(await rxEsc())) RW.stuck = true;
+            R.steps++;
+          }
+        }
+        R.tReactions = Date.now() - R.t0;
         /* Warnings: what the reader may have read wrong, for the refresh report (R3). */
         const ref = k => (OPT.base != null ? '#' + (+OPT.base + 1 + k) : 'new message ' + (k + 1));
         const W = [];
@@ -928,7 +1064,21 @@
           W.push(
             'no full names: none of the ' + others.length + ' new messages from others had an avatar to read (fn)',
           );
+        if (RW.stuck)
+          W.push(
+            'who reacted: the "Message reactions" list didn\'t close with Escape, so the helper stopped reading it (the reload closes it)',
+          );
+        if (!RW.read && RW.noopen + RW.empty >= 2)
+          W.push(
+            'who reacted: the "Message reactions" list ' +
+              (RW.noopen ? "didn't open" : 'had no rows the helper could read') +
+              ' for ' +
+              (RW.noopen + RW.empty) +
+              ' message(s): those keep only their count (x). Messenger may have changed it',
+          );
         R.warn = W;
+        /* the rows read above, kept apart until now so a later read of a message (collect) can't drop them */
+        for (const [id, w] of Object.entries(R.xw)) if (R.info[id]) R.info[id].xw = w;
         sessionStorage.setItem(
           '__mcsave',
           JSON.stringify({
@@ -969,6 +1119,7 @@
       stalled: !!R.stalled,
       scroller: R.scroller || null,
       warn: R.warn || [],
+      rxw: R.rxw || null,
       ms: Date.now() - R.t0,
       labels: (R.win || []).slice(-40).map(id => (R.info[id].label || '').slice(0, 90)),
     };
@@ -1248,6 +1399,7 @@
           o.x = m.rx
             .map(r => r.replace(/; see who reacted to this\.?/, '').replace(/ reactions? with /, ' '))
             .join('; ');
+        if (m.xw && m.xw.length) o.xw = m.xw; /* B67: who reacted, [[name or "You", emoji], ...] */
         if (ext.length) o.l = [...new Set(ext)];
         if (a) o.a = a.slice(0, 220);
         if (pm) o.p = pm[1];
@@ -2029,9 +2181,18 @@
      query is the same chat. One Messenger tab moves between a page's chats. */
   const threadId = () => (location.pathname.match(/\/t\/(\d+)/) || [])[1] || null;
   /* Full refresh pipeline: scan, reload, verify after the reload, then capture. State rides in sessionStorage across the reload. */
+  /* the scan's options from a command's args: me (the user's names) and rxw, rxwMs (B67: who reacted) since 4.0 */
+  const scanOpt = a => ({
+    base: a.base,
+    stallMs: a.stallMs,
+    topMs: a.topMs,
+    me: Array.isArray(a.me) ? a.me : [],
+    rxw: a.rxw,
+    rxwMs: a.rxwMs,
+  });
   async function full(a) {
     sessionStorage.removeItem('mc_result');
-    const r = await mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs, topMs: a.topMs });
+    const r = await mcScan(a.stops, a.first, scanOpt(a));
     if (r.err || !r.win) {
       const o = Object.assign({ stage: 'scan', run: a.run || null, thread: threadId() }, r);
       sessionStorage.setItem('mc_result', JSON.stringify(o));
@@ -2681,7 +2842,7 @@
   }
   const CMDS = {
     probe: a => probe(a.anchor),
-    scan: a => mcScan(a.stops, a.first, { base: a.base, stallMs: a.stallMs, topMs: a.topMs }),
+    scan: a => mcScan(a.stops, a.first, scanOpt(a)),
     verify: a => mcVerify(a),
     capture: a => mcCapture(a.base, a),
     people: a => mcPeople(a),
@@ -2702,7 +2863,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '3.9' }),
+    ping: () => ({ v: '4.0' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

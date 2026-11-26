@@ -8,6 +8,7 @@ Start each with the bridge in SKILL.md › Helper, with a fresh id, and poll unt
 - `probe{anchor}` → `{vis,n,found,after}`.
 - `scan{stops}` or `scan{first:{count}}`; `verify`; `capture{base}`: the steps `full` runs, one at a time (Injecting, below).
 - `full{stops|first, base, run}`: scan, reload, verify, capture. Pass a fresh `run` id; after the reload, poll `sessionStorage.mc_result` in new calls (the first poll often fails with "Inspected target navigated": expected, poll again) and accept it only when its `run` equals yours: `stage:'captured'`, `'verify-failed'`, or `'scan'` (with `err` = scan error; with `err:null, win:0` = nothing new since the last run). Results carry `warn`, `top` and `scroller` (Warnings, Scan results). Messages that arrive during the run (`extra>0`) wait for the next run.
+- `me`, `rxw`, `rxwMs` (4.0; for `full` and `scan`): `me` is the user's names (`ownerName` and `ownerAliases`). During the scan the helper opens Messenger's "see who reacted" list on each new message with reactions that replies to you, names you or ends a sentence with "?", reads who reacted with what into `xw` (`references/reactions.md`), and closes it with Escape, never clicking inside it: at most `rxw` messages (default 30; 0 reads none) and `rxwMs` (45 s) a run, newest first. The scan result's `rxw` `{want, read, noopen, empty, cap, stuck}` counts them.
 - `selfcheck` → `{ok,missing,warn,counts}` (SKILL.md › Refresh steps, step 2).
 - `jump{mid,reply}`: opens that message, with Reply open unless `reply:false` (`references/open-message.md`, `references/outbox.md`).
 - `people{count}`: `references/people.md`.
@@ -36,7 +37,7 @@ An installed helper reports its version in `data-mc-helper` (and `ping`). When i
 - **older than 1.5:** it was installed by pasting and can't update itself. Tell the user to open the install link (below) once and press Install. It replaces the old copy and updates itself from then on.
 - **1.5 or later:** it updates itself within a day. To get it now: the extension's menu › Check for updates, or open the install link again.
 - The page shows it too, from `meta/chat.versions.browsers` (`references/database.md` › Versions): below 1.5 until a refresh in that Chrome finds it up to date, 1.5 or later only while that Chrome ran the last refresh; the user can dismiss either.
-- What an older helper can't do: before 1.6, no full names (`fn`); before 1.7, no `people` scan; before 1.8, no `selfcheck` (skip that check and say so); before 2.0, no warnings, no `top`, no stall timeout, no More actions › Reply, and no `post`; before 2.1, photos carry no Messenger id, `skip` is ignored (a backfill fetches every photo again), a photo it couldn't fetch is only counted in `FAILED` (never owed or retried), and an image that hadn't loaded during the scan was left out, shifting the photos after it to the wrong slot (`references/photos.md`).
+- What an older helper can't do: before 1.6, no full names (`fn`); before 1.7, no `people` scan; before 1.8, no `selfcheck` (skip that check and say so); before 2.0, no warnings, no `top`, no stall timeout, no More actions › Reply, and no `post`; before 2.1, photos carry no Messenger id, `skip` is ignored (a backfill fetches every photo again), a photo it couldn't fetch is only counted in `FAILED` (never owed or retried), and an image that hadn't loaded during the scan was left out, shifting the photos after it to the wrong slot (`references/photos.md`); before 4.0, no who reacted (`xw`): reactions carry only their count (`x`, `references/reactions.md`).
 
 ## Warnings
 `warn` (from `selfcheck`, or a scan: `mc_result.warn`, or the `scan` command's result) never stops a run. Put each in the report in one line, with what it means:
@@ -48,6 +49,8 @@ An installed helper reports its version in `data-mc-helper` (and `ping`). When i
 - **`time labels go backwards`** or **`dated in the future`**: some dates were read wrong (for example a time-only label that isn't today). Name the messages in the report; check them in Messenger before relying on their dates.
 - **`"X" shows as A and B`**: one full name may come from the wrong avatar. Don't use it to tell people apart until a later capture agrees.
 - **`no full names`** or **`sender avatars (full names)`**: avatars can't be read, so new messages carry no `fn` (`references/people.md`).
+- **`who reacted: … didn't close with Escape`**: a "Message reactions" list stayed open, so the helper read no more of them in that scan (the reload that follows closes it). Say so in the report; the messages it didn't read keep only their count (`x`).
+- **`who reacted: … didn't open`** or **`had no rows the helper could read`**: Messenger's who-reacted list may have changed. Those messages keep only their count (`x`), and the build falls back to "probably" (`references/reactions.md`).
 - **`date labels (n of m unreadable)`**, or a capture summary (`mc_result.capture`, or the `capture` command's result) ending with `DATES-GUESSED #…`: those messages' date labels couldn't be read and took the previous message's date. List them in the report, since Messenger may have changed its labels.
 
 ## Scan results

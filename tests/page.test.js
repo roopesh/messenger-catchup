@@ -18416,7 +18416,244 @@ async function groupsImport() {
   ok(p.errors.length === 0, 'G1 import: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 }
+/* B67: reactions in the message lines Claude reads (who reacted, or "probably answered"), and the meaning table, the
+   owner's corrections and the context rules in Ask's prompts. The owner is "Sam" (META). */
+async function reactions() {
+  const p = await open(SEED());
+  const RXW = [
+    ['You', '👍'],
+    ['Cy Chen', '😂'],
+  ];
+  const msgs = [
+    mk(0, { f: 'Ana', b: 'Sam, can you bring the stove Saturday?', x: '1 👍🏽' }),
+    mk(1, { f: 'Ben', b: 'Who has a map?', x: '2 👍 and 😂', xw: RXW }),
+    mk(2, { f: 'Cy', b: 'Ok', r: 'you', x: '1 😂' }),
+    mk(3, { f: 'Dee', b: 'Trail is muddy', x: '1 👍' }),
+    mk(4, { f: 'Ana', b: 'Selling my pack', r: 'you', x: '1 🔥' }),
+    mk(5, { f: 'Ben', b: 'Sam?', x: '1 👍', xw: 'not a list' }),
+    mk(6, { f: 'You', b: 'Anyone at the lot, Sam here?', x: '1 👍' }),
+    mk(7, { f: 'Cy', b: '', p: 'att7' }),
+    mk(8, { f: 'Dee', b: 'trail '.repeat(30).trim() }),
+  ];
+  const r = await paste(p, JSON.stringify(cap(msgs)));
+  ok(r && r.state === 'done', 'B67: a capture with reactions imports ' + JSON.stringify(r && r.state));
+  const c0 = await get(p, 'chunks/c0000');
+  ok(
+    JSON.stringify(c0.msgs[1].xw) === JSON.stringify(RXW) && !('xw' in c0.msgs[5]) && c0.msgs[5].x === '1 👍',
+    'B67: the importer stores who reacted (xw) with the message, and drops an xw of the wrong shape ' +
+      JSON.stringify([c0.msgs[1].xw, c0.msgs[5]]),
+  );
+  const lines = () => p.evaluate(() => S.msgs.map(lineFor));
+  let L = await lines();
+  ok(
+    L[1].endsWith('Ben: Who has a map? {reactions: 👍 You; 😂 Cy Chen}'),
+    'B67: a line names who reacted when the helper read it ' + L[1],
+  );
+  ok(
+    L[0].endsWith('{reactions: 1 👍🏽; probably answered (a 👍🏽 on it, likely yours)}') &&
+      L[4].endsWith('{reactions: 1 🔥; probably answered (a 🔥 on it, likely yours)}'),
+    'B67: without who reacted, an answering reaction on a message that names you or replies to you is "probably answered" ' +
+      JSON.stringify([L[0], L[4]]),
+  );
+  ok(
+    L[2].endsWith('Cy (replying to you): Ok {reactions: 1 😂}') &&
+      L[3].endsWith('{reactions: 1 👍}') &&
+      L[5].endsWith('Ben: Sam? {reactions: 1 👍; probably answered (a 👍 on it, likely yours)}') &&
+      L[6].endsWith('{reactions: 1 👍}'),
+    'B67: a laugh is never an answer, a message to nobody in particular and your own get only the count ' +
+      JSON.stringify([L[2], L[3], L[5], L[6]]),
+  );
+  // the prompts carry the table from references/reactions.md, word for word, and the rules
+  const md = fs.readFileSync(path.join(ROOT, 'plugin/skills/refresh/references/reactions.md'), 'utf8');
+  const rows = md
+    .split('\n')
+    .filter(l => /^\| \S/.test(l) && !/^\| Reaction/.test(l))
+    .map(l =>
+      l
+        .split('|')
+        .slice(1, -1)
+        .map(c => c.trim()),
+    );
+  const rules = md
+    .split("<!-- the page's copy ends here -->")[0]
+    .split('\n')
+    .filter(l => /^- /.test(l));
+  const prompts = () =>
+    p.evaluate(() => ({
+      ask: askPrompt(true, [], 200000, false).text,
+      view: viewPrompt('x', 200000, false).text,
+      x: xRules(false),
+    }));
+  let P = await prompts();
+  const hasTable = t => rows.every(([e, m, a]) => t.includes('  ' + e + ': ' + m + ' (as an answer: ' + a + ')'));
+  ok(
+    rows.length === 11 &&
+      rules.length === 7 &&
+      ['ask', 'view', 'x'].every(k => hasTable(P[k]) && rules.every(l => P[k].includes(l))),
+    'B67: Ask (one chat and across chats) and Views send the meaning table and the context rules from reactions.md ' +
+      JSON.stringify([rows.length, rules.length]),
+  );
+  ok(
+    P.ask.includes('In these rules, you and your mean Sam ("You" in the data)') &&
+      P.ask.includes(
+        'A reaction from You on a message addressed to you (a reply to you, or one that names you) counts as your answer.',
+      ) &&
+      P.ask.includes('"probably answered (a 👍 on it, likely yours)"') &&
+      !P.ask.includes("owner's corrections"),
+    'B67: the rules say a reaction of yours on a message to you is your answer, and explain "probably answered"; no corrections yet',
+  );
+  ok(P.ask.includes('{reactions: 👍 You; 😂 Cy Chen}'), 'B67: Ask reads the line with who reacted');
+  // the owner's corrections (meta/chat.reactionMeanings) win over the table
+  await p.evaluate(() =>
+    __rt.write(
+      'meta/chat',
+      Object.assign(__rt.get('meta/chat'), {
+        reactionMeanings: { '🔥': 'funny here', '😂': 'Yes, agreed', bad: 'x', '👀': 7 },
+      }),
+    ),
+  );
+  await until(p, () => ((S.page || {}).reactionMeanings || {})['🔥']);
+  L = await lines();
+  P = await prompts();
+  ok(
+    L[4].endsWith('{reactions: 1 🔥}') &&
+      L[2].endsWith('{reactions: 1 😂; probably answered (a 😂 on it, likely yours)}'),
+    'B67: a correction changes what a reaction answers: 🔥 no longer, 😂 now a yes ' + JSON.stringify([L[4], L[2]]),
+  );
+  ok(
+    ['ask', 'x'].every(k =>
+      P[k].includes("The owner's corrections, which win over that table: 🔥 means funny here; 😂 means Yes, agreed."),
+    ) && !/means x\b|means 7/.test(P.ask),
+    'B67: both prompts carry the corrections; malformed ones are left out',
+  );
+  // under the message: who reacted, else the count
+  await p.evaluate(() => (location.hash = '#messages'));
+  const sub = await until(p, () => {
+    const a = document.querySelector('#m1 .sub');
+    const b = document.querySelector('#m3 .sub');
+    return a && b && [a.textContent, b.textContent];
+  });
+  ok(
+    sub && sub[0].includes('👍 You · 😂 Cy Chen') && sub[1].includes('1 👍'),
+    'B67: Messages shows who reacted under a message, else the count ' + JSON.stringify(sub),
+  );
+  // F41 (#95): a citation in an answer shows a card on hover: who, when, the start of the message, its reactions
+  await p.evaluate(() => {
+    location.hash = '#ask';
+    addTurn('assistant', 'Ben asked [#1]; Ana asked you [#0]. Photo [#7]. Long [#8].');
+  });
+  const cites = await p.$$eval('#chat .cite', as =>
+    as.map(a => [a.textContent, a.title, a.getAttribute('aria-label')]),
+  );
+  const day = await p.evaluate(() => dayOf(S.byI.get(1).d));
+  const want = [
+    'Ben · ' + day + ' Fri 9:01 AM\nWho has a map?\nReactions: 👍 You; 😂 Cy Chen',
+    'Ana · ' + day + ' Fri 9:00 AM\nSam, can you bring the stove Saturday?\nReactions: 1 👍🏽',
+    'Cy · ' + day + ' Fri 9:07 AM\n📷 photo',
+    'Dee · ' + day + ' Fri 9:08 AM\n' + 'trail '.repeat(17).slice(0, 100) + '…',
+  ];
+  ok(
+    JSON.stringify(cites.map(c => c[1])) === JSON.stringify(want) &&
+      cites[0][2] === '#1: ' + want[0].replace(/\n/g, '; ') &&
+      cites.every(c => /^#\d+$/.test(c[0])),
+    'F41: each citation carries its card text as title and aria-label: name, day and time, the first 100 characters (or 📷 photo), reactions with who reacted, else the count ' +
+      JSON.stringify(cites),
+  );
+  const card = () =>
+    p.evaluate(() => {
+      const c = document.getElementById('citecard');
+      return c && !c.hidden ? c.textContent : null;
+    });
+  await p.hover('#chat .cite >> nth=0');
+  const h1 = await card();
+  await p.mouse.move(5, 5);
+  const h0 = await card();
+  ok(
+    h1 === want[0] && h0 === null,
+    'F41: hovering a citation shows its card, moving away hides it ' + JSON.stringify([h1, h0]),
+  );
+  await p.click('#chat .cite >> nth=0');
+  ok(
+    await until(p, () => !document.getElementById('v-messages').hidden),
+    'F41: a click (not a tap) follows the citation to the message at once',
+  );
+  ok(p.errors.length === 0, 'B67: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  // on a touch screen the first tap shows the card, the second follows the citation
+  const pt = await open(SEED(), PAGE, { hasTouch: true });
+  await paste(pt, JSON.stringify(cap(msgs)));
+  await pt.evaluate(() => {
+    location.hash = '#ask';
+    addTurn('assistant', 'Ben asked [#1].');
+  });
+  await pt.tap('#chat .cite');
+  const t1 = await pt.evaluate(() => [
+    (c => (c && !c.hidden ? c.textContent : null))(document.getElementById('citecard')),
+    document.getElementById('v-messages').hidden,
+  ]);
+  await pt.tap('#chat .cite');
+  const t2 = await until(pt, () => !document.getElementById('v-messages').hidden);
+  ok(
+    t1[0] === want[0] && t1[1] === true && t2,
+    'F41: on touch, the first tap shows the card without following; the second opens the message ' + JSON.stringify(t1),
+  );
+  ok(pt.errors.length === 0, 'F41 touch: no page errors ' + JSON.stringify(pt.errors));
+  await pt.context().close();
+  // across chats: "Cam #2" shows the Camera Club message, named that chat's way, with its reactions
+  const xs = xaSeed();
+  Object.assign(xs.extra['cam_chunks/c0000'].msgs[2], { x: '1 👍', xw: [['You', '👍']] });
+  for (const touch of [false, true]) {
+    const px = await mcOpen(xs, touch ? { hasTouch: true } : undefined);
+    await px.evaluate(pl => (window.__toolPlan = pl), XA_PLAN);
+    await px.click('nav a[data-tab="ask"]');
+    await xask(px, 'Anyone have a tripod?');
+    const sel = '#xchat .turn.assistant .txt .cite[data-chat="cam"]';
+    const xc = await px.$$eval(sel, bs => bs.map(b => [b.textContent, b.title]));
+    const rx2 =
+      /^Dee Moss \(Deedee\) · \w{3} \d+ \w{3} \d+:\d\d [AP]M\nselling my tripod, barely used\nReactions: 👍 You$/;
+    if (!touch) {
+      ok(
+        xc[0][0] === 'Cam #2' && rx2.test(xc[0][1]) && /\n📷 a carbon tripod folded on a table$/.test(xc[1][1]),
+        "F41: a citation across chats carries its chat's message: full name (that chat's nickname), time, text, who reacted; a photo shows its caption " +
+          JSON.stringify(xc.slice(0, 2)),
+      );
+      await px.hover(sel + ' >> nth=0');
+      const hc = await px.evaluate(() => document.getElementById('citecard').textContent);
+      ok(rx2.test(hc), 'F41: hovering "Cam #2" on All chats shows its card ' + JSON.stringify(hc));
+    } else {
+      await px.tap(sel + ' >> nth=0');
+      const a1 = await px.evaluate(() => [
+        !document.getElementById('citecard').hidden,
+        document.querySelector('#h1').textContent,
+      ]);
+      await px.tap(sel + ' >> nth=0');
+      const a2 = await until(px, () => document.querySelector('#h1').textContent !== 'All chats');
+      ok(
+        a1[0] && a1[1] === 'All chats' && a2,
+        'F41: on touch, "Cam #2" shows its card first and opens Camera Club on the second tap ' + JSON.stringify(a1),
+      );
+    }
+    ok(px.errors.length === 0, 'F41 across chats: no page errors ' + JSON.stringify(px.errors));
+    await px.context().close();
+  }
+  // a chat whose messages carry no reactions isn't sent the table (about 2 KB of every prompt)
+  const p2 = await open(SEED());
+  await paste(p2, JSON.stringify(cap(range(0, 5))));
+  const P2 = await p2.evaluate(() => ({
+    ask: askPrompt(true, [], 200000, false).text,
+    x: xRules(false, false),
+    lines: S.msgs.map(lineFor).join('\n'),
+  }));
+  ok(
+    !P2.ask.includes('Reactions can be answers') &&
+      !P2.x.includes('Reactions can be answers') &&
+      !/reactions/.test(P2.lines),
+    'B67: no reactions in the chat, no reaction rules in its prompts',
+  );
+  await p2.context().close();
+}
 const SECTIONS = {
+  reactions,
   groupsAdd,
   groupsImport,
   importer,

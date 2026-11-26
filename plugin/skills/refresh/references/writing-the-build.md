@@ -70,6 +70,9 @@ The numbers are up to three posts it may react to, by someone else in the 3 days
 - **No candidate ("none within 3 days"), or two equally likely:** keep the build's guess, and list the message in the report as a possible claim. Never invent an offer.
 - **With nothing new to build** (the user says a deal sold, or a claim was wrong): `catchup.py relink` takes `bullets` and `dealEdit` too, on their own or with a `relink` or `move`, checked as in a build. Write the spec, `list threading` and `list summary` (limit 1000) into a fresh RUN, run `python3 catchup.py relink WORK RUN spec.json`, and write what `RUN/out/manifest.json` lists, as in step 7.
 
+## Reactions
+A reaction can answer a question or a mention: a yes or no reaction from the person asked closes their question, your own on a message to you settles it, and a laugh never answers. Who reacted comes from `xw` when the helper read it, else "probably" from `x` on messages addressed to the user. The meanings, the rules and how to write `open`, `closeOpen`, `answered` and `mentions` for them are in `references/reactions.md`; read it when a new message with reactions asks or names someone, or answers an open question.
+
 ## Moving a message
 `move` `{"<i>": "<conv id>" | "new"}` puts a message an earlier build threaded into another conversation, together with its Messenger replies in its old one (links `r`, `rq`, `rg`, and their replies). Use it when you spot an earlier misfile during a refresh (say so in the report), or when the user asks ("move #3232 into the bag-sale conversation").
 - **The target:** an existing conversation's id; a new conversation listed in the same spec's `newconvs` (its title and tag go there; a standalone move refuses one no move fills); or `"new"`, which makes `mv<i>`, titled with the message's text.
