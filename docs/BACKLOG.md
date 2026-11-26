@@ -11,7 +11,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 | ID | P | Type | Title |
 |---|---|---|---|
-| B53 | P2 | bug | A first scan with a count can stop at a false "top of chat" and store a short history as the whole chat |
 | B55 | P3 | bug | Chrome names ("Browser 1", "Browser 2") swap when the extension reconnects, so helper notices can name the wrong Chrome |
 | B56 | P3 | bug | Several-chats page oddities: one load after activation opened on the first chat, not All chats; All chats' "need you" count disagrees with the rows |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
@@ -27,11 +26,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
 
 ## Bugs
-
-### B53 · P2 · False "top of chat" on a first scan
-- **Seen (Nov 23, the owner's test chat's first refresh):** a `full` scan with `first:{count:400}` returned `top:true` with 90 messages, although a 200-message scan minutes earlier had read further back. The retry was fine.
-- **Why it matters:** `helper.md` says `top:true` on a first run means the chat is shorter than asked, so a refresh following it would store 90 messages as the chat's whole history.
-- **Likely cause:** the helper takes a short pause at the top (no new messages, no spinner) as the chat's start when the scan asks for a count. Fix: confirm the top (the chat's start marker, or a second longer wait) before reporting `top:true`; add a sim case with a slow load at the top.
 
 ### B55 · P3 · Chrome names swap on reconnect
 - **Seen (Nov 23):** when the Claude in Chrome extension reconnected, the Chrome named "Browser 1" became "Browser 2" and the other took "Browser 1". `versions.browsers` is keyed by these names, so the page's helper notices can name the wrong Chrome.
@@ -157,4 +151,5 @@ Gathered from finished items when they were removed (Nov 14). The item each came
 - **Verify retry (B65, #81, v1.51.1):** on the next busy evening runs of the owner's busiest added chat, a verify that stalls shows `mode:"retry"` and passes in the same run; if one still fails, its `seen` says whether the list loaded nothing (`[25, 25]`-like) or Messenger stopped partway.
 - **GIFs (F39, v1.52.0):** the first refresh with helper 3.7 in Tampermonkey: whether Tampermonkey asks the owner to approve the new download permission on the update, the first stored GIF on the owner's page (a still that plays on hover or tap), a packed GIF's still (its day pack preview) and play, and that photos still download with the helper running under a permission (it falls back to Tampermonkey's download if the page's own fetch fails).
 - **Deeper threads and sections (B64, v1.53.0):** on the owner's page after it reaches 5.9: a real thread deeper than 3 levels shows every level with its rail, folding by a rail and by the keyboard, "Continue this thread" at phone width on a thread past 6 levels; the first refresh that marks `sections` shows their headings, and no new conversation splits one item into two cards.
+- **Top of chat confirmed (B53, v1.53.1):** the next first refresh of a chat the owner adds: its scan says `top:true` (with `nudges:1`) only when the chat really is shorter than the count asked for; a long chat's scan with `nudges` above 0 and `top:false` was saved by a nudge (Messenger paused at the top). If a false top still happens, note the scan's `win`, `nudges` and `ms`.
 - **Scan start (Nov 21):** one scheduled refresh failed with "Scan didn't start scrolling…"; the next runs were fine. If it happens again, file it as a bug with the run's report.

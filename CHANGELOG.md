@@ -2,6 +2,16 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.53.1] - 2026-11-26
+**A pause at the top is no longer the top of the chat** (B53). A first scan with a count of 400 once returned `top:true` with 90 messages, although a 200-message scan minutes earlier had read further back, so a refresh would have stored 90 messages as the chat's whole history. PATCH. Helper 3.8; page 6.0 (only its embedded copy of the helper changes); no skill procedure change.
+
+### Fixed
+- The helper (3.8): the scan no longer takes one quiet pause at the top of what has loaded (no new messages, no spinner, for the top-of-chat wait) as the chat's start. The first time it meets one, it nudges the list (scrolls down two screens and back up, which makes Messenger ask again for older messages) and waits once more; anything new resumes the scan, and a later pause gets its own nudge. Only a second quiet wait right after a nudge is the top. The nudge starts the stall timer over, as the verify's retry does (B65). A genuinely short chat's top now takes about twice the wait (about 28 s instead of 14 s by default). The scan result adds `nudges`.
+- `references/helper.md` › Scan results: `top:true` from helper 3.8 has been confirmed after a nudge.
+
+### Tests
+- sim: a mock mode (`mock_toppause=ms`) where the third request for older messages pauses with no spinner, until the list is scrolled away from the top and back. On helper 3.6 a first scan of 80 on a 100-message chat stopped at the pause with `top:true` and 65 messages; 3.8 nudges once and reads all 80. The short-chat case checks the top comes after one nudge; H5's ceiling for the scan rose from 17.5 s to 26 s (it measured 18.5 s with topMs 1500).
+
 ## [1.53.0] - 2026-11-26
 **Deeper threads, one conversation per item** (B64; the owner, Nov 25: "refine our threading logic", and Nov 26: "more depth, not less"; picked G1 + P1 Rails). MINOR: threads look different and SKILL.md's `join` rule changes. Page 5.9; helper unchanged.
 

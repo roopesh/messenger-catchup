@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      3.7
+// @version      3.8
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on. It downloads GIFs from Facebook's image servers for your page (the permission Tampermonkey asks for).
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -29,13 +29,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '3.7';
+  window.__mcHelper = '3.8';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '3.7');
+  root.setAttribute('data-mc-helper', '3.8');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -503,7 +503,7 @@
     };
   }
   /* scan: scroll back from the newest message until a STOP id (or, for a first run, FIRST.count messages or the first
-     message older than FIRST.days days, or the top of the chat), then settle reply parents. OPT: {base (numbers the
+     message older than FIRST.days days, or the top of the chat, confirmed after a nudge: B53), then settle reply parents. OPT: {base (numbers the
      warnings), stallMs (default 30 s), topMs (a test option: the top-of-chat wait, default 12 s)}. Stops with err "stalled" when nothing new loads for stallMs, so
      Claude retries instead of waiting on a hung scan. */
   async function mcScan(STOPS, FIRST, OPT) {
@@ -649,12 +649,18 @@
           return STOPS.find(m => R.order.includes(m));
         };
         /* The top of the chat: the list stays at the top for TOP_TRIES steps and TOP_MS with nothing new and no
-           loading spinner. A stall: nothing new for STALL, not at the top. */
+           loading spinner, twice. B53: a quiet pause at the top can be a request for older messages that Messenger
+           dropped or is slow to answer, not the chat's start. So the first time, nudge instead: scroll down two screens
+           and back up, which makes Messenger ask again, and wait once more; anything new resumes the scan (and a later
+           pause gets its own nudge). A stall: nothing new for STALL, not at the top; the nudge starts that timer over,
+           as the verify's retry does (B65). */
         let extra = 0,
           tops = 0,
           topSince = 0,
+          nudged = false,
           grownAt = Date.now(),
           len = R.order.length;
+        R.nudges = 0;
         for (let r = 0; r < 1500; r++) {
           if (hit()) {
             if (++extra > 2) break;
@@ -669,12 +675,23 @@
           if (grew) {
             len = R.order.length;
             grownAt = Date.now();
+            nudged = false;
           }
           if (s.scrollTop < 5 && !grew && !loadingTop(s)) {
             if (!tops++) topSince = Date.now();
             if (tops > TOP.tries && Date.now() - topSince >= TOP.ms) {
-              R.atTop = true;
-              if (!FIRST) break;
+              if (!nudged) {
+                nudged = true;
+                R.nudges++;
+                tops = 0;
+                s.scrollTop = Math.min(s.scrollHeight, s.clientHeight * 2);
+                await sleep(700);
+                s.scrollTop = 0;
+                grownAt = Date.now();
+              } else if (!R.atTop) {
+                R.atTop = true;
+                if (!FIRST) break;
+              }
             }
           } else tops = 0;
           if (!hit() && !R.atTop && Date.now() - grownAt > STALL) {
@@ -938,6 +955,7 @@
       perr: Object.values(R.parents || {}).filter(p => p.err).length,
       photoReplies: R.photoReplies || 0,
       top: !!R.atTop,
+      nudges: R.nudges || 0,
       stalled: !!R.stalled,
       scroller: R.scroller || null,
       warn: R.warn || [],
@@ -2674,7 +2692,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '3.7' }),
+    ping: () => ({ v: '3.8' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
