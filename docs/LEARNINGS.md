@@ -8,7 +8,7 @@ Platform limits, gotchas, and what was changed because of them.
 - **The page can't fetch Facebook images** (content security rules), so photos travel inside the paste.
 - **The first paste after the page loads often doesn't land.** Click, wait 2 s, click again, then paste.
 - **Clipboard race:** if the user copies something between Claude's copy and paste, the page refuses it as invalid. Copy and paste back to back.
-- **Skill sharing:** the Share button works only within Team/Enterprise orgs. Elsewhere, upload the ZIP: Customize › Skills › + › Create skill › Upload a skill (needs code execution turned on).
+- **Skill sharing:** the Share button works only within Team/Enterprise orgs. Elsewhere, upload the ZIP: Customize › Skills › + › Create skill › Upload a skill (needs code execution turned on). Since v1.15.0 it's a plugin instead: add this repo as a marketplace, or upload the plugin ZIP under Customize › Plugins (README › Install).
 
 ## Claude in Chrome
 - **Calls die at 45 s.** Start long work, then poll in separate calls of 25 s or less.
@@ -48,7 +48,7 @@ Platform limits, gotchas, and what was changed because of them.
 ## Build tool (`catchup.py`)
 - **Asserts catch mistakes before any write:** bullet and outcome length, every message in one conversation, backward links, a meta check first.
 - **Conversation ID collisions** came up as topics recurred. Use date suffixes (e.g. `weather1106`).
-- **Running `build` twice** fails the second assert harmlessly (a bare `AssertionError: []`). `build` advances WORK as soon as it succeeds and keeps no backup, so copy WORK yourself before a build you may need to redo, or re-run `bootstrap` from a fresh database fetch (BACKLOG B2).
+- **Running `build` twice** failed the second assert harmlessly (a bare `AssertionError: []`), and `build` kept no backup (BACKLOG B2). Fixed: `build` copies the WORK it started from to `WORK/prev/`, `restore WORK` undoes one build, and building the same RUN again is refused with a message naming `catchup.py restore WORK`.
 - **`links` value `null`** means "no link" (start of a new topic).
 
 ## Tooling and process
@@ -61,7 +61,7 @@ Platform limits, gotchas, and what was changed because of them.
 - **Measure before shipping:** hand labels showed that clever linkers scored worse than the existing judgment, and saved a regression.
 
 ## Keeping copies in sync
-- **The helper existed three times:** the file, an HTML-escaped copy inside the page (for "Copy userscript"), and its `jump()` as a URL-encoded bookmarklet. Edits had to be carried by hand until `tools/sync-helper.py` (C2). Since v1.8.0 the page links to the release instead of embedding the userscript (F8), so only the bookmarklet is generated.
+- **The helper existed three times:** the file, an HTML-escaped copy inside the page (for "Copy userscript"), and its `jump()` as a URL-encoded bookmarklet. Edits had to be carried by hand until `tools/sync-helper.py` (C2; now `tools/sync.py`, which also makes the setup and replies skills' copies). Since v1.8.0 the page links to the release instead of embedding the userscript (F8), so only the bookmarklet is generated.
 - **A userscript pasted into Tampermonkey/Violentmonkey can't update itself:** it has no source URL. Installed from a URL with `@updateURL`/`@downloadURL`, the extension checks for a newer `@version` about once a day. Helpers installed before 1.5 need one manual reinstall from the link.
 - **The page writes `meta/chat` too** (import counters, marker choice), not only Claude. Read it fresh before every write and pin the write.
 
@@ -73,7 +73,7 @@ Platform limits, gotchas, and what was changed because of them.
 - **Listen to the collection, merge what `current` names.** The page subscribes to the `threading` and `summary` collections, not to their `current` documents, and merges `current` with the blocks it names. A block written before its `current` is ignored until `current` names it, and an old block stays readable until it's deleted, so no snapshot shows a half-written build.
 
 ## Photo assets (contract 0.2.92, checked Nov 12)
-- **Limits:** an uploaded file is at most 20 MiB, and a page at most 5,000 files and 1 GiB (`assets.list().usage`: `files`, `bytes`, `maxFiles`, `maxBytes`). The file count bites first: the owner's page had 715 files and 38.8 MB on Nov 12, adding about 55 files a day (BACKLOG R13).
+- **Limits:** an uploaded file is at most 20 MiB, and a page at most 5,000 files and 1 GiB (`assets.list().usage`: `files`, `bytes`, `maxFiles`, `maxBytes`). The file count bit first: the owner's page had 715 files and 38.8 MB on Nov 12, adding about 55 files a day (BACKLOG R13). Day packs (v1.30.0) ended the file limit; the 1 GiB limit is still ahead (R20).
 - **Live speed:** about 0.5 s per upload and about 54 KB per photo on the owner's page, so 100 photos take about a minute. Capture size isn't the limit either: up to 400 MB pastes and imports locally in under 3 s (EXPERIMENTS.md §14).
 - **Error codes:** `store_unavailable` is the only one `assets.d.ts` says to retry once; treat unknown codes as `upstream_error`. `quota_or_state` means storage is full (or the page is retiring), so "paste again" can never help; `too_large`, `unsupported_type` and `invalid_request` won't change on a retry; `upstream_auth` needs a reload. `rate_limited`: back off, never loop.
 - **An upload isn't transactional with any database write.** Write the id into its document right after the upload resolves (the page indexes each photo as it lands), and expect an occasional unindexed file: an upload that landed as the tab closed or timed out. Those, and copies from re-pastes, are why a page can hold more files than indexed photos; `references/photos.md` › Cleanup finds them.
@@ -90,5 +90,5 @@ Platform limits, gotchas, and what was changed because of them.
 All open issues now live in [BACKLOG.md](BACKLOG.md). The long-standing ones:
 - Facebook changes Messenger's markup often; the reader depends on the labels above (R3, F4).
 - End-to-end encrypted chats are untested (R5).
-- Distant photo-reply parents are slow to reach (F2).
-- One chat per page and loop; multi-chat is not built (F1).
+- Distant photo-reply parents were slow to reach (F2, fixed in Phase 10).
+- One chat per page and loop: since v1.35.0–v1.39.0 a page holds several chats with one schedule (F1 stages A and B); stage C (across chats) is open.

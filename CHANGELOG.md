@@ -2,6 +2,20 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.56.2] - 2026-11-26
+**The docs catch up with the plugin.** README, STATUS and the developer docs still described one group chat, three skills, page 2.5 and helper 2.0 (STATUS was last updated at v1.21.0). They now cover everything through v1.56.1, B55 and B56 included. PATCH: docs, a test and the plugin's listing text. Page and helper unchanged (`PAGE_VERSION` 6.5, helper 3.8); no skill procedure change.
+
+### Changed
+- `README.md`: what the page does today (several chats and Facebook groups, Ask across chats, the tabs, replies with mentions, photos and reactions, photos and GIFs stored), the four skills in a table, and the helper section (it runs on facebook.com's messages, groups and notifications pages; since 3.7 it asks Tampermonkey to read Facebook's image servers, which stores GIFs; installed copies update themselves).
+- `docs/STATUS.md`: rewritten as a current handoff: the release line, what each area does now, open work pointed at BACKLOG.md, the workflow and enforcement (checked against branch protection, CI and `tools/`), "In use" with no chat details, and the test suites and commands as they are now. The long history it carried is in this file.
+- `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT.md`, `AGENTS.md`: four skills, several chats and groups, the references, the test layout and the versions in play brought up to date. DEVELOPMENT.md adds a phase for Nov 12–26 and "Working in a git worktree" (run `npm ci` in a new worktree; don't run `npm test` mid-rebase before staging resolved files, since a test reads `git ls-files`).
+- `docs/DECISIONS.md`, `docs/LEARNINGS.md`: statements that later releases made wrong are marked as superseded (split threads, the file limit, sharing by ZIP, the name display rule, multi-chat not built, `sync-helper.py`); the history stays.
+- `CLAUDE.md` › Every change, step 2: a release that changes what users see or how the project works updates README.md and docs/STATUS.md in the same PR, and every PR sets STATUS's release line.
+- The plugin's and the marketplace's descriptions say "group chats and Facebook groups" instead of "one group chat".
+
+### Tests
+- `test_tools.TestReleaseVersion.test_status_names_the_release`: docs/STATUS.md's release line names `VERSION`, `PAGE_VERSION` and the helper version (it fails on the STATUS.md of v1.56.1).
+
 ## [1.56.1] - 2026-11-26
 **All chats' "need you" counts match the chats, and a chat's first refresh brings All chats** (B56). PATCH: two page fixes. Page **`PAGE_VERSION` 6.5** (from 6.4); helper and skill procedure unchanged.
 

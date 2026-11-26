@@ -15,7 +15,7 @@ Each entry has what was decided, why, and what was rejected.
 | No cap on photos per run, no splitting a capture into parts, no cap on the photos Claude opens (owner, Nov 12) | Live uploads take about 0.5 s each, a paste of 400 MB still works, and anything a run doesn't finish is owed and backfilled; Claude keeps looking at every new photo, as before | Splitting captures (option C, more steps for no measured need); 10 photos opened per run (some photos only described from context) |
 | Owed photos are backfilled by the next run, scanning from just before them, at most 300 messages back; older ones are given up and reported (owner, Nov 12) | No helper change (an existing `full{stops, base}` scan, proven with helper 2.0), no user action, and the scan stays bounded | Report only (photos lost for good); backfill only when asked |
 | Claude waits for uploads while the heartbeat moves, at most 10 minutes, stall = two of its own reads at least 60 s apart with no change; it never closes the page tab while they run (owner, Nov 12) | Comparing its own reads needs no clock agreement; 60 s is six heartbeats and a dead tab's lease lapses within it; the cap bounds a run, and the tab left open keeps storing | Closing the tab after 10 s (the loss); no limit (a slow store holds the run) |
-| Asset usage recorded with each import, a warning at 80%; deleting duplicates or unused files only on the user's say-so (owner, Nov 12) | The page's 5,000-file limit is the nearest wall (R13); a delete can't be undone | Deleting unindexed files automatically (one may be the only copy of an owed photo) |
+| Asset usage recorded with each import, a warning at 80%; deleting duplicates or unused files only on the user's say-so (owner, Nov 12) | The page's 5,000-file limit was the nearest wall (R13; day packs ended it in v1.30.0, leaving the 1 GiB limit, R20); a delete can't be undone | Deleting unindexed files automatically (one may be the only copy of an owed photo) |
 | `summary.fromI` is kept, never moved | It records which summaries earlier sessions dropped; the page offers range summaries before it | Removing it (the page would show the dropped stretch as summarized) |
 | Settings live in `meta/chat`, not in the skill | One skill serves any user and any chat | Hard-coded chat URL and names (the original skill) |
 | Keep full history; the summary covers only messages after the start point | Old context stays searchable; the summary stays short | Pruning old messages |
@@ -27,7 +27,7 @@ Each entry has what was decided, why, and what was rejected.
 | Messenger is read-only, except allowed clicks | Safety; the user's account | Typing or sending anything not queued by the user |
 | Two passes: scan, then reload and verify by ID | Fast scrolling once skipped 19 messages; verify catches gaps | A single pass |
 | No catch-up round for late arrivals | Saves up to 2 × 30 s per run; the next hourly run gets them | Up to 2 extra rounds (used Nov 1–5) |
-| Don't take over the Messenger tab when it's open on another chat | The user is using it | Navigating it away |
+| Don't take over the Messenger tab when it's open on another chat (since F1: a chat that isn't on the page; Claude moves the tab between the page's own chats) | The user is using it | Navigating it away |
 
 ## Moving data
 | Decision | Why | Rejected |
@@ -44,7 +44,7 @@ Each entry has what was decided, why, and what was rejected.
 | Photo replies are clicked or verified (`rg`) | Quotes are empty, and a "latest photo" guess was wrong once | Guessing from the author's latest photo |
 | Non-replies are linked by Claude's judgment (`i` answers, `c` continues), and `catchup.py` flags GUESS lines for review | Every scorer tried scored worse than this on hand labels | Shipping the context linker or the continuation rule |
 | Fix "loose" messages through display (`convTree`) | The links were mostly right; the page hid them | More link heuristics |
-| Big threads are split into focused sub-conversations | Easier to scan | One card per long thread |
+| Big threads are split into focused sub-conversations. **Superseded in v1.53.0 (B64):** one conversation per item or topic, with sub-topics marked as `sections` inside it, since splitting put one item in two cards with overlapping times | Easier to scan | One card per long thread |
 
 ## Summary
 | Decision | Why |
@@ -98,18 +98,18 @@ Recorded during the Nov 6 handoff review. The reasons are inferred from the code
 | Chunks are read back and compared after writing | Proof the write landed before `meta/chat` moves forward | `importCore` |
 | Messages that arrive during a run (`extra`) are left for the next run | Keeps scan and verify windows identical; no extra round | `mcVerify`, SKILL step 3 |
 | The page carries its own copy of the helper and a bookmarklet | Install by copy and paste from the page, including on a computer without the repo | `#jump-us`, `#jump-bm`. **Superseded in v1.8.0:** the userscript installs from the GitHub release and updates itself; only the bookmarklet stays on the page |
-| The generic page has no in-page Refresh button | It needs a scheduled-trigger id and a connector the generic setup doesn't create; refreshes are asked for in chat | `REFRESH_TASK="__TRIGGER_ID__"`, button `hidden` |
+| The generic page has no in-page Refresh button | It needs a scheduled-trigger id and a connector the generic setup doesn't create; refreshes are asked for in chat | `REFRESH_TASK="__TRIGGER_ID__"`, button `hidden`; the dead code was removed in v1.7.3 (C1) |
 | Dates are stored per message (`d`) instead of deriving them from weekday names | Weekday labels are ambiguous past a week; the old `meta.dates` map is only a fallback | `mcCapture`, `tsOf` |
 
 ## Sharing and repo
 | Decision | Why |
 |---|---|
 | A generic skill instead of a second user-specific one | One codebase; the original user switched to it too |
-| Shared as a ZIP upload | The skill Share button only works inside Team/Enterprise orgs |
-| Private GitHub repo `messenger-catchup` | Source of record; `make-zip.sh` builds the upload |
+| Shared as a ZIP upload | The skill Share button only works inside Team/Enterprise orgs. **Superseded in v1.15.0:** a plugin installed from this repo as a marketplace, which updates itself; the plugin ZIP stays for uploads |
+| Private GitHub repo `messenger-catchup` | Source of record; `make-zip.sh` builds the upload. **Since Nov 7 the repo is public** (R8), for real branch protection |
 | Every change via PR, versioned, squash-merged, tagged and released (from v1.1.1) | The owner's rule: a reviewable record of every change and a downloadable ZIP per version |
 | One release version (`VERSION`, semver) for the whole skill; `PAGE_VERSION` and the helper version stay separate | Component versions trigger republish or reinstall for users, so they move only when that part changes |
 | The userscript installs from `releases/latest/download/helper.user.js` and updates itself (v1.8.0) | No more "reinstall the userscript" on every helper change; the page loses a 30 KB embedded copy | Owner accepted the trust trade-off: whoever controls the repo's releases controls code on facebook.com. Releases come from `tools/release.sh` on protected `main` |
 | Component minor versions stay one digit (1.9 → 2.0) | Read as decimals, `1.1` = `1.10`. The live page was at 1.1, so `PAGE_VERSION` 1.10 could have skipped its republish | Test-enforced |
 | `SKILL.md` holds only what every refresh needs; the rest lives in `references/*.md` read on demand (v1.9.0) | Claude reads `SKILL.md` on every run, hourly with the loop. Cutting 31.8 KB to 19.4 KB saves about 3k tokens per refresh, more than all page-size costs combined | Text moved verbatim (checked line by line). The outbox rules, the only part that posts, are read in full before any row is handled. Hard rules stay in `SKILL.md` |
-| Full names come from each sender's avatar alt text; `f` stays the name Messenger shows (v1.10.0) | Messenger prints only nicknames or first names. The avatar is the one place a full name appears on every message. Replies and the outbox must match what Messenger shows | Display rule set by the owner: first name, full name when a first name is shared, "nickname (name)". Names stay in each user's database (`people/index`, `fn`), never in the repo |
+| Full names come from each sender's avatar alt text; `f` stays the name Messenger shows (v1.10.0) | Messenger prints only nicknames or first names. The avatar is the one place a full name appears on every message. Replies and the outbox must match what Messenger shows | Display rule set by the owner: first name, full name when a first name is shared, "nickname (name)"; **changed in v1.42.0 (B59)** to "Full Name (nickname)" wherever a full name is known. Names stay in each user's database (`people/index`, `fn`), never in the repo |

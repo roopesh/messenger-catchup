@@ -203,6 +203,19 @@ class TestReleaseVersion(unittest.TestCase):
         self.assertTrue(top, 'CHANGELOG.md needs "## [X.Y.Z] - YYYY-MM-DD" entries')
         self.assertEqual(top.group(1), self.v, "newest CHANGELOG entry must be VERSION")
 
+    def test_status_names_the_release(self):
+        """docs/STATUS.md is the handoff: its release line names this VERSION and the page and helper it ships, so every
+        PR updates it (it once said v1.21.0 with page 2.5 and helper 2.0 while v1.53.1 shipped page 6.0 and helper 3.8)."""
+        line = re.search(
+            r"^- \*\*Release: (v\S+)\*\* \(page `PAGE_VERSION` (\S+), helper (\S+)\)\.", read("docs", "STATUS.md"), re.M
+        )
+        self.assertTrue(
+            line, "docs/STATUS.md needs its line '- **Release: vX.Y.Z** (page `PAGE_VERSION` A.B, helper C.D).'"
+        )
+        page = re.search(r'const PAGE_VERSION\s*=\s*"([^"]+)"', in_skill("assets", "page.html")).group(1)
+        helper = re.search(r"@version\s+(\S+)", in_skill("assets", "helper.user.js")).group(1)
+        self.assertEqual(line.groups(), ("v" + self.v, page, helper), "update docs/STATUS.md's release line")
+
     def test_changelog_versions_descend(self):
         vs = [tuple(map(int, v.split("."))) for v in re.findall(r"^## \[(\d+\.\d+\.\d+)\]", read("CHANGELOG.md"), re.M)]
         self.assertEqual(vs, sorted(vs, reverse=True))
