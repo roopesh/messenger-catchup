@@ -1416,6 +1416,75 @@ async function pipeline() {
     }),
     'summary: a bullet opens its thread and highlights its messages',
   );
+  // B62: a Needs you snippet opens its conversation's thread in place, under the item, not in Messages; a thread
+  // opens in one place at a time (the card's closes, and back); the card head has no reply row of its own
+  const hash62 = await p.evaluate(() => location.hash);
+  await p.evaluate(() => document.querySelectorAll('#v-summary article.cv details.thr').forEach(d => (d.open = true)));
+  await flashReset(p);
+  await p.click('#v-summary .item.mention .snip');
+  const n62 = await until(p, () => {
+    const d = document.querySelector('#v-summary .item.mention details.thr');
+    const f = d && d.open && d.querySelector('.msg[data-flashed]');
+    if (!f) return null;
+    const i = +f.dataset.i;
+    const card = [...document.querySelectorAll('#v-summary article.cv')].find(a =>
+      a.querySelector('details.thr .msg[data-i="' + i + '"]'),
+    );
+    const cardThr = card && card.querySelector('details.thr');
+    return { i, conv: card ? card.dataset.conv : null, cardOpen: cardThr ? cardThr.open : null, hash: location.hash };
+  });
+  ok(
+    n62 && n62.hash === hash62 && n62.conv && n62.cardOpen === false,
+    'B62: a Needs you snippet opens its thread under the item (#' +
+      (n62 && n62.i) +
+      ' highlighted), stays on Summary, and closes that thread in its card (' +
+      JSON.stringify(n62) +
+      ')',
+  );
+  if (n62 && n62.conv) {
+    /* a redraw (new data, a tab click) rebuilds Summary off the page: the hosts it registers still close each other */
+    await p.evaluate(() => renderSummary());
+    await p.click('#v-summary article.cv[data-conv="' + n62.conv + '"] details.thr > summary');
+    ok(
+      await until(
+        p,
+        conv => {
+          const c = document.querySelector('#v-summary article.cv[data-conv="' + conv + '"] details.thr');
+          const n = document.querySelector('#v-summary .item.mention details.thr');
+          return c.open && !n.open;
+        },
+        n62.conv,
+      ),
+      "B62: after a redraw, opening the card's thread closes it under Needs you",
+    );
+  }
+  // an item whose messages are in two conversations names each thread
+  await p.evaluate(() => {
+    const sm = S.summary;
+    const a = sm.convs.map(c => convMembers(c.id).find(i => inWin(i)));
+    sm.mentions = sm.mentions.concat([{ note: 'two places', refs: a.slice(0, 2).map(i => [i]) }]);
+    renderSummary();
+  });
+  const two62 = await p.$$eval('#v-summary .item.mention', its =>
+    its
+      .filter(d => /two places/.test(d.textContent))
+      .flatMap(d => [...d.querySelectorAll('details.thr > summary')].map(x => x.textContent)),
+  );
+  const t62 = await p.evaluate(() => S.summary.convs.slice(0, 2).map(c => convTitle(c.id)));
+  ok(
+    two62.length === 2 && two62.every((x, k) => x.startsWith('Show the thread: ' + t62[k] + ' (')),
+    'B62: an item citing two conversations names each thread (' + two62.join(' | ') + ')',
+  );
+  await p.evaluate(() => {
+    S.summary.mentions = S.summary.mentions.filter(x => x.note !== 'two places');
+    renderSummary();
+  });
+  ok(
+    (await p.$$eval('#v-summary article.cv .cv-head .cv-act', a => a.length)) === 0 &&
+      !(await p.$eval('#v-summary', v => v.textContent.includes('to the latest message'))),
+    'B62: no reply row in the card heads (each message in the thread has its own)',
+  );
+  await p.evaluate(() => document.querySelectorAll('#v-summary details.thr').forEach(d => (d.open = false)));
   await p.click('#v-summary .seg.filt button:nth-child(3)');
   ok(
     (await p.$$eval('#v-summary article.cv', a => a.map(x => x.dataset.conv))).join() === 'trail1',
@@ -2109,11 +2178,13 @@ async function texts(p) {
   await p.waitForTimeout(150);
   t.strip = await p.textContent('#strip');
   const openAll = sel => p.$$eval(sel + ' details', ds => ds.forEach(d => (d.open = true))); /* threads build on open */
-  await openAll('#v-summary');
+  /* B62 (v1.51.0): a Needs you item's thread opens in place, and only one place shows a thread: open the cards' */
+  await p.$$eval('#v-summary details:not(.item.mention details)', ds => ds.forEach(d => (d.open = true)));
   await p.waitForTimeout(300);
   t.summary = await p.$eval('#v-summary', e => e.innerText);
   sig.summaryCards = await p.$eval('#v-summary', e => {
-    const hid = [...e.querySelectorAll('.msgs, .ctx, .thr-close')]; /* .thr-close: new in v1.27.0 */
+    /* .thr-close: new in v1.27.0; Needs you threads new and the card heads' reply row gone in v1.51.0 (B62) */
+    const hid = [...e.querySelectorAll('.msgs, .ctx, .thr-close, .item.mention details.thr, .cv-head .cv-act')];
     hid.forEach(x => (x.style.display = 'none'));
     const s = e.innerText;
     hid.forEach(x => (x.style.display = ''));
@@ -17280,7 +17351,7 @@ async function groupsImport() {
       JSON.stringify(pv) +
       ')',
   );
-  // Summary: counts and Needs you (a reply to your comment); its citation opens the comment in Posts
+  // Summary: counts and Needs you (a reply to your comment); its citation opens the post and comment in place (B62)
   await p.evaluate(() => {
     location.hash = '#summary';
   });
@@ -17289,14 +17360,18 @@ async function groupsImport() {
     return /3 posts and 4 comments stored/.test(t) ? t : null;
   });
   await p.click('#v-summary a.cite');
-  const jumped = await until(p, () => location.hash === '#posts' && !!document.getElementById('p1c4'));
+  const jumped = await until(p, () => {
+    const d = document.querySelector('#v-summary .item details.thr');
+    const c = d && d.open && d.querySelector('.gc[data-c="4"]');
+    return location.hash === '#summary' && c && c.hasAttribute('data-flashed') && /Agreed/.test(c.textContent);
+  });
   ok(
     sv &&
       /Dee Diaz replied to you: “Agreed”/.test(sv) &&
       /Gear #p1\/c4/.test(sv) &&
       /Cy Chen mentioned you in a comment in Gear Swap\. Gear #p1\/c3 from notifications/.test(sv) &&
       jumped,
-    'G1-20: a group Summary counts posts and comments; Needs you lists a reply to your comment and a mention from notifications (matched to #p1/c3); a citation opens #p1/c4 (' +
+    'G1-20: a group Summary counts posts and comments; Needs you lists a reply to your comment and a mention from notifications (matched to #p1/c3); a citation opens #p1 in place with c4 marked (' +
       (sv || '').slice(0, 200) +
       ')',
   );

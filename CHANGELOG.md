@@ -2,6 +2,17 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.51.0] - 2026-11-25
+**Needs you opens threads in place** (B62; the owner, Nov 25: "why are we managing two different experiences??"). MINOR: Summary behaves differently. Page 5.6; no helper or skill change.
+
+### Changed
+- A chat's Summary: clicking a Needs you message opens its conversation's thread right under the item, the message highlighted, with the same "Show the thread" and "Close the thread" as the conversation cards, instead of jumping to the Messages tab. A thread opens in one place at a time: opening it under Needs you closes it in its card, and the other way round. An item whose messages are in two conversations names each thread ("Show the thread: Packs (29)").
+- The conversation cards' heads lose their "Reply in Messenger ↗ · Reply here … to the latest message" row: those actions stay with each message in the thread (the owner: keep the menu with the message itself). Open question call-outs keep theirs, under the quoted message. The Refreshing notes say Reply in Messenger is on every message and open question.
+- A group's Summary: a Needs you citation opens the post and its comments in place ("Show the post"), the cited comment highlighted, instead of jumping to Posts.
+
+### Tests
+- page: a Needs you snippet opens its thread under the item and stays on Summary; the card's and the item's threads close each other, also after a redraw (on claude.ai a redraw first dropped the Needs you threads from the hosts that close each other; the scratch check caught it); an item citing two conversations names each thread; no reply row in card heads; a group citation opens the post in place with the comment marked (G1-20); the layout comparison with the last release opens only the cards' threads and leaves out what B62 added or removed.
+
 ## [1.50.1] - 2026-11-25
 **Big first imports land** (B63, #77). A new chat's first capture never reached the page: the paste was silently dropped, so the chat stayed pending and every run rescanned it. A run's own test found the cause: not size, but a short run of characters inside one photo's base64 that trips a content filter in the browser automation's paste. PATCH. Page 5.5, helper 3.5.
 
