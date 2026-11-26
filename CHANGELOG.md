@@ -2,6 +2,18 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.53.0] - 2026-11-26
+**Deeper threads, one conversation per item** (B64; the owner, Nov 25: "refine our threading logic", and Nov 26: "more depth, not less"; picked G1 + P1 Rails). MINOR: threads look different and SKILL.md's `join` rule changes. Page 5.9; helper unchanged.
+
+### Changed
+- Replies nest with no depth limit (they stopped at 3, a deeper reply shown at level 3 as if it answered something else). Each level is a narrow indent with a colored rail; the rail is a button (keyboard too) that folds its branch, leaving "n replies folded" to open it again. At phone width, replies past the sixth level wait behind "Continue this thread (n more) →", which shows that branch on its own with a trail back ("‹ Whole thread › …"). Same-person runs stay level, as before. In the Summary cards' threads, Needs you threads, Messages' conversations and its reply-threads view.
+- Grouping (SKILL.md `join`): one conversation per item or topic instead of splitting a busy thread into sub-topics, which put one item in two cards with overlapping times. A sub-topic inside it is marked with the new spec key `sections` (`{"conv": [[i, "title"], …]}`, `references/writing-the-build.md` › Sections); the page shows each as a small heading over the message that starts it, with how many messages it holds ("Worth trying? · 8"). From new messages on; existing cards stay as they are.
+- `catchup.py`: `sections` is checked (a message of that conversation, a title of 1–60 characters; the same `i` retitles, `null` removes), kept on the threading conversation (`sections:[[i,"title"],…]`, in its block document), and a `move` takes a message's section with it. `references/database.md` documents the field. SKILL.md trimmed a few words elsewhere to stay under 20 KB.
+
+### Tests
+- page: an 8-level chain nests 8 deep; sections show as headings with their counts, none where a conversation has none; a rail folds and the note and keyboard unfold; at 375 px level 7 waits behind "Continue this thread (2 more)", which re-roots with a trail and goes back. The layout comparison with the last release compares rows in any order, since deep replies now sit under their own parent.
+- Python: sections stored on the conversation and in its block, kept by bootstrap, retitled and removed by later builds; bad entries refused before anything is written; a move takes the section away.
+
 ## [1.52.0] - 2026-11-26
 **GIFs on the page** (F39; the owner, Nov 25: "bring in gifs… clicking open in messenger every time is stupidly annoying"). MINOR. Helper 3.7, page 5.8.
 

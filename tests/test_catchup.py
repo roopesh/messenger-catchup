@@ -2574,6 +2574,80 @@ MOVE_SPEC = {
 }
 
 
+class TestSections(unittest.TestCase):
+    """B64: one conversation per item, its sub-topics as sections:[[i, "title"], ...] on the threading conversation."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+        self.e.seed()
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def build(self, spec, new=None):
+        run = self.e.run(new or [dict(m) for m in MOVE_MSGS])
+        out = self.e.build(run, spec)
+        return out, r(os.path.join(run, "out", "merged", "threading.json")), run
+
+    def secs(self, t, cid):
+        return next(c for c in t["convs"] if c["id"] == cid).get("sections")
+
+    def test_stored_on_the_conversation_and_in_its_block(self):
+        out, t, run = self.build(dict(MOVE_SPEC, sections={"hike": [[8, "  Ben  in "], [6, "Who is going"]]}))
+        self.assertEqual(self.secs(t, "hike"), [[6, "Who is going"], [8, "Ben in"]])
+        self.assertIsNone(self.secs(t, "sale"))
+        self.assertIn('SECTION hike #8 "Ben in"', out)
+        blocks = [
+            r(os.path.join(dp, f))
+            for dp, _, fs in os.walk(os.path.join(run, "out"))
+            for f in fs
+            if re.match(r"b\d+-", f) and "threading" in dp
+        ]
+        self.assertTrue(blocks)
+        self.assertIn(
+            [[6, "Who is going"], [8, "Ben in"]], [c.get("sections") for b in blocks for c in b.get("convs", [])]
+        )
+        # bootstrap gives it back (merge), and a later build keeps, retitles and removes entries
+        self.assertEqual(
+            self.secs(r(os.path.join(self.e.work, "base", "threading.json")), "hike"), self.secs(t, "hike")
+        )
+        _, t2, _ = self.build(
+            {"join": {"hike": [11]}, "sections": {"hike": [[8, "Ben is in"], [6, None], [11, "Later"]]}},
+            new=[msg(11, "Ana", "late")],
+        )
+        self.assertEqual(self.secs(t2, "hike"), [[8, "Ben is in"], [11, "Later"]])
+        _, t3, _ = self.build(
+            {"join": {"hike": [12]}, "sections": {"hike": [[8, None], [11, None]]}}, new=[msg(12, "Ana", "x")]
+        )
+        self.assertIsNone(self.secs(t3, "hike"))
+
+    def reject(self, sections, pattern):
+        before = self.e.state()
+        run = self.e.run([dict(m) for m in MOVE_MSGS])
+        with self.assertRaisesRegex(AssertionError, pattern):
+            self.e.build(run, dict(MOVE_SPEC, sections=sections))
+        self.assertEqual(self.e.state(), before)
+
+    def test_rejects(self):
+        self.reject({"hike": [[0, "Not here"]]}, "isn't a message of that conversation")
+        self.reject({"hike": [[6, "x" * 61]]}, "1-60 characters")
+        self.reject({"hike": [[6, "   "]]}, "1-60 characters")
+        self.reject({"nope": [[6, "A"]]}, "sections: unknown conv")
+        self.reject({"hike": [6, "A"]}, r'each entry is \[i, "title"\]')
+
+    def test_a_move_takes_its_section_away(self):
+        self.build(dict(MOVE_SPEC, sections={"hike": [[6, "Who is going"], [8, "Ben in"]]}))
+        p = os.path.join(self.t.name, "move.json")
+        w(p, {"move": {"8": "sale"}, "relink": {"8": [0, "i"]}})
+        run = os.path.join(self.t.name, "mrun")
+        self.e.listing(run)
+        quiet(catchup.relink, self.e.work, run, p)
+        t = r(os.path.join(run, "out", "merged", "threading.json"))
+        self.assertEqual(self.secs(t, "hike"), [[6, "Who is going"]])
+        self.assertIsNone(self.secs(t, "sale"))
+
+
 class MoveEnv:
     """MOVE_MSGS built into WORK (Env), with a standalone move as writing-the-build.md has it."""
 

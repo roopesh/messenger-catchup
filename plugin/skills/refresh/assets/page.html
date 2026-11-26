@@ -886,14 +886,93 @@
     background: var(--surface);
     padding: 4px 0;
   }
-  .thread .kids {
-    margin-left: 2.2em;
-    border-left: 2px solid var(--line);
+  /* B64: reply levels, each a narrow indent with a colored rail, a button that folds the branch */
+  .kids {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr);
+    margin-left: 0.5em;
   }
-  .conv .kids {
-    margin-left: 1.4em;
-    border-left: 2px solid var(--line);
-    padding-left: 2px;
+  .thread .kids {
+    margin-left: 1.2em;
+  }
+  .kids > .rail {
+    grid-row: 1 / span 2;
+    grid-column: 1;
+    display: flex;
+    justify-content: center;
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    min-height: 1em;
+    cursor: pointer;
+  }
+  .kids > .rail::before {
+    content: "";
+    width: 2px;
+    background: var(--rc, var(--line));
+    opacity: 0.55;
+    border-radius: 1px;
+  }
+  .kids > .rail:hover::before,
+  .kids > .rail:focus-visible::before {
+    width: 3px;
+    opacity: 1;
+  }
+  .kids > .rail:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .kids > .kb,
+  .kids > .fold-note {
+    grid-column: 2;
+    min-width: 0;
+  }
+  .kids.shut > .kb,
+  .fold-note[hidden] {
+    display: none;
+  }
+  .fold-note {
+    justify-self: start;
+    font-size: 0.82rem;
+    padding: 2px 6px;
+  }
+  .sec {
+    font-weight: 600;
+    font-size: 0.82rem;
+    color: var(--olive);
+    margin: 10px 0 2px;
+    padding-left: 6px;
+  }
+  .msgs .cont {
+    display: none;
+    font-size: 0.85rem;
+    margin: 2px 0 4px 12px;
+  }
+  .msgs.rerooted > :not(.reroot) {
+    display: none;
+  }
+  .reroot .crumbs {
+    font-size: 0.85rem;
+    margin: 2px 6px 6px;
+  }
+  @media (max-width: 560px) {
+    .kids {
+      grid-template-columns: 8px minmax(0, 1fr);
+      margin-left: 0.2em;
+    }
+    .kids.deep {
+      display: none;
+    }
+    .msgs .cont {
+      display: inline-block;
+    }
+    .reroot .kids.deep {
+      display: grid;
+    }
+    .reroot .cont {
+      display: none;
+    }
   }
   .conv summary .note {
     font-size: 0.84rem;
@@ -1696,17 +1775,6 @@
   }
   button.thr-close::before {
     content: "▴ ";
-  }
-  details.thr .kids {
-    margin-left: 1.4em;
-    border-left: 2px solid var(--line);
-    padding-left: 2px;
-  }
-  details.thr .kids .kids .kids {
-    margin-left: 0.4em;
-  }
-  .conv .kids .kids .kids .kids {
-    margin-left: 0.4em;
   }
   .seg.filt {
     flex-wrap: wrap;
@@ -2855,7 +2923,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "5.8";
+  const PAGE_VERSION = "5.9";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -4650,7 +4718,8 @@
   }
   if (!S.openThr) S.openThr = new Set();
   /* One tree for both views. Replies (r/rq/rg) and "answers" (i) nest under the message they answer; "continues" (c) sits
-   right after the same person's previous message at the same level, so a run of messages doesn't staircase. Max depth 3. */
+   right after the same person's previous message at the same level, so a run of messages doesn't staircase. No depth
+   limit (B64; it was 3, with deeper replies shown at level 3). */
   function convTree(mem, onRow) {
     const L = (S.threading || {}).links || {};
     const set = new Set(mem);
@@ -4673,7 +4742,6 @@
       }
       let p = ok ? lk[0] : null;
       if (p != null && head.has(p)) p = head.get(p);
-      while (p != null && (dep.get(p) || 0) >= 3) p = par.has(p) ? par.get(p) : null;
       if (p != null) {
         par.set(i, p);
         dep.set(i, (dep.get(p) || 0) + 1);
@@ -4706,25 +4774,124 @@
       const xr = i !== mem[0] && crossParent(i, L[i]);
       return xr ? { xr } : undefined;
     };
-    (function add(arr, into) {
+    /* B64: a sub-topic heading over the message that starts it, with how many of the shown messages it holds */
+    const starts = mem.filter(i => secAt(i));
+    const secEl = i => {
+      const nx = starts.find(s => s > i);
+      const n = mem.filter(k => k >= i && (nx == null || k < nx)).length;
+      const h = el("div", "sec", secAt(i) + " · " + n);
+      h.dataset.sec = i;
+      return h;
+    };
+    const size = h => {
+      const grp = [h].concat(conts.get(h) || []);
+      return grp.length + grp.reduce((n, i) => n + (kids.get(i) || []).reduce((a, k) => a + size(k), 0), 0);
+    };
+    /* the messages above h, outermost first, for the trail of a re-rooted branch */
+    const upFrom = h => {
+      const up = [];
+      for (let p = par.get(h); p != null; p = par.get(p)) up.unshift(p);
+      return up;
+    };
+    (function add(arr, into, d) {
       arr.forEach(h => {
         const grp = [h].concat(conts.get(h) || []);
-        runsOf(grp, joins).forEach(run =>
-          into.append(
+        const g = [].concat(...grp.map(i => kids.get(i) || [])).sort((a, b) => a - b);
+        /* a sixth-level message with replies: its branch can be shown on its own at phone width (below) */
+        const box = d === RAIL_FOLD - 1 && g.length ? el("div", "br") : into;
+        if (box !== into) into.append(box);
+        runsOf(grp, joins).forEach(run => {
+          run.filter(i => secAt(i)).forEach(i => box.append(secEl(i)));
+          box.append(
             run.length > 1
               ? blockOf(run, (i, pos) => onRow(i, L[i], shown(i), pos, xo(i)))
               : onRow(run[0], L[run[0]], shown(run[0]), undefined, xo(run[0])),
-          ),
-        );
-        const g = [].concat(...grp.map(i => kids.get(i) || [])).sort((a, b) => a - b);
+          );
+        });
         if (g.length) {
-          const kk = el("div", "kids");
-          add(g, kk);
-          into.append(kk);
+          const n = g.reduce((a, k) => a + size(k), 0);
+          const kk = railKids(d + 1, n);
+          add(g, kk.body, d + 1);
+          if (box !== into) {
+            const more = el("button", "lk cont", "Continue this thread (" + n + " more) →");
+            more.type = "button";
+            more.onclick = () => reroot(tree, box, upFrom(h).concat(h));
+            box.append(more);
+            kk.wrap.classList.add("deep");
+          }
+          box.append(kk.wrap);
         }
       });
-    })(roots, tree);
+    })(roots, tree, 0);
     return tree;
+  }
+  /* B64: replies nest with no depth limit, each level a narrow indent with a colored rail; the rail is a button that
+     folds the branch. At phone width, replies past the sixth level wait behind "Continue this thread", which shows that
+     branch on its own with a trail back. */
+  const RAIL_FOLD = 6;
+  function railKids(d, n) {
+    const wrap = el("div", "kids");
+    wrap.dataset.d = d;
+    wrap.style.setProperty("--rc", "var(--c" + (((d - 1) % 4) + 1) + ")");
+    const rail = el("button", "rail");
+    rail.type = "button";
+    const label = (n === 1 ? "1 reply" : n + " replies") + " (level " + (d + 1) + ")";
+    const set = shut => {
+      wrap.classList.toggle("shut", shut);
+      rail.setAttribute("aria-expanded", String(!shut));
+      rail.setAttribute("aria-label", (shut ? "Show " : "Fold ") + label);
+      rail.title = shut ? "Show these replies" : "Fold these replies";
+      note.hidden = !shut;
+    };
+    const body = el("div", "kb");
+    const note = el("button", "lk fold-note", (n === 1 ? "1 reply" : n + " replies") + " folded");
+    note.type = "button";
+    note.onclick = () => set(false);
+    rail.onclick = () => set(!wrap.classList.contains("shut"));
+    wrap.append(rail, body, note);
+    set(false);
+    return { wrap, body };
+  }
+  function reroot(tree, branch, path) {
+    const ph = document.createComment("branch");
+    branch.before(ph);
+    const view = el("div", "reroot");
+    const trail = el("div", "crumbs");
+    const back = el("button", "lk", "‹ Whole thread");
+    back.type = "button";
+    trail.append(back);
+    path.forEach(i => {
+      const m = S.byI.get(i);
+      trail.append(el("span", "muted", " › " + (m ? nameOf(m) : "?") + " #" + i));
+    });
+    back.onclick = () => {
+      ph.replaceWith(branch);
+      view.remove();
+      tree.classList.remove("rerooted");
+    };
+    view.append(trail, branch);
+    tree.classList.add("rerooted");
+    tree.append(view);
+    back.focus();
+  }
+  /* B64: sub-topic headings (threading conversations' sections, [[i, "title"], ...]) by the message that starts each */
+  let SEC_T = null,
+    SEC = new Map();
+  function secAt(i) {
+    const T = S.threading;
+    if (T !== SEC_T) {
+      SEC_T = T;
+      SEC = new Map();
+      /* from convById's index of this threading object, so the conversations aren't scanned once more (H2) */
+      convById("");
+      (T ? [...convById.map.values()] : []).forEach(c =>
+        (Array.isArray(c.sections) ? c.sections : []).forEach(x => {
+          if (Array.isArray(x) && typeof x[0] === "number" && typeof x[1] === "string" && x[1].trim())
+            SEC.set(x[0], x[1].trim());
+        }),
+      );
+    }
+    return SEC.get(i);
   }
   /* B42: Messenger stores each bubble as its own message, and threading links a person's next bubble to the last with a
    "continues" (c) link. Bubbles from one sender within RUN_MS of each other render as one block, as in Messenger: one
@@ -6816,19 +6983,20 @@
         threads++;
         const t = el("div", "thread");
         t.append(msgRow(m));
-        const kd = el("div", "kids");
-        (function add(arr, into) {
+        const size = arr => arr.reduce((n, c) => n + 1 + size(kids.get(c.i) || []), 0);
+        const kd = railKids(1, size(ks));
+        (function add(arr, into, d) {
           arr.forEach(c => {
             into.append(msgRow(c));
             const g = kids.get(c.i);
             if (g) {
-              const kk = el("div", "kids");
-              add(g, kk);
-              into.append(kk);
+              const kk = railKids(d + 1, size(g));
+              add(g, kk.body, d + 1);
+              into.append(kk.wrap);
             }
           });
-        })(ks, kd);
-        t.append(kd);
+        })(ks, kd.body, 1);
+        t.append(kd.wrap);
         box.append(t);
       } else box.append(msgRow(m));
     });
