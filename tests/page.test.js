@@ -16129,14 +16129,14 @@ async function multiChat() {
     'F1 PG3: the picker counts each chat and they add up to All chats (' + JSON.stringify(counts) + ')',
   );
   await p.keyboard.press('Escape');
-  // DM9: under All chats, the first chat is loaded (its chunks), the others only by meta, summary/current and outbox
+  // DM9: under All chats, the first chat is loaded (its chunks), the others only by meta, summary and outbox (B56)
   let L = await p.evaluate(() => __rt.listeners());
   ok(
     L['c:chunks'] &&
       !L['c:cam_chunks'] &&
       !L['c:book_chunks'] &&
       L['d:meta/chat-cam'] &&
-      L['d:cam_summary/current'] &&
+      L['c:cam_summary'] &&
       L['c:cam_outbox'],
     'F1 DM9: All chats listens to the first chat in full and to the others lightly (' + Object.keys(L).join(' ') + ')',
   );
@@ -17441,6 +17441,140 @@ async function multiChat3() {
   await p.context().close();
 }
 
+/* B56: several-chats oddities seen on the owner's page. The counts and the activation checks failed on page 5.7; the
+   last one keeps the fix from moving you off a view you picked. */
+async function multiChatB56() {
+  // 1. the "need you" counts: Trail and Cam each have mentions older than summary/current's activeFrom, in a block
+  const blk = ments => ({ start: 0, convs: [], open: [], answered: [], deals: [], mentions: ments, syn: {} });
+  const cur = (k, toI, from, ment) => ({
+    version: 2,
+    layout: 2,
+    block: 1000,
+    blocks: ['b0-' + k],
+    activeFrom: from,
+    convs: [],
+    open: [],
+    answered: [],
+    deals: [],
+    mentions: [{ note: MC_NAME[k] + ': someone asked you', refs: [[ment]] }],
+    toI,
+  });
+  const extra = {
+    'summary/current': cur('trail', 11, 6, 8),
+    'summary/b0-trail': blk([
+      { note: 'Trail Crew: Ana asked you about the map', refs: [[3]] },
+      { note: 'Trail Crew: Ben replied to you', refs: [[4, 'yes']] },
+      { note: 'Trail Crew: before you caught up', refs: [[1]] },
+    ]),
+    'cam_summary/current': cur('cam', 7, 5, 6),
+    'cam_summary/b0-cam': blk([{ note: 'Camera Club: Cy replied to you', refs: [[2]] }]),
+  };
+  let p = await mcOpen({ extra });
+  const want = { trail: 3, cam: 2, book: 1 };
+  const cardN = () =>
+    p.evaluate(() =>
+      Object.fromEntries(
+        [...document.querySelectorAll('#v-all .chatcard')].map(c => [
+          c.dataset.chat,
+          +((/· (\d+) needs? you/.exec(c.querySelector('.chatnums').textContent) || [])[1] ?? -1),
+        ]),
+      ),
+    );
+  await until(
+    p,
+    w => {
+      const n = [...document.querySelectorAll('#v-all .chatcard .chatnums')].map(e => e.textContent);
+      return n.length === 3 && n.every((t, k) => t.includes(' ' + w[k] + ' need'));
+    },
+    Object.values(want),
+  );
+  const cards = await cardN();
+  await p.click('#h1');
+  const pick = await p.$$eval('#picker-list button', bs =>
+    Object.fromEntries(
+      bs.map(b => [b.dataset.key, +((b.querySelector('.cnt') || {}).textContent || '0').split(' ')[0]]),
+    ),
+  );
+  await p.keyboard.press('Escape');
+  ok(
+    JSON.stringify(cards) === JSON.stringify(want) &&
+      pick.all === 6 &&
+      pick.trail === 3 &&
+      pick.cam === 2 &&
+      pick.book === 1,
+    'B56: All chats counts the mentions in older summary blocks too: cards 3, 2 and 1, and the picker says 6 for All chats, the sum of its rows (' +
+      JSON.stringify({ cards, pick }) +
+      ')',
+  );
+  // each chat's own Summary and counter strip say the same as its card
+  const own = async k => {
+    await mcPick(p, k);
+    await until(p, k => document.querySelector('#h1').textContent === k, MC_NAME[k]);
+    return p.evaluate(() => {
+      const nb = [...document.querySelectorAll('#v-summary .block')].find(b => /^Needs you/.test(b.textContent));
+      const st = [...document.querySelectorAll('#strip .stat')].find(s => /mentions of you/.test(s.textContent));
+      return [nb ? nb.querySelectorAll('.item.mention').length : -1, st ? +st.querySelector('.n').textContent : -1];
+    });
+  };
+  const mine = { trail: await own('trail'), cam: await own('cam'), book: await own('book') };
+  ok(
+    Object.keys(want).every(k => mine[k][0] === cards[k] && mine[k][1] === cards[k]),
+    "B56: each chat's Summary › Needs you and its strip's mentions of you match its All chats card (" +
+      JSON.stringify(mine) +
+      ')',
+  );
+  ok(p.errors.length === 0, 'B56 counts: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // 2. the opening view: the page opened while Cam was pending; Cam's first refresh makes it active (chats.md step 5)
+  const pend = {
+    cam: { name: 'Camera Club', tag: 'Cam', color: 2, order: 1, state: 'pending', thread: '5151', url: MC_URL('cam') },
+    book: { name: 'Book Club', tag: 'Book', color: 3, order: 2, state: 'pending', thread: '6161', url: MC_URL('book') },
+  };
+  const activate = () =>
+    p.evaluate(() => {
+      const m = JSON.parse(JSON.stringify(__rt.get('meta/chat')));
+      m.chats.cam.state = 'active';
+      __rt.write('meta/chat', m);
+    });
+  const viewNow = () =>
+    p.evaluate(() => ({
+      h1: document.querySelector('#h1').textContent,
+      all: !document.querySelector('#v-all').hidden,
+      tabs: [...document.querySelectorAll('nav.tabs a')]
+        .filter(a => !a.hidden)
+        .map(a => a.dataset.tab)
+        .join(','),
+      messages: !document.querySelector('#v-messages').hidden,
+    }));
+  p = await mcOpen({ chats: pend });
+  await until(p, () => document.querySelector('#h1').textContent === 'Trail Catch-up');
+  const v0 = await viewNow();
+  await activate();
+  await until(p, () => document.querySelector('#h1').textContent === 'All chats');
+  const v1 = await viewNow();
+  ok(
+    v0.h1 === 'Trail Catch-up' && !v0.all && v1.h1 === 'All chats' && v1.all && v1.tabs === 'summary,ask',
+    'B56/PG1: a page opened with one live chat turns to All chats when a second chat becomes active, as a reload would (' +
+      JSON.stringify({ v0, v1 }) +
+      ')',
+  );
+  ok(p.errors.length === 0, 'B56 activation: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  // a view you picked stays: in Messages when Cam becomes active, you stay there
+  p = await mcOpen({ chats: pend });
+  await until(p, () => document.querySelector('#h1').textContent === 'Trail Catch-up');
+  await p.click('nav a[data-tab="messages"]');
+  await activate();
+  await until(p, () => document.querySelector('#h1').textContent === 'Trail Crew');
+  const v2 = await viewNow();
+  ok(
+    v2.h1 === 'Trail Crew' && !v2.all && v2.tabs.includes('messages') && v2.messages,
+    'B56: with a tab picked first, a chat turning active leaves you where you were (' + JSON.stringify(v2) + ')',
+  );
+  await p.context().close();
+}
+
 /* F25 G1: Add a group in Settings, and the picker's Chats and Groups headings */
 /* F1 stage C: Ask across chats. Three chats with "tripod" in two of them; Dee goes by "Dee" in Trail Crew and by
    "Deedee" in Camera Club, with the same full name (fn) in both. */
@@ -18077,6 +18211,7 @@ const SECTIONS = {
   multiChat2,
   multiChat3,
   multiChatAsk,
+  multiChatB56,
   robustness,
   pipeline,
   variants,

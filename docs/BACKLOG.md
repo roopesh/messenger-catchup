@@ -11,7 +11,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 | ID | P | Type | Title |
 |---|---|---|---|
-| B56 | P3 | bug | Several-chats page oddities: one load after activation opened on the first chat, not All chats; All chats' "need you" count disagrees with the rows |
+| B66 | P3 | bug | Under All chats, the refresh note (`#refresh-st`) still says "The choice above only filters what's shown", though the Show messages box it refers to is hidden there |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -26,9 +26,8 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 ## Bugs
 
-### B56 · P3 · Several-chats page oddities
-- **Seen (Nov 23, owner's page 4.2):** one load after activation opened on the first chat instead of All chats (a reload fixed it); All chats in the picker said "6 need you" while the rows said 5 and 3. (The pending chat's view showing the previous chat's stat row was fixed in v1.38.0.)
-- **To do:** reproduce each in the page tests (opening view, picker total) and fix.
+### B66 · P3 · A refresh note about a hidden box on All chats
+- **Seen (Nov 26, B56's scratch check on claude.ai):** under All chats, `renderRefresh` still ends the note with "The choice above only filters what's shown; it doesn't fetch anything.", but the Show messages box is hidden there (`body.allchats` hides the window, marker and strip). To do: leave that sentence out under All chats, or hide the note's second half there, with a page test.
 
 ---
 
