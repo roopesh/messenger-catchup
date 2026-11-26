@@ -8495,6 +8495,108 @@ async function notices() {
       ')',
   );
   await p.close();
+  /* U28 (B55): Claude in Chrome's names ("Browser 1", "Browser 2") can swap on reconnect, so a refresh keys each Chrome by
+     the extension's deviceId and stores the name alongside. A notice names the Chrome by that stored name, never by the
+     id; an entry from before (keyed by the name, no `name` field) still works, named by its key. */
+  const ID1 = '6c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5';
+  const ID2 = 'a0b1c2d3-e4f5-4a6b-9c8d-7e6f5a4b3c2d';
+  p = await open(
+    two({
+      [ID1]: { name: 'Browser 1', helper: HV, at: iso(3600000) },
+      [ID2]: { name: 'Browser 2', helper: '1.1', at: iso(3 * DAY) },
+    }),
+  );
+  n = await noticeTexts(p);
+  ok(
+    n &&
+      n.length === 1 &&
+      n[0].startsWith('When Chrome “Browser 2” was last used for a refresh (') &&
+      n[0].includes("it ran helper 1.1, which can't update itself") &&
+      !n[0].includes(ID2) &&
+      !p.errors.length,
+    'notices U28: deviceId keys: the older Chrome on 1.1 is named by its stored name "Browser 2", not its id (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  await p.close();
+  /* after a swap the same device carries its new name: the last refresh's Chrome (ID2) is now "Browser 1" */
+  p = await open(
+    two({
+      [ID1]: { name: 'Browser 2', helper: HV, at: iso(2 * DAY) },
+      [ID2]: { name: 'Browser 1', helper: '1.9', at: iso(3600000) },
+    }),
+  );
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && n[0].startsWith('At the last refresh, Chrome “Browser 1” ran helper 1.9;'),
+    'notices U28: after a swap, the notice follows the device: its stored name "Browser 1" (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  /* an old name-keyed entry next to a new one: both work, each Chrome named, in name order */
+  p = await open(
+    two({
+      Home: { helper: '1.1', at: iso(2 * DAY) },
+      [ID1]: { name: 'Browser 1', helper: '1.9', at: iso(3600000) },
+    }),
+  );
+  n = await noticeTexts(p);
+  ok(
+    n &&
+      n.length === 2 &&
+      n[0].startsWith('At the last refresh, Chrome “Browser 1” ran helper 1.9;') &&
+      n[1].startsWith('When Chrome “Home” was last used for a refresh (') &&
+      !n.join(' ').includes(ID1),
+    'notices U28: an old name-keyed entry ("Home") and a deviceId entry ("Browser 1") both show, by name (' +
+      JSON.stringify(n) +
+      ')',
+  );
+  await p.close();
+  await none(
+    two({ [ID1]: { name: 'Browser 1', helper: HV, at: iso(3600000) }, Chrome: { helper: '1.1', at: iso(2 * DAY) } }),
+    'U28: deviceId entries keep the rule that an older "Chrome" entry (no deviceId) shows nothing',
+  );
+  /* a missing or blank name falls back to the key, as for an old entry */
+  p = await open(two({ Home: { name: '  ', helper: '1.1', at: iso(3600000) } }));
+  n = await noticeTexts(p);
+  ok(
+    n && n.length === 1 && n[0].startsWith('At the last refresh, Chrome “Home” ran helper 1.1'),
+    'notices U28: a blank name falls back to the key (' + JSON.stringify(n) + ')',
+  );
+  await p.close();
+  /* Dismiss is kept under the deviceId: the same Chrome renamed stays dismissed; another Chrome under the old name
+     (a swap) is a different Chrome and shows */
+  p = await open(two({ [ID1]: { name: 'Browser 1', helper: '1.1', at: iso(3600000) } }));
+  const dis28 = await dismissNotice(p, '“Browser 1”');
+  await p.evaluate(id => {
+    const m = __rt.get('meta/chat');
+    m.versions.browsers[id].name = 'Browser 2';
+    __rt.write('meta/chat', m);
+  }, ID1);
+  await p.waitForTimeout(300);
+  const after28 = await nCount(p);
+  await p.evaluate(
+    ([id1, id2, at]) => {
+      const m = __rt.get('meta/chat');
+      m.versions.browsers[id1].at = at;
+      m.versions.browsers[id2] = { name: 'Browser 1', helper: '1.1', at: new Date().toISOString() };
+      __rt.write('meta/chat', m);
+    },
+    [ID1, ID2, iso(DAY)],
+  );
+  await until(p, () => document.querySelectorAll('#upd p').length === 1, null, 3000);
+  n = await noticeTexts(p);
+  ok(
+    dis28 &&
+      after28 === 0 &&
+      n &&
+      n.length === 1 &&
+      n[0].startsWith('At the last refresh, Chrome “Browser 1” ran helper 1.1') &&
+      !p.errors.length,
+    'notices U28: a dismissal follows the deviceId through a rename, and another device now called "Browser 1" still shows (' +
+      JSON.stringify([dis28, after28, n]) +
+      ')',
+  );
+  await p.close();
   /* U19: no database in this view (signed out, a preview): nothing to compare, nothing shown */
   await none(Object.assign(all(), { __opts: { noDb: true } }), 'U19: no database: no notices, no errors');
   /* U20: a page from before the notices ignores versions */

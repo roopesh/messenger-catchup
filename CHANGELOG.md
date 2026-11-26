@@ -2,6 +2,16 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.56.0] - 2026-11-26
+**Helper notices name the right Chrome** (B55). Claude in Chrome names connected Chromes "Browser 1", "Browser 2", and those names can swap when the extension reconnects, so a notice keyed by the name could say the wrong Chrome is behind. MINOR: the refresh writes `versions.browsers` in a new shape, and the page reads it. Page 6.4; helper unchanged (3.8).
+
+### Changed
+- `references/database.md` › Versions and `references/helper.md` › Which Chrome: a refresh keys each Chrome in `meta/chat.versions.browsers` by the extension's `deviceId` (from `list_connected_browsers`), with the display name alongside: `{"<deviceId>": {name, helper, at}}`. The entry is written whole, so a device seen under a new name gets it. When it writes a `deviceId` entry, it drops every old entry with no `name` field (keyed by a name, from before this release; the `"Chrome"` fallback key too) as `{"__delete__": true}` in the same update, since their names may have swapped. With no `deviceId`, it still writes the `"Chrome"` key.
+- The page (6.4): a helper notice names the Chrome by its stored `name`, never its id; an old name-keyed entry still works, named by its key. Notices are ordered by name, and a dismissal is kept under the key, so it follows a device through a rename.
+
+### Tests
+- page: notices U28: deviceId entries named by their stored name (D and E), the notice following a device after a swap, an old name-keyed entry beside a new one, the `"Chrome"` rule with deviceId entries, a blank name falling back to the key, and a dismissal surviving a rename while another device now under the old name still shows.
+
 ## [1.55.0] - 2026-11-26
 **Ask across chats** (F1 stage C, part 1; the owner, Nov 22: "one ask but results should be clear where they are from … If search is cheap, focus on results filters"). MINOR: All chats gains tabs and an Ask over every chat. Page 6.3; no helper change; `references/database.md` and `references/chats.md` document the new `qa` rows (no procedure change).
 
