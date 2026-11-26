@@ -5904,7 +5904,7 @@ class TestAllChatsSummary(unittest.TestCase):
         self.meta["chats"] = {
             "gear": {"name": "Gear Chat", "tag": "Gear", "home": True, "state": "active", "order": 0},
             "cam": {"name": "Camera Club", "tag": "Cam", "state": "active", "order": 1},
-            "tea": {"name": "Tea Room", "tag": "Tea", "state": "active", "order": 2},
+            "film": {"name": "Film Club", "tag": "Film", "state": "active", "order": 2},
             "book": {"name": "Book Swap", "tag": "Book", "state": "active", "order": 3},
             "hike": {"name": "Hike Club", "tag": "Hike", "state": "paused", "order": 4},
             "old": {"name": "Old Club", "tag": "Old", "state": "hidden", "order": 5},
@@ -5912,7 +5912,7 @@ class TestAllChatsSummary(unittest.TestCase):
         }
         self.points = [
             {"h": "Needs you", "t": "Dee Moss asked you about the tripod in two chats [cam#412, gear#88]."},
-            {"h": "Plans", "t": "Tea order goes in Friday [tea#30]."},
+            {"h": "Plans", "t": "Film night moves to Friday [film#30]."},
         ]
 
     def tearDown(self):
@@ -5932,16 +5932,16 @@ class TestAllChatsSummary(unittest.TestCase):
     def test_SD7_a_run_where_tea_fails_marks_it_and_keeps_the_points(self):
         catchup.NOW = utc("2026-11-26T18:00:00")
         out = self.run_it(
-            done=["gear", "cam", "tea"],
+            done=["gear", "cam", "film"],
             new=["gear", "cam"],
-            failed=["tea"],
+            failed=["film"],
             later=["book"],
             started="2026-11-26T17:50:00Z",
         )
         self.assertEqual(out["write"], "allchats/summary")
         doc = out["doc"]
         self.assertEqual(
-            doc["chats"], {"gear": "new", "cam": "new", "tea": "failed", "book": "later", "hike": "paused"}
+            doc["chats"], {"gear": "new", "cam": "new", "film": "failed", "book": "later", "hike": "paused"}
         )
         self.assertNotIn("old", doc["chats"], "a hidden chat isn't in it")
         self.assertNotIn("grp", doc["chats"], "a group isn't in it")
@@ -5952,7 +5952,7 @@ class TestAllChatsSummary(unittest.TestCase):
     def test_a_chat_not_reached_is_skipped_and_one_with_nothing_new_says_so(self):
         out = self.run_it(done=["gear", "cam"], new=["cam"])
         self.assertEqual(out["doc"]["chats"]["gear"], "nothing")
-        self.assertEqual(out["doc"]["chats"]["tea"], "skipped")
+        self.assertEqual(out["doc"]["chats"]["film"], "skipped")
         self.assertEqual(out["doc"]["chats"]["book"], "skipped")
 
     def test_no_new_messages_anywhere_writes_nothing(self):
@@ -5991,9 +5991,9 @@ class TestAllChatsSummary(unittest.TestCase):
         w(os.path.join(d, "draft.json"), {"points": self.points})
         cmd = [sys.executable, os.path.join(ROOT, "plugin", "skills", "refresh", "scripts", "catchup.py"), "allchats"]
         cmd += [os.path.join(d, "chat.json"), os.path.join(d, "draft.json")]
-        cmd += ["--done=gear,tea", "--new=gear", "--failed=tea", "--later=cam", "--started=2026-11-26T17:50:00Z"]
+        cmd += ["--done=gear,film", "--new=gear", "--failed=film", "--later=cam", "--started=2026-11-26T17:50:00Z"]
         out = json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout)
-        self.assertEqual(out["doc"]["chats"]["tea"], "failed")
+        self.assertEqual(out["doc"]["chats"]["film"], "failed")
         self.assertEqual(out["doc"]["chats"]["cam"], "later")
         self.assertEqual(out["doc"]["run"], "2026-11-26T17:50:00Z")
 
