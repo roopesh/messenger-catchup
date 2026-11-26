@@ -17554,7 +17554,7 @@ async function multiChatB56() {
   await until(p, () => document.querySelector('#h1').textContent === 'All chats');
   const v1 = await viewNow();
   ok(
-    v0.h1 === 'Trail Catch-up' && !v0.all && v1.h1 === 'All chats' && v1.all && v1.tabs === 'summary,ask',
+    v0.h1 === 'Trail Catch-up' && !v0.all && v1.h1 === 'All chats' && v1.all && v1.tabs === 'summary,ask,days,stats',
     'B56/PG1: a page opened with one live chat turns to All chats when a second chat becomes active, as a reload would (' +
       JSON.stringify({ v0, v1 }) +
       ')',
