@@ -103,6 +103,10 @@ LAYOUT (v1.17). A database document holds at most 256 KiB, so threading and summ
   built from.
 SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or null for no link},
   "newconvs":[{"id","title","tag","outcome","key":[...]}], "bullets":{"convid":[["text",[refs]],...]},
+  "sections":{"convid":[[i,"title"],...]} (B64: message i, a member of that conversation after this build, starts a
+  sub-topic the page shows as a small heading over it; one line of at most 60 characters; the same i again retitles it,
+  "title" null removes it; kept on the conversation as sections:[[i,"title"],...] in message order, and dropped with a
+  message a move takes elsewhere),
   "outcome":{"convid":"..."}, "key":{"convid":[...]}, "deals":[{kind,tag,conv,text,links?,refs,claims?,status?,statusAt?}],
   "dealEdit":{"convid":{"text":"...","addRefs":[...],"addClaims":[{i,who,n}],"removeClaims":[i],
   "status":"sold"|"pending"|null,"statusAt":i,"index":n,"ref":i}} (index or ref only when the conv has several deals;
@@ -1133,6 +1137,31 @@ def _cross_warn(t, ids):  # after any move: a relinked message whose parent sits
             )
 
 
+def _sections(sp, C):  # B64: the spec's sub-topic headings, kept on each conversation as [[i, "title"], ...]
+    for cid, items in (sp.get("sections") or {}).items():
+        assert cid in C, ("sections: unknown conv", cid)
+        cur = {x[0]: x[1] for x in C[cid].get("sections", [])}
+        for it in items:
+            assert isinstance(it, list) and len(it) == 2 and isinstance(it[0], int), (
+                'sections: each entry is [i, "title"]',
+                cid,
+                it,
+            )
+            i, title = it
+            assert i in C[cid]["members"], "sections %s: #%d isn't a message of that conversation" % (cid, i)
+            if title is None:
+                cur.pop(i, None)
+                continue
+            title = re.sub(r"\s+", " ", str(title)).strip()
+            assert 0 < len(title) <= 60, "sections %s #%d: the title must be one line of 1-60 characters" % (cid, i)
+            cur[i] = title
+            print('SECTION %s #%d "%s"' % (cid, i, title))
+        if cur:
+            C[cid]["sections"] = [[i, cur[i]] for i in sorted(cur)]
+        else:
+            C[cid].pop("sections", None)
+
+
 def _newconvs(t, s, sp):  # the spec's new conversations, in threading and summary; -> {id: threading conversation}
     C = {cv["id"]: cv for cv in t["convs"]}
     for nc in sp.get("newconvs", []):
@@ -1230,6 +1259,8 @@ def _move(t, s, sp, stored, base, before):
         plan.append((i, old, dest, group))
     for i, old, dest, group in plan:
         T[old]["members"] = [x for x in T[old]["members"] if x not in group]
+        if T[old].get("sections"):
+            T[old]["sections"] = [x for x in T[old]["sections"] if x[0] not in group]
         T[dest]["members"] = sorted(T[dest]["members"] + list(group))
         rest = sorted(group - {i})
         print(
@@ -2000,6 +2031,7 @@ def build(work, run, specp):
         assert seen[i] == 1, ("message in %d conversations" % seen[i], i)
     for k, v in t["links"].items():
         assert v[0] < int(k), ("link must point back", k, v)
+    _sections(sp, C)
     SC = {c["id"]: c for c in s["convs"]}
     for cid in set(sp.get("bullets", {})) | set(sp.get("outcome", {})) | set(sp.get("key", {})) | set(joined.values()):
         if cid in C and cid not in SC:  # its summary was dropped by a session before v1.17: start it again

@@ -2259,8 +2259,15 @@ async function layouts() {
     const relPage = /^<!doctype/i.test(rel) ? rel : SKELETON + rel + '</body></html>';
     const pRel = await open(oldSeed, relPage);
     const tRel = await texts(pRel);
+    /* B64 (v1.53.0): replies nest with no depth limit, so a reply past level 3 now sits under its own parent: the same
+       rows, some in another order, in the summary threads and the threaded view */
+    const rowsAnyOrder = sig =>
+      Object.assign({}, sig, {
+        summaryRows: sig.summaryRows.map(r => JSON.stringify(r)).sort(),
+        threadRows: sig.threadRows.map(r => JSON.stringify(r)).sort(),
+      });
     ok(
-      same(tRel.sig, tOld.sig) && tOld.sig.threadRows.length > 100,
+      same(rowsAnyOrder(tRel.sig), rowsAnyOrder(tOld.sig)) && tOld.sig.threadRows.length > 100,
       'layout: on the old layout this page shows what ' +
         tag +
         "'s page shows (header, summary cards, and every message's number, text and photos in the summary threads, " +
@@ -2669,6 +2676,129 @@ const tryClick = (p, sel) =>
     () => true,
     () => false,
   );
+/* B64: replies nest with no depth limit, each level a colored rail that folds its branch; at phone width a branch past
+   the sixth level opens on its own ("Continue this thread"); a conversation's sections show as headings. Maps (t5) is
+   made an 8-level chain: 39 > 40 > 41 > 42 > 43 > 45 > 46 > 47, and 39 > 48 > 49. */
+async function deepThreads() {
+  const tweak = V => {
+    Object.assign(V.th.links, {
+      40: [39, 'i'],
+      41: [40, 'r'],
+      42: [41, 'i'],
+      43: [42, 'r'],
+      45: [43, 'i'],
+      46: [45, 'r'],
+      47: [46, 'i'],
+      48: [39, 'i'],
+      49: [48, 'r'],
+    });
+    V.th.convs.find(c => c.id === 't5').sections = [
+      [48, 'Printing'],
+      [39, 'Which map'],
+    ];
+  };
+  const p = await viewPage({ tweak });
+  await p.evaluate(() => (document.querySelector('#msgs details.conv[data-conv="t5"]').open = true));
+  await until(p, () => document.querySelector('#m47'));
+  const depthOf = n => p.$eval(n, r => [...document.querySelectorAll('.kids')].filter(k => k.contains(r)).length);
+  const deep = [await depthOf('#m39'), await depthOf('#m43'), await depthOf('#m47'), await depthOf('#m49')];
+  ok(
+    deep.join() === '0,4,7,2',
+    'B64: replies nest with no depth limit: #39 level 1, #43 level 5, #47 level 8, #49 level 3 (' + deep + ')',
+  );
+  const secs = await p.$$eval('#msgs details.conv[data-conv="t5"] .sec', hs =>
+    hs.map(h => [h.textContent, h.nextElementSibling && h.nextElementSibling.id]),
+  );
+  const others = await p.$$eval('#msgs .sec', hs => hs.length);
+  ok(
+    JSON.stringify(secs) ===
+      JSON.stringify([
+        ['Which map · 8', 'm39'],
+        ['Printing · 2', 'm48'],
+      ]) && others === 2,
+    'B64: sections show as headings over the message each starts, with their message counts; conversations without ' +
+      'sections show none (' +
+      JSON.stringify(secs) +
+      ', ' +
+      others +
+      ' in all)',
+  );
+  // fold the branch under #40 by its rail (6 replies), then show it again from the note, and by the keyboard
+  const vis = s => p.$eval(s, r => !!r.offsetParent);
+  const railSel = '#msgs .kids[data-d="2"]:has(#m41) > .rail';
+  const before = [
+    await p.$eval(railSel, b => [b.getAttribute('aria-expanded'), b.getAttribute('aria-label')]),
+    await vis('#m47'),
+  ];
+  await p.click(railSel);
+  const shut = await p.$eval(railSel, b => {
+    const k = b.parentElement;
+    return [
+      b.getAttribute('aria-expanded'),
+      k.querySelector(':scope > .fold-note').textContent,
+      !!document.querySelector('#m41').offsetParent,
+    ];
+  });
+  await p.click('#msgs .kids[data-d="2"]:has(#m41) > .fold-note');
+  const back = await vis('#m47');
+  await p.focus(railSel);
+  await p.keyboard.press('Enter');
+  const kb = await p.$eval(railSel, b => b.getAttribute('aria-expanded'));
+  await p.keyboard.press('Space');
+  const kb2 = await p.$eval(railSel, b => b.getAttribute('aria-expanded'));
+  ok(
+    before[0][0] === 'true' &&
+      /^Fold 6 replies/.test(before[0][1]) &&
+      before[1] &&
+      shut[0] === 'false' &&
+      shut[1] === '6 replies folded' &&
+      !shut[2] &&
+      back &&
+      kb === 'false' &&
+      kb2 === 'true',
+    'B64: a rail folds its branch ("6 replies folded"), the note shows it again, and the keyboard works it (' +
+      JSON.stringify([before, shut, back, kb, kb2]) +
+      ')',
+  );
+  const deskCont = await p.$$eval('#msgs .cont', bs => bs.filter(b => !!b.offsetParent).length);
+  // at phone width: levels 7 and on wait behind "Continue this thread", which shows that branch with a trail back
+  await p.setViewportSize({ width: 375, height: 800 });
+  await p.waitForTimeout(100);
+  const ph = [await vis('#m45'), await vis('#m46')];
+  const cont = await p.$eval('#msgs .cont', b => [b.textContent, !!b.offsetParent]);
+  await p.click('#msgs .cont');
+  const rr = await p.evaluate(() => ({
+    m46: !!document.querySelector('#m46').offsetParent,
+    m39: !!document.querySelector('#m39').offsetParent,
+    trail: (document.querySelector('.reroot .crumbs') || {}).textContent,
+  }));
+  await p.click('.reroot .crumbs button');
+  const after = [
+    await vis('#m39'),
+    await vis('#m46'),
+    !(await p.$('.reroot')),
+    await p.$eval('#m45', r => !!r.closest('.kids[data-d="5"]')),
+  ];
+  ok(
+    deskCont === 0 &&
+      ph[0] &&
+      !ph[1] &&
+      cont[0] === 'Continue this thread (2 more) →' &&
+      cont[1] &&
+      rr.m46 &&
+      !rr.m39 &&
+      /‹ Whole thread › \S+ #39 › \S+ #40 › \S+ #41 › \S+ #42 › \S+ #43 › \S+ #45$/.test(rr.trail) &&
+      after[0] &&
+      !after[1] &&
+      after[2] &&
+      after[3],
+    'B64: at phone width level 7 waits behind "Continue this thread (2 more)", which shows the branch on its own with ' +
+      'a trail back, and "Whole thread" puts it back (none on a wide screen) (' +
+      JSON.stringify([deskCont, ph, cont, rr, after]) +
+      ')',
+  );
+  await p.context().close();
+}
 async function messagesView() {
   // B42: a person's bubbles sent close together are one block
   let p = await viewPage();
@@ -17502,6 +17632,7 @@ const SECTIONS = {
   variants,
   ranges,
   layouts,
+  deepThreads,
   names,
   messagesView,
   speed,
