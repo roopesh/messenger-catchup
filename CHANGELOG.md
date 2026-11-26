@@ -2,6 +2,20 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.57.2] - 2026-11-26
+**The helper clicks again in Tampermonkey's sandbox** (B68, #93). PATCH. Helper 3.9; page 6.7 (only its embedded copy of the helper changes).
+
+### Fixed
+- Helper 3.7 added a `@grant` (for GIFs, F39), so Tampermonkey runs it in its sandbox, where `window` is a proxy that a synthetic event's `view` refuses ("Failed to convert value to 'Window'"). Every synthetic click and hover threw:
+  - a group's feed reads failed, so the owner's first group read never landed (#93);
+  - the reply menu on photo-only messages failed;
+  - the clicks that close menus failed;
+  - the menus behind reactions failed.
+- Fixed: the events take the page's real window (`unsafeWindow`) when the sandbox's `window` won't do, and none at all as a last resort.
+
+### Tests
+- sim (B68): a mode that runs the helper as Tampermonkey's sandbox does, with `window` a proxy. On helper 3.8 it fails exactly as #93 reported (groupFeed's TypeError at `point`, the Reply jump stuck). On 3.9, jump{reply} opens Reply through More actions and groupFeed reads all 24 posts.
+
 ## [1.57.1] - 2026-11-26
 **Every change considers the docs** (F42, #96; the owner, Nov 26: "every work item updates documentation… it should be considered and/or updated"). PATCH: tooling and process. No page, helper or skill change.
 

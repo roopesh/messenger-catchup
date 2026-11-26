@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      3.8
+// @version      3.9
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on. It downloads GIFs from Facebook's image servers for your page (the permission Tampermonkey asks for).
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -18,6 +18,16 @@
      keeps the page. An older one gives way: Claude injects this file when the installed helper is too old (several
      chats need 2.3 or later). This copy then sets data-mc-helper to its version and answers the bridge; the older
      copy's bridge listener stays registered but is stopped before it runs (the bridge, below; owns()). */
+  /* B68 (#93): with a @grant (3.7+, for GIFs) Tampermonkey runs the helper in its sandbox, where `window` is a proxy
+     that an event's `view` refuses ("Failed to convert value to 'Window'"), so every synthetic click and hover threw.
+     Events take the page's real window there (unsafeWindow), else none: the page's handlers don't need it. */
+  const VIEW = (() => {
+    for (const w of [window, typeof unsafeWindow !== 'undefined' ? unsafeWindow : null])
+      try {
+        if (w) return new MouseEvent('mc-probe', { view: w }), { view: w };
+      } catch (e) {}
+    return {};
+  })();
   const root = document.documentElement;
   const had = [window.__mcHelper, root.getAttribute('data-mc-helper')].filter(Boolean).map(String);
   const num = v => v.split('.').map(n => +n || 0);
@@ -29,13 +39,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '3.8';
+  window.__mcHelper = '3.9';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '3.8');
+  root.setAttribute('data-mc-helper', '3.9');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -1526,7 +1536,7 @@
           own = own.parentElement;
         }
         ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(function (t) {
-          e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+          e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, ...VIEW }));
         });
         var b = null,
           via = 'button';
@@ -1564,8 +1574,8 @@
               document.dispatchEvent(new KeyboardEvent('keydown', esc));
               await sleep(200);
               if (menu && menu.isConnected && menu.getBoundingClientRect().height > 0) {
-                document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, view: window }));
-                document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, view: window }));
+                document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, ...VIEW }));
+                document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, ...VIEW }));
                 await sleep(200);
               }
             }
@@ -2167,7 +2177,7 @@
     const e = msg();
     if (!e) return out({ err: 'jump-failed', detail: 'the message is not on screen after the jump' });
     ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(t =>
-      e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })),
+      e.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, ...VIEW })),
     );
     let rb = null;
     for (let k = 0; k < 10 && !rb; k++) {
@@ -2332,7 +2342,7 @@
   }
   const point = a => {
     ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'].forEach(ty =>
-      a.dispatchEvent(new MouseEvent(ty, { bubbles: true, view: window })),
+      a.dispatchEvent(new MouseEvent(ty, { bubbles: true, ...VIEW })),
     );
     a.focus({ preventScroll: true });
   };
@@ -2692,7 +2702,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '3.8' }),
+    ping: () => ({ v: '3.9' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

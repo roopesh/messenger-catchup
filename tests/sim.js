@@ -95,10 +95,22 @@ function checkCap(cap, base, mockFrom, n, label) {
 const NOW = (d => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0))(new Date());
 const ymdOf = d =>
   d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+/* helper 'sandbox' (B68, #93): the helper runs as in Tampermonkey's sandbox with a @grant, where `window` is a proxy
+   (an event's view refuses it), with methods bound to the real window as the sandbox does */
+const SANDBOX =
+  'const __w = new Proxy(window, { get: (t, k) => { const v = Reflect.get(t, k); return typeof v === "function" && !/^[A-Z]/.test(String(k)) ? v.bind(t) : v; }, set: (t, k, v) => Reflect.set(t, k, v) });';
 const newCtx = async (b, helper) => {
   const c = await b.newContext({ viewport: { width: 900, height: 800 } });
   await c.clock.install({ time: NOW });
-  if (helper) await c.addInitScript('document.addEventListener("DOMContentLoaded",function(){' + HELPER + '\n});');
+  if (helper === 'sandbox')
+    await c.addInitScript(
+      'document.addEventListener("DOMContentLoaded",function(){' +
+        SANDBOX +
+        '(function(window){' +
+        HELPER +
+        '\n})(__w);});',
+    );
+  else if (helper) await c.addInitScript('document.addEventListener("DOMContentLoaded",function(){' + HELPER + '\n});');
   return c;
 };
 /* A new context (helper installed unless helper is false) and page; capOf() reads the page's last capture */
@@ -1824,6 +1836,42 @@ const gOpen = async (p, path, q, modes = {}) => {
   await p.goto(gUrl(path, q));
   await p.waitForTimeout(500);
 };
+/* B68 (#93): helper 3.7 added a @grant (GIFs), so Tampermonkey runs it in its sandbox, where `window` is a proxy that
+   an event's view refuses; every synthetic click and hover threw ("Failed to convert value to 'Window'"), blocking
+   group reads and the reply and react menus. Here the helper runs the same way. */
+sim('B68: the helper in Tampermonkey’s sandbox clicks and hovers', { s: 30 }, async b => {
+  const { ctx, p } = await fresh(b, 'sandbox');
+  await mode(p, {});
+  await bridge(p, 'jump', { mid: 'mid.$mock100', reply: true });
+  let res = null;
+  for (let k = 0; k < 60; k++) {
+    await p.waitForTimeout(250);
+    res = await p.evaluate(() => window.__mcJumpRes || null);
+    if (res && res.state !== 'running') break;
+  }
+  const bar = await p.evaluate(() =>
+    document.querySelector('#replybar').hidden ? '' : document.querySelector('#replybar').innerText,
+  );
+  await gOpen(p, '', '?sorting_setting=CHRONOLOGICAL', { g_posts: '24' });
+  const r = await bridge(p, 'groupFeed', { cap: 100 });
+  ok(
+    res &&
+      res.via === 'menu' &&
+      /^Replying to Ana/.test(bar) &&
+      r &&
+      !r.err &&
+      r.stop === 'end' &&
+      r.posts.length === 24,
+    'B68: in the sandbox, jump{reply} opens Reply through More actions and groupFeed reads all 24 posts (' +
+      JSON.stringify([
+        res && { state: res.state, via: res.via, err: res.err },
+        bar.slice(0, 30),
+        r && { err: r.err, stop: r.stop, n: (r.posts || []).length },
+      ]) +
+      ')',
+  );
+  await ctx.close();
+});
 sim('G1: groupFeed', { s: 40 }, async b => {
   const { ctx, p } = await fresh(b);
   let r;
