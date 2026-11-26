@@ -2,6 +2,19 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.57.0] - 2026-11-26
+**Stats, By day and a summary across chats** (F1 stage C, part 2; the owner, Nov 22: "comparison and summaries for all chats too"). MINOR: All chats gains By day and Stats, and a run over every chat writes a summary across chats (`references/chats.md` changes: a behavior change; SKILL.md unchanged). Page 6.6; no helper change. F1's stage C is done.
+
+### Added
+- All chats' Stats: the chats compared over the Stats tab's timeframe (Today to All, and Custom, shared with each chat's Stats): a bar per chat, then a table with each chat's messages, people posting, photos and GIFs and most active person, and an All row that is their sum (someone in two chats counts twice, as the note says). Each chat's numbers are its own Stats' numbers.
+- All chats' By day: a card per day, newest first, a section per chat (in the chats' order) with that day's summary and Still open, else its older digest; a day only one chat has shows that chat alone. Every number names its chat ("Cam #412") and opens it there.
+- The summary across chats: All chats' Summary opens with "Across your chats", from `allchats/summary`: a few points citing `[key#n]` (shown "Cam #412", "#n · which chat?" for a bare one), when it was written, each chat that run didn't refresh named with why ("it failed", "it wasn't reached", "it wasn't due yet", "it's paused") and its part as from its last refresh, chats added since named as not in it, and "You've caught up in every chat since" once every chat in it was marked caught up after it was written. Before the first one, a line says Claude writes it.
+- The refresh skill: `references/chats.md` › The summary across chats: at the end of a run over every chat that brought new messages, Claude drafts up to 10 points (each at most 45 words, citing `[KEY#n]`, the same person named the same way in every chat) and `catchup.py allchats` checks the draft and prints the document with each chat's state in that run (`new`, `nothing`, `failed`, `later`, `paused`, `skipped`), which Claude writes pinned. `references/database.md` documents `allchats/summary`.
+
+### Tests
+- page (section `multiChatAll`): the summary across chats above the cards, its tagged citations, the failed chat's line, the caught-up line after Mark all caught up, and the line before the first one (SD7, CT2); Stats on All chats: a row per chat whose All row is the sum in every timeframe, a bar per chat, each row equal to that chat's own Stats tiles, the one-chat switches hidden (SD1, SD2); By day on All chats: newest first, a section per chat, Still open, tagged numbers, a day in one chat only, a number opening its chat (SD4, CT2); a chat's own By day keeps bare numbers and switching back redraws (SD6); 390 px. PG1 now expects All chats' Summary, Ask, By day and Stats tabs.
+- Python (`TestAllChatsSummary`): a run where one chat fails marks it `failed` and keeps the points (SD7); not reached, nothing new, not due and paused chats; no new messages writes nothing; the draft's checks (a bare `[#n]`, an unknown key or a tag as key, no citation, a bad citation, a long heading or point, too many points); the CLI; the references.
+
 ## [1.56.3] - 2026-11-26
 **CI: the merged-PR check waits for GitHub's link** (tooling). PATCH. No page, helper or skill change. This release also carries v1.56.2 (the docs refresh), which has no release of its own: its post-merge `pr-only` run asked GitHub for the commit's pull request 6 s after the merge and got none yet, so `tools/release.sh` refused it.
 

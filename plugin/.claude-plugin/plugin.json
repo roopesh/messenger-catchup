@@ -1,8 +1,8 @@
 {
   "name": "messenger-catchup",
   "displayName": "Messenger Catch-up",
-  "version": "1.56.3",
-  "description": "A private catch-up page for your Facebook Messenger group chats and Facebook groups: summaries, threads, deals, mentions and replies you queue, read from your own Chrome through Claude in Chrome.",
+  "version": "1.57.0",
+  "description": "A private catch-up page for one Facebook Messenger group chat: summary, threads, deals, mentions and queued replies, read from your own Chrome through Claude in Chrome.",
   "author": { "name": "Messenger Catch-up", "url": "https://github.com/roopesh/messenger-catchup" },
   "homepage": "https://github.com/roopesh/messenger-catchup",
   "repository": "https://github.com/roopesh/messenger-catchup",

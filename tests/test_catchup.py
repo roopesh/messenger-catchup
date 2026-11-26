@@ -5892,5 +5892,124 @@ class TestRunPlan(unittest.TestCase):
         self.assertIn("the first chat and a pending chat never wait", chats)
 
 
+class TestAllChatsSummary(unittest.TestCase):
+    """F1 stage C (SD7): at the end of a run over every chat that brought new messages, Claude writes the summary
+    across chats (allchats/summary) from a draft that `catchup.py allchats` checks: points citing [key#n] of the page's
+    chats, never a bare [#n], and each chat's state in that run, so the page can name a chat that failed or wasn't
+    reached as not refreshed."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.meta = {"thread": "4242", "threadName": "Gear Chat", "shortName": "Gear"}
+        self.meta["chats"] = {
+            "gear": {"name": "Gear Chat", "tag": "Gear", "home": True, "state": "active", "order": 0},
+            "cam": {"name": "Camera Club", "tag": "Cam", "state": "active", "order": 1},
+            "tea": {"name": "Tea Room", "tag": "Tea", "state": "active", "order": 2},
+            "book": {"name": "Book Swap", "tag": "Book", "state": "active", "order": 3},
+            "hike": {"name": "Hike Club", "tag": "Hike", "state": "paused", "order": 4},
+            "old": {"name": "Old Club", "tag": "Old", "state": "hidden", "order": 5},
+            "grp": {"name": "A Group", "tag": "Grp", "state": "active", "order": 6, "kind": "group"},
+        }
+        self.points = [
+            {"h": "Needs you", "t": "Dee Moss asked you about the tripod in two chats [cam#412, gear#88]."},
+            {"h": "Plans", "t": "Tea order goes in Friday [tea#30]."},
+        ]
+
+    def tearDown(self):
+        catchup.NOW = None
+        self.t.cleanup()
+
+    def run_it(self, points=None, **kw):
+        d = self.t.name
+        w(os.path.join(d, "chat.json"), self.meta)
+        w(os.path.join(d, "draft.json"), {"points": self.points if points is None else points})
+        args = [kw.get(k, ()) for k in ("done", "new", "failed", "later")]
+        out = quiet(
+            catchup.allchats_cmd, os.path.join(d, "chat.json"), os.path.join(d, "draft.json"), *args, kw.get("started")
+        )
+        return json.loads(out)
+
+    def test_SD7_a_run_where_tea_fails_marks_it_and_keeps_the_points(self):
+        catchup.NOW = utc("2026-11-26T18:00:00")
+        out = self.run_it(
+            done=["gear", "cam", "tea"],
+            new=["gear", "cam"],
+            failed=["tea"],
+            later=["book"],
+            started="2026-11-26T17:50:00Z",
+        )
+        self.assertEqual(out["write"], "allchats/summary")
+        doc = out["doc"]
+        self.assertEqual(
+            doc["chats"], {"gear": "new", "cam": "new", "tea": "failed", "book": "later", "hike": "paused"}
+        )
+        self.assertNotIn("old", doc["chats"], "a hidden chat isn't in it")
+        self.assertNotIn("grp", doc["chats"], "a group isn't in it")
+        self.assertEqual([p["h"] for p in doc["points"]], ["Needs you", "Plans"])
+        self.assertEqual(doc["run"], "2026-11-26T17:50:00Z")
+        self.assertEqual(doc["at"], "2026-11-26T18:00:00Z")
+
+    def test_a_chat_not_reached_is_skipped_and_one_with_nothing_new_says_so(self):
+        out = self.run_it(done=["gear", "cam"], new=["cam"])
+        self.assertEqual(out["doc"]["chats"]["gear"], "nothing")
+        self.assertEqual(out["doc"]["chats"]["tea"], "skipped")
+        self.assertEqual(out["doc"]["chats"]["book"], "skipped")
+
+    def test_no_new_messages_anywhere_writes_nothing(self):
+        out = self.run_it(done=["gear", "cam"], new=[])
+        self.assertIsNone(out["doc"])
+
+    def test_the_draft_is_checked(self):
+        bad = [
+            ([{"t": "Selling a tripod [#412]."}], "bare #412"),
+            ([{"t": "Selling a tripod [zzz#412]."}], "not a chat on this page"),
+            ([{"t": "Selling a tripod [old2#4]."}], "not a chat on this page"),
+            ([{"t": "Selling a tripod."}], "cites no message"),
+            ([{"t": "Selling [cam#1, see above]."}], "isn't a citation"),
+            ([{"t": "x [cam#1]", "h": "a heading far too long to be a heading at all"}], "characters"),
+            ([{"t": " ".join(["word"] * 46) + " [cam#1]"}], "over 45 words"),
+            ([{"t": "x [cam#%d]" % n} for n in range(11)], "1 to 10 points"),
+            ([], "1 to 10 points"),
+        ]
+        for pts, why in bad:
+            with self.assertRaises(AssertionError, msg=why) as e:
+                self.run_it(pts, done=["gear"], new=["gear"])
+            self.assertIn(why, str(e.exception))
+        with self.assertRaises(AssertionError):
+            self.run_it(done=["gear"], new=["cam"])  # --new must be chats in --done
+        with self.assertRaises(AssertionError):
+            self.run_it(done=["gear"], new=["gear"], failed=["gear"])
+        # a tag isn't a key: [Cam#1] is refused, as the page would show it as "which chat?" only by luck
+        with self.assertRaises(AssertionError):
+            self.run_it([{"t": "x [Cam#1]"}], done=["gear"], new=["gear"])
+
+    def test_the_cli(self):
+        import subprocess
+
+        d = self.t.name
+        w(os.path.join(d, "chat.json"), self.meta)
+        w(os.path.join(d, "draft.json"), {"points": self.points})
+        cmd = [sys.executable, os.path.join(ROOT, "plugin", "skills", "refresh", "scripts", "catchup.py"), "allchats"]
+        cmd += [os.path.join(d, "chat.json"), os.path.join(d, "draft.json")]
+        cmd += ["--done=gear,tea", "--new=gear", "--failed=tea", "--later=cam", "--started=2026-11-26T17:50:00Z"]
+        out = json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(out["doc"]["chats"]["tea"], "failed")
+        self.assertEqual(out["doc"]["chats"]["cam"], "later")
+        self.assertEqual(out["doc"]["run"], "2026-11-26T17:50:00Z")
+
+    def test_the_references_say_when_and_how(self):
+        refs = os.path.join(ROOT, "plugin", "skills", "refresh", "references")
+        with open(os.path.join(refs, "chats.md"), encoding="utf-8") as f:
+            chats = f.read()
+        with open(os.path.join(refs, "database.md"), encoding="utf-8") as f:
+            db = f.read()
+        self.assertIn("## The summary across chats", chats)
+        self.assertIn("the summary across chats (below), Method ideas", chats)
+        self.assertIn("python3 catchup.py allchats META.json DRAFT.json", chats)
+        self.assertIn("never a bare `[#n]`", chats)
+        self.assertIn("`allchats/summary` `{at, run, points:[{h?, t}], chats:{KEY: state}}`", db)
+        self.assertIn("catchup.py allchats META.json DRAFT.json", catchup.__doc__)
+
+
 if __name__ == "__main__":
     unittest.main()

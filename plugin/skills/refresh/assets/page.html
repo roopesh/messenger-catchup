@@ -2611,6 +2611,63 @@
     overflow-wrap: anywhere;
   }
   /* a chat's chip carries its colour as a bar under the tag; the tag text carries the meaning */
+  /* All chats' Stats and By day (F1 stage C): a bar per chat, the comparison table, a section per chat in a day */
+  #v-stats.xall .st-show,
+  #v-stats.xall #st-reset {
+    display: none;
+  }
+  ul.xbars {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+  }
+  ul.xbars li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+  }
+  ul.xbars .track {
+    height: 12px;
+    border-radius: 6px;
+    background: var(--accent-soft);
+    overflow: hidden;
+  }
+  ul.xbars .bar {
+    display: block;
+    height: 100%;
+    background: var(--c1);
+  }
+  ul.xbars .bar.c2 {
+    background: var(--c2);
+  }
+  ul.xbars .bar.c3 {
+    background: var(--c3);
+  }
+  ul.xbars .bar.c4 {
+    background: var(--c4);
+  }
+  ul.xbars .v,
+  table.xcmp td.num {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  table.xcmp .xall-row td {
+    font-weight: 600;
+  }
+  .xday-chat {
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+    margin-top: 8px;
+  }
+  .xday-chat h5 {
+    margin: 8px 0 2px;
+  }
+  .xsum-points li {
+    overflow-wrap: anywhere;
+  }
   .xchips button.c1 {
     box-shadow: inset 0 -3px 0 var(--c1);
   }
@@ -2976,7 +3033,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "6.5";
+  const PAGE_VERSION = "6.6";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -3100,8 +3157,9 @@
   const TABS = ["summary", "posts", "ask", "messages", "days", "views", "stats"];
   /* F25: a group has Summary and Posts; a chat has the rest */
   const tabsFor = c => (isGroup(c) ? ["summary", "posts"] : TABS.filter(t => t !== "posts"));
-  /* F1 stage C: All chats has its own tabs: Summary (a card per chat) and Ask (across every chat) */
-  const ALL_TABS = ["summary", "ask"];
+  /* F1 stage C: All chats has its own tabs: Summary (the summary across chats and a card per chat), Ask (across every
+     chat), By day (each day, a section per chat) and Stats (the chats compared) */
+  const ALL_TABS = ["summary", "ask", "days", "stats"];
   function route() {
     const h = (location.hash || "").slice(1);
     const allv = S.view === "all";
@@ -8511,6 +8569,9 @@
         daySums: S.daySums,
         digests: S.digests,
         threading: S.threading,
+        photos: S.photos,
+        gifs: S.gifs,
+        live: true,
       });
     const db = chatDb(S.rawDb, c);
     const opt = f =>
@@ -8518,12 +8579,13 @@
         .then(f)
         .catch(() => null);
     try {
-      const [ch, cp, pp, ds, th] = await Promise.all([
+      const [ch, cp, pp, ds, th, dg] = await Promise.all([
         snapOnce(db.collection("chunks")),
         opt(() => snapOnce(db.collection("captions"))),
         opt(() => db.doc("people/index").get()),
         opt(() => snapOnce(db.collection("daySummaries"))),
         opt(() => snapOnce(db.collection("threading"))),
+        opt(() => snapOnce(db.collection("digests"))),
       ]);
       const msgs = msgsOf(collDocs(ch));
       return Object.assign(base, {
@@ -8532,8 +8594,10 @@
         caps: cp ? mergeCaps(collDocs(cp)) : null,
         P: peopleOf(pp && pp.exists ? pp.data() : null, msgs),
         daySums: ds ? daySumMap(ds) : new Map(),
-        digests: new Map(),
+        digests: dg ? digestMap(dg) : new Map(),
         threading: th ? mergeThreading(collDocs(th)) : null,
+        photos: null,
+        gifs: new Set(),
       });
     } catch (e) {
       return Object.assign(base, { err: e });
@@ -9205,6 +9269,330 @@
     /* a note from the other mode's last question doesn't belong here */
     if (askMode.all !== undefined && askMode.all !== all) document.getElementById("ask-note").textContent = "";
     askMode.all = all;
+  }
+
+  /* ---------- All chats: By day, Stats and the summary across chats (F1 stage C, part 2) ----------
+     By day and Stats on All chats read every chat Ask can (xChats), once and again when the data is a minute old or a
+     chat was added (XD; the chat loaded on the page always from memory, so its imports show at once). By day: a card
+     per day, newest first, a section per chat with that day's summary (or its older digest), every number tagged. Stats:
+     the chats compared over the Stats tab's timeframe (shared with a chat's Stats): messages, people posting and photos
+     per chat, each counted as that chat's own Stats counts them (statsBase in the chat's context), a bar per chat and an
+     All row, which is the sum (someone in two chats counts twice). The summary across chats (allchats/summary) is
+     written by Claude at the end of a run over every chat (references/chats.md); All chats' Summary shows it above the
+     cards, with the chats that run didn't refresh, and says when every chat was caught up after it. */
+  var XD = { ctxs: null, at: 0, busy: null, v: 0, n: 0 };
+  const XD_AGE = 60000;
+  function xCtxs() {
+    const live = xChats();
+    const stale = !XD.ctxs || Date.now() - XD.at > XD_AGE || live.some(c => !XD.ctxs.some(x => x.key === c.key));
+    if (!XD.busy && S.rawDb && stale)
+      XD.busy = xLoad()
+        .then(all => (XD.ctxs = all))
+        .catch(() => (XD.ctxs = XD.ctxs || []))
+        .finally(() => {
+          XD.at = Date.now();
+          XD.busy = null;
+          XD.v++;
+          renderStats();
+          renderDays();
+        });
+    if (!XD.ctxs) return null;
+    return XD.ctxs
+      .filter(x => live.some(c => c.key === x.key))
+      .map(x => {
+        const c = live.find(y => y.key === x.key);
+        if (x.key !== CUR.key || !S.msgs.length) return Object.assign(x, { c });
+        return {
+          c,
+          key: c.key,
+          msgs: S.msgs,
+          byI: S.byI,
+          caps: S.caps,
+          P: PEOPLE,
+          daySums: S.daySums,
+          digests: S.digests,
+          threading: S.threading,
+          photos: S.photos,
+          gifs: S.gifs,
+          live: true,
+        };
+      });
+  }
+  /* a chat's Stats base (statsBase in its context; the chat loaded on the page: its own, cached as usual) */
+  function xBase(x) {
+    if (x.live) return statsBase();
+    if (x.B && x.B.msgs === x.msgs) return x.B;
+    const keep = [S.photos, S.gifs, STB];
+    S.photos = x.photos || null;
+    S.gifs = x.gifs || new Set();
+    STB = null;
+    try {
+      x.B = inCtx(x, statsBase);
+      x.B.msgs = x.msgs;
+    } finally {
+      [S.photos, S.gifs, STB] = keep;
+    }
+    return x.B;
+  }
+  /* the stored history of every chat as one span, for the timeframe (stFrameOf reads firstTm and lastTm) */
+  function xSpanBase() {
+    const bs = (xCtxs() || []).filter(x => !x.err && x.msgs.length).map(xBase);
+    const f = bs.map(b => b.firstTm).filter(t => t >= 0);
+    return { firstTm: f.length ? Math.min(...f) : -1, lastTm: Math.max(-1, ...bs.map(b => b.lastTm)) };
+  }
+  /* one chat's numbers over [lo, hi), as its own Stats tiles count them */
+  function xRow(x, F) {
+    const B = xBase(x);
+    const A = statsAgg(B, F.lo, F.hi);
+    const r = stRank(A);
+    const top = !r.length ? "" : x.live ? stName(B, r[0]) : inCtx(x, () => stName(B, r[0]));
+    return { x, msgs: A.total, people: r.length, photos: A.photos, top };
+  }
+  function xStats(body) {
+    [...body.children].forEach(x => x !== stWordsSec && x.remove());
+    stWordsSec.hidden = true;
+    const add = n => body.insertBefore(n, stWordsSec);
+    const ctxs = xCtxs();
+    if (!ctxs) {
+      stSpanLine("", false);
+      add(el("div", "empty", S.rawDb ? "Reading every chat's messages…" : "The stats can't load in this view."));
+      return;
+    }
+    const ok = ctxs.filter(x => !x.err);
+    const F = stFrame();
+    const rows = ok.map(x => xRow(x, F));
+    const sum = k => rows.reduce((n, r) => n + r[k], 0);
+    const tot = { msgs: sum("msgs"), people: sum("people"), photos: sum("photos") };
+    stSpanLine(
+      stSpanText(F.lo, F.hi) + ": " + plural(tot.msgs, "message") + " in " + plural(rows.length, "chat") + ".",
+      false,
+    );
+    const bars = stSec("xbars", "Messages by chat", null);
+    const ul = el("ul", "xbars");
+    const mx = Math.max(1, ...rows.map(r => r.msgs));
+    rows.forEach(r => {
+      const li = el("li");
+      li.dataset.chat = r.x.key;
+      const tr = el("span", "track");
+      const bar = el("span", "bar c" + ((((r.x.c.color || 1) - 1) % 4) + 1));
+      bar.style.width = Math.round((100 * r.msgs) / mx) + "%";
+      tr.append(bar);
+      li.append(tagChip(r.x.c), tr, el("span", "v", stNum(r.msgs)));
+      ul.append(li);
+    });
+    bars.append(ul);
+    const cmp = stSec(
+      "xtable",
+      "Your chats compared",
+      "Counted on this page from each chat's stored messages, as each chat's own Stats counts them. People are counted per chat, so someone in two chats counts twice in the All row.",
+    );
+    const w = el("div", "tablewrap"),
+      t = el("table", "xcmp"),
+      hr = el("tr"),
+      tb = el("tbody");
+    ["Chat", "Messages", "People posting", "Photos and GIFs", "Most active"].forEach(c => hr.append(el("th", null, c)));
+    const thead = el("thead");
+    thead.append(hr);
+    rows.forEach(r => {
+      const tr = el("tr");
+      tr.dataset.chat = r.x.key;
+      const c0 = el("td");
+      c0.append(tagChip(r.x.c), " " + r.x.c.name);
+      tr.append(c0, el("td", "num", stNum(r.msgs)), el("td", "num", stNum(r.people)), el("td", "num", stNum(r.photos)));
+      tr.append(el("td", null, r.top || "—"));
+      tb.append(tr);
+    });
+    const all = el("tr", "xall-row");
+    all.append(
+      el("td", null, "All"),
+      el("td", "num", stNum(tot.msgs)),
+      el("td", "num", stNum(tot.people)),
+      el("td", "num", stNum(tot.photos)),
+      el("td", null, ""),
+    );
+    tb.append(all);
+    t.append(thead, tb);
+    w.append(t);
+    cmp.append(w);
+    const bad = ctxs.filter(x => x.err);
+    if (bad.length) cmp.append(el("p", "note", "Couldn't read " + bad.map(x => x.c.name).join(", ") + " just now."));
+    add(bars);
+    add(cmp);
+  }
+  /* By day on All chats: a card per day, newest first, a section per chat (in the chats' order) with that day's
+     summary, else its older digest; a day only one chat has shows that chat alone */
+  function xDays(box) {
+    box.textContent = "";
+    const ctxs = xCtxs();
+    if (!ctxs) {
+      box.append(
+        el(
+          "div",
+          "empty",
+          S.rawDb ? "Reading every chat's day summaries…" : "The day summaries can't load in this view.",
+        ),
+      );
+      return;
+    }
+    const byDay = new Map();
+    const put = (k, e) => (byDay.get(k) || byDay.set(k, []).get(k)).push(e);
+    ctxs
+      .filter(x => !x.err)
+      .forEach(x =>
+        inCtx(x, () => {
+          const seen = new Set();
+          for (const k of x.daySums.keys()) {
+            const s = isDay(k) && daySumOf(k);
+            if (s) {
+              put(k, { x, s });
+              seen.add(k);
+            }
+          }
+          for (const [k, g] of x.digests)
+            if (isDay(k) && !seen.has(k) && g && Array.isArray(g.bullets) && g.bullets.length) put(k, { x, g });
+        }),
+      );
+    const days = [...byDay.keys()].sort().reverse();
+    if (!days.length) {
+      box.append(el("div", "empty", "No day summaries in any chat yet. A refresh writes each chat's day summary."));
+      return;
+    }
+    box.append(
+      el("p", "note", "Each day, a section per chat with that day's summary. A number opens its message in its chat."),
+    );
+    const n = XD.n || DAYS_STEP;
+    days.slice(0, n).forEach(k => {
+      const art = el("article", "item dg-day xday");
+      art.dataset.day = k;
+      art.tabIndex = -1;
+      const head = el("div", "row");
+      head.append(el("h3", null, dayTitle(k)));
+      art.append(head);
+      byDay
+        .get(k)
+        .sort((a, b) => xOrd(a.x.key) - xOrd(b.x.key))
+        .forEach(({ x, s, g }) => {
+          const sec = el("section", "xday-chat");
+          sec.dataset.chat = x.key;
+          const h = el("div", "chathead");
+          h.append(tagChip(x.c), el("h4", null, x.c.name));
+          sec.append(h);
+          const cite = i => xCite(x.c, i);
+          if (s) {
+            s.sections.forEach(y => {
+              const ul = y && dayBullets(y.bullets, Infinity, cite);
+              if (!ul) return;
+              sec.append(el("h5", "ds-h", oneLine(y.h) || "More"), ul);
+            });
+            const op = dayBullets(s.open, Infinity, cite);
+            if (op) sec.append(el("h5", "ds-h ds-open", "Still open"), op);
+          } else {
+            const ul = dayBullets(g.bullets, 10, cite);
+            if (ul) sec.append(ul);
+          }
+          art.append(sec);
+        });
+      box.append(art);
+    });
+    if (days.length > n) {
+      const more = el(
+        "button",
+        "secondary dg-more",
+        "Show " + plural(Math.min(DAYS_STEP, days.length - n), "more day"),
+      );
+      more.onclick = () => {
+        XD.n = n + DAYS_STEP;
+        renderDays();
+        const next = box.querySelectorAll("article.xday")[n];
+        if (next) next.focus();
+      };
+      box.append(more);
+    }
+  }
+  /* The summary across chats (allchats/summary {at, run, points:[{h, t}], chats:{key: state}}), written by Claude at
+     the end of a run over every chat that brought new messages: points citing [key#n], and each chat's state in that
+     run ("new", "nothing", "failed", "skipped": the time limit or a stop, "later": not due yet). Shown above All chats'
+     cards; a chat that run didn't refresh is named, its part being from its last refresh. Once every chat in it was
+     marked caught up after it was written, it says so instead of the points. */
+  S.allSum = undefined;
+  const X_WHY = {
+    failed: "it failed",
+    skipped: "it wasn't reached",
+    later: "it wasn't due yet",
+    paused: "it's paused",
+  };
+  function allSumBlock() {
+    const d = S.allSum;
+    const b = block("Across your chats", null);
+    b.classList.add("xsum");
+    if (d === undefined) return null;
+    if (!d || !Array.isArray(d.points)) {
+      b.append(
+        el(
+          "p",
+          "note",
+          "Claude writes a short summary across your chats here at the end of each refresh of every chat that brings new messages.",
+        ),
+      );
+      return b;
+    }
+    const st = isObj(d.chats) ? d.chats : {};
+    const live = xChats();
+    const inIt = live.filter(c => c.key in st);
+    const at = Date.parse(d.at);
+    const w = vwWhen(d.at);
+    b.append(
+      el("p", "note", "Written at the end of the refresh" + (!w ? "" : /^\d/.test(w) ? " at " : " on ") + w + "."),
+    );
+    const caught =
+      inIt.length &&
+      Number.isFinite(at) &&
+      inIt.every(c => {
+        const t = Date.parse((metaOf(c) || {}).caughtUpAt);
+        return Number.isFinite(t) && t > at;
+      });
+    if (caught) {
+      b.append(el("p", null, "You've caught up in every chat since. The next refresh writes a new summary here."));
+      return b;
+    }
+    const ul = el("ul", "xsum-points");
+    d.points.forEach(p => {
+      if (!p || typeof p.t !== "string" || !p.t.trim()) return;
+      const li = el("li");
+      if (typeof p.h === "string" && p.h.trim()) li.append(el("b", null, p.h.trim() + ": "));
+      const sp = el("span");
+      renderXCites(sp, p.t);
+      li.append(sp);
+      ul.append(li);
+    });
+    if (ul.children.length) b.append(ul);
+    inIt.forEach(c => {
+      const why = X_WHY[st[c.key]];
+      if (!why) return;
+      const m = metaOf(c) || {};
+      const last = m.lastRefresh ? refreshShown(m.lastRefresh, m.tz || (S.page || {}).tz) : "";
+      const p = el(
+        "p",
+        "note xsum-stale",
+        c.name +
+          " wasn't refreshed in that run (" +
+          why +
+          "), so its part is from its last refresh" +
+          (last ? " (" + last + ")." : "."),
+      );
+      p.dataset.chat = c.key;
+      b.append(p);
+    });
+    const added = live.filter(c => !(c.key in st));
+    if (added.length && Object.keys(st).length)
+      b.append(
+        el(
+          "p",
+          "note",
+          "Not in this summary: " + added.map(c => c.name).join(", ") + " (added or brought back since).",
+        ),
+      );
+    return b;
   }
   /* ---------- look deeper (F17) ----------
      Under an answer that saw part of the history only as summary lines (P.before, P.after: what packHistory sent,
@@ -13103,7 +13491,7 @@
       : "";
   }
   /* a list of bullets ({t, refs}), each followed by its message numbers (at most `most`); null when none has text */
-  function dayBullets(bullets, most = 10) {
+  function dayBullets(bullets, most = 10, cite = dayCite) {
     const ul = el("ul");
     (Array.isArray(bullets) ? bullets : []).forEach(b => {
       const t = b && oneLine(b.t);
@@ -13112,7 +13500,7 @@
       (Array.isArray(b.refs) ? b.refs : [])
         .filter(i => Number.isInteger(i) && i >= 0)
         .slice(0, most)
-        .forEach(i => li.append(" ", dayCite(i)));
+        .forEach(i => li.append(" ", cite(i)));
       ul.append(li);
     });
     return ul.children.length ? ul : null;
@@ -13371,6 +13759,13 @@
     if (!box || !v || v.hidden) return;
     /* the date in the key: a summary's state follows the day boundary (the minute tick calls this) */
     const key = [S.daySums, S.digests, S.reports, S.msgs, S.daysN, S.meta, S.daySumsIn, S.digestsIn, dsToday()];
+    key.push(S.view === "all", XD && XD.v, S.chats, XD && XD.n);
+    v.classList.toggle("xall", S.view === "all");
+    if (S.view === "all") {
+      if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
+      renderDays.k = key;
+      return xDays(box);
+    }
     if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
     renderDays.k = key;
     /* a run list the reader opened stays open when the tab redraws (after an import or a refresh's write) */
@@ -13956,8 +14351,10 @@
   /* The timeframe as a span [lo, hi) of minutes: whole days through today. All runs from the first stored day; a
      custom range is kept within a year of the stored history so its bars stay few. */
   function stFrame() {
-    const st = S.stats,
-      B = statsBase();
+    return stFrameOf(S.view === "all" && xCtxs() ? xSpanBase() : statsBase());
+  }
+  function stFrameOf(B) {
+    const st = S.stats;
     const td = stToday();
     const t0 = isDay(td) ? dayMin(td) : B.lastTm >= 0 ? dayFloor(B.lastTm) : 0;
     const first = B.firstTm >= 0 ? dayFloor(B.firstTm) : t0,
@@ -15277,8 +15674,14 @@
     if (!v || v.hidden || !S.stats || !body) return;
     const st = S.stats;
     const key = [S.msgs, PEOPLE, S.photos, S.gifs, S.threading, S.summary, S.meta, S.digestsIn, st.v, stToday()];
+    key.push(S.view === "all", XD && XD.v, S.chats);
     if (!force && renderStats.k && key.every((x, j) => x === renderStats.k[j])) return;
     renderStats.k = key;
+    v.classList.toggle("xall", S.view === "all");
+    if (S.view === "all") {
+      stControls();
+      return xStats(body);
+    }
     stControls();
     /* a redraw for new data (or a zoom) keeps the keyboard where it was: a chart, a name in a list or Back, without
        scrolling; the word box is never rebuilt, so it keeps the focus and what's typed by itself */
@@ -15749,6 +16152,15 @@
     renderHeader();
     if (S.db) subscribeChat();
   }
+  /* digests/m<YYYY-MM> documents (F16) as "YYYY-MM-DD" -> that day's digest */
+  function digestMap(q) {
+    const m = new Map();
+    q.docs.forEach(d => {
+      const days = (d.data() || {}).days;
+      if (days && typeof days === "object") Object.entries(days).forEach(([k, v]) => v && m.set(k, v));
+    });
+    return m;
+  }
   /* daySummaries/d<YYYY-MM-DD> documents as "YYYY-MM-DD" -> summary */
   function daySumMap(q) {
     const m = new Map();
@@ -15838,12 +16250,7 @@
     on(
       db.collection("digests"),
       q => {
-        const m = new Map();
-        q.docs.forEach(d => {
-          const days = (d.data() || {}).days;
-          if (days && typeof days === "object") Object.entries(days).forEach(([k, v]) => v && m.set(k, v));
-        });
-        S.digests = m;
+        S.digests = digestMap(q);
         S.digestsIn = true;
         renderDays();
       },
@@ -16112,6 +16519,8 @@
       top.append(f);
     }
     v.append(top);
+    const xs = allSumBlock();
+    if (xs) v.append(xs);
     S.chats
       .filter(c => isShown(c) && showIn(c))
       .forEach(c => {
@@ -17081,6 +17490,14 @@
       s => {
         S.skipped = s.exists ? s.data() : null;
         refreshChatLines();
+      },
+      () => {},
+    );
+    /* F1 stage C: the summary across chats, written by Claude at the end of a run over every chat */
+    db.doc("allchats/summary").onSnapshot(
+      s => {
+        S.allSum = s.exists ? s.data() : null;
+        renderAll();
       },
       () => {},
     );
