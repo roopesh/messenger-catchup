@@ -2,6 +2,16 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.58.1] - 2026-11-26
+**A quick second Move press is never lost** (B70). PATCH. Page 6.9. This release also carries v1.58.0, which has no release of its own: main's CI failed on it in the test this fixes.
+
+### Fixed
+- Settings › Move up and Move down act on key-down for Enter and Space. Space normally acts on key-up, and the store's echo of an earlier move can redraw the row between key-down and key-up, which lost a quick second press. A timing-dependent page test (F1 q6) caught it on main after v1.58.0 merged.
+- Backlog: F40 links #92.
+
+### Tests
+- page (F1 q6) passes 5 runs in a row on the fix.
+
 ## [1.58.0] - 2026-11-26
 **Reactions: whose they are and what they mean** (B67, the owner's pick: C). Ask called a question to the owner still open though the owner had answered it with a 👍 in Messenger: captures kept only a reaction's count and emoji, and nothing said what a reaction means. MINOR: the helper reads who reacted, Ask and the summary build read reactions as answers, and the refresh skill gains `references/reactions.md` (SKILL.md changes: a behavior change). It also brings citation cards in Ask answers (F41, #95). Page 6.8, helper 4.0.
 

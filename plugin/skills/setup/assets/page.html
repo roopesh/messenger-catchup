@@ -3052,7 +3052,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "6.8";
+  const PAGE_VERSION = "6.9";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -17138,6 +17138,13 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
             ["dn", "Move down", 1],
           ].forEach(([id, t, d]) => {
             const b = act(t, () => moveChat(c.key, d));
+            /* Enter and Space move on key-down: Space normally acts on key-up, and the store's echo of an earlier move
+               can redraw the row between the two, so a quick second press was lost */
+            b.onkeydown = e => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              if (!b.disabled) moveChat(c.key, d);
+            };
             b.id = "mv-" + id + "-" + c.key;
             b.setAttribute("aria-label", t + ": " + c.name);
             b.disabled = !movable[at + d];
