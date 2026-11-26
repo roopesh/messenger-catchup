@@ -12,6 +12,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | ID | P | Type | Title |
 |---|---|---|---|
 | B66 | P3 | bug | Under All chats, the refresh note (`#refresh-st`) still says "The choice above only filters what's shown", though the Show messages box it refers to is hidden there |
+| F40 | P3 | feature | Reply checks every 10 minutes: the scheduler the reply check uses runs at most hourly (armed Nov 26 at :33), so a queued reply can wait about 30 minutes; find a faster way |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -124,6 +125,10 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
   - **Arm it on the owner's account and check it:** in a Claude app whose tool list has the recurring tool with the device requirement (see `references/scheduling.md` › Tools), say "schedule reply checks"; confirm the result says it's tied to this computer, the approval mode, that an empty check costs about what was measured, and that a reply queued on the page goes out within 10 minutes. Watch for the task pausing after a check finds the computer asleep (LEARNINGS: a device-bound task pauses for good on `device_absent`).
 - **Later (owner, Nov 23): change the interval and hours in the page,** picked up at the next check with no re-arming. A fixed recurring task can't change its own cron, and a check that reads its settings costs a second read on every run, so this needs a design: for example a chain (each check arms the next from `meta/chat`), or a recurring task at the shortest interval offered whose checks skip cheaply when not due. Measure the skip's cost first.
 
+
+### F40 · P3 · Reply checks every 10 minutes
+- **Found (Nov 26):** the owner armed reply checks (F30, decided every 10 minutes 5 AM–10 PM), but `create_trigger`'s minimum interval is 1 hour, so it runs hourly at :33; with refreshes at :12 a queued reply waits about 30 minutes at most.
+- **To research:** whether the Desktop app's own scheduled tasks allow shorter intervals, a chain of one-time follow-ups every 10 minutes (each a turn in one conversation: cost and length), or the page asking for a run when a reply is queued.
 
 ### L1 · P3 · Live checks still to do
 Gathered from finished items when they were removed (Nov 14). The item each came from is in brackets; CHANGELOG.md has its history.
