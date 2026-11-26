@@ -560,7 +560,7 @@ sim('A3, A5: stale result, message deleted mid-run', { s: 20, after: ['A1, A2: f
   );
   await ctx.close();
 });
-sim('A4: short chat', { s: 55 }, async b => {
+sim('A4: short chat', { s: 70 }, async b => {
   const { ctx, p } = await fresh(b);
   let r, res;
   // short chat: 30 messages total, first run asks for 50 -> all 30, none dropped; old label forms parse
@@ -1036,7 +1036,7 @@ sim('H9: two reads of a message merged tile by tile', async b => {
   );
   await ctx.close();
 });
-sim('H5: topMs shortens the top-of-chat wait', { s: 33 }, async b => {
+sim('H5: topMs shortens the top-of-chat wait', { s: 38 }, async b => {
   const { ctx, p } = await fresh(b);
   // H5: topMs shortens the top-of-chat wait in the scan, verify and full (a 30-message chat, a first run of 50)
   await mode(p, {}, 30);
@@ -1044,10 +1044,10 @@ sim('H5: topMs shortens the top-of-chat wait', { s: 33 }, async b => {
   await p.waitForLoadState('load');
   const T = await pollResult(p);
   ok(
-    T && T.stage === 'captured' && T.scan.top && T.scan.win === 30 && T.verify.ok && T.scan.ms < 17500 && T.ms < 22500,
-    'H5: full with topMs 1500 on a 30-message chat: the top is confirmed in ' +
+    T && T.stage === 'captured' && T.scan.top && T.scan.win === 30 && T.verify.ok && T.scan.ms < 26000 && T.ms < 22500,
+    'H5: full with topMs 1500 on a 30-message chat: the top is confirmed (after one nudge, B53) in ' +
       (T && T.scan && T.scan.ms) +
-      ' ms (about 22 s by default), the reload, verify and capture in ' +
+      ' ms (about 37 s by default), the reload, verify and capture in ' +
       (T && T.ms) +
       ' ms (about 27 s)',
   );
@@ -1431,15 +1431,19 @@ sim('E: verify retries a stall itself', { s: 40 }, async b => {
   );
   await ctx.close();
 });
-sim('E: top of a short chat, anchors gone', { s: 42 }, async b => {
+sim('E: top of a short chat, anchors gone', { s: 70 }, async b => {
   const { ctx, p } = await fresh(b);
   let r, t0;
   // the top of a short chat is reported (top:true), and a stop scan that reaches the top ends with a clear error
   await mode(p, {}, 30);
   r = await bridge(p, 'scan', { first: { count: 50 } });
   ok(
-    r && !r.err && r.anchor === '__top__' && r.win === 30 && r.top === true,
-    'E: a 30-message chat, first run of 50: top:true, anchor __top__, all 30 (' + short(r) + ')',
+    r && !r.err && r.anchor === '__top__' && r.win === 30 && r.top === true && r.nudges === 1,
+    'E: a 30-message chat, first run of 50: top:true after one nudge, anchor __top__, all 30 (' +
+      short(r) +
+      ', nudges ' +
+      (r && r.nudges) +
+      ')',
   );
   t0 = Date.now();
   r = await bridge(p, 'scan', { stops: ['mid.$gone1', 'mid.$gone2'] });
@@ -1449,6 +1453,33 @@ sim('E: top of a short chat, anchors gone', { s: 42 }, async b => {
       Math.round((Date.now() - t0) / 1000) +
       ' s (' +
       (r && r.err) +
+      ')',
+  );
+  await ctx.close();
+});
+
+/* B53: a first scan with a count took a quiet pause at the top for the chat's start and returned top:true with 90 of
+   400 messages. The mock pauses its third request for older messages (no spinner) for longer than the top-of-chat
+   wait (topMs 2000 here); the helper nudges the list before taking the top, and reads the whole count. */
+sim('E: a pause at the top is not the top', { s: 20 }, async b => {
+  const { ctx, p } = await fresh(b);
+  await mode(p, { toppause: '8000' }, 100);
+  const t0 = Date.now();
+  const r = await bridge(p, 'scan', { first: { count: 80 }, topMs: 2000 });
+  ok(
+    r &&
+      !r.err &&
+      r.win === 80 &&
+      r.top === false &&
+      r.anchor !== '__top__' &&
+      r.nudges === 1 &&
+      Date.now() - t0 < 50000,
+    'E: a first scan of 80 past a quiet pause at the top nudges once and reads all 80, not top:true, in ' +
+      Math.round((Date.now() - t0) / 1000) +
+      ' s (' +
+      short(r) +
+      ', nudges ' +
+      (r && r.nudges) +
       ')',
   );
   await ctx.close();
