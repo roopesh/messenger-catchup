@@ -2,6 +2,17 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.50.1] - 2026-11-25
+**Big first imports land** (B63, #77). A new chat's first capture never reached the page: the paste was silently dropped, so the chat stayed pending and every run rescanned it. A run's own test found the cause: not size, but a short run of characters inside one photo's base64 that trips a content filter in the browser automation's paste. PATCH. Page 5.5, helper 3.5.
+
+### Fixed
+- The helper (3.5) breaks each photo's base64 into lines of 76 characters (MIME style), which the filter lets through; the page (5.5) checks the photo checksum over the capture as pasted, then joins the lines before hashing, uploading or counting bytes. Older captures (one line) import as before.
+- A paste that gets no toast at all is no longer retried forever: `references/troubleshooting.md` › Import toasts pastes once more, then checks `refresh/lastImport`, and reports "Helper update needed (3.5+)" or "Paste ignored: no toast" as an error (three pastes at most). SKILL.md step 4 points there.
+
+### Tests
+- sim: the helper's photo base64 comes in lines of 76 that join back to plain base64.
+- page (P18): a real helper capture with lined photo base64 stores the joined bytes.
+
 ## [1.50.0] - 2026-11-25
 **The page tab closes at the end of a run** (B61 follow-up; the owner, Nov 25: "close the page tab at the end"). MINOR: SKILL.md's steps change. No page or helper change.
 

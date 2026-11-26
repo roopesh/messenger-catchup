@@ -2825,7 +2825,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "5.4";
+  const PAGE_VERSION = "5.5";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat */
   const RP = () =>
@@ -11040,6 +11040,11 @@
     const photos = Array.isArray(cap.photos) ? cap.photos : [];
     if (photos.length && (await sha256hex(JSON.stringify(photos))) !== cap.phsha)
       return done("Photo checksum mismatch. Nothing saved.");
+    /* B63: helper 3.5 breaks each photo's base64 into lines (a filter could block the paste otherwise): back to one
+       line before anything else uses it (its hash, the upload, the byte counts) */
+    photos.forEach(ph => {
+      if (ph && typeof ph.b64 === "string") ph.b64 = ph.b64.replace(/\s+/g, "");
+    });
     if (!S.db) return done("The page's data isn't loaded yet; try again in a moment.");
     /* several chats (F1): a capture goes only into the chat it was read from (helper 2.3 and later name it). One that
        doesn't name it (an older helper) goes into the first chat, as before F1,
@@ -11414,7 +11419,7 @@
   /* the helper this page shipped with: npm run sync writes it from assets/helper.user.js's @version. A Chrome is
      behind when its helper is older than this or than versions.helper, whichever is higher: versions.helper is
      written by Claude, and a stale one (v1.35.0 refreshes wrote 2.1 while shipping 2.3) hid every notice. */
-  const HELPER_VERSION = "3.4";
+  const HELPER_VERSION = "3.5";
   const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
   const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
   const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";

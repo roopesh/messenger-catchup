@@ -6922,6 +6922,14 @@ async function photos2() {
         (r18 && r18.msg) +
         ')',
     );
+    // B63: the helper's photo base64 arrives in lines of 76; the stored photo is the joined bytes
+    const ph18 = B.backfill.photos.find(ph => ph.i === 30);
+    const want18 = Buffer.from(ph18.b64.replace(/\s+/g, ''), 'base64').length;
+    const up18 = (await uploads(p)).slice(-1)[0];
+    ok(
+      ph18.b64.includes('\n') && up18 && up18.size === want18,
+      'B63: a photo sent in lines stores its joined bytes (' + (up18 && up18.size) + ' of ' + want18 + ')',
+    );
     const drift = JSON.parse(JSON.stringify(B.backfill));
     drift.msgs = drift.msgs.slice(1).map((m, k) => Object.assign(m, { i: drift.msgs[0].i + k }));
     drift.sha = sha(JSON.stringify(drift.msgs));

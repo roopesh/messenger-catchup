@@ -761,6 +761,16 @@ sim('G: photo backfill scan', { s: 45 }, async b => {
     res && res.stage === 'captured' && first.count === 50 && first.photos.length === 1 && first.photos[0].i === 30,
     'G: first run of 50 with a photo on #30 (' + (res && res.capture) + ')',
   );
+  /* B63: photo base64 goes in lines of 76 (a run inside plain base64 can trip a paste filter); the lines join back to
+     the same bytes */
+  const lines = first.photos[0].b64.split('\n');
+  ok(
+    lines.length > 1 &&
+      lines.slice(0, -1).every(l => l.length === 76) &&
+      lines[lines.length - 1].length <= 76 &&
+      /^[A-Za-z0-9+/=]+$/.test(lines.join('')),
+    'B63: photo base64 broken into lines of 76 (' + lines.length + ' lines)',
+  );
   const stops = first.msgs
     .slice(27, 30)
     .map(m => m.m)
