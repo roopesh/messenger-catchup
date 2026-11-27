@@ -2,6 +2,25 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.63.0] - 2026-11-27
+**A chat and its Facebook group, linked: "With …" in both Stats tabs, and "Probably:" links under chat messages** (F25 stage G2c, #119). MINOR. Page 7.8. This finishes stage G2.
+
+### Added
+- **"With <the other>" in a linked chat's and group's Stats.** A group linked to a chat (its "Goes with a chat", in Add a group or its Settings card) adds a section to the end of both Stats tabs, over the Stats timeframe. It has the design's seven views:
+  - **One timeline:** the chat's messages and the group's posts and comments per day (or hour, week, month), stacked, with a table.
+  - **People in both,** matched by full name: each person's messages, posts and comments, marked "both", "<chat> only" or "<group> only". Each row opens their newest message and post or comment. Below: the share of the group's comments written by the chat's members.
+  - **Chat to group:** the group posts named in the chat, certain and probably counted apart, and the typical gap from the post to the message (from posts known to the hour). Each post lists the messages naming it and how many replies they drew in the chat.
+  - **Deals,** per seller: the chat summary's deals (posted, sold in the chat, posted to sold), the person's posts in the group and those marked sold (the post or the author's comment starts "Sold", says "is sold", or has SOLD in capitals), and their chat deals linked to a group post (certain and probably apart). Asked and agreed prices aren't stored, so they aren't shown.
+  - **When each is busy:** G2b's weekday-by-hour map for each place.
+  - **You:** your messages, posts and comments; what was asked of you in each place and whether you answered; your median reply time where it can be worked out. What's still unanswered opens from the list.
+  - **Shared topics:** words in at least two messages and two posts or comments, with each side's count. On the chat, a word opens its Word trends.
+  - Show has a switch for the section. Unlinked groups and pages of chats only look as before.
+- **"Probably:" under a chat message.** When a message says something is up in the group without a link ("tent's up in the group", "posted it in the group", "on <the group's name>"), Messages shows "Probably: Gear #p12 · Ana Alvarez's post “…”", which opens the post. The match needs all three: the sender's full name is the post's author's; the post's estimated time is from 6 hours before the message to 1 hour after (a day later for a post Facebook dates only by the day); and the post shares a word with the message or the message it replies to, leaving out common and selling words. The most shared words wins, then the nearest in time. Nothing shows when nothing matches. A message that carries the post's address shows "In the group:" instead, and counts as certain.
+- The page works all of this out from what's stored, with no Claude call. The other side is read when needed and again after a minute.
+
+### Tests
+- page (groupsLinked, new): Camera Club linked to Gear Swap over a fixed range. Covers the certain and Probably lines under messages, with near misses: another person, and a post days earlier. Opening the post. What counts as saying it's in the group, a post's address (wrapped by Messenger too), "sold" (not a rule like "mark sold items"), and the words matched. All seven views on the chat's Stats, then the same figures on the group's Stats. The Show switch. A shared word opening Word trends. The section fits at 1000 and 390 px. Unlinking in Settings removes it all. A page of chats only is unchanged.
+
 ## [1.62.1] - 2026-11-27
 **The summary across chats takes groups** (#117, filed by a scheduled run on the owner's page). PATCH. No page or helper change.
 
