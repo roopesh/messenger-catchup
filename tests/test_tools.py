@@ -163,6 +163,13 @@ class TestDocsCheck(unittest.TestCase):
         self.assertIn("`Docs:", read("CLAUDE.md"))
 
 
+class TestGroupFirstReadClearsReason(unittest.TestCase):
+    """A group's first read leaves no stale failure note (Nov 27: the owner's group kept "keeps losing its posts")"""
+
+    def test_groups_reference_clears_reason(self):
+        self.assertIn('`state:"active", reason:null`', in_skill("references", "groups.md"))
+
+
 class TestRefreshPhraseGuard(unittest.TestCase):
     """B73: a run wrote a group's "refresh <name>" over the page's refreshPhrase; only setup sets it"""
 
