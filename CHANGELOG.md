@@ -2,6 +2,18 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.62.1] - 2026-11-27
+**The summary across chats takes groups** (#117, filed by a scheduled run on the owner's page). PATCH. No page or helper change.
+
+### Fixed
+- `run-plan` orders and refreshes a Facebook group with the chats, so a run's `--done` carries the group's key, but `catchup.py allchats` refused it ("no chat 'pa' on this page"). The run left the group out, and the summary couldn't say whether the group was refreshed.
+  - `allchats` now takes group keys in `--done`/`--new`/`--failed`/`--later`, records each group's state, and accepts a group's citations `[key#pN]` and `[key#pN/cM]`. The page's summary already renders those (G2a).
+  - It refuses a chat cited as a post, or a group cited as a message.
+- `references/chats.md` says so.
+
+### Tests
+- Python (TestAllChatsSummary): a group in the run gets its state and can be cited; mismatched citations are refused. A group not reached is now "skipped", where before it was left out.
+
 ## [1.62.0] - 2026-11-27
 **Stats and By day for a Facebook group, and groups in All chats' Stats and By day** (F25 stage G2b, #116). MINOR. Page 7.7.
 

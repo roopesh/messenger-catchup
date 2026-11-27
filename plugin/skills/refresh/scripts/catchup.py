@@ -520,8 +520,9 @@ def run_plan_cmd(meta_file, skipped_file, done=(), started=None, stop=False, sch
 ALLSUM_POINTS = 10  # the summary across chats: at most this many points
 ALLSUM_WORDS = 45  # words in one point
 ALLSUM_HEAD = 30  # characters in a point's heading
-_CITE_GROUP = re.compile(r"\[([^\[\]]*#\s*\d+[^\[\]]*)\]")
-_CITE_PART = re.compile(r"^\s*([A-Za-z0-9_.~:@+-]*)\s*#\s*(\d+)\s*$")
+_CITE_GROUP = re.compile(r"\[([^\[\]]*#\s*p?\d+[^\[\]]*)\]")
+# a chat's message [key#n], or a group's post or comment [key#pN] / [key#pN/cM] (#117)
+_CITE_PART = re.compile(r"^\s*([A-Za-z0-9_.~:@+-]*)\s*#\s*(?:(p)(\d+)(?:/c\d+)?|()(\d+))\s*$")
 
 
 def allchats_cmd(meta_file, draft_file, done=(), new=(), failed=(), later=(), started=None):
@@ -530,13 +531,14 @@ def allchats_cmd(meta_file, draft_file, done=(), new=(), failed=(), later=(), st
     the chats the run refreshed or tried (run-plan's --done), --new: those of them with new messages, --failed: those
     that failed, --later: chats not due yet (run-plan's `later`). DRAFT.json {"points": [{"h": short heading, "t": the
     point, citing [key#n]}]}: 1 to ALLSUM_POINTS points, each at most ALLSUM_WORDS words with at least one citation, every
-    citation [key#n] (or [key#n, key#m]) with the key of a chat on the page, never a bare [#n] (numbers restart in each
-    chat). Prints {"doc": the document to set, "write": "allchats/summary"}; each chat's state in that run: "new",
+    citation [key#n] (or [key#n, key#m]) with the key of a chat on the page, or [key#pN] / [key#pN/cM] for a group's post
+    or comment, never a bare [#n] (numbers restart in each chat). Groups count like chats in --done and the states
+    (#117: run-plan orders and refreshes them with the chats). Prints {"doc": the document to set, "write": "allchats/summary"}; each chat's state in that run: "new",
     "nothing" (refreshed, nothing new), "failed", "later" (not due), "paused", or "skipped" (not reached: the time limit,
     or a failure that stopped the run). With no chat in --new: {"doc": null} (the summary stays as it is)."""
     meta = _load(meta_file)
     draft = _load(draft_file)
-    cs = {k: c for k, c in chats_of(meta).items() if not is_group(c)}
+    cs = chats_of(meta)
     done, new, failed, later = (list(dict.fromkeys(k for k in x if k)) for x in (done, new, failed, later))
     for k in done + new + failed + later:
         assert k in cs, "allchats: no chat %r on this page (its keys: %s)" % (k, ", ".join(sorted(cs)))
@@ -560,8 +562,13 @@ def allchats_cmd(meta_file, draft_file, done=(), new=(), failed=(), later=(), st
             for part in g.split(","):
                 m = _CITE_PART.match(part)
                 assert m, "allchats: point %d: %r isn't a citation like [cam#412]" % (n, "[" + g + "]")
-                assert m.group(1), "allchats: point %d: a bare #%s; write [key#%s]" % (n, m.group(2), m.group(2))
+                num = m.group(3) or m.group(5)
+                assert m.group(1), "allchats: point %d: a bare #%s; write [key#%s]" % (n, num, num)
                 assert m.group(1) in cs, "allchats: point %d cites %s, not a chat on this page" % (n, m.group(1))
+                assert bool(m.group(2)) == is_group(cs[m.group(1)]), (
+                    "allchats: point %d: %r: a group's post is [key#pN] or [key#pN/cM], a chat's message [key#n]"
+                    % (n, "[" + g + "]")
+                )
         p = {"t": t}
         h = x.get("h")
         if h is not None:

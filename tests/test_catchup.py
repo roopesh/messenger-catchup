@@ -6057,10 +6057,10 @@ class TestAllChatsSummary(unittest.TestCase):
         self.assertEqual(out["write"], "allchats/summary")
         doc = out["doc"]
         self.assertEqual(
-            doc["chats"], {"gear": "new", "cam": "new", "film": "failed", "book": "later", "hike": "paused"}
+            doc["chats"],
+            {"gear": "new", "cam": "new", "film": "failed", "book": "later", "hike": "paused", "grp": "skipped"},
         )
         self.assertNotIn("old", doc["chats"], "a hidden chat isn't in it")
-        self.assertNotIn("grp", doc["chats"], "a group isn't in it")
         self.assertEqual([p["h"] for p in doc["points"]], ["Needs you", "Plans"])
         self.assertEqual(doc["run"], "2026-11-26T17:50:00Z")
         self.assertEqual(doc["at"], "2026-11-26T18:00:00Z")
@@ -6070,6 +6070,18 @@ class TestAllChatsSummary(unittest.TestCase):
         self.assertEqual(out["doc"]["chats"]["gear"], "nothing")
         self.assertEqual(out["doc"]["chats"]["film"], "skipped")
         self.assertEqual(out["doc"]["chats"]["book"], "skipped")
+
+    def test_117_a_group_in_the_run_counts_like_a_chat_and_can_be_cited(self):
+        """#117: run-plan orders the group with the chats, so --done carries its key; allchats stopped on it"""
+        pts = [{"h": "Deals", "t": "Ana listed a tent in the group [grp#p12] and Ben offered 100 [grp#p12/c3, cam#9]."}]
+        out = self.run_it(pts, done=["gear", "cam", "grp"], new=["cam", "grp"])
+        self.assertEqual(out["doc"]["chats"]["grp"], "new")
+        self.assertEqual(out["doc"]["chats"]["gear"], "nothing")
+        out = self.run_it(done=["gear", "grp"], new=["gear"])
+        self.assertEqual(out["doc"]["chats"]["grp"], "nothing")
+        for bad in ("x [grp#12]", "x [cam#p12]", "x [cam#9/c2]"):
+            with self.assertRaises(AssertionError, msg=bad):
+                self.run_it([{"t": bad}], done=["gear"], new=["gear"])
 
     def test_no_new_messages_anywhere_writes_nothing(self):
         out = self.run_it(done=["gear", "cam"], new=[])
