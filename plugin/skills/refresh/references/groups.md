@@ -8,7 +8,7 @@ Read this when `meta/chat.chats` holds an entry with `kind:"group"` and a run re
 - Groups need the helper 3.1 or later (`data-mc-helper`), installed or injected (SKILL.md › Helper).
 
 ## The entry (`meta/chat.chats.KEY`)
-`{kind:"group", name, tag, color, order, state, url, group (the id or name in its address), chat? (a chat key it goes with), start:{days} (the first read, 3, 7 or 30), read:"all"|"mine", rollup (Show in All), addedAt, reason?}`. The page writes it (Settings › Add a group) as `pending`.
+`{kind:"group", name, tag, color, order, state, url, group (the id or name in its address), chat? (a chat key it goes with), start:{days} (the first read, 3, 7 or 30), read:"all"|"mine", rollup (Show in All), addedAt, reason?}`. The page writes it (Settings › Add a group) as `pending`; `chat`, `read` and `rollup` can be changed later on the group's Settings screen, each a write of that one field.
 
 ## A refresh of a group
 Use one run id (`run`, e.g. `g` + the current time in ms) for every command of this group's refresh, and the bridge from SKILL.md › Helper. Navigation ends a running command, so start each command after its page has loaded.

@@ -2525,29 +2525,197 @@
     border-top: 1px solid var(--line);
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -8px 28px rgb(0 0 0 / 0.22);
-    padding: 16px max(16px, env(safe-area-inset-left, 0px)) calc(24px + env(safe-area-inset-bottom, 0px));
+    padding: 0 max(16px, env(safe-area-inset-left, 0px)) calc(24px + env(safe-area-inset-bottom, 0px));
   }
   .sheet > * {
     max-width: 760px;
     margin-inline: auto;
   }
+  /* F43: the heading and Close stay at the top while the sheet scrolls (the sheet has no top padding, so the sticky
+     head starts at its very top either way) */
   .sheet-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 8px;
-    margin-bottom: 12px;
+    padding: 16px 0 10px;
+    margin-bottom: 4px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
   }
+  /* F43: Settings is a list, then a screen per entry; on a phone the screen replaces the list, on a wide sheet the
+     two sit side by side */
   #set-body {
     display: grid;
     gap: 14px;
   }
+  .set-list,
+  .set-pane {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    min-width: 0;
+  }
+  .set-pane {
+    gap: 12px;
+  }
+  @media (max-width: 859.98px) {
+    #set-body.split:not(.scr) > .set-pane,
+    #set-body.split.scr > .set-list {
+      display: none;
+    }
+  }
+  .set-sec {
+    margin: 10px 0 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  button.set-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: 10px;
+    row-gap: 2px;
+    align-items: center;
+    width: 100%;
+    min-height: 48px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  button.set-row::after {
+    content: "›";
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    font-size: 1.2rem;
+    color: var(--muted);
+  }
+  button.set-row.on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+  .set-row > .ctag,
+  .set-row > .lead {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+  .set-row > .lead {
+    min-width: 1ch;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .set-row > .nm {
+    grid-column: 2;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .set-row > .sub {
+    grid-column: 2;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .badge {
+    padding: 0 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--fg);
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+  .badge.warn {
+    border-color: var(--warn);
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  #set-back {
+    justify-self: start;
+  }
+  .set-pane h3:focus,
+  #settings-h:focus {
+    outline: none;
+  }
+  .set-pane h3:focus-visible,
+  #settings-h:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .ordlist {
+    display: grid;
+    gap: 6px;
+  }
+  .ordrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg);
+  }
+  .ordrow > .nm {
+    flex: 1 1 8rem;
+    min-width: 0;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .ordrow > .btns {
+    margin-left: auto;
+  }
+  .chkrow {
+    display: grid;
+    gap: 4px;
+  }
+  @media (min-width: 560px) {
+    .set-pane .fld.kv {
+      grid-template-columns: 9.5rem minmax(0, 1fr);
+      align-items: center;
+      column-gap: 12px;
+    }
+    .set-pane .fld.kv > .hint {
+      grid-column: 2;
+    }
+  }
+  .set-pane .hint {
+    margin: 0;
+  }
+  @media (min-width: 860px) {
+    #settings > * {
+      max-width: 1000px;
+    }
+    #set-body.split {
+      grid-template-columns: 250px minmax(0, 1fr);
+      align-items: start;
+      gap: 24px;
+    }
+    #set-body.split > .set-pane {
+      padding-left: 24px;
+      border-left: 1px solid var(--line);
+    }
+    #set-back {
+      display: none;
+    }
+  }
   .chatrow,
   .addform {
     display: grid;
-    gap: 8px;
-    border-top: 1px solid var(--line);
-    padding-top: 12px;
+    gap: 10px;
   }
   .fields {
     display: grid;
@@ -2571,12 +2739,6 @@
     border-radius: 8px;
     background: var(--bg);
     color: var(--fg);
-  }
-  .fld:has(> button) {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-  .fld:has(> button) label {
-    grid-column: 1 / -1;
   }
   label.chk {
     display: flex;
@@ -3118,7 +3280,7 @@
 
 <section class="sheet" id="settings" aria-labelledby="settings-h" hidden>
   <div class="sheet-head">
-    <h2 id="settings-h">Your chats</h2>
+    <h2 id="settings-h" tabindex="-1">Settings</h2>
     <button type="button" class="secondary" id="settings-close">Close</button>
   </div>
   <div id="set-body"></div>
@@ -3127,7 +3289,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "7.8";
+  const PAGE_VERSION = "7.9";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -18223,6 +18385,15 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       const t = c ? chatLine(c) : "";
       if (c && n.textContent !== t) n.textContent = t;
     });
+    /* F43: Settings' rows (their line and chips) and the open screen's tag */
+    document.querySelectorAll("#set-body .set-row[data-chat]").forEach(b => {
+      const c = S.chats.find(x => x.key === b.dataset.chat);
+      if (c) rowFill(b, c);
+    });
+    document.querySelectorAll("#set-body .chatrow[data-chat] > .chathead > .ctag").forEach(t => {
+      const c = S.chats.find(x => x.key === t.parentElement.parentElement.dataset.chat);
+      if (c && t.textContent !== c.tag) t.textContent = c.tag;
+    });
     if (S.meta && !S.msgs.length && CUR && CUR.state === "pending") renderHeader();
   }
   function tagChip(c) {
@@ -18623,7 +18794,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       if (it.key === S.view) b.setAttribute("aria-current", "true");
       b.onclick = () => {
         closePicker();
-        if (it.key === "add") openSettings(true);
+        if (it.key === "add") openSettings("add");
         else if (it.key === "all") {
           S.viewPicked = true;
           S.view = "all";
@@ -18778,7 +18949,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     renderAll();
   }
 
-  /* ---------- Settings: Your chats ----------
+  /* ---------- Settings (F43: a list, then a screen per row) ----------
      Everything here works without Claude: the page writes meta/chat.chats (and outboxAuto), and the next refresh of a
      chat does the rest (an added chat's first capture, a removed one's skip). Page writes can't be pinned, so each
      write names one chat's fields and merges. */
@@ -18790,6 +18961,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     [3, "Posts from the last 3 days"],
     [7, "Posts from the last 7 days"],
     [30, "Posts from the last 30 days"],
+  ];
+  const GROUP_READ = [
+    ["all", "All new posts and comments"],
+    ["mine", "Only posts I'm in, and mentions of me"],
   ];
   const HISTORY = [
     [1, "The last day"],
@@ -18811,32 +18986,72 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     Object.values(upd).forEach(v => delete v.key);
     await S.rawDb.doc("meta/chat").update({ chats: upd });
   }
-  function openSettings(add) {
+  /* F43: Settings is a list (For all chats, a row per chat and group in refresh order, Change the order, the Add rows),
+     then a screen per row; on a wide sheet the two sit side by side. One screen is open at a time: S.setScreen is null
+     (the list), "all", "order", "add" (Add a chat), "addg" (Add a group) or an entry's key. It lives in state because
+     the sheet rebuilds from store snapshots. Screens switch in code: no #hash and no history entries (the artifact
+     viewer handles links and navigation its own way, v1.26.1). */
+  S.setScreen = null;
+  S.setBuilding = false; /* a rebuild is emptying the sheet: a field's blur then saves nothing */
+  const setWide = () => matchMedia("(min-width: 860px)").matches;
+  function openSettings(scr) {
+    S.setScreen = scr || null;
+    S.rmOpen = null;
     $("#settings").hidden = false;
+    $("#settings").scrollTop = 0;
     $("#settings-open").setAttribute("aria-expanded", "true");
-    renderSettings();
-    const f = add ? $("#add-link") : $("#settings-close");
-    if (f) {
-      f.focus();
-      if (add) f.scrollIntoView({ block: "center" });
-    }
+    renderSettings(true);
+    const f = S.setScreen ? $("#set-scr-h") : $("#settings-close");
+    if (f) f.focus();
   }
   function closeSettings() {
     $("#settings").hidden = true;
     $("#settings-open").setAttribute("aria-expanded", "false");
     $("#settings-open").focus();
   }
-  $("#settings-open").onclick = () => ($("#settings").hidden ? openSettings(false) : closeSettings());
+  /* to a screen (null: the list). A field being typed in loses focus first, so a tag saves (on blur) before the rebuild.
+     Focus goes to the new screen's heading; back on the list, to the row it came from */
+  function setGo(scr) {
+    const box = $("#set-body");
+    const ae = document.activeElement;
+    if (ae && box && box.contains(ae) && typeof ae.blur === "function") ae.blur();
+    const from = S.setScreen;
+    S.setScreen = scr || null;
+    S.rmOpen = null;
+    renderSettings(true);
+    if (S.setScreen) {
+      const wide = setWide();
+      if (!wide) $("#settings").scrollTop = 0;
+      const h = $("#set-scr-h");
+      if (h) h.focus({ preventScroll: !wide });
+    } else {
+      const r = (from && document.getElementById("set-row-" + from)) || $("#settings-h");
+      if (r) r.focus();
+    }
+  }
+  $("#settings-open").onclick = () => ($("#settings").hidden ? openSettings(null) : closeSettings());
   $("#settings-close").onclick = closeSettings;
+  /* Escape goes back to the list first, then closes */
   $("#settings").addEventListener("keydown", e => {
-    if (e.key === "Escape") closeSettings();
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    if (S.setScreen) setGo(null);
+    else closeSettings();
   });
   function setNote(k, t, err) {
     S.setNotes[k] = { t, err: !!err };
     const p = document.getElementById("set-st-" + k);
-    if (!p) return renderSettings();
+    if (!p) return S.setBuilding || renderSettings();
     p.textContent = t;
     p.classList.toggle("err", !!err);
+  }
+  /* the line under a screen's controls ("Saved.", or what went wrong) */
+  function setNoteEl(k) {
+    const n = S.setNotes[k];
+    const p = el("p", "note set-st" + (n && n.err ? " err" : ""), n ? n.t : "");
+    p.setAttribute("role", "status");
+    p.id = "set-st-" + k;
+    return p;
   }
   function field(id, label, input) {
     input.id = id;
@@ -18844,6 +19059,33 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const l = el("label", null, label);
     l.htmlFor = id;
     w.append(l, input);
+    return w;
+  }
+  /* a screen's setting: a short label beside its control (above it on a phone), what it does said once under it */
+  function kv(id, label, input, hint) {
+    const w = field(id, label, input);
+    w.classList.add("kv");
+    if (hint) {
+      const p = el("p", "note hint", hint);
+      p.id = id + "-hint";
+      input.setAttribute("aria-describedby", p.id);
+      w.append(p);
+    }
+    return w;
+  }
+  function chkRow(id, label, input, hint) {
+    input.type = "checkbox";
+    input.id = id;
+    const w = el("div", "chkrow");
+    const l = el("label", "chk");
+    l.append(input, " " + label);
+    w.append(l);
+    if (hint) {
+      const p = el("p", "note hint", hint);
+      p.id = id + "-hint";
+      input.setAttribute("aria-describedby", p.id);
+      w.append(p);
+    }
     return w;
   }
   function autoSelect(id, val) {
@@ -18862,11 +19104,29 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     return s;
   }
   const autoVal = v => (v === "on" ? true : v === "off" ? false : null);
-  function renderSettings() {
+  /* one field of one entry, merged into meta/chat.chats (each write names only what changed) */
+  async function saveOne(c, patch) {
+    try {
+      await saveChats({ [c.key]: patch });
+      setNote(c.key, "Saved.");
+      return true;
+    } catch (e) {
+      setNote(c.key, "Couldn't save that. Try again.", true);
+      return false;
+    }
+  }
+  /* the screen shown, or null when it's gone (its entry deleted, the order with nothing left to move) */
+  function setScreenOk(s) {
+    if (s === "all" || s === "add" || s === "addg") return s;
+    if (s === "order") return movableChats().length > 1 ? s : null;
+    return s && S.chats.some(c => c.key === s && c.state !== "deleted") ? s : null;
+  }
+  function renderSettings(force) {
     const box = $("#set-body");
     if (!box || $("#settings").hidden) return;
     const ae = document.activeElement;
     if (
+      !force &&
       ae &&
       box.contains(ae) &&
       (ae.tagName === "INPUT" || ae.tagName === "SELECT") &&
@@ -18874,7 +19134,28 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     )
       return settingsInPlace();
     const keep = ae && box.contains(ae) && ae.id ? ae.id : null;
+    const inPane = !!(ae && box.contains(ae) && ae.closest(".set-pane"));
+    const was = S.setScreen;
+    S.setBuilding = true;
+    try {
+      buildSettings(box);
+    } finally {
+      S.setBuilding = false;
+    }
+    /* a rebuild keeps keyboard focus on what had it (a Move button that reached the end: its pair); when that went (a
+       closed Remove box), focus goes to the screen's heading, and when the screen itself went (its entry deleted), to
+       the sheet's */
+    const kept = keep && document.getElementById(keep);
+    const lost = !ae || ae === document.body;
+    if (kept) {
+      const pair = document.getElementById(keep.replace(/^mv-(up|dn)/, (x, d) => "mv-" + (d === "up" ? "dn" : "up")));
+      (kept.disabled && pair ? pair : kept).focus();
+    } else if (was && !S.setScreen && (inPane || lost)) $("#settings-h").focus();
+    else if (inPane && S.setScreen && $("#set-scr-h")) $("#set-scr-h").focus();
+  }
+  function buildSettings(box) {
     box.textContent = "";
+    box.classList.remove("split", "scr");
     if (S.canWrite === false) {
       box.append(el("p", "note", "Only people who can edit this page can add, remove or change its chats."));
       return;
@@ -18883,18 +19164,130 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       box.append(el("p", "note", "The page's data isn't loaded in this view."));
       return;
     }
-    const note = k => {
-      const n = S.setNotes[k];
-      const p = el("p", "note set-st" + (n && n.err ? " err" : ""), n ? n.t : "");
-      p.setAttribute("role", "status");
-      p.id = "set-st-" + k;
-      return p;
+    S.setScreen = setScreenOk(S.setScreen);
+    box.classList.add("split");
+    box.classList.toggle("scr", !!S.setScreen);
+    box.append(setList(), setPane());
+  }
+  /* the list: For all chats, each chat and group in refresh order with what differs from the defaults, then the order
+     and the Add rows */
+  function setList() {
+    const w = el("div", "set-list");
+    w.append(setRow("all", { lead: "", name: "For all chats", sub: allSub() }));
+    const list = S.chats.filter(c => c.state !== "deleted");
+    w.append(el("h3", "set-sec", list.some(isGroup) ? "Chats and groups" : "Chats"), setNoteEl("list"));
+    list.forEach(c => w.append(setRow(c.key, { c })));
+    if (movableChats().length > 1)
+      w.append(setRow("order", { lead: "", name: "Change the order", sub: homeChat().name + " stays first" }));
+    w.append(
+      setRow("add", { lead: "+", name: "Add a chat", sub: "Paste a Messenger link" }),
+      setRow("addg", { lead: "+", name: "Add a group", sub: "Paste a Facebook group link" }),
+    );
+    return w;
+  }
+  function setRow(scr, o) {
+    const b = el("button", "set-row");
+    b.type = "button";
+    b.id = "set-row-" + scr;
+    if (S.setScreen === scr) {
+      b.classList.add("on");
+      b.setAttribute("aria-current", "true");
+    }
+    b.onclick = () => setGo(scr);
+    if (o.c) {
+      b.dataset.chat = o.c.key;
+      rowFill(b, o.c);
+    } else b.append(el("span", "lead", o.lead), el("span", "nm", o.name), el("span", "sub", o.sub));
+    return b;
+  }
+  const allSub = def =>
+    "Replies: " +
+    (autoFor(null) ? "send automatically" : "wait for my OK") +
+    (multi() ? " · " + lc1(everyLabel(def ?? pageEvery())) : "");
+  /* a row's line: what it is and how it stands, then a chip for each setting that differs from the defaults */
+  function rowParts(c) {
+    const bits = [],
+      chips = [];
+    if (c.home) bits.push("First chat");
+    if (isGroup(c)) {
+      const w = c.chat && S.chats.find(x => x.key === c.chat && isShown(x));
+      bits.push(w ? "Group · with " + w.name : "Group");
+    }
+    const m = metaOf(c) || {};
+    if (oldSkill(c)) chips.push(["update the plugin", 1]);
+    else if (c.state === "pending") {
+      if (c.reason) chips.push(["couldn't add it yet", 1]);
+      else bits.push("waiting for its first refresh");
+    } else if (c.state === "paused") chips.push(["paused", 1]);
+    else if (c.state === "hidden") chips.push(["hidden", 0]);
+    else {
+      bits.push(
+        m.lastRefresh ? "refreshed " + refreshShown(m.lastRefresh, m.tz || (S.page || {}).tz) : "not refreshed yet",
+      );
+      if (skippedKeys().includes(c.key)) chips.push(["skipped in the last run", 1]);
+    }
+    if (!isGroup(c) && typeof c.auto === "boolean" && c.auto !== autoFor(null))
+      chips.push([c.auto ? "replies: automatic" : "replies: wait for my OK", 0]);
+    const ev = everyNum(c.every);
+    if (!c.home && multi() && ev != null && ev !== pageEvery()) chips.push([lc1(everyLabel(ev)), 0]);
+    if (!isGroup(c) && !c.home && c.photos === false) chips.push(["no photos", 0]);
+    if (isGroup(c) && c.read === "mine") chips.push(["only mine", 0]);
+    if (isGroup(c) && c.rollup === false) chips.push(["not in All", 0]);
+    const t = bits.join(" · ");
+    return { text: t.charAt(0).toUpperCase() + t.slice(1), chips };
+  }
+  /* (re)writes a row's tag, name and line, only when they changed (refreshChatLines calls it on every status change) */
+  function rowFill(b, c) {
+    const p = rowParts(c);
+    const sig = JSON.stringify([c.tag, c.color, c.name, p]);
+    if (b.dataset.sig === sig) return;
+    b.dataset.sig = sig;
+    b.textContent = "";
+    const sub = el("span", "sub");
+    if (p.text) sub.append(el("span", null, p.text));
+    p.chips.forEach(([t, w]) => sub.append(el("span", "badge" + (w ? " warn" : ""), t)));
+    b.append(tagChip(c), el("span", "nm", c.name), sub);
+  }
+  /* the screen open: Back (a phone; on a wide sheet the list stays beside it), its heading, its settings */
+  function setPane() {
+    const w = el("div", "set-pane");
+    const s = S.setScreen;
+    if (!s) {
+      w.append(el("p", "note", "Choose a row on the left to see and change its settings."));
+      return w;
+    }
+    w.setAttribute("role", "region");
+    w.setAttribute("aria-labelledby", "set-scr-h");
+    const back = el("button", "secondary", "‹ Settings");
+    back.type = "button";
+    back.id = "set-back";
+    back.setAttribute("aria-label", "Back to Settings");
+    back.onclick = () => setGo(null);
+    w.append(back);
+    const h = t => {
+      const x = el("h3", null, t);
+      x.id = "set-scr-h";
+      x.tabIndex = -1;
+      x.dataset.scr = s;
+      return x;
     };
-    /* the page default for replies */
-    const dl = el("label", "chk");
+    if (s === "all") w.append(h("For all chats"), ...allScreen());
+    else if (s === "order") w.append(h("Change the order"), ...orderScreen());
+    else if (s === "add") w.append(h("Add a chat"), addForm(setNoteEl));
+    else if (s === "addg") w.append(h("Add a group"), groupForm(setNoteEl));
+    else
+      w.append(
+        entryScreen(
+          S.chats.find(c => c.key === s),
+          h,
+        ),
+      );
+    return w;
+  }
+  /* For all chats: the page's defaults (How often only with several chats: a one-chat page's runs don't read it) */
+  function allScreen() {
+    const out = [];
     const dc = el("input");
-    dc.type = "checkbox";
-    dc.id = "set-auto";
     dc.checked = autoFor(null);
     dc.onchange = async () => {
       try {
@@ -18909,9 +19302,15 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         setNote("page", "Couldn't save that. Try again.", true);
       }
     };
-    dl.append(dc, " Send queued replies automatically (all chats, unless a chat below says otherwise)");
-    box.append(dl, note("page"));
-    /* How often, the page default (only with several chats: a one-chat page's runs don't read it) */
+    out.push(
+      chkRow(
+        "set-auto",
+        "Send queued replies automatically",
+        dc,
+        "Every chat, unless its own screen says otherwise. Otherwise Claude asks you before posting each reply.",
+      ),
+      setNoteEl("page"),
+    );
     if (multi()) {
       const es = everySelect("set-every", pageEvery(), false);
       es.onchange = async () => {
@@ -18923,151 +19322,203 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
           setNote("every", "Couldn't save that. Try again.", true);
         }
       };
-      box.append(
-        field("set-every", "How often scheduled runs refresh each chat", es),
-        el(
-          "p",
-          "note",
+      out.push(
+        kv(
+          "set-every",
+          "Scheduled refresh",
+          es,
           /* the page's own phrase: RP() names the chat on screen when it's an added one */
-          "A refresh you ask for (“" +
+          "How often scheduled runs refresh each chat. A refresh you ask for (“" +
             ((S.page || {}).refreshPhrase || "refresh my catch-up") +
             "”) always refreshes every chat.",
         ),
-        note("every"),
+        setNoteEl("every"),
       );
     }
-    /* the order: the first chat always first, the others moved with Move up and Move down (or dragged); a run still
-       takes the chats the last one didn't reach first and pending chats last (run-plan) */
+    return out;
+  }
+  /* Change the order: the first chat always first, the others moved with Move up and Move down (or dragged); a run still
+     takes the chats the last one didn't reach first and pending chats last (run-plan) */
+  function orderScreen() {
     const movable = movableChats();
-    if (movable.length > 1)
-      box.append(
+    const home = homeChat();
+    const list = el("div", "ordlist");
+    const hr = el("div", "ordrow");
+    hr.dataset.chat = home.key;
+    hr.append(tagChip(home), el("span", "nm", home.name), el("span", "note", "always first"));
+    list.append(hr);
+    movable.forEach((c, at) => {
+      const r = el("div", "ordrow");
+      r.dataset.chat = c.key;
+      r.append(tagChip(c), el("span", "nm", c.name));
+      dragRow(r, c);
+      const acts = el("span", "btns");
+      [
+        ["up", "Move up", -1],
+        ["dn", "Move down", 1],
+      ].forEach(([id, t, d]) => {
+        const b = el("button", "secondary", t);
+        b.type = "button";
+        b.onclick = () => moveChat(c.key, d);
+        /* Enter and Space move on key-down: Space normally acts on key-up, and the store's echo of an earlier move
+           can redraw the row between the two, so a quick second press was lost */
+        b.onkeydown = e => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          if (!b.disabled) moveChat(c.key, d);
+        };
+        b.id = "mv-" + id + "-" + c.key;
+        b.setAttribute("aria-label", t + ": " + c.name);
+        b.disabled = !movable[at + d];
+        acts.append(b);
+      });
+      r.append(acts);
+      list.append(r);
+    });
+    return [
+      el(
+        "p",
+        "note",
+        home.name +
+          " always refreshes first. Use Move up and Move down to set the order of the others. A run starts with any chat the last one didn't reach, and a new chat's first refresh comes after the rest.",
+      ),
+      list,
+      setNoteEl("order"),
+    ];
+  }
+  /* an entry's own screen: its tag, line and settings (the ones set when adding too), then Pause and Remove */
+  function entryScreen(c, h) {
+    const row = el("div", "chatrow");
+    row.dataset.chat = c.key;
+    const hd = el("div", "chathead");
+    hd.append(tagChip(c), h(c.name));
+    row.append(hd, el("p", "note chatline", chatLine(c)));
+    const kind = isGroup(c) ? "group" : "chat";
+    const ctl = el("div", "fields");
+    /* the tag saves on Enter or when the field loses focus, with saveTag's checks */
+    const ti = el("input");
+    ti.type = "text";
+    ti.maxLength = TAG_MAX;
+    ti.autocomplete = "off";
+    ti.value = c.tag;
+    let last = c.tag;
+    ti.addEventListener("keydown", e => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      last = ti.value.trim();
+      saveTag(c, ti.value);
+    });
+    ti.addEventListener("blur", () => {
+      if (S.setBuilding || ti.value.trim() === last) return;
+      last = ti.value.trim();
+      saveTag(c, ti.value);
+    });
+    ctl.append(
+      kv(
+        "tag-" + c.key,
+        "Tag",
+        ti,
+        "Up to " +
+          TAG_MAX +
+          " letters, shown beside this " +
+          kind +
+          "'s " +
+          (isGroup(c) ? "posts" : "messages") +
+          " and citations. Saved when you press Enter or leave the field.",
+      ),
+    );
+    if (isGroup(c)) {
+      ctl.append(withChatField(c));
+      const rd = el("select");
+      GROUP_READ.forEach(([v, t]) => {
+        const o = el("option", null, t);
+        o.value = v;
+        rd.append(o);
+      });
+      rd.value = c.read === "mine" ? "mine" : "all";
+      rd.onchange = () => saveOne(c, { read: rd.value });
+      ctl.append(kv("read-" + c.key, "Read", rd, "What the next refresh reads from this group."));
+    } else {
+      const as = autoSelect("auto-" + c.key, c.auto);
+      as.onchange = () => saveOne(c, { auto: autoVal(as.value) });
+      ctl.append(kv("auto-" + c.key, "Queued replies", as));
+    }
+    if (multi() && c.home) ctl.append(el("p", "note", "Scheduled runs always refresh this chat: it's the first chat."));
+    else if (multi()) {
+      const es = everySelect("every-" + c.key, everyNum(c.every), true);
+      es.onchange = async () => {
+        if (await saveOne(c, { every: es.value === "" ? null : Number(es.value) })) settingsInPlace();
+      };
+      ctl.append(kv("every-" + c.key, "Scheduled refresh", es, "How often scheduled runs refresh this " + kind + "."));
+    }
+    if (isGroup(c)) {
+      const ro = el("input");
+      ro.checked = c.rollup !== false;
+      ro.onchange = () => saveOne(c, { rollup: ro.checked });
+      ctl.append(
+        chkRow(
+          "rollup-" + c.key,
+          "Show in All",
+          ro,
+          "Its Needs you items join All's. Its card shows on All either way.",
+        ),
+      );
+    }
+    if (!isGroup(c) && !c.home) {
+      const ph = el("input");
+      ph.checked = c.photos !== false;
+      ph.onchange = () => saveOne(c, { photos: ph.checked });
+      ctl.append(
+        chkRow(
+          "photos-" + c.key,
+          "Store its photos",
+          ph,
+          "Off: the next refreshes store none of its new photos. Photos already stored stay.",
+        ),
+      );
+    }
+    row.append(ctl, setNoteEl(c.key));
+    const acts = el("div", "btns");
+    const act = (t, fn, id) => {
+      const b = el("button", "secondary", t);
+      b.type = "button";
+      b.onclick = fn;
+      if (id) b.id = id;
+      acts.append(b);
+      return b;
+    };
+    /* one id whatever it says, so focus stays on it when Pause turns into Resume */
+    if (c.state === "active") act("Pause this " + kind, () => setState(c, "paused"), "set-state-" + c.key);
+    if (c.state === "paused") act("Resume", () => setState(c, "active"), "set-state-" + c.key);
+    if (c.state === "hidden") act("Bring back", () => setState(c, c.was || "active"), "set-state-" + c.key);
+    if (!c.home && c.state !== "hidden") {
+      const rb = act(
+        "Remove…",
+        () => {
+          S.rmOpen = S.rmOpen === c.key ? null : c.key;
+          renderSettings();
+          if (S.rmOpen) rmFree(c);
+        },
+        "rm-open-" + c.key,
+      );
+      rb.setAttribute("aria-expanded", String(S.rmOpen === c.key));
+    }
+    if (acts.childElementCount) row.append(acts);
+    /* what Pause does, said once (chats.md: a paused chat's refreshes are skipped; it stays on the page) */
+    if (c.state === "active")
+      row.append(
         el(
           "p",
           "note",
-          homeChat().name +
-            " always refreshes first. Use Move up and Move down to set the order of the others. A run starts with any chat the last one didn't reach, and a new chat's first refresh comes after the rest.",
+          "Pausing stops refreshes of this " +
+            kind +
+            " until you resume it. Its " +
+            (isGroup(c) ? "posts" : "messages") +
+            " stay on the page.",
         ),
       );
-    S.chats
-      .filter(c => c.state !== "deleted")
-      .forEach(c => {
-        const row = el("div", "chatrow");
-        row.dataset.chat = c.key;
-        const h = el("div", "chathead");
-        h.append(tagChip(c), el("h3", null, c.name));
-        row.append(h, el("p", "note chatline", chatLine(c)));
-        const at = movable.indexOf(c);
-        if (at >= 0 && movable.length > 1) dragRow(row, h, c);
-        const ctl = el("div", "fields");
-        /* a group's card says "group" and has no replies yet (commenting is F25 G3) */
-        const kind = isGroup(c) ? "group" : "chat";
-        const ti = el("input");
-        ti.type = "text";
-        ti.maxLength = TAG_MAX;
-        ti.value = c.tag;
-        const ts = el("button", "secondary", "Save tag");
-        ts.onclick = () => saveTag(c, ti.value);
-        ti.addEventListener("keydown", e => e.key === "Enter" && saveTag(c, ti.value));
-        const tw = field(
-          "tag-" + c.key,
-          "Short tag (up to " +
-            TAG_MAX +
-            " letters), shown beside this " +
-            kind +
-            "'s " +
-            (isGroup(c) ? "posts" : "messages") +
-            " and citations",
-          ti,
-        );
-        tw.append(ts);
-        const as = autoSelect("auto-" + c.key, c.auto);
-        as.onchange = async () => {
-          try {
-            await saveChats({ [c.key]: { auto: autoVal(as.value) } });
-            setNote(c.key, "Saved.");
-          } catch (e) {
-            setNote(c.key, "Couldn't save that. Try again.", true);
-          }
-        };
-        ctl.append(tw);
-        if (isGroup(c)) ctl.append(withChatField(c));
-        else ctl.append(field("auto-" + c.key, "Queued replies in this chat", as));
-        if (multi() && c.home)
-          ctl.append(el("p", "note", "Scheduled runs always refresh this chat: it's the first chat."));
-        else if (multi()) {
-          const es = everySelect("every-" + c.key, everyNum(c.every), true);
-          es.onchange = async () => {
-            try {
-              await saveChats({ [c.key]: { every: es.value === "" ? null : Number(es.value) } });
-              setNote(c.key, "Saved.");
-              settingsInPlace();
-            } catch (e) {
-              setNote(c.key, "Couldn't save that. Try again.", true);
-            }
-          };
-          ctl.append(field("every-" + c.key, "How often scheduled runs refresh this " + kind, es));
-        }
-        row.append(ctl);
-        const acts = el("div", "btns");
-        const act = (t, fn) => {
-          const b = el("button", "secondary", t);
-          b.onclick = fn;
-          acts.append(b);
-          return b;
-        };
-        if (at >= 0 && movable.length > 1)
-          [
-            ["up", "Move up", -1],
-            ["dn", "Move down", 1],
-          ].forEach(([id, t, d]) => {
-            const b = act(t, () => moveChat(c.key, d));
-            /* Enter and Space move on key-down: Space normally acts on key-up, and the store's echo of an earlier move
-               can redraw the row between the two, so a quick second press was lost */
-            b.onkeydown = e => {
-              if (e.key !== "Enter" && e.key !== " ") return;
-              e.preventDefault();
-              if (!b.disabled) moveChat(c.key, d);
-            };
-            b.id = "mv-" + id + "-" + c.key;
-            b.setAttribute("aria-label", t + ": " + c.name);
-            b.disabled = !movable[at + d];
-          });
-        if (c.state === "active") act("Pause this " + kind, () => setState(c, "paused"));
-        if (c.state === "paused") act("Resume", () => setState(c, "active"));
-        if (c.state === "hidden") act("Bring back", () => setState(c, c.was || "active"));
-        if (!c.home && c.state !== "hidden") {
-          const rb = act("Remove…", () => {
-            S.rmOpen = S.rmOpen === c.key ? null : c.key;
-            renderSettings();
-            if (S.rmOpen) rmFree(c);
-          });
-          rb.setAttribute("aria-expanded", String(S.rmOpen === c.key));
-        }
-        row.append(acts);
-        /* what Pause does (chats.md: a paused chat's refreshes are skipped; it stays on the page) */
-        if (c.state === "active")
-          row.append(
-            el(
-              "p",
-              "note",
-              "Pausing stops refreshes of this " +
-                kind +
-                " until you resume it. Its " +
-                (isGroup(c) ? "posts" : "messages") +
-                " stay on the page.",
-            ),
-          );
-        if (S.rmOpen === c.key) row.append(rmBox(c));
-        row.append(note(c.key));
-        box.append(row);
-      });
-    box.append(addForm(note), groupForm(note));
-    /* a rebuild keeps keyboard focus on the button that had it (a Move button that reached the end: its pair) */
-    const kept = keep && document.getElementById(keep);
-    if (kept) {
-      const pair = document.getElementById(keep.replace(/^mv-(up|dn)/, (x, d) => "mv-" + (d === "up" ? "dn" : "up")));
-      (kept.disabled && pair ? pair : kept).focus();
-    }
+    if (S.rmOpen === c.key) row.append(rmBox(c));
+    return row;
   }
   /* A group's "Goes with a chat", changeable after adding (Add a group sets it first) */
   function withChatField(c) {
@@ -19080,15 +19531,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         if (v === (c.chat || "")) o.selected = true;
         ws.append(o);
       });
-    ws.onchange = async () => {
-      try {
-        await saveChats({ [c.key]: { chat: ws.value || null } });
-        setNote(c.key, "Saved.");
-      } catch (e) {
-        setNote(c.key, "Couldn't save that. Try again.", true);
-      }
-    };
-    return field("with-" + c.key, "Goes with a chat", ws);
+    ws.onchange = () => saveOne(c, { chat: ws.value || null });
+    return kv("with-" + c.key, "Goes with a chat", ws);
   }
   function everySelect(id, val, perChat) {
     const s = el("select");
@@ -19109,20 +19553,32 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     s.id = id;
     return s;
   }
-  /* what changes without a rebuild (one waits while a field has focus): each chat's line, "Same as all chats (…)" */
+  /* what changes without a rebuild (one waits while a field has focus): each chat's line and row, the screen's tag,
+     For all chats' row, "Same as all chats (…)" */
   function settingsInPlace(def) {
+    /* the list holds no fields, so it's redrawn whole when its rows changed (an entry added, removed or moved) */
+    const ls = document.querySelector("#set-body > .set-list");
+    const want = S.chats.filter(c => c.state !== "deleted").map(c => c.key);
+    if (ls) {
+      const have = [...ls.querySelectorAll(".set-row[data-chat]")].map(b => b.dataset.chat);
+      const order = !!ls.querySelector("#set-row-order") === movableChats().length > 1;
+      if (have.join() !== want.join() || !order) ls.replaceWith(setList());
+    }
     refreshChatLines();
     const t = sameAll(def ?? pageEvery());
     document.querySelectorAll('#set-body select[id^="every-"] option[value=""]').forEach(o => {
       if (o.textContent !== t) o.textContent = t;
     });
+    const a = document.querySelector("#set-row-all > .sub");
+    const at = allSub(def);
+    if (a && a.textContent !== at) a.textContent = at;
   }
   /* the chats the order moves: after the first, not hidden or deleted (pending ones too) */
   const movableChats = () => S.chats.filter(c => !c.home && c.state !== "deleted" && c.state !== "hidden");
   const moveChat = (key, d) => placeChat(key, movableChats().findIndex(c => c.key === key) + d);
   /* desktop drag: a handle (a mouse only; Move up and Move down serve the keyboard and touch) onto another row puts
      the chat in that row's place */
-  function dragRow(row, h, c) {
+  function dragRow(row, c) {
     const hd = el("span", "draghandle", "⠿");
     hd.draggable = true;
     hd.title = "Drag to change the order";
@@ -19133,7 +19589,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       e.dataTransfer.setData("text/plain", c.key);
     };
     hd.ondragend = () => (S.dragKey = null);
-    h.prepend(hd);
+    row.prepend(hd);
     row.ondragover = e => {
       if (S.dragKey && S.dragKey !== c.key) e.preventDefault();
     };
@@ -19164,17 +19620,18 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     renderChats();
     try {
       await saveChats(patch);
-      setNote(key, "Order saved.");
+      setNote("order", "Order saved.");
     } catch (e) {
       if (S.page && S.page.chats === chats) {
         S.page = before;
         S.chats = chatsOf(S.page);
         renderChats();
       }
-      setNote(key, "Couldn't save the order. Try again.", true);
+      setNote("order", "Couldn't save the order. Try again.", true);
     }
   }
   async function saveTag(c, raw) {
+    c = S.chats.find(x => x.key === c.key) || c; /* the tag as stored now, not when the screen was drawn */
     const t = String(raw || "").trim();
     if (!t) return setNote(c.key, "A tag can't be empty.", true);
     if (t.length > TAG_MAX) return setNote(c.key, "A tag has at most " + TAG_MAX + " characters.", true);
@@ -19267,6 +19724,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     no.onclick = () => {
       S.rmOpen = null;
       renderSettings();
+      const rb = document.getElementById("rm-open-" + c.key);
+      if (rb) rb.focus();
     };
     b.append(go, no);
     w.append(b);
@@ -19318,7 +19777,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       await db.doc("refresh/lastImport").delete();
       await saveChats({ [c.key]: { state: "deleted", deletedAt: new Date().toISOString() } });
       setNote(c.key, "");
-      S.setNotes.add = {
+      S.setNotes.list = {
         t: c.name + " is deleted: " + gone + " file" + (gone === 1 ? "" : "s") + " removed.",
         err: false,
       };
@@ -19335,7 +19794,6 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   function addForm(note) {
     const f = el("form", "addform");
     f.noValidate = true; /* the page's own messages, not the browser's, say what's wrong with a link */
-    f.append(el("h3", null, "Add a chat"));
     f.append(
       el(
         "p",
@@ -19375,7 +19833,14 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const go = el("button", "primary", "Add chat");
     go.type = "submit";
     go.id = "add-go";
-    f.append(go, note("add"));
+    /* the title's "Add a chat or group" opens this screen: a group's link goes to Add a group */
+    const sw = el("button", "secondary", "Add a group instead");
+    sw.type = "button";
+    sw.id = "add-to-grp";
+    sw.onclick = () => setGo("addg");
+    const bs = el("div", "btns");
+    bs.append(go, sw);
+    f.append(bs, note("add"));
     f.onsubmit = e => {
       e.preventDefault();
       addChat({
@@ -19395,7 +19860,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       return setNote(
         "add",
         GROUP_RE.test(String(o.link || "").trim())
-          ? "That's a Facebook group: add it under Add a group below."
+          ? "That's a Facebook group: add it under Add a group instead."
           : "That isn't a Messenger chat link. Open the chat in Messenger and copy its address: it looks like https://www.facebook.com/messages/t/1234567890.",
         true,
       );
@@ -19406,7 +19871,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         "add",
         "That chat is already on the page: " +
           dup.name +
-          (dup.state === "hidden" ? " (hidden; bring it back above)." : "."),
+          (dup.state === "hidden" ? " (hidden; open its row in Settings to bring it back)." : "."),
         true,
       );
     const name = String(o.name || "").trim() || "New chat";
@@ -19456,7 +19921,6 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   function groupForm(note) {
     const f = el("form", "addform");
     f.noValidate = true;
-    f.append(el("h3", null, "Add a group"));
     f.append(
       el(
         "p",
@@ -19489,10 +19953,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       sd.append(o);
     });
     const rd = el("select");
-    [
-      ["all", "All new posts and comments"],
-      ["mine", "Only posts I'm in, and mentions of me"],
-    ].forEach(([v, t]) => {
+    GROUP_READ.forEach(([v, t]) => {
       const o = el("option", null, t);
       o.value = v;
       rd.append(o);
@@ -19537,7 +19998,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       return setNote(
         "grp",
         LINK_RE.test(raw)
-          ? "That's a Messenger chat: add it under Add a chat above."
+          ? "That's a Messenger chat: add it under Add a chat instead."
           : "That isn't a Facebook group link. Open the group on Facebook and copy its address: it looks like https://www.facebook.com/groups/1234567890/.",
         true,
       );
@@ -19548,7 +20009,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         "grp",
         "That group is already on the page: " +
           dup.name +
-          (dup.state === "hidden" ? " (hidden; bring it back above)." : "."),
+          (dup.state === "hidden" ? " (hidden; open its row in Settings to bring it back)." : "."),
         true,
       );
     const name = String(o.name || "").trim() || "New group";
