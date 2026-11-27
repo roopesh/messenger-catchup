@@ -156,13 +156,16 @@
         ["pointerover", "mouseover", "focus"].forEach(t => a.addEventListener(t, () => setTimeout(fill, 300)));
         return a;
       }
-      function cardContent(p) {
+      /* a card's content; open: the post at the top of its dialog (no comment previews; mock_g_dlg_noname: without the
+         profile_name marker) */
+      function cardContent(p, open) {
         const f = document.createDocumentFragment();
         const pn = el("div", { "data-ad-rendering-role": "profile_name" });
         const h2 = el("h2");
         h2.append(el("a", { href: "/groups/" + G + "/user/" + p.uid + "/" }, p.who));
         pn.append(h2);
-        f.append(pn, timeLink(p));
+        if (!(open && MODE("g_dlg_noname"))) f.append(pn);
+        f.append(timeLink(p));
         f.append(el("div", { "data-ad-rendering-role": "story_message" }, p.text));
         p.photos.forEach(fb => {
           const a = el("a", { href: "/photo/?fbid=" + fb + "&set=pcb." + p.pid });
@@ -185,12 +188,13 @@
           }),
         );
         f.append(cbw);
-        p.cmts.slice(-2).forEach(c => {
-          const ar = el("div", { role: "article", "aria-label": "Comment by " + c.who + " " + age(c.h) });
-          ar.append(el("a", { href: "/groups/" + G + "/posts/" + p.pid + "/?comment_id=" + c.cid }, short(c.h)));
-          ar.append(el("div", { dir: "auto" }, c.text));
-          f.append(ar);
-        });
+        if (!open)
+          p.cmts.slice(-2).forEach(c => {
+            const ar = el("div", { role: "article", "aria-label": "Comment by " + c.who + " " + age(c.h) });
+            ar.append(el("a", { href: "/groups/" + G + "/posts/" + p.pid + "/?comment_id=" + c.cid }, short(c.h)));
+            ar.append(el("div", { dir: "auto" }, c.text));
+            f.append(ar);
+          });
         return f;
       }
       /* cards: a placeholder each (kept in order), content only while within about two screens of the viewport */
@@ -250,7 +254,9 @@
         outer.append(inner);
         document.body.append(outer);
         if (p) {
-          inner.append(el("div", { "data-ad-rendering-role": "story_message" }, p.text));
+          /* the post itself at the top, marked up as its feed card is (its time link a bare placeholder further down
+             the feed, filled by a pointer) */
+          inner.append(cardContent(p, true));
           let sort = "relevant";
           const sb = el("div", { role: "button", "aria-haspopup": "menu" }, "Most relevant﻿");
           sb.onclick = () => {
@@ -291,6 +297,8 @@
             ar.append(el("a", { href: uh }), el("a", { href: uh }, who)); /* the avatar link (no text), then the name */
             ar.append(el("div", { dir: "auto" }, text));
             ar.append(el("a", { href }, short));
+            /* a comment can hold a photo too: never one of the post's */
+            if (/^Comment 0 on/.test(text)) ar.append(el("a", { href: "/photo/?fbid=3999999999999999" }));
             const w = el("div");
             w.append(ar);
             return w;

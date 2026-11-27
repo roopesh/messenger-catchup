@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      4.2
+// @version      4.3
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on. It downloads GIFs from Facebook's image servers for your page (the permission Tampermonkey asks for).
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -42,13 +42,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '4.2';
+  window.__mcHelper = '4.3';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '4.2');
+  root.setAttribute('data-mc-helper', '4.3');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -2687,9 +2687,9 @@
   /* the card's own time link, before the post's text: one holding span[aria-labelledby] (its readable time), or, on
      cards further down the feed (live check, Nov 25), a bare placeholder link (href "?__cft__…") that gets that span,
      and its address, only once a pointer is over it */
-  function cardTime(card) {
-    const msg = card.querySelector('[data-ad-rendering-role="story_message"]');
-    const before = x => !msg || !(msg.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING);
+  function cardTime(card, own = () => true) {
+    const msg = Array.from(card.querySelectorAll('[data-ad-rendering-role="story_message"]')).find(own);
+    const before = x => own(x) && (!msg || !(msg.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING));
     for (const s of card.querySelectorAll('a span[aria-labelledby]')) {
       if (!before(s)) continue;
       const l = document.getElementById(s.getAttribute('aria-labelledby'));
@@ -2716,26 +2716,29 @@
       t.a && t.a.blur();
     }
     if (!pid) return { err: 'no-id' };
-    const au = Array.from(card.querySelectorAll('[data-ad-rendering-role="profile_name"] a[href*="/user/"]')).find(x =>
-      N(x.textContent),
-    );
-    const msg = card.querySelector('[data-ad-rendering-role="story_message"]');
     /* the count is on the "Comment on <name>'s post, N comments" button (no ", N comments" when there are none); the
        comment_button marker itself has no label (live check, Nov 25) */
     const cl = card.querySelector('[aria-label^="Comment on"]');
     const lbl = (cl && cl.getAttribute('aria-label')) || cb.getAttribute('aria-label') || '';
+    const f = postFields(card, t.age, lbl, () => true);
+    if (f.count == null) f.count = 0;
+    return Object.assign({ pid }, f);
+  }
+  /* a post's own author, text, photos and comment count: readCard on a feed card, mcGroupPost on an open post. own(x)
+     leaves out what isn't the post's (an open post's comments). count is null when lbl isn't a "Comment on" label. */
+  function postFields(root, age, lbl, own) {
+    const all = sel => Array.from(root.querySelectorAll(sel)).filter(own);
+    const au = all('[data-ad-rendering-role="profile_name"] a[href*="/user/"]').find(x => N(x.textContent));
+    const msg = all('[data-ad-rendering-role="story_message"]')[0];
     const cm = lbl.match(/,\s*([\d,]+)\s+comments?$/);
     return {
-      pid,
       who: au ? N(au.textContent) : '',
       uid: au ? ((au.getAttribute('href') || '').match(/\/user\/(\d+)/) || [])[1] || null : null,
-      age: t.age,
+      age,
       text: msg ? N(msg.innerText) : '',
       more: !!(msg && Array.from(msg.querySelectorAll('[role="button"]')).some(b => /^See more$/.test(N(b.innerText)))),
-      photos: Array.from(card.querySelectorAll('a[href*="/photo/?fbid="]')).map(a =>
-        qp(a.getAttribute('href'), 'fbid'),
-      ),
-      count: cm ? +cm[1].replace(/,/g, '') : 0,
+      photos: all('a[href*="/photo/?fbid="]').map(a => qp(a.getAttribute('href'), 'fbid')),
+      count: cm ? +cm[1].replace(/,/g, '') : /^Comment on/.test(lbl) ? 0 : null,
     };
   }
   /* A group run's buffer (`run`: Claude's run id): each command merges its full result into localStorage on
@@ -2858,7 +2861,9 @@
   /* groupPost{newest, known, maxComments}: on an open post (/groups/G/posts/P/, a dialog), reads its comments. newest
      (true): set the post's comment sort to Newest first (it resets on every post). Scrolls the dialog's list until no
      more load (or, sorted Newest, a known comment id shows), opens every "View N replies", then reads each comment:
-     {cid, rid (a reply's own id), parent (the comment or reply it answers), who, uid, text, age}. */
+     {cid, rid (a reply's own id), parent (the comment or reply it answers), who, uid, text, age}. post (4.3): the post
+     itself as a feed card gives it, {pid, who, uid, age, text, more, photos, count?}, or null; with run, the buffer
+     keeps it unless this run's feed read the card, and the answer says body: true or false. */
   async function mcGroupPost(a) {
     a = a || {};
     const t0 = Date.now();
@@ -2874,6 +2879,27 @@
     for (let k = 0; k < 60 && !((d = dlg()) && ready(d)); k++) await sleep(250);
     if (!d) return { err: 'no-post', detail: 'no post dialog: open /groups/<g>/posts/<p>/ first' };
     const pid = (location.pathname.match(/\/posts\/(\d+)/) || [])[1] || null;
+    /* B77 (#128): the post's own author, text, age, photos and count, above its comments, read like a feed card (no
+       click: a pointer over its time link fills in the age). It fills a post stored only from its comments or a
+       notification. Kept only when an author is found; the dialog's title ("<name>'s post") stands in when the
+       profile_name marker isn't there. */
+    const notCmt = x =>
+      !x.closest('[role="article"][aria-label^="Comment by"], [role="article"][aria-label^="Reply by"]');
+    let t = cardTime(d, notCmt);
+    const ta = t.a;
+    if (!t.age && ta) {
+      point(ta);
+      for (let k = 0; k < 10 && !(t = cardTime(d, notCmt)).age; k++) await sleep(150);
+      ta.blur();
+    }
+    const cl = Array.from(d.querySelectorAll('[aria-label^="Comment on"]')).find(notCmt);
+    const pf = postFields(d, t.age, (cl && cl.getAttribute('aria-label')) || '', notCmt);
+    if (!pf.who) {
+      const tl = document.getElementById(d.getAttribute('aria-labelledby'));
+      pf.who = ((tl ? N(tl.textContent) : '').match(/^(.+)['’]s post$/) || [])[1] || '';
+    }
+    if (pf.count == null) delete pf.count;
+    const post = pid && pf.who ? Object.assign({ pid }, pf) : null;
     const known = new Set(Array.isArray(a.known) ? a.known.map(String) : []);
     let sorted = 'relevant';
     if (a.newest !== false) {
@@ -2950,12 +2976,20 @@
         age: i.age,
       };
     });
-    const res = { group: groupOf(), pid, sorted, comments, ms: Date.now() - t0 };
+    const res = { group: groupOf(), pid, sorted, post, comments, ms: Date.now() - t0 };
     if (!a.run || !pid) return res;
     const b = gBuf(a.run);
     b.comments[pid] = comments;
+    /* a card this run's feed pass read wins */
+    if (post && !(b.posts[pid] && b.posts[pid].who)) b.posts[pid] = Object.assign(b.posts[pid] || {}, post);
     gSave(a.run, b);
-    return Object.assign({}, res, { comments: undefined, read: comments.length, buf: gCount(b) });
+    return Object.assign({}, res, {
+      post: undefined,
+      body: !!post,
+      comments: undefined,
+      read: comments.length,
+      buf: gCount(b),
+    });
   }
   /* notifs{since, more}: on /notifications/, reads the items without clicking any (a click marks it read): each
      {id (notif_id), kind (notif_t), group, post, comment, reply, unread, age, text}. Stops at the item `since` (a
@@ -3076,7 +3110,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '4.2' }),
+    ping: () => ({ v: '4.3' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

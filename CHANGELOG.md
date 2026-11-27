@@ -2,6 +2,22 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.65.2] - 2026-11-27
+**Opening a group post reads the post too, so a post read only through its comments gets filled** (B77, #128). PATCH. Helper 4.3, page 8.2.
+
+### Fixed
+- **A post known only from its comments or a notification stayed "a post not read yet"** until a feed pass happened to reach its card. `groupPost` read only the comments of the post it opened.
+  - **Helper 4.3:** `groupPost` also reads the open post's own author, text, time, photos and comment count, the way a feed card is read (the same markers, shared as `postFields`). It reads only the post itself, not its comments. No click: a pointer over its time link fills in the time, as on the feed. When the dialog has no author marker, its title ("<name>'s post") gives the author. Nothing is kept unless an author is found.
+  - With a run, the post goes into the run's buffer, unless this run's feed pass already read its card. The answer says `body: true` or `false`. The capture then fills the stored post, keeping its number.
+  - **Refresh (`references/groups.md`):** step 1 also reads each stored post's `who`. Step 5 also opens posts stored without one, after the changed and notification posts, within the 50 per run.
+  - **Page 8.2:** the note on such a post in Posts says its author and text come when a refresh opens it or reads it in the feed. It also brings the new helper's embedded copy.
+- Untried on a real post page: the live check is the owner's next refresh with helper 4.3 (L1).
+
+### Tests
+- sim (G1 groupPost): the open post's author, uid, text, time (from a pointer over a bare time link), photos (not a comment's) and count; the poll untouched.
+- sim (B77): with a run, a post the feed didn't read reaches the capture with its author (from the dialog's title), text, time, 2 photos and count, beside its comments; a card the feed read keeps the feed's read.
+- The mock group page's post dialog now shows the post as its feed card does, and a comment there holds a photo.
+
 ## [1.65.1] - 2026-11-27
 **Probably links need a posting word before the group's name, and a post read only through its comments says so** (B75, #126; B76, #127). PATCH. Page 8.1.
 

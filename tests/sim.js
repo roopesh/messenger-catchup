@@ -1955,6 +1955,22 @@ sim('G1: groupPost', { s: 20 }, async b => {
   const top = (r && r.comments.filter(c => !c.rid)) || [];
   const reps = (r && r.comments.filter(c => c.rid)) || [];
   const votes = await p.evaluate(() => window.mockVotes.length);
+  const m4 = await p.evaluate(() => window.mockPosts[4]);
+  const po = (r && r.post) || {};
+  ok(
+    po.pid === m4.pid &&
+      po.who === m4.who &&
+      po.uid === m4.uid &&
+      po.text === m4.text &&
+      po.age === '13 hours ago' &&
+      po.more === false &&
+      po.photos.length === 0 &&
+      po.count === m4.count &&
+      !votes,
+    "B77: groupPost reads the open post's own author, uid, text, age (a pointer over its bare time link), photos (not a comment's) and count; the poll is untouched (" +
+      JSON.stringify(r && r.post) +
+      ')',
+  );
   ok(
     r &&
       r.pid === '2000000000000004' &&
@@ -1966,6 +1982,55 @@ sim('G1: groupPost', { s: 20 }, async b => {
       !votes,
     'G1: groupPost sorts Newest, loads all 18 comments by scrolling the dialog, opens "View 2 replies", and gives each reply its parent (' +
       JSON.stringify(r && { top: top.length, reps: reps.length, sorted: r.sorted, rep0: reps[0] }) +
+      ')',
+  );
+  await ctx.close();
+});
+/* B77 (#128): a post known only from its comments or a notification is stored without author or text; opening it with
+   groupPost fills it. The capture carries the open post's body (from the dialog's title when the profile_name marker
+   isn't there), and a card this run's feed pass read wins over the dialog's read. */
+sim('B77: groupPost puts the open post in the run buffer', { s: 25 }, async b => {
+  const { ctx, p } = await fresh(b);
+  const run = 'run' + Date.now();
+  await gOpen(p, '', '?sorting_setting=CHRONOLOGICAL', { g_posts: '10', g_bump: '7:3', g_dlg_noname: '1' });
+  const f = await bridge(p, 'groupFeed', { run, cap: 3 });
+  const m = await p.evaluate(() => window.mockPosts);
+  await p.goto(gUrl('posts/' + m[7].pid + '/'));
+  await p.waitForTimeout(500);
+  const g7 = await bridge(p, 'groupPost', { run });
+  await p.goto(gUrl('posts/' + m[1].pid + '/'));
+  await p.waitForTimeout(500);
+  const g1 = await bridge(p, 'groupPost', { run });
+  await p.goto(gUrl(''));
+  await p.waitForTimeout(400);
+  await bridge(p, 'groupCapture', { run, group: GROUP });
+  const cap = JSON.parse((await p.evaluate(() => window.__capText)) || 'null');
+  const c7 = cap && cap.posts.find(x => x.pid === m[7].pid);
+  const c1 = cap && cap.posts.find(x => x.pid === m[1].pid);
+  ok(
+    f &&
+      f.read === 3 &&
+      g7 &&
+      g7.body === true &&
+      g7.post === undefined &&
+      g7.read === 3 &&
+      g1 &&
+      g1.body === true &&
+      cap &&
+      cap.posts.length === 4 &&
+      c7 &&
+      c7.who === m[7].who &&
+      c7.uid === null &&
+      c7.text === m[7].text &&
+      /ago$/.test(c7.age) &&
+      JSON.stringify(c7.photos) === JSON.stringify(m[7].photos) &&
+      c7.count === m[7].count &&
+      cap.comments[m[7].pid].length === 3 &&
+      c1 &&
+      c1.known === false &&
+      c1.uid === m[1].uid,
+    "B77: a post the feed didn't read reaches the capture with its author (from the dialog's title), text, age, its 2 photos and count; a card the feed read stays the feed's (" +
+      JSON.stringify([f && f.read, g7 && g7.body, cap && cap.posts.length, c7, c1 && c1.known]) +
       ')',
   );
   await ctx.close();
