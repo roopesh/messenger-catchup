@@ -125,7 +125,8 @@ SPEC (JSON): {"join":{"convid":[i,...]}, "links":{"i":[parent,"r|rq|rg|i|c"] or 
   "dealEdit":{"convid":{"text":"...","addRefs":[...],"addClaims":[{i,who,n}],"removeClaims":[i],
   "status":"sold"|"pending"|null,"statusAt":i,"index":n,"ref":i}} (index or ref only when the conv has several deals;
   ref: a message of the deal; index is refused where the same spec moves or adds deals), "open":[{conv,ask,to,note}], "closeOpen":[ask,...],
-  "answered":[{conv,ask,answer,refs}], "mentions":[{"note","refs":[[i],...]}],
+  "answered":[{conv,ask,answer,refs}], "mentions":[{"note","refs":[[i],...]}], "settle":[{ref,answer}] (B69: the
+  mentions citing ref get `answered`, the user's own yes or no reaction, and leave the page's Needs you),
   "daySummaries":{"YYYY-MM-DD":{"sections":[{"h":"heading","bullets":[["text",[refs]],...]}],"open":[["text",[refs]],
   ...]}} (a day's fuller summary, F29: at least one section, each a one-line heading and at least one bullet; "open"
   (optional, [] when nothing is) what's still open; every bullet one line of plain text, no length cap, citing at least
@@ -1703,15 +1704,15 @@ def relink(work, run, specp):
     global TZ
     sp = _load(specp)
     lay = _layout(work)
-    edits = sp.get("bullets") or sp.get("dealEdit") or sp.get("closeOpen")
+    edits = sp.get("bullets") or sp.get("dealEdit") or sp.get("closeOpen") or sp.get("settle")
     assert (
-        set(sp) <= {"relink", "move", "newconvs", "bullets", "dealEdit", "closeOpen", "answered"}
+        set(sp) <= {"relink", "move", "newconvs", "bullets", "dealEdit", "closeOpen", "answered", "settle"}
         and (sp.get("relink") or sp.get("move") or edits or lay.get("repair") and not sp)
         and (sp.get("move") or "newconvs" not in sp)
         and (sp.get("closeOpen") or "answered" not in sp)
     ), (
-        'relink SPEC takes only a non-empty "relink", "move", "bullets", "dealEdit" and/or "closeOpen" (with its '
-        '"answered"; newconvs only for a move; {} only to write what bootstrap --rollback refiled; use build for the rest)'
+        'relink SPEC takes only a non-empty "relink", "move", "bullets", "dealEdit", "closeOpen" (with its '
+        '"answered") and/or "settle" (newconvs only for a move; {} only to write what bootstrap --rollback refiled; use build for the rest)'
     )
     for nc in sp.get("newconvs", []):
         assert nc.get("id") in (sp.get("move") or {}).values(), (
@@ -1740,6 +1741,7 @@ def relink(work, run, specp):
         _add_bullets(sp, s, C)
         _deal_edits(sp, s, C, stored, _gained(s, homes, sp, st))
         _close_open(sp, s)
+        _settle(sp, s)
         seen = collections.Counter(x for cv in t["convs"] for x in cv["members"])
         assert all(v == 1 for v in seen.values()), ("internal error: a message in two conversations", seen)
         _check_summary(t, s, stored)
@@ -1776,6 +1778,7 @@ def relink(work, run, specp):
                     (sum(len(b) for b in (sp.get("bullets") or {}).values()), "bullet(s)"),
                     (len(sp.get("dealEdit") or {}), "dealEdit(s)"),
                     (len(sp.get("closeOpen") or []), "question(s) closed"),
+                    (len(sp.get("settle") or []), "mention(s) settled"),
                 )
                 if n
             ),
@@ -1793,12 +1796,18 @@ def _rx_hints(rxnew, s, pool):
     """B69: an open question whose asking message's reactions changed since it was stored, still open after this spec:
     the reaction may answer it (references/reactions.md)."""
     still = {o["ask"]: o for o in s["open"]}
+    named = {i for x in s["mentions"] if not x.get("answered") for i in _nums(x.get("refs") or [])}
     for i in sorted(rxnew):
+        m = pool[i]
+        who = "; ".join("%s %s" % (w[1], w[0]) for w in m.get("xw") or []) or m.get("x") or "none now"
         if i in still:
-            m = pool[i]
-            who = "; ".join("%s %s" % (w[1], w[0]) for w in m.get("xw") or []) or m.get("x") or "none now"
             print(
                 "RX %d (%s: %s) reactions changed: %s -> an open question: if a reaction answers it, closeOpen it "
+                "(references/reactions.md; restore, then build again)" % (i, m.get("f", "?"), _short(m), who)
+            )
+        if i in named:
+            print(
+                "RX %d (%s: %s) reactions changed: %s -> a Needs you mention: if it's your own yes or no, settle it "
                 "(references/reactions.md; restore, then build again)" % (i, m.get("f", "?"), _short(m), who)
             )
 
@@ -1811,6 +1820,18 @@ def _close_open(sp, s):
         assert k in open_asks, "closeOpen: no open question asks at #%s" % k
     s["open"] = [o for o in s["open"] if o["ask"] not in sp.get("closeOpen", [])]
     s["answered"] = sp.get("answered", []) + s["answered"]
+
+
+def _settle(sp, s):
+    """B69: "settle" [{ref, answer}]: the mentions citing message ref are answered (the user's own yes or no reaction on
+    it, references/reactions.md): they keep their place in the summary with `answered`, and leave the page's Needs you."""
+    for st in sp.get("settle", []):
+        i, ans = (st or {}).get("ref"), (st or {}).get("answer")
+        assert isinstance(ans, str) and ans.strip() and len(ans) <= 120, ("settle: answer must be one short line", st)
+        hit = [x for x in s["mentions"] if i in _nums(x.get("refs") or [])]
+        assert hit, "settle: no mention cites #%s" % i
+        for x in hit:
+            x["answered"] = ans.strip()
 
 
 RX_DAYS = 3  # B69: rxIds reach back this many days before the newest stored message ...
@@ -1836,7 +1857,8 @@ def recheck(work, last, caught, frm, rxsum):
     since = (datetime.date.fromisoformat(days[-1]) - datetime.timedelta(days=RX_DAYS)).isoformat() if days else "9999"
     asks = [o.get("ask") for o in s.get("open", [])]
     for x in s.get("mentions", []):
-        asks += [r[0] if isinstance(r, list) else r for r in x.get("refs") or []]
+        if not x.get("answered"):
+            asks += [r[0] if isinstance(r, list) else r for r in x.get("refs") or []]
     pick = sorted(
         {i for i in asks if i in by and by[i].get("m") and by[i].get("f") != "You" and (by[i].get("d") or "") >= since},
         reverse=True,
@@ -2224,6 +2246,7 @@ def build(work, run, specp):
     s["open"] = sp.get("open", []) + [o for o in s["open"] if o["ask"] not in sp.get("closeOpen", [])]
     s["answered"] = sp.get("answered", []) + s["answered"]
     s["mentions"] = sp.get("mentions", []) + s["mentions"]
+    _settle(sp, s)
     s["toI"] = ids[-1]
     _rx_hints(rxnew, s, pool)
     cm = _check_summary(t, s, pool)

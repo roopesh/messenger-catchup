@@ -2348,7 +2348,7 @@ sim('B69: a late reaction on a stored message', { s: 30 }, async b => {
       r.rx.cap === '' &&
       r.rx.n === 30 &&
       r.rx.same === false &&
-      /^[0-9a-f]{16}$/.test(sum0) &&
+      /^30:[0-9a-f]{16}$/.test(sum0) &&
       JSON.stringify(rxIds(cap)) === JSON.stringify(range(70, 99)) &&
       cap.rx.every(e => !e.x && !e.xw) &&
       cap.rxsum === sum0 &&
@@ -2451,6 +2451,56 @@ sim('B69: the recheck’s cap keeps the newest', { s: 30 }, async b => {
   ok(
     r && !r.err && r.rx.read === 100 && r.rx.cap === 'top',
     'B69: rxBack past the start of the chat: all 100 stored, cap "top" (' + JSON.stringify(r && r.rx) + ')',
+  );
+  await ctx.close();
+});
+/* a recheck cut short by time: its digest covers the newest N it read ("N:hex"), so a later quiet run that reads at
+   least N compares those and captures nothing, whatever the cap did; a change in the newest N still captures */
+sim('B69: a time-capped recheck doesn’t capture on quiet runs', { s: 30 }, async b => {
+  const { ctx, p } = await fresh(b);
+  const M = { rx: '50:👍,98:👍' };
+  await mode(p, M);
+  let r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxMs: 1 });
+  const sumT = r && r.rx && r.rx.sum;
+  const n = sumT ? +sumT.split(':')[0] : 0;
+  ok(
+    r && !r.err && r.rx.cap === 'time' && n === r.rx.read && n > 0 && n < 90,
+    'B69: the capped run’s digest names how many it read (' + JSON.stringify(r && r.rx) + ')',
+  );
+  await mode(p, M);
+  r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxSum: sumT });
+  ok(
+    r && !r.err && r.rx.read === 90 && r.rx.same === true,
+    'B69: a later run that reads more compares the newest ' +
+      n +
+      ': same, nothing to capture (' +
+      JSON.stringify(r && r.rx) +
+      ')',
+  );
+  await mode(p, M);
+  r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxMs: 1, rxSum: sumT });
+  ok(
+    r && !r.err && (r.rx.read >= n ? r.rx.same === true : r.rx.same === false),
+    'B69: capped again: same when it read at least ' + n + ', else it captures (' + JSON.stringify(r && r.rx) + ')',
+  );
+  await mode(p, Object.assign({ myrx: '119:👍' }, M));
+  r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxSum: sumT });
+  ok(
+    r && !r.err && r.rx.same === false,
+    'B69: a reaction in the newest ' + n + ' still captures (' + JSON.stringify(r && r.rx) + ')',
+  );
+  const older = 119 - n; /* just older than the newest n, inside the 90 asked for */
+  await mode(p, { rx: '50:👍,98:👍,' + older + ':😂' });
+  r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxSum: sumT });
+  ok(
+    r && !r.err && r.rx.same === true,
+    'B69: a change older than the newest ' +
+      n +
+      ' (#' +
+      older +
+      ') waits for a run with new messages (' +
+      JSON.stringify(r && r.rx) +
+      ')',
   );
   await ctx.close();
 });

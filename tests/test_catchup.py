@@ -1019,13 +1019,13 @@ class TestLateReactions(unittest.TestCase):
 
     def test_a_build_takes_reactions_the_page_updated(self):
         self.e.msgs[8] = dict(self.e.msgs[8], x="1 👍", xw=[["You", "👍"]])  # updated in its chunk after it was built
-        self.e.msgs[1] = dict(self.e.msgs[1], x="1 ❤️")
+        self.e.msgs[2] = dict(self.e.msgs[2], x="1 ❤️")
         run = self.e.run([msg(11, "Dee", "later", h=13, mi=40)])
         out = self.e.build(run, {"join": {"gear1106": [11]}})
         self.assertIn("RX 8 (Ana: new topic) reactions changed: 👍 You -> an open question", out)
-        self.assertNotIn("RX 1 ", out, "#1 isn't an open question")
+        self.assertNotIn("RX 2 ", out, "#2 is neither an open question nor a mention")
         al = r(os.path.join(self.e.work, "all.json"))
-        self.assertEqual((al[8]["x"], al[8]["xw"], al[1]["x"]), ("1 👍", [["You", "👍"]], "1 ❤️"))
+        self.assertEqual((al[8]["x"], al[8]["xw"], al[2]["x"]), ("1 👍", [["You", "👍"]], "1 ❤️"))
         self.assertEqual(len(al), 12)
 
     def test_closing_it_in_the_same_build_prints_nothing(self):
@@ -1070,6 +1070,29 @@ class TestLateReactions(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, msg_re):
                 self.relink(spec)
             self.assertEqual(r(os.path.join(self.e.work, "base", "summary.json")), before, "WORK untouched")
+
+    def test_a_mention_answered_by_your_reaction_is_settled(self):
+        self.e.msgs[1] = dict(self.e.msgs[1], x="1 👍", xw=[["You", "👍"]])  # #1 is SPEC's mention
+        run = self.e.run([msg(11, "Dee", "later", h=13, mi=40)])
+        out = self.e.build(run, {"join": {"gear1106": [11]}})
+        self.assertIn("RX 1 (Ben: I have one, $120) reactions changed: 👍 You -> a Needs you mention", out)
+        quiet(catchup.restore, self.e.work)
+        out = self.e.build(run, {"join": {"gear1106": [11]}, "settle": [{"ref": 1, "answer": "You: 👍 (reaction)"}]})
+        self.assertNotIn("RX 1", out)
+        ms = r(os.path.join(run, "out", "merged", "summary.json"))["mentions"]
+        self.assertEqual(ms, [{"note": "Ben offered one", "refs": [[1]], "answered": "You: 👍 (reaction)"}])
+        self.assertEqual(self.recheck(11, None, None, None)["rxIds"], ["mid.8"], "a settled mention isn't rechecked")
+
+    def test_relink_settles_a_mention_with_nothing_new(self):
+        out, d = self.relink({"settle": [{"ref": 1, "answer": "You: 👍 (reaction)"}]})
+        self.assertIn("1 mention(s) settled", out)
+        self.assertEqual(r(os.path.join(d, "merged", "summary.json"))["mentions"][0]["answered"], "You: 👍 (reaction)")
+        for spec, msg_re in (
+            ({"settle": [{"ref": 5, "answer": "x"}]}, "no mention cites #5"),
+            ({"settle": [{"ref": 1, "answer": ""}]}, "one short line"),
+        ):
+            with self.assertRaisesRegex(AssertionError, msg_re):
+                self.relink(spec)
 
     def recheck(self, *flags):
         buf = io.StringIO()

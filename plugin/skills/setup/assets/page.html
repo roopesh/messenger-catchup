@@ -4044,7 +4044,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const people = new Set(win.map(m => fullOf(m) || m.f));
     const sm = S.summary || {};
     const sm2 = activeSummary() || sm;
-    const open = (sm2.open || []).filter(o => inWin(o.ask)).length;
+    const open = openIn(sm2, inWin).length;
     [
       [win.length, "new messages"],
       [people.size, "people posting"],
@@ -5772,8 +5772,35 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   /* Needs you: the mentions (your name, or a reply to you) with a message in the window. One rule for a chat's Summary,
      its counter strip, its All chats card and the picker (B56: All chats read only summary/current, not the older
      blocks, and counted fewer than the chats showed) */
-  function needsIn(sm, inW) {
-    return ((sm || {}).mentions || []).filter(x => (x.refs || []).some(r => inW(r[0] ?? r)));
+  function needsIn(sm, inW, ctx) {
+    const by = ctx ? ctx.byI : S.byI;
+    const ob = ctx ? ctx.outbox : S.outbox;
+    const ids = x => (x.refs || []).map(r => r[0] ?? r);
+    return ((sm || {}).mentions || []).filter(
+      x => ids(x).some(inW) && !x.answered && !ids(x).some(i => ownAnswered(i, by, ob)),
+    );
+  }
+  /* B69: you answered message i with your own yes or no reaction (references/reactions.md, your corrections first):
+     a "You" row in who reacted (xw, read by the helper, also later), or the newest reaction sent from this page. byI:
+     the chat's messages by number (null when they aren't loaded); ob: its outbox rows. A count alone (x) isn't yours
+     for sure, so it never settles anything here. */
+  function ownAnswered(i, byI, ob) {
+    const fx = rxFixes();
+    const m = byI && byI.get(i);
+    if (m && Array.isArray(m.xw) && m.xw.some(w => w[0] === "You" && rxAnswer(w[1], fx))) return true;
+    let cur = null;
+    (ob || [])
+      .filter(o => o.kind === "react" && o.i === i && o.state === "sent")
+      .sort((a, b) => (a.queuedAt || "").localeCompare(b.queuedAt || ""))
+      .forEach(o => (cur = o.remove ? null : o.emoji));
+    return !!cur && !!rxAnswer(cur, fx);
+  }
+  /* open questions in the window, less one to you that you answered with your own yes or no reaction (B69) */
+  function openIn(sm, inW) {
+    return ((sm || {}).open || []).filter(o => {
+      const m = inW(o.ask) && S.byI.get(o.ask);
+      return inW(o.ask) && !(m && toOwner(m) && ownAnswered(o.ask, S.byI, S.outbox));
+    });
   }
   function renderSummaryV2(v, sm) {
     const R = winRange();
@@ -5848,7 +5875,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     };
     const ctx = {
       after,
-      open: idx((sm.open || []).filter(o => after(o.ask))),
+      open: idx(openIn(sm, after)),
       deal: idx((sm.deals || []).filter(x => (x.refs || []).some(after))),
       ans: idx((sm.answered || []).filter(a => after(a.ask))),
     };
@@ -13282,7 +13309,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
           ")."
         : " Reactions on " + rxIn.length + " stored messages: no changes.";
     }
-    if (typeof cap.rxsum === "string" && /^[0-9a-f]{16}$/.test(cap.rxsum) && Array.isArray(cap.rx))
+    if (typeof cap.rxsum === "string" && /^\d{1,4}:[0-9a-f]{16}$/.test(cap.rxsum) && Array.isArray(cap.rx))
       await S.db.doc("meta/chat").update({ rxSum: cap.rxsum });
     R.fresh = fresh.length;
     R.chunks = [
@@ -16344,7 +16371,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       m = metaOf(c);
     if (!v || !v.sum || !m) return [];
     const lo = chatLo(m);
-    return needsIn(v.sum, i => i > lo);
+    /* the chat on screen has its messages loaded (who reacted); another, only its outbox */
+    return needsIn(v.sum, i => i > lo, c.key === CUR.key ? null : { byI: null, outbox: v.outbox });
   }
   const newOf = c => {
     const m = metaOf(c);

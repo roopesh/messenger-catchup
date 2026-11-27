@@ -1154,14 +1154,24 @@
           });
         R.rxl = rxl;
         R.rx.n = rxl.length;
-        if (rxl.length) {
-          const dg = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(rxl)));
-          R.rxsum = [...new Uint8Array(dg)]
+        /* the digest, "N:hex": over the newest N stored messages read (x only) and the messages read by id (x, xw).
+           A run that stopped short of last time's N (time, a stall) can't compare and captures; one that read at least
+           N compares the newest N, so a recheck capped by time doesn't capture on every quiet run. A change older
+           than N waits for the next run with new messages, which always carries the whole read. */
+        const hex = async v =>
+          [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(v))))]
             .slice(0, 8)
             .map(x => x.toString(16).padStart(2, '0'))
             .join('');
+        const byIdPart = Object.keys(rxWho)
+          .sort((a, b) => posOf(a) - posOf(b))
+          .map(id => Object.assign(rxEnt(id), rxWho[id] ? { xw: rxWho[id] } : {}));
+        const sumOf = n => hex([rxRange.slice(rxRange.length - n).map(rxEnt), byIdPart]);
+        if (rxl.length) {
+          R.rxsum = rxRange.length + ':' + (await sumOf(rxRange.length));
           R.rx.sum = R.rxsum;
-          R.rx.same = typeof OPT.rxSum === 'string' && OPT.rxSum === R.rxsum;
+          const was = typeof OPT.rxSum === 'string' ? OPT.rxSum.match(/^(\d{1,4}):([0-9a-f]{16})$/) : null;
+          R.rx.same = !!was && +was[1] <= rxRange.length && (await sumOf(+was[1])) === was[2];
         }
         R.tRechecks = Date.now() - R.t0;
         /* Warnings: what the reader may have read wrong, for the refresh report (R3). */
