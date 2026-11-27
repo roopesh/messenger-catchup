@@ -24,6 +24,9 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 ### Docs
 - README.md, docs/STATUS.md and docs/ARCHITECTURE.md describe the new Settings; docs/DECISIONS.md records the owner's pick. The refresh skill's `references/chats.md`, `references/database.md` (synced to setup and replies) and `references/groups.md` name its screens. BACKLOG.md: F43 removed; its live check is under L1.
 
+### Fixed
+- **Escape after a click on blank space** (#123, found on the claude.ai bench): the handler listened on the sheet, and a click on a non-focusable spot leaves focus on the page body, so Escape did nothing. It now listens on the document while Settings is open; a handler that already took Escape (a suggestion box, a confirm) still wins.
+
 ### Tests
 - Page, a new section `settingsF43`: the list's rows and chips; two panes at 1000 px and the sheet's width; a phone at 390 px (list, then the screen with ‹ Settings, Back returning focus to the row, no sideways scroll); Escape back then closed; a screen surviving a store snapshot; chips updating while a field has focus; a deleted entry falling back to the list; Store its photos as a one-field write; the picker's add item and "Add a group instead"; no history entry or `#hash`; Close staying at the top while the sheet scrolls.
 - The existing Settings tests (multiChat, multiChat2, multiChat3, groupsAdd) now go to each screen through its row (`mcSet`) and check the same things there, plus: tags refused and saved on Enter and on blur with no Save button; the group's labels, Read and Show in All as one-field writes; the order screen by mouse, keyboard and drag, the list following it; every field on every screen labelled; each screen fitting at 390 and 360 px.

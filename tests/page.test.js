@@ -20467,6 +20467,18 @@ async function settingsF43() {
     (await p.isHidden('#settings')) && (await f43Focus(p)) === 'settings-open',
     'F43: a second Escape closes Settings, focus back on its button',
   );
+  // #123: after a click on blank space in the sheet, focus is on body; Escape still goes back, then closes
+  await mcSet(p, 'book');
+  await p.evaluate(() => document.activeElement && document.activeElement.blur());
+  const onBody = await p.evaluate(() => document.activeElement === document.body);
+  await p.keyboard.press('Escape');
+  const back = !(await p.$('#set-scr-h')) && (await p.isVisible('#settings'));
+  await p.evaluate(() => document.activeElement && document.activeElement.blur());
+  await p.keyboard.press('Escape');
+  ok(
+    onBody && back && (await p.isHidden('#settings')),
+    '#123: with focus on the page body, Escape goes back to the list, then closes Settings',
+  );
   // a chat's Store its photos, set when adding, changes here: one field, and its chip goes
   await mcSet(p, 'cam');
   let w0 = await mcNWrites(p);

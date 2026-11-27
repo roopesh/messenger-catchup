@@ -19031,9 +19031,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   }
   $("#settings-open").onclick = () => ($("#settings").hidden ? openSettings(null) : closeSettings());
   $("#settings-close").onclick = closeSettings;
-  /* Escape goes back to the list first, then closes */
-  $("#settings").addEventListener("keydown", e => {
-    if (e.key !== "Escape") return;
+  /* Escape goes back to the list first, then closes. On the document, not the sheet: a click on blank space in the
+     sheet leaves focus on body (#123). A handler that already took it (a suggestion box, a confirm) wins. */
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape" || e.defaultPrevented || $("#settings").hidden) return;
     e.preventDefault();
     if (S.setScreen) setGo(null);
     else closeSettings();
