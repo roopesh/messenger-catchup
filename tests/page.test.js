@@ -16028,10 +16028,23 @@ async function mcPaste(p, c, key) {
     [doc, before],
   );
 }
+/* opens Settings on its list (a sheet already open stays open: the gear button toggles it) */
 async function mcSettings(p) {
-  await p.click('#settings-open');
-  await p.waitForTimeout(150);
+  if (await p.isHidden('#settings')) await p.click('#settings-open');
+  await until(p, () => !document.getElementById('settings').hidden && document.getElementById('set-body').firstChild);
 }
+/* F43: Settings is a list, then a screen per row: opens Settings and goes to screen SCR (an entry's key, "all",
+   "order", "add" or "addg") by clicking its row, as a person would, and waits for the screen's heading */
+async function mcSet(p, scr) {
+  await mcSettings(p);
+  /* on a phone a screen hides the list: back to it first */
+  if (await p.isVisible('#set-back')) await p.click('#set-back');
+  await until(p, s => document.getElementById('set-row-' + s), scr);
+  await p.click('#set-row-' + scr);
+  await until(p, s => ((document.getElementById('set-scr-h') || {}).dataset || {}).scr === s, scr);
+}
+/* every row of Settings' list: [key or screen, its text] */
+const mcRows = p => p.$$eval('#set-body .set-row', rs => rs.map(r => [r.id.slice(8), r.textContent]));
 async function multiChat() {
   // MIG5, PG1: a page from before F1 (no chats) is one chat and looks as it did, opening on that chat
   let p = await mcOpen({ one: true });
@@ -16350,14 +16363,23 @@ async function multiChat() {
   );
   await p.context().close();
 
-  // Settings: Your chats (the owner manages chats without Claude)
+  // Settings (the owner manages chats without Claude): a list, then a screen per row (F43)
   p = await mcOpen({ chats: { chess: { name: 'Chess Swap', tag: 'Chess', color: 4, order: 3, state: 'deleted' } } });
   const s0 = await p.evaluate(() => __rt.samples.length);
   await mcSettings(p);
-  const unlabeled = await p.$$eval('#set-body input:not([type=radio]):not([type=checkbox]), #set-body select', xs =>
-    xs.filter(x => !x.id || !document.querySelector('label[for="' + x.id + '"]')).map(x => x.outerHTML.slice(0, 60)),
-  );
-  ok(!unlabeled.length, 'F1 PH3: every field in Settings has an id and a label (' + unlabeled + ')');
+  const unlabeled = [];
+  for (const scr of ['all', 'trail', 'cam', 'book', 'order', 'add', 'addg']) {
+    await mcSet(p, scr);
+    unlabeled.push(
+      ...(await p.$$eval('#set-body input:not([type=radio]):not([type=checkbox]), #set-body select', xs =>
+        xs
+          .filter(x => !x.id || !document.querySelector('label[for="' + x.id + '"]'))
+          .map(x => x.outerHTML.slice(0, 60)),
+      )),
+    );
+  }
+  ok(!unlabeled.length, 'F1 PH3: every field on every Settings screen has an id and a label (' + unlabeled + ')');
+  await mcSet(p, 'add');
   ok(
     (await p.evaluate(() => getComputedStyle(document.getElementById('settings')).overflowY)) === 'auto',
     'F1 PH3: Settings is a sheet that scrolls inside itself',
@@ -16412,12 +16434,13 @@ async function multiChat() {
       JSON.stringify(e) +
       ')',
   );
-  await until(p, () => document.querySelector('.chatrow[data-chat="chess2"]'));
+  await until(p, () => document.querySelector('#set-row-chess2'));
   ok(
-    (await mcText(p, '#set-body')).includes(
-      'Waiting for its first refresh. Ask Claude to “refresh Chess Club” (or “refresh my catch-up” for every chat).',
-    ),
-    'F1 SET4, stage B: a pending chat on a page with no schedule says to ask Claude',
+    (await mcText(p, '#set-row-chess2')).includes('Waiting for its first refresh') &&
+      (await mcText(p, '#set-scr-h')) === 'Add a chat',
+    "F43: the new chat's row joins the list at once, its line saying it waits for its first refresh, while the Add a chat screen stays open (" +
+      (await mcText(p, '#set-row-chess2')) +
+      ')',
   );
   ok(
     (await mcText(p, '#set-st-add')) ===
@@ -16437,42 +16460,85 @@ async function multiChat() {
       ]),
     'F34: Add a chat asks how far back to read in days, a day by default',
   );
-  // SET12, DM4, CT7: renaming a tag: empty, too long and duplicate refused; a good one shows at once, nothing else written
-  for (const [t, why] of [
-    ['', /can't be empty/],
-    ['Cam', /already Camera Club's tag/],
+  await mcSet(p, 'chess2');
+  ok(
+    (await mcText(p, '.chatrow[data-chat="chess2"] > .chatline')) ===
+      'Waiting for its first refresh. Ask Claude to “refresh Chess Club” (or “refresh my catch-up” for every chat).',
+    'F1 SET4, stage B: a pending chat on a page with no schedule says to ask Claude (' +
+      (await mcText(p, '.chatrow[data-chat="chess2"] > .chatline')) +
+      ')',
+  );
+  // SET12, DM4, CT7, F43: renaming a tag: empty and duplicate refused; a good one shows at once, nothing else written.
+  // No Save button: the tag saves on Enter or when the field loses focus
+  await mcSet(p, 'book');
+  ok(
+    !(await p.$$eval('.chatrow[data-chat="book"] button', bs => bs.some(b => /Save/.test(b.textContent)))),
+    'F43: a tag has no Save button',
+  );
+  for (const [t, why, how] of [
+    ['', /can't be empty/, 'Enter'],
+    ['Cam', /already Camera Club's tag/, 'blur'],
   ]) {
     w0 = await mcNWrites(p);
     await p.fill('#tag-book', t);
-    await p.click('.chatrow[data-chat="book"] .fld button');
-    await p.waitForTimeout(100);
+    if (how === 'Enter') await p.press('#tag-book', 'Enter');
+    else await p.click('#set-scr-h');
+    await until(p, w => new RegExp(w).test(document.getElementById('set-st-book').textContent), why.source);
     ok(
       why.test(await mcText(p, '#set-st-book')) && (await mcNWrites(p)) === w0,
-      'F1 SET12: the tag "' + t + '" is refused (' + (await mcText(p, '#set-st-book')) + ')',
+      'F1 SET12/F43: the tag "' + t + '" is refused on ' + how + ' (' + (await mcText(p, '#set-st-book')) + ')',
     );
   }
   w0 = await mcNWrites(p);
   await p.fill('#tag-book', 'Brew');
-  await p.click('.chatrow[data-chat="book"] .fld button');
+  await p.press('#tag-book', 'Enter');
   await until(p, () => __rt.get('meta/chat').chats.book.tag === 'Brew');
+  ok(
+    await until(
+      p,
+      () =>
+        document.querySelector('#set-row-book .ctag').textContent === 'Brew' &&
+        document.querySelector('.chatrow[data-chat="book"] .chathead .ctag').textContent === 'Brew' &&
+        document.activeElement.id === 'tag-book',
+    ),
+    "F43: Enter saves the tag; the list row's and the screen's tag show it at once while the field keeps focus",
+  );
   const keys0 = await p.evaluate(() =>
     [...__rt.store.keys()]
       .filter(k => /^book_/.test(k))
       .sort()
       .join(),
   );
+  await p.click('#set-scr-h');
   ok(
     JSON.stringify(await mcWrites(p, w0)) === '["meta/chat"]' && keys0.includes('book_chunks/c0000'),
-    "F1 SET12/DM4: a new tag is one meta/chat write; the chat's collections keep their names",
+    "F1 SET12/DM4: a new tag is one meta/chat write (leaving the field after Enter writes nothing more); the chat's collections keep their names",
   );
+  // blur saves too: a tag typed and left (a click elsewhere) is one write
+  w0 = await mcNWrites(p);
+  await p.fill('#tag-book', 'Brews');
+  await p.click('#set-scr-h');
+  await until(p, () => __rt.get('meta/chat').chats.book.tag === 'Brews');
+  await until(p, () => document.getElementById('set-st-book').textContent === 'Tag saved.');
+  /* the save's echo redraws the screen (focus had left the field): wait for it before typing again */
+  await until(p, () => document.querySelector('#set-row-book .ctag').textContent === 'Brews');
+  const wb = await p.evaluate(n => __rt.writes.slice(n), w0);
+  ok(
+    wb.length === 1 && JSON.stringify(wb[0].v.chats) === '{"book":{"tag":"Brews"}}',
+    'F43: leaving the tag field saves it, one write of only the tag (' + JSON.stringify(wb) + ')',
+  );
+  await p.fill('#tag-book', 'Brew');
+  await p.press('#tag-book', 'Enter');
+  await until(p, () => __rt.get('meta/chat').chats.book.tag === 'Brew');
   await p.click('#settings-close');
   await until(p, () => /Brew #3/.test(document.getElementById('v-all').textContent));
   ok(/Brew #3/.test(await mcText(p, '#v-all')), 'F1 CT7: the new tag shows at once in citations');
   // OB4, OB8: the page default and a chat's own setting
-  await mcSettings(p);
+  await mcSet(p, 'all');
   w0 = await mcNWrites(p);
   await p.check('#set-auto');
   await until(p, () => __rt.get('meta/chat').outboxAuto === true);
+  await mcSet(p, 'cam');
   await p.selectOption('#auto-cam', 'off');
   await until(p, () => __rt.get('meta/chat').chats.cam.auto === false);
   await p.selectOption('#auto-cam', '');
@@ -16484,13 +16550,21 @@ async function multiChat() {
   // SET6: pause and resume
   await p.click('.chatrow[data-chat="cam"] .btns button:text("Pause")');
   await until(p, () => __rt.get('meta/chat').chats.cam.state === 'paused');
-  await until(p, () =>
-    /Paused: refreshes skip it/.test(document.querySelector('.chatrow[data-chat="cam"]').textContent),
+  ok(
+    await until(
+      p,
+      () =>
+        /Paused: refreshes skip it/.test(document.querySelector('.chatrow[data-chat="cam"]').textContent) &&
+        /paused/.test((document.querySelector('#set-row-cam .badge.warn') || {}).textContent) &&
+        document.activeElement.id === 'set-state-cam' &&
+        document.activeElement.textContent === 'Resume',
+    ),
+    'F1 SET6/F43: Pause marks the chat paused, its line says so, its row gets a paused chip, and focus stays on the button (now Resume)',
   );
-  ok(true, 'F1 SET6: Pause marks the chat paused and its line says so');
   await p.click('.chatrow[data-chat="cam"] .btns button:text("Resume")');
   await until(p, () => __rt.get('meta/chat').chats.cam.state === 'active');
   // SET7: Remove: delete chosen by default; Cancel writes nothing; Keep it hidden keeps every document
+  await mcSet(p, 'book');
   await p.click('.chatrow[data-chat="book"] .btns button:text("Remove…")');
   ok(await p.isChecked('#rm-delete-book'), 'F1 SET7: Remove opens with "Delete its messages and photos" chosen');
   w0 = await mcNWrites(p);
@@ -16503,6 +16577,15 @@ async function multiChat() {
   ok(
     (await p.evaluate(() => [...__rt.store.keys()].filter(k => /^book_|chat-book/.test(k)).length)) >= 4,
     'F1 SET7: Keep it hidden deletes nothing',
+  );
+  ok(
+    await until(
+      p,
+      () =>
+        document.querySelector('.chatrow[data-chat="book"] .btns').textContent === 'Bring back' &&
+        (document.querySelector('#set-row-book .badge') || {}).textContent === 'hidden',
+    ),
+    "F43: a hidden chat's screen stays open with Bring back, and its row says hidden",
   );
   await p.click('#settings-close');
   await until(p, () => !document.querySelector('#v-all .chatcard[data-chat="book"]'));
@@ -16517,7 +16600,7 @@ async function multiChat() {
     extra: { 'cam_photos/b0': { start: 0, byK: { 2: { 0: '/_blob/' + camBlob } }, gifs: [] } },
     opts: { blobs: { [camBlob]: { type: 'image/png', b64: PNG } } },
   });
-  await mcSettings(p);
+  await mcSet(p, 'cam');
   await p.click('.chatrow[data-chat="cam"] .btns button:text("Remove…")');
   await until(p, () => /frees 1 file/.test((document.getElementById('rm-free-cam') || {}).textContent || ''));
   ok(
@@ -16526,6 +16609,19 @@ async function multiChat() {
   );
   await p.click('#rm-go-cam');
   await until(p, () => __rt.get('meta/chat').chats.cam.state === 'deleted', null, 8000);
+  ok(
+    await until(
+      p,
+      () =>
+        !document.getElementById('set-scr-h') &&
+        !document.getElementById('set-row-cam') &&
+        /Camera Club is deleted: 1 file removed/.test(document.getElementById('set-st-list').textContent) &&
+        document.activeElement.id === 'settings-h',
+    ),
+    'F43: when a chat is deleted from its screen, Settings goes back to the list, which says so, focus on its heading (' +
+      (await mcText(p, '#set-body')).slice(0, 200) +
+      ')',
+  );
   const left = await p.evaluate(() => [...__rt.store.keys()].filter(k => /^cam_|chat-cam|lastImport-cam/.test(k)));
   ok(
     !left.length &&
@@ -16540,15 +16636,18 @@ async function multiChat() {
   // SET11: a viewer who can't write sees no chat controls
   p = await mcOpen({ opts: { canWrite: false } });
   await mcSettings(p);
+  await until(p, () => /Only people who can edit this page/.test(document.getElementById('set-body').textContent));
   ok(
-    /Only people who can edit this page/.test(await mcText(p, '#set-body')) && !(await p.$('#add-link')),
+    /Only people who can edit this page/.test(await mcText(p, '#set-body')) &&
+      !(await p.$('#add-link')) &&
+      !(await p.$('.set-row')),
     'F1 SET11: a viewer without write access gets no controls',
   );
   await p.context().close();
 
   // SET3 on a page from before F1: the first write adds the first chat too
   p = await mcOpen({ one: true });
-  await mcSettings(p);
+  await mcSet(p, 'add');
   await p.fill('#add-link', 'https://www.messenger.com/t/8181');
   await p.fill('#add-name', 'Book Club');
   await p.click('#add-go');
@@ -16662,12 +16761,17 @@ async function multiChat() {
     const a2 = await fit();
     await mcSettings(p);
     const a3 = await fit();
+    const a4 = [];
+    for (const scr of ['cam', 'book', 'all', 'order', 'add', 'addg']) {
+      await mcSet(p, scr);
+      a4.push(await fit());
+    }
     ok(
-      [a1, a2, a3].every(x => x[0] && x[1]),
-      'F1 PH1/PH4: ' +
+      [a1, a2, a3, ...a4].every(x => x[0] && x[1]),
+      'F1 PH1/PH4/F43: ' +
         vp.width +
-        ' px, All chats, a long-named chat and Settings fit with no sideways scroll (' +
-        JSON.stringify([a1, a2, a3]) +
+        ' px, All chats, a long-named chat, Settings and each of its screens fit with no sideways scroll (' +
+        JSON.stringify([a1, a2, a3, a4]) +
         ')',
     );
     await p.context().close();
@@ -16870,7 +16974,7 @@ async function multiChat2() {
   await p.context().close();
   // 5: Bring back puts a chat removed while pending back to pending
   p = await mcOpen({ chats: pend });
-  await mcSettings(p);
+  await mcSet(p, 'chess');
   await p.click('.chatrow[data-chat="chess"] .btns button:text("Remove…")');
   await p.check('#rm-hide-chess');
   await p.click('#rm-go-chess');
@@ -16901,10 +17005,10 @@ async function multiChat2() {
   await p.evaluate(() =>
     __rt.write('refresh/status', { state: 'running', startedAt: new Date().toISOString(), step: 'scan' }),
   );
-  await mcSettings(p);
+  await mcSet(p, 'cam');
   await p.click('.chatrow[data-chat="cam"] .btns button:text("Remove…")');
   await p.click('#rm-go-cam');
-  await p.waitForTimeout(500);
+  await until(p, () => /refresh is running/.test(document.getElementById('set-st-cam').textContent));
   ok(
     (await get(p, 'meta/chat')).chats.cam.state === 'active' &&
       (await get(p, 'cam_chunks/c0000')) &&
@@ -16913,7 +17017,7 @@ async function multiChat2() {
   );
   await p.context().close();
   p = await del();
-  await mcSettings(p);
+  await mcSet(p, 'cam');
   await p.click('.chatrow[data-chat="cam"] .btns button:text("Remove…")');
   await p.click('#rm-go-cam');
   await until(p, () => __rt.get('meta/chat').chats.cam.state === 'deleted', null, 8000);
@@ -16935,7 +17039,19 @@ async function multiChat2() {
   p = await open(s54);
   const cards54 = await p.$$eval('#v-all .chatcard', cs => cs.map(c => c.dataset.chat + '|' + c.textContent));
   await mcSettings(p);
-  const rows54 = await p.$$eval('.chatrow', rs => rs.map(r => r.dataset.chat + '|' + r.textContent));
+  const list54 = await mcRows(p);
+  const rows54 = [];
+  for (const k of ['trail', 'cam', 'book']) {
+    await mcSet(p, k);
+    rows54.push(k + '|' + (await mcText(p, '.chatrow[data-chat="' + k + '"]')));
+  }
+  ok(
+    (list54.find(r => r[0] === 'trail') || [])[1] === 'TrailTrail CrewFirst chat · refreshed Mon Nov 23, 9:04 AM' &&
+      (list54.find(r => r[0] === 'cam') || [])[1] === 'CamCamera ClubRefreshed Mon Nov 23, 8:34 AM',
+    "B54/F43: Settings' list rows say when each chat was last refreshed, in the display form (" +
+      JSON.stringify(list54) +
+      ')',
+  );
   const both = cards54.concat(rows54);
   const trail54 = both.filter(t => t.startsWith('trail|'));
   const cam54 = both.filter(t => t.startsWith('cam|'));
@@ -16955,23 +17071,30 @@ async function multiChat2() {
       JSON.stringify(cam54.map(t => t.slice(0, 200))) +
       ')',
   );
+  await mcSet(p, 'all');
   ok(
-    (await mcText(p, '#set-body')).includes(
-      'Send queued replies automatically (all chats, unless a chat below says otherwise)',
-    ),
-    'Settings: the page default for replies reads "Send queued replies automatically (…)"',
+    (await mcText(p, '#set-body')).includes('Send queued replies automatically') &&
+      (await mcText(p, '#set-auto-hint')) ===
+        'Every chat, unless its own screen says otherwise. Otherwise Claude asks you before posting each reply.',
+    'Settings: the page default for replies reads "Send queued replies automatically", what it does said once',
   );
+  await mcSet(p, 'cam');
   const opts54 = await p.$$eval('#auto-cam option', os => os.map(o => o.value + '=' + o.textContent));
   const camRow = rows54.find(t => t.startsWith('cam|')) || '';
+  const camLabels = await p.$$eval('.chatrow[data-chat="cam"] .fld > label', ls => ls.map(l => l.textContent));
   ok(
     JSON.stringify(opts54) ===
       JSON.stringify(['=Same as all chats (wait for my OK)', 'on=Send automatically', 'off=Wait for my OK']) &&
-      camRow.includes("Short tag (up to 8 letters), shown beside this chat's messages and citations") &&
-      camRow.includes('Queued replies in this chat') &&
+      JSON.stringify(camLabels) === JSON.stringify(['Tag', 'Queued replies', 'Scheduled refresh']) &&
+      camRow.includes(
+        "Up to 8 letters, shown beside this chat's messages and citations. Saved when you press Enter or leave the field.",
+      ) &&
+      camRow.includes('Store its photos') &&
       camRow.includes('Pause this chat') &&
-      camRow.includes('Pausing stops refreshes of this chat until you resume it. Its messages stay on the page.'),
-    "Settings: a chat row's tag, reply and Pause wording, each option keeping its value (" +
-      JSON.stringify([opts54, camRow.slice(0, 400)]) +
+      camRow.includes('Pausing stops refreshes of this chat until you resume it. Its messages stay on the page.') &&
+      camRow.split('Pausing stops refreshes').length === 2,
+    "Settings/F43: a chat's screen: short labels, the tag's and Pause's wording said once, each option keeping its value (" +
+      JSON.stringify([opts54, camLabels, camRow.slice(0, 400)]) +
       ')',
   );
   ok(!p.errors.length, 'B54: no page errors ' + JSON.stringify(p.errors));
@@ -16994,8 +17117,12 @@ async function multiChat2() {
     const o = {};
     for (const c of await p.$$eval('#v-all .chatcard', cs => cs.map(c => [c.dataset.chat, c.textContent])))
       o['all:' + c[0]] = c[1];
-    for (const c of await p.$$eval('.chatrow', rs => rs.map(r => [r.dataset.chat, r.textContent])))
-      o['set:' + c[0]] = c[1];
+    if (await p.isHidden('#settings')) return o;
+    for (const [k, t] of await mcRows(p)) o['row:' + k] = t;
+    for (const k of ['trail', 'cam', 'book', 'chess']) {
+      await mcSet(p, k);
+      o['set:' + k] = await mcText(p, '.chatrow[data-chat="' + k + '"]');
+    }
     return o;
   };
   let L = await lines();
@@ -17013,6 +17140,15 @@ async function multiChat2() {
       JSON.stringify(L) +
       ')',
   );
+  ok(
+    /skipped in the last run/.test(L['row:book'] || '') &&
+      ['row:trail', 'row:cam', 'row:chess'].every(k => L[k] && !/skipped/.test(L[k])) &&
+      /Waiting for its first refresh/.test(L['row:chess']),
+    "F43: Settings' list: the skipped chat's row has a chip saying so, the pending one says it waits (" +
+      JSON.stringify(L) +
+      ')',
+  );
+  await mcSet(p, 'add');
   const addNote = await mcText(p, '.addform');
   ok(
     addNote.includes(
@@ -17023,23 +17159,35 @@ async function multiChat2() {
   // review 6c: a status change never rebuilds Settings: a half-typed link survives, focus elsewhere, while the
   // skipped notes update in place
   await p.fill('#add-link', 'https://www.facebook.com/messages/t/99');
-  await p.click('.addform h3');
+  await p.click('#set-scr-h');
   await p.evaluate(() => {
     __rt.write('refresh/status', { state: 'running', startedAt: new Date().toISOString(), step: 'scan' });
     __rt.write('refresh/skipped', { keys: ['trail'], at: new Date().toISOString(), run: new Date().toISOString() });
   });
-  const moved = await until(
-    p,
-    s => document.querySelector('.chatrow[data-chat="trail"] .chatline').textContent.includes(s),
-    SKIP,
+  const moved = await until(p, () =>
+    /skipped in the last run/.test(document.getElementById('set-row-trail').textContent),
   );
   ok(
     moved &&
       (await p.inputValue('#add-link')) === 'https://www.facebook.com/messages/t/99' &&
-      !(await mcText(p, '.chatrow[data-chat="book"]')).includes(SKIP),
-    'F1 review 6c: a status and skipped change update the notes in place; a half-typed Add a chat link survives (' +
+      !/skipped/.test(await mcText(p, '#set-row-book')),
+    'F1 review 6c: a status and skipped change update the rows in place; a half-typed Add a chat link survives (' +
       (await p.inputValue('#add-link')) +
       ')',
+  );
+  // and on a chat's screen, its line updates in place while its tag field has focus
+  await mcSet(p, 'trail');
+  await p.focus('#tag-trail');
+  await p.evaluate(() =>
+    __rt.write('refresh/skipped', { keys: ['book'], at: new Date().toISOString(), run: new Date().toISOString() }),
+  );
+  ok(
+    (await until(
+      p,
+      s => !document.querySelector('.chatrow[data-chat="trail"] > .chatline').textContent.includes(s),
+      SKIP,
+    )) && (await p.evaluate(() => document.activeElement.id)) === 'tag-trail',
+    "F1 review 6c/F43: a chat's line on its screen updates in place while its tag field keeps focus",
   );
   await p.click('#settings-close');
   await p.waitForTimeout(150);
@@ -17057,7 +17205,7 @@ async function multiChat2() {
   );
   // review 6b: a chain that has stopped is no schedule to wait for
   await p.evaluate(() => __rt.write('refresh/schedule', { armId: 'x', nextAt: '2026-01-01T00:00:00Z' }));
-  await mcSettings(p);
+  await mcSet(p, 'chess');
   ok(
     await until(p, s => document.querySelector('.chatrow[data-chat="chess"]').textContent.includes(s), MANUAL),
     'F1 review 6b: a stopped chain: the pending chat says to ask Claude (' +
@@ -17079,7 +17227,7 @@ async function multiChat2() {
     p = await open(sM);
     await p.evaluate(() => openChat('cam'));
     await p.waitForTimeout(200);
-    await mcSettings(p);
+    await mcSet(p, 'chess');
     const t = await mcText(p, '.chatrow[data-chat="chess"]');
     ok(
       t.includes(want) && !/for every chat/.test(t.replace(want, '')),
@@ -17130,6 +17278,11 @@ async function multiChat3() {
   /* tall enough that Settings shows every row without scrolling, for the drag below */
   let p = await mcOpen({ chats: chess }, { viewport: { width: 1000, height: 2400 } });
   await mcSettings(p);
+  ok(
+    (await mcText(p, '#set-row-order')) === 'Change the orderTrail Crew stays first',
+    'F43: the list offers Change the order, saying the first chat stays first',
+  );
+  await mcSet(p, 'order');
   const body = await mcText(p, '#set-body');
   ok(
     body.includes(
@@ -17158,11 +17311,11 @@ async function multiChat3() {
   );
   // by mouse: Camera Club down, below Book Club: one meta/chat update holding the whole order after the first chat
   const rowsAre = want =>
-    until(p, w => [...document.querySelectorAll('.chatrow')].map(x => x.dataset.chat).join() === w, want.join());
+    until(p, w => [...document.querySelectorAll('.ordrow')].map(x => x.dataset.chat).join() === w, want.join());
   const w0 = await mcNWrites(p);
   await p.click('#mv-dn-cam');
   await until(p, () => __rt.get('meta/chat').chats.cam.order === 2);
-  await until(p, () => document.getElementById('set-st-cam').textContent === 'Order saved.');
+  await until(p, () => document.getElementById('set-st-order').textContent === 'Order saved.');
   const wr = await p.evaluate(n => __rt.writes.slice(n), w0);
   let ch = (await get(p, 'meta/chat')).chats;
   ok(
@@ -17177,8 +17330,17 @@ async function multiChat3() {
       ')',
   );
   ok(
+    await until(
+      p,
+      () =>
+        [...document.querySelectorAll('#set-body .set-row[data-chat]')].map(x => x.dataset.chat).join() ===
+        'trail,book,cam,chess',
+    ),
+    "F43: the list's rows follow the new order (refresh order) beside the order screen",
+  );
+  ok(
     (await p.evaluate(() => document.activeElement.id)) === 'mv-dn-cam',
-    'F1 q6: focus stays on the button pressed, and the row says "Order saved."',
+    'F1 q6: focus stays on the button pressed, and the order screen says "Order saved."',
   );
   // by keyboard, two presses before the first write's snapshot can arrive (Enter, then Space at once): Chess Club up
   // above Camera Club, then above Book Club. The second press moves from the order the first made (the page applies a
@@ -17199,7 +17361,7 @@ async function multiChat3() {
   );
   // by mouse drag (desktop): Camera Club's handle onto Chess Club's row puts it in that place, the same write
   const w1 = await mcNWrites(p);
-  await p.dragAndDrop('.chatrow[data-chat="cam"] .draghandle', '.chatrow[data-chat="chess"]');
+  await p.dragAndDrop('.ordrow[data-chat="cam"] .draghandle', '.ordrow[data-chat="chess"]');
   await until(p, () => __rt.get('meta/chat').chats.cam.order === 1);
   const wd = await p.evaluate(n => __rt.writes.slice(n), w1);
   ok(
@@ -17207,7 +17369,7 @@ async function multiChat3() {
       JSON.stringify(wd[0].v.chats) ===
         JSON.stringify({ cam: { order: 1 }, chess: { order: 2 }, book: { order: 3 } }) &&
       (await rowsAre(['trail', 'cam', 'chess', 'book'])) &&
-      !(await p.$('.chatrow[data-chat="trail"] .draghandle')),
+      !(await p.$('.ordrow[data-chat="trail"] .draghandle')),
     'F1 q6: dragging a row by its handle writes the whole order, as the buttons do; the first chat has no handle (' +
       JSON.stringify(wd) +
       ')',
@@ -17224,8 +17386,12 @@ async function multiChat3() {
     "F1 q6: the title's chat list and All chats follow the new order (" + JSON.stringify([picks, cards]) + ')',
   );
   // How often: the page default and each chat's own, with plain labels
-  await mcSettings(p);
+  await mcSet(p, 'all');
   const dflt = await p.$$eval('#set-every option', os => os.map(o => o.value + '=' + o.textContent));
+  const dfltVal = await p.inputValue('#set-every');
+  const sb = await mcText(p, '#set-body');
+  const dfltLabel = await mcText(p, 'label[for="set-every"]');
+  await mcSet(p, 'book');
   const own = await p.$$eval('#every-book option', os => os.map(o => o.value + '=' + o.textContent));
   ok(
     JSON.stringify(dflt) ===
@@ -17238,26 +17404,30 @@ async function multiChat3() {
           '240=Every 4 hours',
           '1440=Once a day',
         ]) &&
-      (await p.inputValue('#set-every')) === '0' &&
+      dfltVal === '0' &&
       (await p.inputValue('#every-book')) === '',
     'F1 q10: How often offers every scheduled run, 2 hours, 4 hours and once a day, a chat also "Same as all chats" (' +
       JSON.stringify([dflt, own]) +
       ')',
   );
-  const sb = await mcText(p, '#set-body');
   ok(
     sb.includes('How often scheduled runs refresh each chat') &&
       sb.includes('A refresh you ask for (“refresh my catch-up”) always refreshes every chat.') &&
+      dfltLabel === 'Scheduled refresh' &&
+      (await mcText(p, 'label[for="every-book"]')) === 'Scheduled refresh' &&
       (await mcText(p, '.chatrow[data-chat="book"]')).includes('How often scheduled runs refresh this chat'),
-    'F1 q10: the labels, and that a refresh you ask for refreshes every chat',
+    'F1 q10/F43: the short labels, what they do, and that a refresh you ask for refreshes every chat',
   );
+  await mcSet(p, 'trail');
   ok(
     !(await p.$('#every-trail')) &&
       (await mcText(p, '.chatrow[data-chat="trail"]')).includes(
         "Scheduled runs always refresh this chat: it's the first chat.",
       ),
-    'F1 q10: the first chat has no How often; its row says scheduled runs always refresh it',
+    'F1 q10: the first chat has no How often; its screen says scheduled runs always refresh it',
   );
+  await mcSet(p, 'book');
+  await p.focus('#every-book');
   await p.selectOption('#every-book', '240');
   await until(p, () => __rt.get('meta/chat').chats.book.every === 240);
   await until(p, () => document.getElementById('set-st-book').textContent === 'Saved.');
@@ -17270,12 +17440,24 @@ async function multiChat3() {
     ),
     "F1 q10: the chat's line says its new How often at once, while the select keeps focus",
   );
+  ok(
+    await until(
+      p,
+      () =>
+        /every 4 hours/.test((document.querySelector('#set-row-book .badge') || {}).textContent) &&
+        document.activeElement.id === 'every-book',
+    ),
+    'F43: the chat\'s row gets an "every 4 hours" chip at once (it differs from the default), while the select keeps focus',
+  );
   await p.selectOption('#every-book', '');
   await until(p, () => __rt.get('meta/chat').chats.book.every === null);
   ok(true, 'F1 q10: "Same as all chats" writes `every` null');
+  await mcSet(p, 'cam');
   await p.selectOption('#every-cam', '0');
   await until(p, () => __rt.get('meta/chat').chats.cam.every === 0);
   ok(true, 'F1 q10: "Every scheduled run" on a chat writes `every` 0 (it overrides a slower default)');
+  await mcSet(p, 'all');
+  await p.focus('#set-every');
   await p.selectOption('#set-every', '120');
   await until(p, () => __rt.get('meta/chat').chatEvery === 120);
   await until(p, () => document.getElementById('set-st-every').textContent === 'Saved.');
@@ -17283,18 +17465,31 @@ async function multiChat3() {
   ok(
     await until(
       p,
-      () => document.querySelector('#every-book option[value=""]').textContent === 'Same as all chats (every 2 hours)',
+      () =>
+        document.querySelector('#set-row-all > .sub').textContent === 'Replies: wait for my OK · every 2 hours' &&
+        /every scheduled run/.test((document.querySelector('#set-row-cam .badge') || {}).textContent) &&
+        document.activeElement.id === 'set-every',
     ),
-    'F1 q10: each chat\'s "Same as all chats (…)" names the new default at once, while #set-every keeps focus',
+    "F1 q10/F43: For all chats' row names the new default at once, and Camera Club (every run, now not the default) gets a chip, while #set-every keeps focus",
+  );
+  await mcSet(p, 'book');
+  ok(
+    (await p.$eval('#every-book option[value=""]', o => o.textContent)) === 'Same as all chats (every 2 hours)',
+    'F1 q10: each chat\'s "Same as all chats (…)" names the new default',
   );
   await p.click('#settings-close');
-  await mcSettings(p);
+  await mcSet(p, 'book');
+  const bookSame = await p.$eval('#every-book option', o => o.textContent);
+  await mcSet(p, 'cam');
+  const camEvery = await p.inputValue('#every-cam');
+  await mcSet(p, 'all');
   ok(
-    (await p.$eval('#every-book option', o => o.textContent)) === 'Same as all chats (every 2 hours)' &&
-      (await p.inputValue('#every-cam')) === '0' &&
+    bookSame === 'Same as all chats (every 2 hours)' &&
+      camEvery === '0' &&
       (await p.inputValue('#set-every')) === '120',
     'F1 q10: reopened, Settings shows each choice, "Same as all chats" naming the default',
   );
+  await mcSet(p, 'cam');
   await p.evaluate(() => {
     const m = JSON.parse(JSON.stringify(__rt.get('meta/chat')));
     m.chats.cam.every = 60;
@@ -17315,7 +17510,7 @@ async function multiChat3() {
   await p.click('#settings-close');
   await p.evaluate(() => openChat('book'));
   await until(p, () => document.querySelector('#h1').textContent === 'Book Club');
-  await mcSettings(p);
+  await mcSet(p, 'all');
   ok(
     (await mcText(p, '#set-body')).includes(
       'A refresh you ask for (“refresh my catch-up”) always refreshes every chat.',
@@ -17352,8 +17547,10 @@ async function multiChat3() {
     last: { book: '2026-11-23T17:00:00Z', cam: '2026-11-22T17:00:00Z' },
   };
   p = await open(sL, PAGE, { clockAt: T });
-  await mcSettings(p);
-  const line = k => mcText(p, '.chatrow[data-chat="' + k + '"] .chatline');
+  const line = async k => {
+    await mcSet(p, k);
+    return mcText(p, '.chatrow[data-chat="' + k + '"] .chatline');
+  };
   const [lb, lc, lt] = [await line('book'), await line('cam'), await line('trail')];
   ok(
     lb.endsWith(' Scheduled runs refresh it every 4 hours. Next refresh about 12:45 PM.') &&
@@ -17364,6 +17561,7 @@ async function multiChat3() {
       ')',
   );
   // a due time outside the schedule's hours (Camera Club: 10:30 PM) leaves the time out
+  await mcSet(p, 'cam');
   await p.evaluate(() =>
     __rt.write(
       'refresh/skipped',
@@ -17381,6 +17579,7 @@ async function multiChat3() {
     "F1 q10: a next refresh outside the schedule's hours is left out (" + (await line('cam')) + ')',
   );
   // only while the schedule is healthy: missed runs leave the time out
+  await mcSet(p, 'book');
   const NEXT = 'Next refresh about 12:45 PM.';
   const bookHas = (t, want) =>
     until(p, ([t, w]) => document.querySelector('.chatrow[data-chat="book"] .chatline').textContent.includes(t) === w, [
@@ -17418,7 +17617,7 @@ async function multiChat3() {
   await p.click('#h1');
   const picksH = await p.$$eval('#picker-list button', bs => bs.map(b => b.dataset.key));
   await p.keyboard.press('Escape');
-  await mcSettings(p);
+  await mcSet(p, 'order');
   const idsH = await p.$$eval('[id^="mv-"]', bs => bs.map(b => b.id));
   ok(
     JSON.stringify(picksH) === JSON.stringify(['all', 'trail', 'cam', 'book', 'add']) &&
@@ -17441,9 +17640,13 @@ async function multiChat3() {
   // a page with one chat shows no How often or Move buttons: its runs don't read them
   p = await mcOpen({ one: true });
   await mcSettings(p);
+  const noOrder = !(await p.$('#set-row-order'));
+  await mcSet(p, 'all');
+  const noDefault = !(await p.$('#set-every'));
+  await mcSet(p, 'trail');
   ok(
-    !(await p.$('#set-every')) && !(await p.$('[id^="every-"]')) && !(await p.$('[id^="mv-"]')),
-    'F1 q6/q10: a one-chat page has no How often and no Move buttons',
+    noOrder && noDefault && !(await p.$('[id^="every-"]')) && !(await p.$('[id^="mv-"]')),
+    'F1 q6/q10: a one-chat page has no How often and no Move buttons (no Change the order row)',
   );
   await p.context().close();
 }
@@ -18153,7 +18356,7 @@ async function multiChatAll() {
 }
 async function groupsAdd() {
   let p = await mcOpen();
-  await mcSettings(p);
+  await mcSet(p, 'addg');
   let w0 = await mcNWrites(p);
   for (const [bad, want] of [
     ['https://www.facebook.com/messages/t/6161/', /That's a Messenger chat: add it under Add a chat/],
@@ -18162,7 +18365,7 @@ async function groupsAdd() {
   ]) {
     await p.fill('#grp-link', bad);
     await p.click('#grp-go');
-    await p.waitForTimeout(100);
+    await until(p, w => new RegExp(w).test(document.getElementById('set-st-grp').textContent), want.source);
     ok(
       want.test(await mcText(p, '#set-st-grp')) && (await mcNWrites(p)) === w0,
       'G1-02: Add a group refuses "' + bad + '" inline and writes nothing',
@@ -18199,10 +18402,18 @@ async function groupsAdd() {
   w0 = await mcNWrites(p);
   await p.fill('#grp-link', 'https://m.facebook.com/groups/1000000000000001');
   await p.click('#grp-go');
-  await p.waitForTimeout(100);
+  await until(p, () => /already on the page/.test(document.getElementById('set-st-grp').textContent));
   ok(
     /already on the page: Gear Swap/.test(await mcText(p, '#set-st-grp')) && (await mcNWrites(p)) === w0,
     'G1-02: the same group again (another link form) is refused, naming it',
+  );
+  ok(
+    (await mcText(p, '#set-row-gear')) ===
+      'GearGear SwapGroup · with Book Club · waiting for its first refreshonly minenot in All' &&
+      (await mcText(p, '#set-body .set-sec')) === 'Chats and groups',
+    "F43: the new group's row: Group, the chat it goes with, its status, and chips for Read only mine and Show in All off (" +
+      (await mcText(p, '#set-row-gear')) +
+      ')',
   );
   await p.keyboard.press('Escape');
   /* as after its first read: an active group has Pause */
@@ -18215,20 +18426,28 @@ async function groupsAdd() {
       }),
     );
   });
-  await mcSettings(p);
+  await mcSet(p, 'gear');
   await until(p, () =>
     /Pause this group/.test((document.querySelector('.chatrow[data-chat="gear"]') || {}).textContent || ''),
   );
   const gRow = await p.$eval('.chatrow[data-chat="gear"]', x => x.textContent);
+  const gLabels = await p.$$eval('.chatrow[data-chat="gear"] .fld > label, .chatrow[data-chat="gear"] label.chk', ls =>
+    ls.map(l => l.textContent.trim()),
+  );
   ok(
     (await p.$eval('#with-gear', x => x.value)) === 'book' &&
+      JSON.stringify(gLabels) ===
+        JSON.stringify(['Tag', 'Goes with a chat', 'Read', 'Scheduled refresh', 'Show in All']) &&
+      (await p.inputValue('#read-gear')) === 'mine' &&
+      !(await p.isChecked('#rollup-gear')) &&
+      !(await p.$('#photos-gear')) &&
       gRow.includes("shown beside this group's posts and citations") &&
       gRow.includes('Pause this group') &&
       gRow.includes('Pausing stops refreshes of this group until you resume it. Its posts stay on the page.') &&
       !gRow.includes('Queued replies') &&
       !/this chat/.test(gRow),
-    "G1-03: a group's Settings card says group (no chat wording, no Queued replies) and shows Goes with a chat (" +
-      gRow.slice(0, 300) +
+    "G1-03/F43: a group's screen says group (no chat wording, no Queued replies, no photos) and shows Goes with a chat, Read and Show in All as set when adding (" +
+      JSON.stringify([gLabels, gRow.slice(0, 300)]) +
       ')',
   );
   w0 = await mcNWrites(p);
@@ -18239,6 +18458,34 @@ async function groupsAdd() {
     wl.length === 1 && JSON.stringify(wl[0].v.chats) === '{"gear":{"chat":null}}',
     "G1-03: changing a group's Goes with a chat after adding writes only that field (" + JSON.stringify(wl) + ')',
   );
+  // F43: Read and Show in All, set when adding, change here too: each one field
+  for (const [act, want, chip] of [
+    [() => p.selectOption('#read-gear', 'all'), '{"gear":{"read":"all"}}', /only mine/],
+    [() => p.check('#rollup-gear'), '{"gear":{"rollup":true}}', /not in All/],
+  ]) {
+    w0 = await mcNWrites(p);
+    await act();
+    await until(p, n => __rt.writes.length > n, w0);
+    const wr = await p.evaluate(n => __rt.writes.slice(n), w0);
+    const gone = await until(
+      p,
+      c => !new RegExp(c).test(document.getElementById('set-row-gear').textContent),
+      chip.source,
+    );
+    ok(
+      wr.length === 1 && JSON.stringify(wr[0].v.chats) === want && gone,
+      "F43: a group's " +
+        want +
+        ' is one write of that field, and its chip leaves the row (' +
+        JSON.stringify(wr) +
+        ')',
+    );
+  }
+  ok(
+    (await get(p, 'meta/chat')).chats.gear.read === 'all' && (await get(p, 'meta/chat')).chats.gear.rollup === true,
+    "F43: the group's Read and Show in All are stored",
+  );
+  await p.keyboard.press('Escape');
   await p.keyboard.press('Escape');
   await p.click('#h1');
   const items = await p.$$eval('#picker-list > *', xs =>
@@ -20028,9 +20275,10 @@ async function groupsLinked() {
   );
   await p.setViewportSize({ width: 1000, height: 900 });
   // unlinked in Settings: the section, its switch and the lines under messages go
-  await mcSettings(p);
+  await mcSet(p, 'gear');
   await p.selectOption('#with-gear', '');
   await until(p, () => !__rt.get('meta/chat').chats.gear.chat);
+  await p.keyboard.press('Escape');
   await p.keyboard.press('Escape');
   await until(p, () => !document.querySelector('#st-body [data-sec="linked"]'));
   await mcPick(p, 'cam');
@@ -20071,6 +20319,279 @@ async function groupsLinked() {
   ok(p.errors.length === 0, 'G2c chats only: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 }
+/* F43: Settings is a list, then a screen per row (two panes on a wide sheet, one at a time on a phone). The list shows
+   what differs from the defaults; the screen open lives in state, so a store echo keeps it; Back and Escape return. */
+const F43_CHATS = {
+  cam: {
+    name: 'Camera Club',
+    tag: 'Cam',
+    color: 2,
+    order: 1,
+    state: 'active',
+    thread: '5151',
+    url: MC_URL('cam'),
+    auto: true,
+    photos: false,
+  },
+  book: { name: 'Book Club', tag: 'Book', color: 3, order: 2, state: 'active', thread: '6161', every: 240 },
+  chess: { name: 'Chess Club', tag: 'Chess', color: 4, order: 3, state: 'paused', thread: '7171' },
+  gear: {
+    kind: 'group',
+    name: 'Gear Swap',
+    tag: 'Gear',
+    color: 1,
+    order: 4,
+    state: 'active',
+    group: '1000000000000001',
+    url: 'https://www.facebook.com/groups/1000000000000001/',
+    chat: 'book',
+    read: 'mine',
+    rollup: false,
+  },
+};
+const f43Rows = p =>
+  p.$$eval('#set-body .set-row', rs =>
+    rs.map(r => [
+      r.id.slice(8),
+      (r.querySelector('.sub > span:not(.badge)') || { textContent: r.querySelector('.sub').textContent }).textContent,
+      [...r.querySelectorAll('.badge')].map(b => b.textContent + (b.classList.contains('warn') ? '!' : '')),
+    ]),
+  );
+const f43Focus = p => p.evaluate(() => document.activeElement.id);
+async function settingsF43() {
+  let p = await mcOpen({ chats: F43_CHATS });
+  const h0 = await p.evaluate(() => [history.length, location.hash]);
+  await mcSettings(p);
+  // the list: For all chats, each chat and group in refresh order with chips for what differs, the order, the Add rows
+  const rows = await f43Rows(p);
+  const R = Object.fromEntries(rows.map(r => [r[0], r]));
+  ok(
+    JSON.stringify(rows.map(r => r[0])) ===
+      JSON.stringify(['all', 'trail', 'cam', 'book', 'chess', 'gear', 'order', 'add', 'addg']) &&
+      (await mcText(p, '#settings-h')) === 'Settings' &&
+      (await mcText(p, '#set-body .set-sec')) === 'Chats and groups',
+    'F43: the list: For all chats, the chats and groups in refresh order, Change the order, Add a chat, Add a group (' +
+      JSON.stringify(rows.map(r => r[0])) +
+      ')',
+  );
+  ok(
+    R.all[1] === 'Replies: wait for my OK · every scheduled run' &&
+      /^First chat · refreshed /.test(R.trail[1]) &&
+      R.trail[2].length === 0 &&
+      JSON.stringify(R.cam[2]) === JSON.stringify(['replies: automatic', 'no photos']) &&
+      JSON.stringify(R.book[2]) === JSON.stringify(['every 4 hours']) &&
+      JSON.stringify(R.chess[2]) === JSON.stringify(['paused!']) &&
+      R.gear[1] === 'Group · with Book Club · not refreshed yet' &&
+      JSON.stringify(R.gear[2]) === JSON.stringify(['only mine', 'not in All']) &&
+      R.order[1] === 'Trail Crew stays first' &&
+      R.add[1] === 'Paste a Messenger link' &&
+      R.addg[1] === 'Paste a Facebook group link',
+    "F43: each row's line says how it stands, with a chip for each setting that differs from the defaults (" +
+      JSON.stringify(rows) +
+      ')',
+  );
+  // desktop (1000 px): two panes, the list on the left, the sheet about 1000 px wide
+  const geo = await p.evaluate(() => {
+    const r = s => document.querySelector(s).getBoundingClientRect();
+    return {
+      body: r('#set-body').width,
+      list: r('.set-list'),
+      pane: r('.set-pane'),
+      ph: document.querySelector('.set-pane').textContent,
+    };
+  });
+  ok(
+    geo.body > 900 &&
+      Math.abs(geo.list.width - 250) < 2 &&
+      geo.list.right <= geo.pane.left &&
+      geo.pane.width > 500 &&
+      /Choose a row on the left/.test(geo.ph),
+    'F43: on a wide window the sheet widens and shows two panes, the list (250 px) beside the screen (' +
+      JSON.stringify(geo) +
+      ')',
+  );
+  await p.click('#set-row-book');
+  await until(p, () => document.activeElement.id === 'set-scr-h');
+  ok(
+    (await mcText(p, '#set-scr-h')) === 'Book Club' &&
+      (await f43Focus(p)) === 'set-scr-h' &&
+      (await p.getAttribute('#set-row-book', 'aria-current')) === 'true' &&
+      (await p.isVisible('#set-row-cam')) &&
+      (await p.isHidden('#set-back')),
+    "F43: a row opens its screen beside the list, focus on the screen's heading, the row marked current, no Back on a wide sheet",
+  );
+  // a store echo (another change to meta/chat) rebuilds the sheet and keeps the screen and the focus on its heading
+  await p.evaluate(() => (document.getElementById('set-scr-h').__old = 1));
+  await p.evaluate(() => {
+    const m = JSON.parse(JSON.stringify(__rt.get('meta/chat')));
+    m.chats.cam.tag = 'Cams';
+    __rt.write('meta/chat', m);
+  });
+  ok(
+    await until(
+      p,
+      () =>
+        document.querySelector('#set-row-cam .ctag').textContent === 'Cams' &&
+        !document.getElementById('set-scr-h').__old &&
+        document.getElementById('set-scr-h').dataset.scr === 'book' &&
+        document.activeElement.id === 'set-scr-h',
+    ),
+    "F43: a store snapshot rebuilds the sheet; Book Club's screen stays open with focus on its heading",
+  );
+  // while a select has focus nothing is rebuilt, but the rows' chips still update
+  await p.focus('#auto-book');
+  await p.evaluate(() => (document.getElementById('auto-book').__old = 1));
+  await p.evaluate(() => {
+    const m = JSON.parse(JSON.stringify(__rt.get('meta/chat')));
+    m.chats.cam.every = 1440;
+    __rt.write('meta/chat', m);
+  });
+  ok(
+    await until(
+      p,
+      () =>
+        [...document.querySelectorAll('#set-row-cam .badge')].some(b => b.textContent === 'once a day') &&
+        document.getElementById('auto-book').__old === 1 &&
+        document.activeElement.id === 'auto-book',
+    ),
+    "F43: with a field focused, the sheet isn't rebuilt, and a row's chips still update in place",
+  );
+  // Escape goes back first (focus on the row it came from), then closes
+  await p.keyboard.press('Escape');
+  ok(
+    !(await p.$('#set-scr-h')) && (await f43Focus(p)) === 'set-row-book' && (await p.isVisible('#settings')),
+    'F43: Escape goes back to the list, focus on the row it came from',
+  );
+  await p.keyboard.press('Escape');
+  ok(
+    (await p.isHidden('#settings')) && (await f43Focus(p)) === 'settings-open',
+    'F43: a second Escape closes Settings, focus back on its button',
+  );
+  // #123: after a click on blank space in the sheet, focus is on body; Escape still goes back, then closes
+  await mcSet(p, 'book');
+  await p.evaluate(() => document.activeElement && document.activeElement.blur());
+  const onBody = await p.evaluate(() => document.activeElement === document.body);
+  await p.keyboard.press('Escape');
+  const back = !(await p.$('#set-scr-h')) && (await p.isVisible('#settings'));
+  await p.evaluate(() => document.activeElement && document.activeElement.blur());
+  await p.keyboard.press('Escape');
+  ok(
+    onBody && back && (await p.isHidden('#settings')),
+    '#123: with focus on the page body, Escape goes back to the list, then closes Settings',
+  );
+  // a chat's Store its photos, set when adding, changes here: one field, and its chip goes
+  await mcSet(p, 'cam');
+  let w0 = await mcNWrites(p);
+  await p.check('#photos-cam');
+  await until(p, n => __rt.writes.length > n, w0);
+  const wp = await p.evaluate(n => __rt.writes.slice(n), w0);
+  ok(
+    wp.length === 1 &&
+      JSON.stringify(wp[0].v.chats) === '{"cam":{"photos":true}}' &&
+      (await until(p, () => !/no photos/.test(document.getElementById('set-row-cam').textContent))) &&
+      (await until(p, () => document.getElementById('set-st-cam').textContent === 'Saved.')),
+    "F43: a chat's Store its photos is one write of that field; its chip leaves the row (" + JSON.stringify(wp) + ')',
+  );
+  // an entry removed while its screen is open: back to the list, focus on the sheet's heading
+  await mcSet(p, 'chess');
+  await p.focus('#set-state-chess');
+  await p.evaluate(() => {
+    const m = JSON.parse(JSON.stringify(__rt.get('meta/chat')));
+    m.chats.chess.state = 'deleted';
+    __rt.write('meta/chat', m);
+  });
+  ok(
+    await until(
+      p,
+      () =>
+        !document.getElementById('set-scr-h') &&
+        !document.getElementById('set-row-chess') &&
+        document.activeElement.id === 'settings-h' &&
+        /Choose a row on the left/.test(document.querySelector('.set-pane').textContent),
+    ),
+    'F43: when the entry on screen is deleted elsewhere, Settings falls back to the list, focus on its heading',
+  );
+  // the title's "Add a chat or group" opens Settings at Add a chat; Add a group is a click away
+  await p.click('#settings-close');
+  await p.click('#h1');
+  await p.click('#picker-list button[data-key="add"]');
+  await until(p, () => (document.getElementById('set-scr-h') || {}).textContent === 'Add a chat');
+  ok(
+    (await p.isVisible('#add-link')) && (await f43Focus(p)) === 'set-scr-h',
+    'F43: the picker\'s "Add a chat or group" opens Settings at the Add a chat screen, focus on its heading',
+  );
+  await p.click('#add-to-grp');
+  await until(p, () => (document.getElementById('set-scr-h') || {}).dataset.scr === 'addg');
+  ok(
+    (await p.isVisible('#grp-link')) && (await mcText(p, '#set-scr-h')) === 'Add a group',
+    'F43: "Add a group instead" opens the Add a group screen',
+  );
+  const h1 = await p.evaluate(() => [history.length, location.hash]);
+  ok(
+    JSON.stringify(h0) === JSON.stringify(h1),
+    'F43: moving between screens adds no history entry and no #hash (' + JSON.stringify([h0, h1]) + ')',
+  );
+  ok(!p.errors.length, 'F43 desktop: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // a phone (390 px): the list, then a screen that replaces it, with Back; nothing scrolls sideways
+  p = await mcOpen({ chats: F43_CHATS }, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const fits = () => p.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+  await mcSettings(p);
+  const f1 = await fits();
+  ok(
+    (await p.isVisible('#set-row-cam')) && (await p.isHidden('.set-pane')),
+    'F43: on a phone Settings opens on the list alone',
+  );
+  await p.click('#set-row-cam');
+  await until(p, () => document.activeElement.id === 'set-scr-h');
+  const f2 = await fits();
+  ok(
+    (await p.isHidden('.set-list')) &&
+      (await p.isVisible('#set-back')) &&
+      (await mcText(p, '#set-back')) === '‹ Settings' &&
+      (await mcText(p, '#set-scr-h')) === 'Camera Club' &&
+      (await f43Focus(p)) === 'set-scr-h',
+    "F43: on a phone a row's screen replaces the list, with ‹ Settings to go back, focus on its heading",
+  );
+  // the heading and Close stay in view while the sheet scrolls (a short window, so the screen scrolls)
+  await p.setViewportSize({ width: 390, height: 480 });
+  await p.evaluate(() => (document.getElementById('settings').scrollTop = 1e6));
+  const stick = await p.evaluate(() => {
+    const s = document.getElementById('settings');
+    const c = document.getElementById('settings-close').getBoundingClientRect();
+    return {
+      scrolled: s.scrollTop,
+      top: c.top - s.getBoundingClientRect().top,
+      hit: document.elementFromPoint(c.x + 4, c.y + 4) === document.getElementById('settings-close'),
+    };
+  });
+  ok(
+    stick.scrolled > 0 && stick.top >= 0 && stick.top < 40 && stick.hit,
+    'F43: Close stays at the top of the sheet, clickable, while it scrolls (' + JSON.stringify(stick) + ')',
+  );
+  await p.setViewportSize({ width: 390, height: 844 });
+  await p.click('#set-back');
+  ok(
+    (await until(p, () => document.activeElement.id === 'set-row-cam')) &&
+      (await p.isVisible('.set-list')) &&
+      (await p.isHidden('.set-pane')),
+    'F43: Back returns to the list, focus on the row it came from',
+  );
+  await p.click('#set-row-order');
+  await until(p, () => document.activeElement.id === 'set-scr-h');
+  const f3 = await fits();
+  await p.keyboard.press('Escape');
+  ok(
+    (await f43Focus(p)) === 'set-row-order' && (await p.isVisible('.set-list')),
+    'F43: on a phone Escape goes back to the list first',
+  );
+  await p.keyboard.press('Escape');
+  ok(await p.isHidden('#settings'), 'F43: then closes');
+  ok(f1 && f2 && f3, 'F43: at 390 px the list and the screens fit with no sideways scroll (' + [f1, f2, f3] + ')');
+  ok(!p.errors.length, 'F43 phone: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 const SECTIONS = {
   groupsLinked,
   reactions,
@@ -20084,6 +20605,7 @@ const SECTIONS = {
   multiChat,
   multiChat2,
   multiChat3,
+  settingsF43,
   multiChatAsk,
   multiChatB56,
   multiChatAll,

@@ -2,6 +2,36 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.64.0] - 2026-11-27
+**Settings that are easy to use: a list, then a screen per chat or group** (F43, #109). MINOR. Page 7.9.
+
+### Changed
+- **Settings ⚙ is a list, then a screen per row** (the owner's pick, option C). The heading and Close stay at the top while the sheet scrolls.
+  - The list: For all chats (the replies default and the scheduled refresh default), then a row per chat and group in refresh order, then Change the order, Add a chat and Add a group.
+  - Each row says how it stands ("First chat · refreshed …", "Group · with Book Club", "waiting for its first refresh") and has a chip for each setting that differs from the defaults: "replies: automatic", "every 4 hours", "no photos", "only mine", "not in All", and "paused", "hidden" or "skipped in the last run".
+  - A row opens its own screen with short labels: Tag; Queued replies (a chat); Goes with a chat and Read (a group); Scheduled refresh (not the first chat); Store its photos (an added chat) or Show in All (a group). Then Pause, Resume or Bring back, and Remove… with the same confirm. What each one does is said once.
+  - On a wide window the sheet widens to about 1000 px and shows the list (250 px) beside the open screen; on a phone the screen replaces the list, with ‹ Settings to go back.
+  - One screen at a time. Focus moves to the new screen's heading, and back on the list to the row it came from. Escape goes back first, then closes. No `#hash` or history entries: screens switch in code.
+  - The screen open lives in state, so a store snapshot redraws the sheet without leaving it; if its chat is deleted, Settings goes back to the list.
+  - While a field has focus the sheet isn't redrawn, but the rows (added, removed, reordered), their chips and the screen's tag still update.
+- **A tag saves on Enter or when you leave the field**, with the same checks. The Save tag button is gone.
+- **Change the order** has its own screen: Move up and Move down per chat (Enter and Space act on key-down, as in B70), a drag handle on desktop, and the first chat fixed at the top. "Order saved." shows there.
+- **Add a chat and Add a group** each have their own screen. The title's "Add a chat or group" opens Add a chat, which has an "Add a group instead" button.
+
+### Added
+- **Settings that were set only when adding can now be changed:** a chat's Store its photos, and a group's Read and Show in All (and Goes with a chat, as before). Each change writes that one field.
+
+### Docs
+- README.md, docs/STATUS.md and docs/ARCHITECTURE.md describe the new Settings; docs/DECISIONS.md records the owner's pick. The refresh skill's `references/chats.md`, `references/database.md` (synced to setup and replies) and `references/groups.md` name its screens. BACKLOG.md: F43 removed; its live check is under L1.
+
+### Fixed
+- **Escape after a click on blank space** (#123, found on the claude.ai bench): the handler listened on the sheet, and a click on a non-focusable spot leaves focus on the page body, so Escape did nothing. It now listens on the document while Settings is open; a handler that already took Escape (a suggestion box, a confirm) still wins.
+
+### Tests
+- Page, a new section `settingsF43`: the list's rows and chips; two panes at 1000 px and the sheet's width; a phone at 390 px (list, then the screen with ‹ Settings, Back returning focus to the row, no sideways scroll); Escape back then closed; a screen surviving a store snapshot; chips updating while a field has focus; a deleted entry falling back to the list; Store its photos as a one-field write; the picker's add item and "Add a group instead"; no history entry or `#hash`; Close staying at the top while the sheet scrolls.
+- The existing Settings tests (multiChat, multiChat2, multiChat3, groupsAdd) now go to each screen through its row (`mcSet`) and check the same things there, plus: tags refused and saved on Enter and on blur with no Save button; the group's labels, Read and Show in All as one-field writes; the order screen by mouse, keyboard and drag, the list following it; every field on every screen labelled; each screen fitting at 390 and 360 px.
+- `mcSettings` waits for the sheet instead of a fixed 150 ms, and a few fixed waits after a click became waits for the result.
+
 ## [1.63.0] - 2026-11-27
 **A chat and its Facebook group, linked: "With …" in both Stats tabs, and "Probably:" links under chat messages** (F25 stage G2c, #119). MINOR. Page 7.8. This finishes stage G2.
 
