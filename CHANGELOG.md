@@ -2,6 +2,24 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.65.1] - 2026-11-27
+**Probably links need a posting word before the group's name, and a post read only through its comments says so** (B75, #126; B76, #127). PATCH. Page 8.1.
+
+### Fixed
+- **B75 (#126): "Probably:" links fired on everyday talk.** The check accepted "in" or "on" before the group's name or tag. A chat that uses the tag for its whole community ("glad to have him in Gear") got a weak Probably link.
+  - The name or tag now counts only after a posting word: "up in/on Gear", "posted (it) in/on/to Gear Swap", "listed (it) in/on …", "put (it) (up) in/on …". It also counts right before "group" ("the Gear group").
+  - "in/on/to/into the group" (also "our", "this", "that", "fb" or "facebook"), and "check the group", work as before.
+  - A bare "in Gear" or "on Gear Swap" no longer counts.
+- **B76 (#127): a group post known only from its comments showed "?" as its author.** Comments or a notification can bring a post whose card the feed pass didn't read. The page stores such a post with a number but no author or text.
+  - Posts, a post opened from Needs you, Chat to group, the line under a chat message, Ask's lines for Claude, citation cards and By day now say "a post not read yet". Posts adds that its author and text come once a refresh reads it in the group's feed.
+  - The import already fills such a post, keeping its number, when a later capture brings its card. A test now covers it.
+  - Opening the post by its link doesn't fill it: `groupPost` reads only comments. Filed as B77 (#128): the helper should read the open post's author and text too, which needs a live check.
+
+### Tests
+- page (G2c): the trigger's cases, now with "Glad to have him in Gear" (no), "Tent is up in Gear", "posted it in Gear Swap", "listed on gear swap", "put it up on Gear", "the Gear group" (yes), and "it's on Gear Swap now" (now no). Under messages: "Tent is up in Gear" gets its Probably link, and "Glad to have him in Gear" gets none (same sender, near the post, a shared word).
+- page (G2c): a post with no author or text, linked from a message, reads "a post not read yet" under the message, in Chat to group, in its Ask line, its citation card, Posts and By day, never "?".
+- page (G1): comments on an unread post store it with a number and no author or text; a later capture with its card fills it with the same number, author, text and time.
+
 ## [1.65.0] - 2026-11-27
 **The Import capture box stays hidden unless a paste fails** (F44, #124; the owner's pick, B). MINOR. Page 8.0.
 

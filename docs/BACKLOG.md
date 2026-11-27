@@ -12,6 +12,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | ID | P | Type | Title |
 |---|---|---|---|
 | B66 | P3 | bug | Under All chats, the refresh note (`#refresh-st`) still says "The choice above only filters what's shown", though the Show messages box it refers to is hidden there |
+| B77 | P3 | bug | A group post read only through its comments stays "a post not read yet" until a feed pass reaches its card: `groupPost` doesn't read the open post's author and text (#128) |
 | L1 | P3 | check | Live checks still to do, gathered from finished items |
 | R3 | P3 | risk | The helper reads Messenger's English labels and markup; a change shows as a warning, except when every marker of a feature changes at once |
 | R5 | P2 | risk | E2EE chats untested live; `messenger.com` not supported |
@@ -28,6 +29,10 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 
 ### B66 · P3 · A refresh note about a hidden box on All chats
 - **Seen (Nov 26, B56's scratch check on claude.ai):** under All chats, `renderRefresh` still ends the note with "The choice above only filters what's shown; it doesn't fetch anything.", but the Show messages box is hidden there (`body.allchats` hides the window, marker and strip). To do: leave that sentence out under All chats, or hide the note's second half there, with a page test.
+
+### B77 · P3 · Fill a post read only through its comments (#128)
+- **Seen (Nov 27, #127):** a stub post (`{pid, n, firstSeen, lastAct}`, no `who` or `text`) is stored when a capture brings comments or a notification for a post the feed pass didn't read. Since v1.65.1 the page shows it as "a post not read yet", and the import fills it (same `n`) when a later capture brings its card. But only `groupFeed` reads a post's author and text; `groupPost` reads only comments, so opening the post by its link doesn't fill it.
+- **To do:** `groupPost` also reads the open post's author, text, age, photos and count into the run buffer's `posts[pid]` (read-only, no clicks), and `references/groups.md` step 5 opens posts stored without text within the 50-post cap. Helper version bump; a live check on a real post page for the selectors.
 
 ---
 
