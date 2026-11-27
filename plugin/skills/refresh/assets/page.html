@@ -2637,8 +2637,24 @@
   /* a chat's chip carries its colour as a bar under the tag; the tag text carries the meaning */
   /* All chats' Stats and By day (F1 stage C): a bar per chat, the comparison table, a section per chat in a day */
   #v-stats.xall .st-show,
-  #v-stats.xall #st-reset {
+  #v-stats.xall #st-reset,
+  #v-stats.grp .st-show .st-chat,
+  #v-stats.grp #st-reset {
     display: none;
+  }
+  /* a group's By day (G2b): a block per post, its comments that day under it */
+  .gday-post {
+    border-top: 1px solid var(--line);
+    padding-top: 6px;
+    margin-top: 6px;
+    overflow-wrap: anywhere;
+  }
+  .gday-post p {
+    margin: 0;
+  }
+  .gday-post ul {
+    margin: 4px 0 0;
+    padding-left: 20px;
   }
   ul.xbars {
     list-style: none;
@@ -2902,11 +2918,11 @@
         <label><input type="checkbox" data-sec="volume" checked /> Volume</label>
         <label><input type="checkbox" data-sec="top" checked /> Top 10</label>
         <label><input type="checkbox" data-sec="heat" checked /> Day and hour</label>
-        <label><input type="checkbox" data-sec="convs" checked /> Conversations</label>
-        <label><input type="checkbox" data-sec="deals" checked /> Deals</label>
-        <label><input type="checkbox" data-sec="people" checked /> People</label>
-        <label><input type="checkbox" data-sec="engage" checked /> Engagement</label>
-        <label><input type="checkbox" data-sec="words" checked /> Word trends</label>
+        <label class="st-chat"><input type="checkbox" data-sec="convs" checked /> Conversations</label>
+        <label class="st-chat"><input type="checkbox" data-sec="deals" checked /> Deals</label>
+        <label class="st-chat"><input type="checkbox" data-sec="people" checked /> People</label>
+        <label class="st-chat"><input type="checkbox" data-sec="engage" checked /> Engagement</label>
+        <label class="st-chat"><input type="checkbox" data-sec="words" checked /> Word trends</label>
       </div>
     </div>
     <div class="st-body" id="st-body"></div>
@@ -3076,7 +3092,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "7.6";
+  const PAGE_VERSION = "7.7";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -3203,8 +3219,8 @@
 
   /* ---------- routing ---------- */
   const TABS = ["summary", "posts", "ask", "messages", "days", "views", "stats"];
-  /* F25: a group has Summary, Posts and (G2a) Ask; a chat has the rest */
-  const tabsFor = c => (isGroup(c) ? ["summary", "posts", "ask"] : TABS.filter(t => t !== "posts"));
+  /* F25: a group has Summary, Posts, (G2a) Ask, and (G2b) By day and Stats; a chat has the rest */
+  const tabsFor = c => (isGroup(c) ? ["summary", "posts", "ask", "days", "stats"] : TABS.filter(t => t !== "posts"));
   /* F1 stage C: All chats has its own tabs: Summary (the summary across chats and a card per chat), Ask (across every
      chat), By day (each day, a section per chat) and Stats (the chats compared) */
   const ALL_TABS = ["summary", "ask", "days", "stats"];
@@ -8870,7 +8886,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
      Newest first / By chat (remembered in this browser); all of it redraws on the page and sends nothing. The answer is
      saved in qa with scope "chats" and the chats it searched, so a chat added later shows as not searched. */
   const tagOfKey = k => (S.chats.find(c => c.key === k) || {}).tag || k;
-  /* the chats All chats' Stats and By day read (groups get theirs in G2b) */
+  /* the live chats, without groups (the summary across chats names these; Stats and By day read groups too, G2b) */
   const xChats = () => S.chats.filter(c => isLive(c) && !isGroup(c));
   let xturns = [];
   const X_WAIT = 20000; /* a chat whose data doesn't come within this is left out of the question */
@@ -8940,7 +8956,6 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       return Object.assign(base, { err: e });
     }
   }
-  const xLoad = () => Promise.all(xChats().map(xLoadChat));
   /* G2a: what Ask across chats reads: every live chat, and every live group's posts and comments */
   const xAskLoad = () => Promise.all(xAskChats().map(c => (isGroup(c) ? xLoadGroup(c) : xLoadChat(c))));
   /* runs fn with chat x as the page's chat, so the one-chat helpers (searchMsgs, lineFor, nameOf, capsOf, dayLines)
@@ -9653,7 +9668,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       () => {
         if (isGroup(c)) {
           const live = c.key === CUR.key && (S.gLoaded & 3) === 3 ? gLive() : null;
-          const x = live || (GA_LAST || []).concat(XA_LAST || []).find(y => y.key === c.key && y.byRef);
+          const x = live || (GA_LAST || []).concat(XA_LAST || [], XD.ctxs || []).find(y => y.key === c.key && y.byRef);
           return x ? gCiteText(x.byRef.get(String(n))) : "";
         }
         if (!XD.ctxs) xCtxs(); /* starts loading every chat; a later hover finds it */
@@ -10097,14 +10112,17 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
      per chat, each counted as that chat's own Stats counts them (statsBase in the chat's context), a bar per chat and an
      All row, which is the sum (someone in two chats counts twice). The summary across chats (allchats/summary) is
      written by Claude at the end of a run over every chat (references/chats.md); All chats' Summary shows it above the
-     cards, with the chats that run didn't refresh, and says when every chat was caught up after it. */
+     cards, with the chats that run didn't refresh, and says when every chat was caught up after it.
+     G2b: both read every live group too (its posts and comments, as Ask does), a group's posts and comments counted
+     beside a chat's messages and listed by day, each labeled by its tag; with groups on the page, All chats' Show
+     (All, Chats, Groups) filters them as it does the cards. */
   var XD = { ctxs: null, at: 0, busy: null, v: 0, n: 0 };
   const XD_AGE = 60000;
   function xCtxs() {
-    const live = xChats();
+    const live = xAskChats();
     const stale = !XD.ctxs || Date.now() - XD.at > XD_AGE || live.some(c => !XD.ctxs.some(x => x.key === c.key));
     if (!XD.busy && S.rawDb && stale)
-      XD.busy = xLoad()
+      XD.busy = xAskLoad()
         .then(all => (XD.ctxs = all))
         .catch(() => (XD.ctxs = XD.ctxs || []))
         .finally(() => {
@@ -10119,7 +10137,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       .filter(x => live.some(c => c.key === x.key))
       .map(x => {
         const c = live.find(y => y.key === x.key);
-        if (x.key !== CUR.key || !S.msgs.length) return Object.assign(x, { c });
+        /* the group on screen: from memory, so its imports show at once */
+        if (x.g && x.key === CUR.key && (S.gLoaded & 3) === 3) return Object.assign(gLive(), { c });
+        if (x.g || x.key !== CUR.key || !S.msgs.length) return Object.assign(x, { c });
         return {
           c,
           key: c.key,
@@ -10154,12 +10174,21 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   }
   /* the stored history of every chat as one span, for the timeframe (stFrameOf reads firstTm and lastTm) */
   function xSpanBase() {
-    const bs = (xCtxs() || []).filter(x => !x.err && x.msgs.length).map(xBase);
+    const ok = (xCtxs() || []).filter(x => !x.err && xShows(x.c));
+    const bs = ok
+      .filter(x => !x.g && x.msgs.length)
+      .map(xBase)
+      .concat(ok.filter(x => x.g).map(gStatBase));
     const f = bs.map(b => b.firstTm).filter(t => t >= 0);
     return { firstTm: f.length ? Math.min(...f) : -1, lastTm: Math.max(-1, ...bs.map(b => b.lastTm)) };
   }
-  /* one chat's numbers over [lo, hi), as its own Stats tiles count them */
+  /* one chat's numbers over [lo, hi), as its own Stats tiles count them; a group's (G2b): its posts and comments */
   function xRow(x, F) {
+    if (x.g) {
+      const A = gAgg(gStatBase(x), F.lo, F.hi);
+      const top = A.rank.length ? A.rank[0].who : "";
+      return { x, msgs: A.total, people: A.rank.length, photos: A.photos, top, posts: A.posts, cmts: A.cmts };
+    }
     const B = xBase(x);
     const A = statsAgg(B, F.lo, F.hi);
     const r = stRank(A);
@@ -10170,22 +10199,35 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     [...body.children].forEach(x => x !== stWordsSec && x.remove());
     stWordsSec.hidden = true;
     const add = n => body.insertBefore(n, stWordsSec);
+    const show = showRow(() => renderStats(true), "#st-body");
+    if (show) add(show);
     const ctxs = xCtxs();
     if (!ctxs) {
       stSpanLine("", false);
       add(el("div", "empty", S.rawDb ? "Reading every chat's messages…" : "The stats can't load in this view."));
       return;
     }
-    const ok = ctxs.filter(x => !x.err);
+    const ok = ctxs.filter(x => !x.err && xShows(x.c));
     const F = stFrame();
     const rows = ok.map(x => xRow(x, F));
-    const sum = k => rows.reduce((n, r) => n + r[k], 0);
+    const sum = (k, rs = rows) => rs.reduce((n, r) => n + r[k], 0);
     const tot = { msgs: sum("msgs"), people: sum("people"), photos: sum("photos") };
-    stSpanLine(
-      stSpanText(F.lo, F.hi) + ": " + plural(tot.msgs, "message") + " in " + plural(rows.length, "chat") + ".",
-      false,
-    );
-    const bars = stSec("xbars", "Messages by chat", null);
+    const cr = rows.filter(r => !r.x.g),
+      gr = rows.filter(r => r.x.g);
+    const grp = ctxs.some(x => x.g);
+    /* a page without groups says what it always said */
+    const said = [];
+    if (cr.length || !gr.length) said.push(plural(sum("msgs", cr), "message") + " in " + plural(cr.length, "chat"));
+    if (gr.length)
+      said.push(
+        plural(sum("posts", gr), "post") +
+          " and " +
+          plural(sum("cmts", gr), "comment") +
+          " in " +
+          plural(gr.length, "group"),
+      );
+    stSpanLine(stSpanText(F.lo, F.hi) + ": " + said.join("; ") + ".", false);
+    const bars = stSec("xbars", grp ? "Messages, posts and comments by chat or group" : "Messages by chat", null);
     const ul = el("ul", "xbars");
     const mx = Math.max(1, ...rows.map(r => r.msgs));
     rows.forEach(r => {
@@ -10199,16 +10241,25 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       ul.append(li);
     });
     bars.append(ul);
-    const cmp = stSec(
-      "xtable",
-      "Your chats compared",
-      "Counted on this page from each chat's stored messages, as each chat's own Stats counts them. People are counted per chat, so someone in two chats counts twice in the All row.",
-    );
+    const cmp = grp
+      ? stSec(
+          "xtable",
+          "Your chats and groups compared",
+          "Counted on this page from each chat's stored messages and each group's stored posts and comments, as their own Stats count them. People are counted per chat or group, so someone in two counts twice in the All row. A group's days come from Facebook's ages (“3h”, “2d”), so they're estimates.",
+        )
+      : stSec(
+          "xtable",
+          "Your chats compared",
+          "Counted on this page from each chat's stored messages, as each chat's own Stats counts them. People are counted per chat, so someone in two chats counts twice in the All row.",
+        );
     const w = el("div", "tablewrap"),
       t = el("table", "xcmp"),
       hr = el("tr"),
       tb = el("tbody");
-    ["Chat", "Messages", "People posting", "Photos and GIFs", "Most active"].forEach(c => hr.append(el("th", null, c)));
+    (grp
+      ? ["Chat or group", "Messages, posts and comments", "People posting", "Photos and GIFs", "Most active"]
+      : ["Chat", "Messages", "People posting", "Photos and GIFs", "Most active"]
+    ).forEach(c => hr.append(el("th", null, c)));
     const thead = el("thead");
     thead.append(hr);
     rows.forEach(r => {
@@ -10216,6 +10267,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       tr.dataset.chat = r.x.key;
       const c0 = el("td");
       c0.append(tagChip(r.x.c), " " + r.x.c.name);
+      if (r.x.g) c0.append(el("span", "note", " (" + plural(r.posts, "post") + ", " + plural(r.cmts, "comment") + ")"));
       tr.append(c0, el("td", "num", stNum(r.msgs)), el("td", "num", stNum(r.people)), el("td", "num", stNum(r.photos)));
       tr.append(el("td", null, r.top || "—"));
       tb.append(tr);
@@ -10232,7 +10284,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     t.append(thead, tb);
     w.append(t);
     cmp.append(w);
-    const bad = ctxs.filter(x => x.err);
+    const bad = ctxs.filter(x => x.err && xShows(x.c));
     if (bad.length) cmp.append(el("p", "note", "Couldn't read " + bad.map(x => x.c.name).join(", ") + " just now."));
     add(bars);
     add(cmp);
@@ -10241,8 +10293,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
      summary, else its older digest; a day only one chat has shows that chat alone */
   function xDays(box) {
     box.textContent = "";
-    const ctxs = xCtxs();
-    if (!ctxs) {
+    const show = showRow(renderDays, "#days-list");
+    if (show) box.append(show);
+    const all = xCtxs();
+    if (!all) {
       box.append(
         el(
           "div",
@@ -10252,10 +10306,13 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       );
       return;
     }
+    const ctxs = all.filter(x => !x.err && xShows(x.c));
     const byDay = new Map();
     const put = (k, e) => (byDay.get(k) || byDay.set(k, []).get(k)).push(e);
+    /* G2b: a group's section on a day lists that day's posts and comments */
+    ctxs.filter(x => x.g).forEach(x => gByDay(x).forEach((its, k) => put(k, { x, its })));
     ctxs
-      .filter(x => !x.err)
+      .filter(x => !x.g)
       .forEach(x =>
         inCtx(x, () => {
           const seen = new Set();
@@ -10272,7 +10329,15 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       );
     const days = [...byDay.keys()].sort().reverse();
     if (!days.length) {
-      box.append(el("div", "empty", "No day summaries in any chat yet. A refresh writes each chat's day summary."));
+      box.append(
+        el(
+          "div",
+          "empty",
+          all.some(x => x.g)
+            ? "No day summaries or group posts here yet. A refresh writes each chat's day summary and reads each group's posts."
+            : "No day summaries in any chat yet. A refresh writes each chat's day summary.",
+        ),
+      );
       return;
     }
     const n = XD.n || DAYS_STEP;
@@ -10286,14 +10351,16 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       byDay
         .get(k)
         .sort((a, b) => xOrd(a.x.key) - xOrd(b.x.key))
-        .forEach(({ x, s, g }) => {
+        .forEach(({ x, s, g, its }) => {
           const sec = el("section", "xday-chat");
           sec.dataset.chat = x.key;
           const h = el("div", "chathead");
           h.append(tagChip(x.c), el("h4", null, x.c.name));
+          if (its) h.append(el("span", "note", gDayCount(its)));
           sec.append(h);
           const cite = i => xCite(x.c, i);
-          if (s) {
+          if (its) sec.append(gDayPosts(its, it => xCite(x.c, it.ref)));
+          else if (s) {
             s.sections.forEach(y => {
               const ul = y && dayBullets(y.bullets, Infinity, cite);
               if (!ul) return;
@@ -10323,6 +10390,42 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       };
       box.append(more);
     }
+  }
+  /* F25: with groups on the page, Show: All, Chats or Groups (All chats' cards, Stats and By day share it); null, and
+     everything shown, without groups. The button pressed keeps the focus after the redraw. */
+  function hasGroups() {
+    return S.chats.some(c => isShown(c) && isGroup(c));
+  }
+  function xShows(c) {
+    return !hasGroups() || showIn(c);
+  }
+  function showRow(redraw, scope) {
+    if (!hasGroups()) {
+      S.allShow = "all";
+      return null;
+    }
+    const f = el("div", "btns xshow");
+    f.setAttribute("role", "group");
+    f.setAttribute("aria-label", "Show");
+    f.append(el("span", "note", "Show:"));
+    [
+      ["all", "All"],
+      ["chats", "Chats"],
+      ["groups", "Groups"],
+    ].forEach(([k, t]) => {
+      const x = el("button", "link" + ((S.allShow || "all") === k ? " on" : ""), t);
+      x.type = "button";
+      x.dataset.show = k;
+      x.setAttribute("aria-pressed", String((S.allShow || "all") === k));
+      x.onclick = () => {
+        S.allShow = k;
+        redraw();
+        const b = document.querySelector(scope + ' .xshow button[data-show="' + k + '"]');
+        if (b) b.focus();
+      };
+      f.append(x);
+    });
+    return f;
   }
   /* The summary across chats (allchats/summary {at, run, points:[{h, t}], chats:{key: state}}), written by Claude at
      the end of a run over every chat that brought new messages: points citing [key#n], and each chat's state in that
@@ -14711,21 +14814,33 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     /* the date in the key: a summary's state follows the day boundary (the minute tick calls this) */
     const key = [S.daySums, S.digests, S.reports, S.msgs, S.daysN, S.meta, S.daySumsIn, S.digestsIn, dsToday()];
     key.push(S.view === "all", XD && XD.v, S.chats, XD && XD.n);
+    key.push(CUR, S.gposts, S.gcmts, S.gLoaded, S.allShow);
     v.classList.toggle("xall", S.view === "all");
-    /* the header says what the tab shows: a chat's days (with Copy for chat), or every chat's on All chats */
+    /* the header says what the tab shows: a chat's days (with Copy for chat), every chat's on All chats (and every
+       group's, G2b), or a group's posts and comments */
     const hp = v.querySelector(".sec-head p");
     if (hp) {
       if (renderDays.head == null) renderDays.head = hp.textContent;
       const ht =
         S.view === "all"
-          ? "Each day, newest first, a section per chat with that day's summary: its topics, then what's still open. A number opens its message in its chat."
-          : renderDays.head;
+          ? hasGroups()
+            ? "Each day, newest first, a section per chat with that day's summary (its topics, then what's still open) and per group with that day's posts and comments. A number opens it in its chat or group."
+            : "Each day, newest first, a section per chat with that day's summary: its topics, then what's still open. A number opens its message in its chat."
+          : isGroup(CUR)
+            ? "Each day's new posts and comments, newest day first, placed by Facebook's ages (“3h”, “2d”), so a day is an estimate. A number opens the post in Posts at that comment."
+            : renderDays.head;
       if (hp.textContent !== ht) hp.textContent = ht;
     }
     if (S.view === "all") {
       if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
       renderDays.k = key;
       return xDays(box);
+    }
+    if (isGroup(CUR)) {
+      if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
+      renderDays.k = key;
+      box.textContent = "";
+      return gDays(box);
     }
     if (renderDays.k && key.every((x, j) => x === renderDays.k[j])) return;
     renderDays.k = key;
@@ -15312,7 +15427,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   /* The timeframe as a span [lo, hi) of minutes: whole days through today. All runs from the first stored day; a
      custom range is kept within a year of the stored history so its bars stay few. */
   function stFrame() {
-    return stFrameOf(S.view === "all" && xCtxs() ? xSpanBase() : statsBase());
+    if (S.view === "all") return stFrameOf(xCtxs() ? xSpanBase() : statsBase());
+    const g = isGroup(CUR) && gLive();
+    return stFrameOf(g ? gStatBase(g) : statsBase());
   }
   function stFrameOf(B) {
     const st = S.stats;
@@ -15610,10 +15727,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     return box;
   }
   /* The weekday-by-hour heatmap: one hue, stronger where more was posted (none: the faint line colour) */
-  function stHeatChart(A, label) {
+  function stHeatChart(A, label, unit = n => plural(n, "message")) {
     const { box, tip, say } = stBox("heat", label + " Arrow keys step through the hours.");
     const max = Math.max(1, ...A.wk);
-    const tipOf = (d, h) => [ST_DOW[d] + ", " + stHourSpan(h), plural(A.wk[d * 24 + h], "message")];
+    const tipOf = (d, h) => [ST_DOW[d] + ", " + stHourSpan(h), unit(A.wk[d * 24 + h])];
     let cd = -1,
       ch = -1,
       G = null;
@@ -15881,18 +15998,16 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     );
     return s;
   }
-  function stHeatSec(A) {
-    const s = stSec("heat", "Day and hour", "When people post, by weekday and hour, in the chat's local time.");
+  /* G2b: a group's says its own note and counts posts and comments (unit) */
+  function stHeatSec(A, note, unit) {
+    const s = stSec("heat", "Day and hour", note || "When people post, by weekday and hour, in the chat's local time.");
     const top = stArgmax(A.wk);
-    const busiest = A.total
-      ? " Busiest: " +
-        ST_DOW[Math.floor(top / 24)] +
-        ", " +
-        stHourSpan(top % 24) +
-        ", " +
-        plural(A.wk[top], "message") +
-        "."
-      : " No messages.";
+    const n = unit || (c => plural(c, "message"));
+    const busiest = A.wk[top]
+      ? " Busiest: " + ST_DOW[Math.floor(top / 24)] + ", " + stHourSpan(top % 24) + ", " + n(A.wk[top]) + "."
+      : unit
+        ? " None."
+        : " No messages.";
     const key = el("div", "st-key");
     key.setAttribute("aria-hidden", "true");
     key.append(el("span", null, "Fewer"));
@@ -15903,7 +16018,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     });
     key.append(el("span", null, "More"));
     s.append(
-      stHeatChart(A, "Messages by weekday and hour." + busiest),
+      stHeatChart(A, (unit ? "Posts and comments" : "Messages") + " by weekday and hour." + busiest, n),
       key,
       stTable(
         ["Day"].concat(Array.from({ length: 24 }, (_, h) => stHourShort(h))),
@@ -16636,12 +16751,30 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const st = S.stats;
     const key = [S.msgs, PEOPLE, S.photos, S.gifs, S.threading, S.summary, S.meta, S.digestsIn, st.v, stToday()];
     key.push(S.view === "all", XD && XD.v, S.chats);
+    key.push(CUR, S.gposts, S.gcmts, S.gLoaded, S.allShow);
     if (!force && renderStats.k && key.every((x, j) => x === renderStats.k[j])) return;
     renderStats.k = key;
     v.classList.toggle("xall", S.view === "all");
+    /* G2b: a group's Stats has the timeframes and the first four sections; its header names posts and comments */
+    const grp = S.view !== "all" && isGroup(CUR);
+    v.classList.toggle("grp", grp);
+    const hp = v.querySelector(".sec-head p");
+    if (hp) {
+      if (renderStats.head == null) renderStats.head = hp.textContent;
+      const ht = grp
+        ? "Counted on this page from the group's stored posts and comments, so they cost nothing and stay current after every refresh."
+        : S.view === "all" && hasGroups()
+          ? "Counted on this page from the stored messages, posts and comments, so they cost nothing and stay current after every refresh."
+          : renderStats.head;
+      if (hp.textContent !== ht) hp.textContent = ht;
+    }
     if (S.view === "all") {
       stControls();
       return xStats(body);
+    }
+    if (grp) {
+      stControls();
+      return gStats(body);
     }
     stControls();
     /* a redraw for new data (or a zoom) keeps the keyboard where it was: a chart, a name in a list or Back, without
@@ -16755,6 +16888,325 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     }, 150);
   });
   renderStats();
+
+  /* ---------- a group's Stats and By day (F25 G2b) ----------
+     Counted from the group's posts and comments (gCtx's items) with no Claude call. Each sits at its estimated time
+     (gWhen: its stored `at`, else Facebook's age from when it was first read), as a minute on the page's clock in its
+     time zone, like a chat's stored times, so the chat Stats' timeframes, bars and heatmap work unchanged. Facebook
+     gives anything a day old or more only by the day ("2d"), so the hours and the heatmap count only posts and
+     comments whose time is known to the hour; the days count everything with a time. One pass over the items per
+     timeframe (gAgg), kept until the posts or comments change. */
+  var G_FMT = null;
+  function gMin(ms) {
+    const tz = gTz();
+    if (!G_FMT || G_FMT.tz !== tz) {
+      const o = { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit" };
+      G_FMT = { tz, f: new Intl.DateTimeFormat("en-US", Object.assign(o, { hour: "2-digit", minute: "2-digit" })) };
+    }
+    const p = Object.fromEntries(G_FMT.f.formatToParts(ms).map(x => [x.type, x.value]));
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute) / 60000;
+  }
+  /* a group's items with a time, oldest first, each with its minute: {items, rows: [{it, tm}], firstTm, lastTm, none
+     (how many have no time)}; kept on the group's context */
+  function gStatBase(x) {
+    if (x.SB && x.SB.items === x.items) return x.SB;
+    const rows = x.items
+      .filter(it => Number.isFinite(it.ms))
+      .map(it => ({ it, tm: gMin(it.ms) }))
+      .sort((a, b) => a.tm - b.tm || a.it.o - b.it.o);
+    const n = rows.length;
+    x.SB = { items: x.items, rows, firstTm: n ? rows[0].tm : -1, lastTm: n ? rows[n - 1].tm : -1, agg: new Map() };
+    x.SB.none = x.items.length - n;
+    return x.SB;
+  }
+  /* everything a group's Stats needs for one span [lo, hi): posts and comments in total and per bar, photos (on
+     posts), each day's count, each person's posts and comments (rank: most first; a tie, who posted first), and the
+     hours and weekday-by-hour of those known to the hour (timed) */
+  function gAgg(B, lo, hi) {
+    const ck = lo + "_" + hi;
+    let A = B.agg.get(ck);
+    if (A) return A;
+    const bk = stBuckets(lo, hi),
+      nb = bk.edges.length - 1;
+    A = { lo, hi, bk, total: 0, posts: 0, cmts: 0, photos: 0, timed: 0, days: new Map(), by: new Map() };
+    Object.assign(A, {
+      bp: new Int32Array(nb),
+      bc: new Int32Array(nb),
+      hour: new Int32Array(24),
+      wk: new Int32Array(168),
+    });
+    B.rows.forEach(({ it, tm }, j) => {
+      if (tm < lo || tm >= hi) return;
+      const post = !it.c;
+      A.total++;
+      if (post) {
+        A.posts++;
+        A.photos += it.photos;
+        A.bp[bk.at(tm)]++;
+      } else {
+        A.cmts++;
+        A.bc[bk.at(tm)]++;
+      }
+      const d = minDay(dayFloor(tm));
+      A.days.set(d, (A.days.get(d) || 0) + 1);
+      let p = A.by.get(it.who);
+      if (!p) A.by.set(it.who, (p = { who: it.who, n: 0, posts: 0, cmts: 0, j }));
+      p.n++;
+      if (post) p.posts++;
+      else p.cmts++;
+      if (!it.hr) return;
+      A.timed++;
+      const h = stHourOf(tm);
+      A.hour[h]++;
+      A.wk[((Math.floor(tm / DAY_MIN) + 4) % 7) * 24 + h]++;
+    });
+    A.rank = [...A.by.values()].sort((a, b) => b.n - a.n || a.j - b.j);
+    A.you = A.by.get("You") || { posts: 0, cmts: 0 };
+    /* the busiest day: the most posts and comments (a tie: the earlier day) */
+    A.day = [...A.days].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0] || null;
+    if (B.agg.size > 40) B.agg.clear();
+    B.agg.set(ck, A);
+    return A;
+  }
+  const gPC = (p, c) => plural(p, "post") + " · " + plural(c, "comment");
+  function gNumbers(A) {
+    const s = stSec("tiles", "Numbers", null);
+    s.append(
+      stTiles([
+        ["posts", A.posts, "posts"],
+        ["comments", A.cmts, "comments"],
+        ["people", A.rank.length, "people posting"],
+        ["photos", A.photos, "photos"],
+        ["day", A.day ? dayOf(A.day[0]) : "—", "busiest day"],
+        ["hour", A.timed ? stHourSpan(stArgmax(A.hour)) : "—", "busiest hour"],
+        ["yposts", A.you.posts, "your posts"],
+        ["ycmts", A.you.cmts, "your comments"],
+      ]),
+    );
+    return s;
+  }
+  /* posts and comments per bar, stacked (posts below), with a key */
+  function gVolume(A, F) {
+    const bk = A.bk,
+      n = bk.edges.length - 1;
+    const s = stSec(
+      "volume",
+      "Posts and comments per " + bk.kind,
+      "Placed by Facebook's ages (“3h”, “2d”), so a day is an estimate. By day lists each day's posts and comments.",
+    );
+    const lg = el("ul", "st-legend");
+    [
+      ["var(--c1)", "Posts"],
+      ["var(--c2)", "Comments"],
+    ].forEach(([c, t]) => {
+      const li = el("li");
+      const i = el("i");
+      i.style.background = c;
+      li.append(i, t);
+      lg.append(li);
+    });
+    const tot = k => A.bp[k] + A.bc[k];
+    let best = 0;
+    for (let k = 1; k < n; k++) if (tot(k) > tot(best)) best = k;
+    const busiest = A.total ? " Busiest: " + stBarText(bk, best) + ", " + gPC(A.bp[best], A.bc[best]) + "." : "";
+    s.append(
+      lg,
+      stBarChart({
+        name: "gvolume",
+        n,
+        val: tot,
+        segs: k => [
+          ["var(--c1)", A.bp[k]],
+          ["var(--c2)", A.bc[k]],
+        ],
+        tip: k => [stBarText(bk, k), ["var(--c1)", plural(A.bp[k], "post")], ["var(--c2)", plural(A.bc[k], "comment")]],
+        tick: k => stTick(bk, k),
+        strides: ST_STRIDES[bk.kind],
+        label: "Posts and comments per " + bk.kind + ", " + stSpanText(F.lo, F.hi) + "." + busiest,
+      }),
+      stTable([bk.kind[0].toUpperCase() + bk.kind.slice(1), "Posts", "Comments"], () =>
+        Array.from({ length: n }, (_, k) => [stBarText(bk, k), stNum(A.bp[k]), stNum(A.bc[k])]),
+      ),
+    );
+    return s;
+  }
+  /* the ten most active: posts and comments together, each person's split under the name */
+  function gTopSec(A) {
+    const s = stSec("top", "Most active", "Posts and comments together, yours too.");
+    if (!A.rank.length) s.append(el("p", "note", "Nobody posted or commented in this span."));
+    else
+      s.append(
+        stList(
+          "top",
+          A.rank
+            .slice(0, 10)
+            .map(p => ({ pk: p.who, label: p.who, c: p.n, pc: stPct(p.n, A.total), sub: gPC(p.posts, p.cmts) })),
+        ),
+      );
+    return s;
+  }
+  function gStats(body) {
+    [...body.children].forEach(x => x !== stWordsSec && x.remove());
+    stWordsSec.hidden = true;
+    const add = n => body.insertBefore(n, stWordsSec);
+    const x = gLive();
+    if (!x || (S.gLoaded & 3) !== 3) {
+      stSpanLine("", false);
+      add(
+        el(
+          "div",
+          "empty",
+          S.rawDb ? "Stats show here once the group's posts and comments load." : "The stats can't load in this view.",
+        ),
+      );
+      return;
+    }
+    if (!x.items.length) {
+      stSpanLine("", false);
+      add(el("div", "empty", CUR.state === "pending" ? firstRefreshText(CUR) : "No posts stored yet."));
+      return;
+    }
+    const B = gStatBase(x),
+      F = stFrame(),
+      A = gAgg(B, F.lo, F.hi);
+    let line = stSpanText(F.lo, F.hi) + ": " + plural(A.posts, "post") + " and " + plural(A.cmts, "comment") + ".";
+    if (B.firstTm >= 0 && F.lo <= B.firstTm) line += " Stored posts start " + stDayText(minDay(B.firstTm)) + ".";
+    if (B.none)
+      line +=
+        " " +
+        plural(B.none, "post or comment") +
+        " without a time " +
+        (B.none === 1 ? "isn't" : "aren't") +
+        " counted.";
+    stSpanLine(line, false);
+    const h = S.stats.hide;
+    if (["tiles", "volume", "top", "heat"].every(k => h.has(k)))
+      add(el("p", "empty", "Every section is switched off. Tick one under Show."));
+    if (!h.has("tiles")) add(gNumbers(A));
+    if (!h.has("volume")) add(gVolume(A, F));
+    if (!h.has("top")) add(gTopSec(A));
+    if (!h.has("heat"))
+      add(
+        stHeatSec(
+          A,
+          "When people post and comment, by weekday and hour, in the page's time zone. Only those known to the hour count here (" +
+            stNum(A.timed) +
+            " of " +
+            stNum(A.total) +
+            "): Facebook gives anything a day old or more by the day.",
+          c => stNum(c) + (c === 1 ? " post or comment" : " posts and comments"),
+        ),
+      );
+    body.querySelectorAll(".st-chart").forEach(c => c._draw());
+    stW = body.clientWidth;
+  }
+  /* a group's items with a time, by day ("YYYY-MM-DD" in the page's time zone); kept on the group's context */
+  function gByDay(x) {
+    if (x.BD && x.BD.items === x.items) return x.BD.m;
+    const m = new Map();
+    x.items.forEach(it => it.d && (m.get(it.d) || m.set(it.d, []).get(it.d)).push(it));
+    x.BD = { items: x.items, m };
+    return m;
+  }
+  const gDayCount = its => gPC(its.filter(it => !it.c).length, its.filter(it => it.c).length);
+  /* One day's posts and comments in a group: a block per post, the one with the newest that day first. The post itself
+     when it came that day, else a line naming it; then that day's comments on it in order. cite(it) is its citation. */
+  function gDayPosts(its, cite) {
+    const by = new Map();
+    its.forEach(it => (by.get(it.post) || by.set(it.post, []).get(it.post)).push(it));
+    const last = l => Math.max(...l.map(it => it.ms));
+    const wrap = el("div", "gday-posts");
+    [...by]
+      .sort((a, b) => last(b[1]) - last(a[1]) || b[0].p.n - a[0].p.n)
+      .forEach(([pi, l]) => {
+        const sec = el("div", "gday-post");
+        sec.dataset.post = pi.ref;
+        const head = el("p");
+        head.append(cite(pi), " ");
+        if (l.includes(pi)) {
+          head.append(el("b", null, pi.who), " posted" + (pi.hr ? " about " + gHour(pi.ms) : "") + ": ");
+          head.append(trunc(oneLine(pi.text), 240) || "(no text)");
+          if (pi.photos) head.append(" ", el("span", "note", "📷 " + plural(pi.photos, "photo")));
+        } else
+          head.append(
+            el("span", "note", "On " + pi.who + "'s post" + (pi.d ? " from " + dayOf(pi.d) : "") + ": "),
+            trunc(oneLine(pi.text), 100),
+          );
+        sec.append(head);
+        const cs = l.filter(it => it.c).sort((a, b) => a.c.c - b.c.c);
+        if (cs.length) {
+          const ul = el("ul");
+          cs.forEach(it => {
+            const li = el("li");
+            li.append(cite(it), " ", el("b", null, it.who));
+            li.append((it.parent ? " (replying to " + it.parent.who + ")" : "") + ": " + trunc(oneLine(it.text), 240));
+            ul.append(li);
+          });
+          sec.append(ul);
+        }
+        wrap.append(sec);
+      });
+    return wrap;
+  }
+  /* a group's By day: a card per day with posts or comments, newest first, 30 at a time */
+  function gDays(box) {
+    const x = gLive();
+    if (!x || (S.gLoaded & 3) !== 3) {
+      box.append(
+        el(
+          "div",
+          "empty",
+          S.rawDb
+            ? "Posts and comments show here once the group's data loads."
+            : "The group's posts can't load in this view.",
+        ),
+      );
+      return;
+    }
+    const by = gByDay(x);
+    const days = [...by.keys()].sort().reverse();
+    if (!days.length) {
+      box.append(el("div", "empty", CUR.state === "pending" ? firstRefreshText(CUR) : "No posts stored yet."));
+      return;
+    }
+    const none = x.items.filter(it => !it.d).length;
+    if (none)
+      box.append(
+        el(
+          "p",
+          "note",
+          plural(none, "post or comment") + " without a time " + (none === 1 ? "isn't" : "aren't") + " listed.",
+        ),
+      );
+    const n = S.daysN || DAYS_STEP;
+    days.slice(0, n).forEach(k => {
+      const its = by.get(k);
+      const art = el("article", "item dg-day gday");
+      art.dataset.day = k;
+      art.tabIndex = -1;
+      const head = el("div", "row");
+      head.append(el("h3", null, dayTitle(k)), el("span", "note", gDayCount(its)));
+      art.append(
+        head,
+        gDayPosts(its, it => gCite(it.p, it.c)),
+      );
+      box.append(art);
+    });
+    if (days.length > n) {
+      const more = el(
+        "button",
+        "secondary dg-more",
+        "Show " + plural(Math.min(DAYS_STEP, days.length - n), "more day"),
+      );
+      more.onclick = () => {
+        S.daysN = n + DAYS_STEP;
+        renderDays();
+        const next = box.querySelectorAll("article.gday")[n];
+        if (next) next.focus();
+      };
+      box.append(more);
+    }
+  }
 
   /* ---------- several chats (F1, stage A) ----------
      One page holds several Messenger chats. meta/chat.chats maps each chat's fixed key to {name, tag, color, order,
@@ -17149,6 +17601,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         renderPosts();
         renderGroupSummary();
         renderHeader();
+        renderDays();
+        renderStats();
         if (S.goPostAfter && S.gLoaded === 7) goPost(S.goPostAfter);
       };
       on(db.collection("posts"), q => {
@@ -17469,27 +17923,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     bt.append(b, st);
     top.append(bt);
     /* F25: with groups on the page, show all, the chats or the groups */
-    const hasG = S.chats.some(c => isShown(c) && isGroup(c));
-    if (!hasG) S.allShow = "all";
-    if (hasG) {
-      const f = el("div", "btns");
-      f.setAttribute("role", "group");
-      f.setAttribute("aria-label", "Show");
-      f.append(el("span", "note", "Show:"));
-      [
-        ["all", "All"],
-        ["chats", "Chats"],
-        ["groups", "Groups"],
-      ].forEach(([k, t]) => {
-        const x = el("button", "link" + ((S.allShow || "all") === k ? " on" : ""), t);
-        x.dataset.show = k;
-        x.setAttribute("aria-pressed", String((S.allShow || "all") === k));
-        x.onclick = () => {
-          S.allShow = k;
-          renderAll();
-        };
-        f.append(x);
-      });
+    const f = showRow(renderAll, "#v-all");
+    if (f) {
       const tot = S.chats.filter(c => isLive(c) && inRollup(c) && showIn(c)).reduce((a, c) => a + needsOf(c).length, 0);
       f.append(el("span", "note", tot + " need" + (tot === 1 ? "s" : "") + " you"));
       top.append(f);

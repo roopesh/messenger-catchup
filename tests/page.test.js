@@ -18412,8 +18412,8 @@ async function groupsImport() {
       pv.folded === '2 earlier comments' &&
       pv.news === 2 &&
       pv.fb === 'https://www.facebook.com/groups/' + G + '/posts/' + post(2).pid + '/' &&
-      JSON.stringify(pv.tabs) === '["summary","posts","ask"]',
-    'G1-18: Posts lists the group newest activity first (#p3 new, #p1 with 2 new comments, 2 earlier folded), each with its Facebook link; a group shows only Summary, Posts and (G2a) Ask (' +
+      JSON.stringify(pv.tabs) === '["summary","posts","ask","days","stats"]',
+    'G1-18: Posts lists the group newest activity first (#p3 new, #p1 with 2 new comments, 2 earlier folded), each with its Facebook link; a group shows only Summary, Posts, (G2a) Ask, and (G2b) By day and Stats (' +
       JSON.stringify(pv) +
       ')',
   );
@@ -18845,12 +18845,12 @@ async function groupsAsk() {
     ),
   };
   ok(
-    JSON.stringify(tabs) === '["summary","posts","ask"]' &&
+    JSON.stringify(tabs) === '["summary","posts","ask","days","stats"]' &&
       head.h === 'Ask about the group' &&
       head.chat &&
       !head.xchat &&
       JSON.stringify(head.tools) === '["search_posts","read_posts"]',
-    "G2a: a group has an Ask tab of its own (Summary, Posts, Ask), with the group's tools: search_posts and read_posts " +
+    "G2a: a group has an Ask tab of its own (Summary, Posts, Ask, and G2b's By day and Stats), with the group's tools: search_posts and read_posts " +
       JSON.stringify({ tabs, head }),
   );
   await p.evaluate(
@@ -19385,6 +19385,315 @@ async function reactions() {
   );
   await p2.context().close();
 }
+/* F25 G2b: a group's Stats and By day, and groups in All chats' Stats and By day, on G2a's Gear Swap (gaDocs). In the
+   page's zone: #p1 (Dee; no `at`, so "3 days ago" from when it was read) on Nov 17, #p1/c1 on Nov 18, #p1/c2 and your
+   #p1/c3 (4 PM) on Nov 19, #p2 (Ana, 7 AM, 2 photos) and its three comments (8, 9 and 11 AM) on Nov 20. Only those known
+   to the hour (#p1/c3, #p2 and its comments) count in the hours. A custom range keeps the days fixed whatever today is. */
+const gsText = (p, sel) => p.$$eval(sel, es => es.map(e => e.textContent.replace(/\s+/g, ' ').trim()));
+async function gsCustom(p, from, to) {
+  await p.click('#v-stats [data-tf="custom"]');
+  await p.fill('#st-from', from);
+  await p.fill('#st-to', to);
+  await p.press('#st-to', 'Enter');
+}
+/* presses Show's button k (sel: the box holding it) and waits for it to be pressed and focused after the redraw */
+async function gsPick(p, sel, k) {
+  await p.click(sel + ' .xshow [data-show="' + k + '"]');
+  return until(
+    p,
+    ([sel, k]) => {
+      const b = document.querySelector(sel + ' .xshow [data-show="' + k + '"]');
+      return b && b.getAttribute('aria-pressed') === 'true' && document.activeElement === b;
+    },
+    [sel, k],
+  );
+}
+async function groupsStats() {
+  let p = await mcOpen(gaSeed());
+  await mcPick(p, 'gear');
+  await until(p, () => S.gLoaded === 7);
+  await p.click('nav a[data-tab="stats"]');
+  await gsCustom(p, '2026-11-17', '2026-11-21');
+  const span = await until(p, () => {
+    const t = document.getElementById('st-span').textContent;
+    return /^Nov 17(, 2026)? – Nov 21(, 2026)?: /.test(t) && document.querySelector('#st-body .st-tile') ? t : null;
+  });
+  const tiles = await p.evaluate(() =>
+    Object.fromEntries(
+      [...document.querySelectorAll('#st-body .st-tile')].map(t => [t.dataset.k, t.querySelector('.n').textContent]),
+    ),
+  );
+  ok(
+    /: 2 posts and 6 comments\. Stored posts start Nov 17(, 2026)?\.$/.test(span || '') &&
+      JSON.stringify(tiles) ===
+        '{"posts":"2","comments":"6","people":"5","photos":"2","day":"Nov 20","hour":"7–8 AM","yposts":"0","ycmts":"1"}',
+    "G2-03: a group's Stats over the timeframe: posts, comments, people posting, photos, the busiest day and hour (of those known to the hour), and your own posts and comments (#p1 without a stored time placed from its age) " +
+      JSON.stringify({ span, tiles }),
+  );
+  await p.click('#st-body [data-sec="volume"] .st-tbl summary');
+  await until(p, () => document.querySelector('#st-body [data-sec="volume"] .st-tbl tbody tr'));
+  const vol = await p.evaluate(() => ({
+    v: [...document.querySelectorAll('#st-body .st-chart[data-chart="gvolume"] g[data-k]')]
+      .map(g => g.dataset.v)
+      .join(','),
+    rows: [...document.querySelectorAll('#st-body [data-sec="volume"] .st-tbl tbody tr')]
+      .map(tr =>
+        [...tr.children]
+          .slice(1)
+          .map(td => td.textContent)
+          .join('/'),
+      )
+      .join(','),
+    title: document.querySelector('#st-body [data-sec="volume"] h3').textContent,
+    key: [...document.querySelectorAll('#st-body [data-sec="volume"] .st-legend li')].map(l => l.textContent).join(','),
+  }));
+  ok(
+    vol.v === '1,1,2,4,0' &&
+      vol.rows === '1/0,0/1,0/2,1/3,0/0' &&
+      vol.title === 'Posts and comments per day' &&
+      vol.key === 'Posts,Comments',
+    "G2-03: posts and comments per day, stacked, in the chat Stats' chart style, with a table " + JSON.stringify(vol),
+  );
+  const top = await gsText(p, '#st-body [data-list="top"] li');
+  const heat = await p.evaluate(() => ({
+    on: [...document.querySelectorAll('#st-body .st-chart[data-chart="heat"] rect[data-d]')]
+      .filter(r => r.getAttribute('fill') === 'var(--c1)')
+      .map(r => r.dataset.d + ':' + r.dataset.h)
+      .join(','),
+    note: document.querySelector('#st-body [data-sec="heat"] .sec-head p').textContent,
+  }));
+  ok(
+    JSON.stringify(top) ===
+      '["1Dee Diaz225.0%1 post · 1 comment","2Ben Brooks225.0%0 posts · 2 comments","3Ana Alvarez225.0%1 post · 1 comment","4You112.5%0 posts · 1 comment","5Cy Chen112.5%0 posts · 1 comment"]' &&
+      heat.on === '4:16,5:7,5:8,5:9,5:11' &&
+      /\(5 of 8\)/.test(heat.note),
+    'G2-03: most active (posts and comments together, each split under the name; a tie goes to who posted first), and the busiest weekdays and hours from those known to the hour ' +
+      JSON.stringify({ top, heat }),
+  );
+  const show = await p.evaluate(() => ({
+    labels: [...document.querySelectorAll('#v-stats .st-show label')]
+      .filter(l => l.offsetParent)
+      .map(l => l.textContent.trim()),
+    words: document.querySelector('#st-body [data-sec="words"]').hidden,
+    head: document.querySelector('#v-stats .sec-head p').textContent,
+  }));
+  await p.click('#v-stats input[data-sec="volume"]');
+  const off = await until(
+    p,
+    () =>
+      !document.querySelector('#st-body [data-sec="volume"]') && !!document.querySelector('#st-body [data-sec="top"]'),
+  );
+  await p.click('#v-stats input[data-sec="volume"]');
+  await until(p, () => !!document.querySelector('#st-body [data-sec="volume"]'));
+  await p.click('#v-stats [data-tf="today"]');
+  const today = await until(p, () =>
+    (t => (/^[A-Z][a-z]{2}, /.test(t) ? t : null))(document.getElementById('st-span').textContent),
+  );
+  ok(
+    JSON.stringify(show.labels) === '["Numbers","Volume","Top 10","Day and hour"]' &&
+      show.words &&
+      /group's stored posts and comments/.test(show.head) &&
+      !!off &&
+      /: 0 posts and 0 comments\.$/.test(today || ''),
+    "G2-03: a group's Stats shows only its four sections' switches (each still works) and the timeframes (Today: none) " +
+      JSON.stringify({ show, off: !!off, today }),
+  );
+  // By day: a card per day, newest first, a block per post with that day's comments, each citing #pN/cM
+  await p.click('nav a[data-tab="days"]');
+  await until(p, () => document.querySelectorAll('#days-list article.gday').length === 4);
+  const days = await p.$$eval('#days-list article.gday', as =>
+    as.map(a => ({
+      day: a.dataset.day,
+      n: a.querySelector('.row .note').textContent,
+      posts: [...a.querySelectorAll('.gday-post')].map(
+        s => s.dataset.post + ':' + [...s.querySelectorAll('.cite')].map(c => c.textContent).join(','),
+      ),
+    })),
+  );
+  const lines = await p.evaluate(() => ({
+    on: document.querySelector('#days-list article[data-day="2026-11-19"] .gday-post > p').textContent,
+    re: document.querySelector('#days-list article[data-day="2026-11-20"] .gday-post li:nth-child(2)').textContent,
+    post: document.querySelector('#days-list article[data-day="2026-11-20"] .gday-post > p').textContent,
+    head: document.querySelector('#v-days .sec-head p').textContent,
+  }));
+  ok(
+    JSON.stringify(days) ===
+      JSON.stringify([
+        { day: '2026-11-20', n: '1 post · 3 comments', posts: ['p2:Gear #p2,Gear #p2/c1,Gear #p2/c2,Gear #p2/c3'] },
+        { day: '2026-11-19', n: '0 posts · 2 comments', posts: ['p1:Gear #p1,Gear #p1/c2,Gear #p1/c3'] },
+        { day: '2026-11-18', n: '0 posts · 1 comment', posts: ['p1:Gear #p1,Gear #p1/c1'] },
+        { day: '2026-11-17', n: '1 post · 0 comments', posts: ['p1:Gear #p1'] },
+      ]) &&
+      /^Gear #p1 On Dee Diaz's post from Nov 17: Group rules/.test(lines.on) &&
+      /^Gear #p2 Ana Alvarez posted about 7 AM: Selling a 2-person tent.*📷 2 photos$/.test(lines.post) &&
+      lines.re === 'Gear #p2/c2 Ana Alvarez (replying to Ben Brooks): 110 and it is yours.' &&
+      /^Each day's new posts and comments, newest day first/.test(lines.head),
+    "G2b: a group's By day: each day's posts and comments newest day first (#p1 placed from its age), a block per post (an older post named) with that day's comments, each citing #pN or #pN/cM " +
+      JSON.stringify({ days, lines }),
+  );
+  await flashReset(p);
+  await p.click('#days-list article[data-day="2026-11-19"] a.cite:text-is("Gear #p1/c2")');
+  const opened = await until(
+    p,
+    () => {
+      const t = document.querySelector('#p1c2[data-flashed]');
+      return location.hash === '#posts' && t && t.closest('details').open && !document.getElementById('v-posts').hidden;
+    },
+    null,
+    3000,
+  );
+  ok(
+    !!opened,
+    "G2b: Gear #p1/c2 in the group's By day opens Posts at #p1 with its earlier comments unfolded and c2 marked",
+  );
+  await p.setViewportSize({ width: 390, height: 844 });
+  const wide = {};
+  for (const t of ['days', 'stats']) {
+    await p.click('nav a[data-tab="' + t + '"]');
+    await until(
+      p,
+      t =>
+        !document.getElementById('v-' + t).hidden && document.querySelector('#v-' + t + ' .item, #v-' + t + ' .st-sec'),
+      t,
+    );
+    wide[t] = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  }
+  ok(
+    Object.values(wide).every(x => x <= 0),
+    "G2b PH: at 390 px a group's By day and Stats fit the screen " + JSON.stringify(wide),
+  );
+  ok(p.errors.length === 0, "G2b group's Stats and By day: no page errors " + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // All chats: the group beside the chats in Stats and By day, labeled by tag, filtered by Show
+  p = await mcOpen(gaSeed(xsSeed()));
+  await p.click('nav a[data-tab="stats"]');
+  await p.click('#v-stats [data-tf="all"]');
+  await until(p, () => document.querySelectorAll('#v-stats table.xcmp tbody tr').length === 5);
+  const xs = {
+    rows: await xsRows(p),
+    bars: await p.$$eval('#v-stats ul.xbars li', ls =>
+      ls.map(l => l.dataset.chat + ':' + l.querySelector('.v').textContent),
+    ),
+    th: await p.$$eval('#v-stats table.xcmp th', ts => ts.map(t => t.textContent)),
+    name: await mcText(p, '#v-stats table.xcmp tr[data-chat="gear"] td'),
+    span: await mcText(p, '#st-span'),
+  };
+  ok(
+    JSON.stringify(xs.rows) === '[["trail",12,5,0],["cam",8,6,1],["book",6,5,0],["gear",8,5,2],["all",34,21,3]]' &&
+      xs.bars.join(',') === 'trail:12,cam:8,book:6,gear:8' &&
+      xs.th[0] === 'Chat or group' &&
+      xs.th[1] === 'Messages, posts and comments' &&
+      xs.name === 'Gear Gear Swap (2 posts, 6 comments)' &&
+      /: 26 messages in 3 chats; 2 posts and 6 comments in 1 group\.$/.test(xs.span),
+    "G2-03: All chats' Stats counts the group's posts and comments beside the chats' messages (people, photos), labeled by its tag, and All is the sum " +
+      JSON.stringify(xs),
+  );
+  const shown = {};
+  for (const k of ['groups', 'chats', 'all']) {
+    shown[k] = { focus: !!(await gsPick(p, '#st-body', k)) };
+    shown[k].rows = (await xsRows(p)).map(r => r[0] + ':' + r[1]).join(',');
+    shown[k].span = (await mcText(p, '#st-span')).replace(/^.*: /, '');
+    if (k === 'groups') {
+      await p.click('nav a[data-tab="summary"]');
+      shown[k].cards = await p.$$eval('#v-all .chatcard', cs => cs.map(c => c.dataset.chat).join(','));
+      await p.click('nav a[data-tab="stats"]');
+    }
+  }
+  ok(
+    shown.groups.focus &&
+      shown.groups.rows === 'gear:8,all:8' &&
+      shown.groups.span === '2 posts and 6 comments in 1 group.' &&
+      shown.groups.cards === 'gear' &&
+      shown.chats.rows === 'trail:12,cam:8,book:6,all:26' &&
+      shown.chats.span === '26 messages in 3 chats.' &&
+      shown.all.rows === 'trail:12,cam:8,book:6,gear:8,all:34',
+    "G2b: All chats' Show (All, Chats, Groups) filters Stats too, keeps the focus on the button pressed, and is the same choice as the cards' " +
+      JSON.stringify(shown),
+  );
+  await p.click('nav a[data-tab="days"]');
+  await until(p, () => document.querySelectorAll('#days-list article.xday').length === 6);
+  const xd = await p.$$eval('#days-list article.xday', as =>
+    as.map(a => ({
+      day: a.dataset.day,
+      chats: [...a.querySelectorAll('.xday-chat')].map(s => s.dataset.chat).join(','),
+      gear: [...a.querySelectorAll('.xday-chat[data-chat="gear"] .cite')].map(c => c.textContent).join(','),
+      n: (a.querySelector('.xday-chat[data-chat="gear"] .chathead .note') || {}).textContent || '',
+    })),
+  );
+  const xhead = await mcText(p, '#v-days .sec-head p');
+  ok(
+    xd.length === 6 &&
+      xd[0].chats === 'trail,cam' &&
+      xd[1].chats === 'cam' &&
+      JSON.stringify(xd.slice(2).map(d => d.day + '|' + d.chats + '|' + d.n)) ===
+        '["2026-11-20|gear|1 post · 3 comments","2026-11-19|gear|0 posts · 2 comments","2026-11-18|gear|0 posts · 1 comment","2026-11-17|gear|1 post · 0 comments"]' &&
+      xd[2].gear === 'Gear #p2,Gear #p2/c1,Gear #p2/c2,Gear #p2/c3' &&
+      /and per group with that day's posts and comments/.test(xhead),
+    "G2b: All chats' By day lists the group's posts and comments on their days beside the chats' summaries, newest day first, every citation tagged " +
+      JSON.stringify({ xd, xhead }),
+  );
+  const dshown = {};
+  for (const k of ['groups', 'chats', 'all']) {
+    dshown[k] = { focus: !!(await gsPick(p, '#days-list', k)) };
+    dshown[k].days = await p.$$eval('#days-list article.xday', as =>
+      as.map(a => [...a.querySelectorAll('.xday-chat')].map(s => s.dataset.chat).join('+')).join(','),
+    );
+  }
+  ok(
+    dshown.groups.focus &&
+      dshown.groups.days === 'gear,gear,gear,gear' &&
+      dshown.chats.days === 'trail+cam,cam' &&
+      dshown.all.days === 'trail+cam,cam,gear,gear,gear,gear',
+    "G2b: All chats' Show filters By day too " + JSON.stringify(dshown),
+  );
+  await flashReset(p);
+  await p.click(
+    '#days-list article.xday[data-day="2026-11-19"] .xday-chat[data-chat="gear"] button.cite[data-i="p1/c2"]',
+  );
+  const went = await until(
+    p,
+    () => {
+      const t = document.querySelector('#p1c2[data-flashed]');
+      return location.hash === '#posts' && t && t.closest('details').open;
+    },
+    null,
+    5000,
+  );
+  ok(
+    !!went && (await mcText(p, '#h1')) === 'Gear Swap',
+    "G2b: Gear #p1/c2 in All chats' By day opens Gear Swap's Posts at #p1 with c2 marked",
+  );
+  ok(p.errors.length === 0, "G2b All chats' Stats and By day with a group: no page errors " + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // a page without groups: no Show, and Stats and By day say what they always said
+  p = await mcOpen(xsSeed());
+  await p.click('nav a[data-tab="stats"]');
+  await until(p, () => document.querySelectorAll('#v-stats table.xcmp tbody tr').length === 4);
+  const plain = {
+    show: await p.$$eval('#v-stats .xshow', x => x.length),
+    th: await p.$$eval('#v-stats table.xcmp th', ts => ts.map(t => t.textContent).join(',')),
+    bars: await mcText(p, '#st-body [data-sec="xbars"] h3'),
+    span: (await mcText(p, '#st-span')).replace(/^.*: /, ''),
+  };
+  await p.click('nav a[data-tab="days"]');
+  await until(p, () => document.querySelectorAll('#days-list article.xday').length === 2);
+  plain.dshow = await p.$$eval('#days-list .xshow', x => x.length);
+  plain.head = await mcText(p, '#v-days .sec-head p');
+  ok(
+    plain.show === 0 &&
+      plain.dshow === 0 &&
+      plain.th === 'Chat,Messages,People posting,Photos and GIFs,Most active' &&
+      plain.bars === 'Messages by chat' &&
+      plain.span === '26 messages in 3 chats.' &&
+      /^Each day, newest first, a section per chat with that day's summary: its topics/.test(plain.head),
+    'G2b: with no group on the page, All chats’ Stats and By day are as before (no Show, the same words) ' +
+      JSON.stringify(plain),
+  );
+  ok(p.errors.length === 0, 'G2b All chats without groups: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 const SECTIONS = {
   reactions,
   lateReactions,
@@ -19392,6 +19701,7 @@ const SECTIONS = {
   groupsAdd,
   groupsImport,
   groupsAsk,
+  groupsStats,
   importer,
   multiChat,
   multiChat2,
