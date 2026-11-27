@@ -22,6 +22,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F1 | P3 | feature | Several chats per page: stages A (v1.35.0), B (v1.38.0, v1.39.0) and C (v1.55.0, v1.57.0) shipped; left: the polish noticed in stage A and the options not built |
 | F25 | P2 | feature | Facebook groups on the page: stage G1 (read groups) shipped in v1.47.0–v1.48.0, G2a (Ask and search over posts and comments) in v1.61.0; next G2b (Stats, By day), G2c (linked stats, loose links) and G3 (commenting, with photos) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; option C step 1 (the `reply-check` skill) in v1.34.0; measured (0.2% of a 5-hour session per check); scheduling it ("schedule reply checks") in v1.37.0; left: arm it on the owner's account (every 10 minutes, 5 AM–10 PM) and check it, then make the interval and hours changeable in the page |
+| F43 | P2 | feature | Settings that are easy to use (#109): owner's pick between rows that open in place, a tidied list, or a screen per chat |
 | F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
 
 ## Bugs
@@ -87,6 +88,16 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
   - **G2c:** linked stats for a chat and its group with all seven of the design's views, and loose links ("<bag> up in the group" → "Probably: …" under the chat message). The owner sets the linked chat in Settings.
 - **Then, stage G3 (comment):** a comment on a post or a reply to a comment from the page, with photos (one per comment; several as a thread under your comment), through the outbox.
 - **Known limits (G1):** a reply to a reply gets a reply as its parent, though not always the one it names (Facebook's indent and labels don't say which); comment counts include hidden ones the page can't read (26 said, 22 loaded); notifications were only read in the survey (opening the page clears the red badge).
+### F43 · P2 · Settings that are easy to use (#109)
+- **Asked (owner, Nov 27):** "the settings page is a disaster. Very painful to navigate, read, or act on anything."
+- **Today (page 7.5):** one panel, about 53 controls and 16 notes, about 5.6 phone screens. The Close button scrolls away; notes and labels repeat on every card; nothing shows what differs from the defaults; the Add forms sit at the end. A group's Read and Show in All, and a chat's Store its photos, can't be changed after adding.
+- **Options (mockups: https://claude.ai/artifact/J71GEGwZFsSmuy6dEvRbsL; on the board):**
+  - A: one summary row per chat that opens in place (recommended).
+  - B: tidy the one list.
+  - C: a list, then a screen per chat.
+- **Verified:** https://source.android.com/docs/core/settings/settings-guidelines, https://developer.apple.com/design/human-interface-guidelines/lists-and-tables, https://code.visualstudio.com/docs/configure/settings, https://www.nngroup.com/articles/progressive-disclosure/
+- **Open questions:** one row open at a time or many; make the set-when-adding fields changeable in this release; save a tag without a button.
+- **Risks in the viewer:** the panel redraws from store snapshots unless an input has focus, so the open row lives in state; no `#hash` navigation.
 ### F33 · P3 · Windowed loading of day summaries for very long histories
 - **Today (v1.32.0):** the page listens to the whole `daySummaries` collection, as it does its other collections, and By day, Ask, Views and the `day_summaries` tool use the summaries in memory. The owner's page has about 55 days, roughly 0.5 MB. F29 built a window (the newest days live, older ones read on demand) and dropped it after three reviews kept finding faults in it; this item is that work, done in small pieces when it's needed.
 - **Trigger:** only when a page's day summaries pass about a year of days, or a load time or size threshold measured on the real runtime. Measure first; don't build ahead of it.

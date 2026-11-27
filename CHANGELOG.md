@@ -2,6 +2,18 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.61.1] - 2026-11-27
+**A group's Refreshing help is about the group** (#114). PATCH. Page 7.6.
+
+### Fixed
+- A group's page ended with the chat's Refreshing help: Claude "reads your open Messenger tab", Chrome needs "the Messenger tab open", plus Mark caught up and Reply in Messenger. A group now shows its own: Claude opens the group on facebook.com, reads new posts and comments and your notifications from it (clearing the red badge), and the same online conditions apply. The chat help and the Jump-to-a-message setup are hidden there (`body.groupview`).
+
+### Docs
+- BACKLOG: F43 (#109), Settings that are easy to use, with the owner's options.
+
+### Tests
+- page (groupsAsk): a group's help has no Messenger wording and names its own phrase; a chat's is unchanged.
+
 ## [1.61.0] - 2026-11-27
 **Ask and search over a Facebook group's posts and comments** (F25 stage G2a). MINOR. Page 7.5.
 
