@@ -18729,6 +18729,30 @@ async function groupsImport() {
       ')',
   );
   await mcPick(p, 'gear');
+  /* #127: comments on a post whose card wasn't read store a stub (no author or text, a number); a later capture with
+     its card fills that post in place, keeping its number */
+  await mcPaste(p, gcap(G, [], { [post(6).pid]: [cmt(6, 1, 'Ben Brooks')] }), 'gear');
+  const st1 = await get(p, 'gear_posts/p' + post(6).pid);
+  await mcPaste(p, gcap(G, [post(6, 1)], {}), 'gear');
+  const st2 = await get(p, 'gear_posts/p' + post(6).pid);
+  const stC = await get(p, 'gear_comments/p' + post(6).pid);
+  ok(
+    st1 &&
+      st1.n === 4 &&
+      !st1.who &&
+      !st1.text &&
+      st2 &&
+      st2.n === 4 &&
+      st2.who === 'Ana Alvarez' &&
+      st2.text === 'Post 6' &&
+      st2.firstSeen === st1.firstSeen &&
+      Date.parse(st2.at) > 0 &&
+      stC.comments.length === 1 &&
+      (await get(p, 'meta/chat-gear')).nextP === 5,
+    '#127: a post stored only from its comments (#p4, no author or text) is filled by a later capture that brings its card: same number, its author, text and time, its comment kept (' +
+      JSON.stringify({ st1, st2 }) +
+      ')',
+  );
   // a capture from another group is refused
   await mcPaste(p, gcap('999', [post(5, 0)], {}), 'gear').catch(() => null);
   ok(!(await get(p, 'gear_posts/p' + post(5).pid)), 'G1: a capture from another group is refused, nothing stored');
@@ -20121,6 +20145,15 @@ async function groupsLinked() {
       'the group chat is quiet',
       'my group of friends',
       'I said so in the group chat',
+      /* #126: the name or tag only after a posting word, or before "group" */
+      'He is great! Glad to have him in Gear!',
+      'Tent is up in Gear',
+      'posted it in Gear Swap',
+      'listed on gear swap yesterday',
+      'put it up on Gear',
+      'it is in the Gear group',
+      'see you on Gear Swap night',
+      'Gearbox posted in Gearheads',
     ].map(t => lkSayRe(g).test(t));
     const pid = [
       'https://www.facebook.com/groups/123/posts/456/',
@@ -20136,12 +20169,12 @@ async function groupsLinked() {
   ok(
     JSON.stringify(rules) ===
       JSON.stringify({
-        say: [true, true, true, true, false, false, false, false],
+        say: [true, true, true, false, false, false, false, false, false, true, true, true, true, true, false, false],
         pid: ['456', '789', '321', null],
         sold: [true, true, true, false, false],
         words: ['tent'],
       }),
-    'G2c: what counts as saying it is in the group (also by the group\'s name), a post\'s address (wrapped by Messenger too), "sold", and the words matched (no common or selling words, plurals folded) ' +
+    'G2c: what counts as saying it is in the group (by the group\'s name or tag only after a posting word or before "group", #126: not "it\'s on Gear Swap now" or "glad to have him in Gear"), a post\'s address (wrapped by Messenger too), "sold", and the words matched (no common or selling words, plurals folded) ' +
       JSON.stringify(rules),
   );
   await flashReset(p);
@@ -20309,6 +20342,93 @@ async function groupsLinked() {
       JSON.stringify(unl),
   );
   ok(p.errors.length === 0, 'G2c linked stats: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  /* #126 and #127: #2 says "Tent is up in Gear" (the tag after "up in": probably #p2); #6, Ana near her post and
+     sharing "tent", says "Glad to have him in Gear" (a bare "in <tag>": no link); #9 carries the address of #p4, a
+     post stored only from its comment (a stub: no author, no text), which reads "a post not read yet", never "?" */
+  const P4 = '2000000000000004';
+  const v = lkSeed();
+  const vm = v.extra['cam_chunks/c0000'].msgs;
+  vm[2].b = 'Tent is up in Gear';
+  vm[6].b = "He's great with tents! Glad to have him in Gear";
+  vm[9].l = ['https://www.facebook.com/groups/' + GA_G + '/posts/' + P4 + '/'];
+  Object.assign(v.extra, {
+    ['gear_posts/p' + P4]: { pid: P4, n: 4, firstSeen: GA_READ, lastAct: '2026-11-21T18:00:00.000Z' },
+    ['gear_comments/p' + P4]: {
+      pid: P4,
+      comments: [
+        {
+          c: 1,
+          cid: '4000000000000401',
+          rid: null,
+          parent: null,
+          who: 'Eli Ito',
+          uid: '9102',
+          text: 'Interested, sending a message.',
+          age: '1h',
+          at: '2026-11-21T17:00:00.000Z',
+          firstSeen: GA_READ,
+        },
+      ],
+    },
+    'meta/chat-gear': Object.assign({}, v.extra['meta/chat-gear'], { nextP: 5 }),
+  });
+  p = await mcOpen(gaSeed(v));
+  await mcPick(p, 'cam');
+  await until(p, () => S.msgs.length === 10);
+  await p.click('nav a[data-tab="messages"]');
+  const vUnder = await until(p, () => {
+    const ls = [...document.querySelectorAll('#msgs .lk-under')];
+    return ls.length === 3 ? ls.map(l => l.closest('.msg').id + ':' + l.textContent.replace(/\s+/g, ' ').trim()) : null;
+  });
+  ok(
+    JSON.stringify(vUnder) ===
+      JSON.stringify([
+        "m0:In the group: Gear #p3 · Ben Brooks's post “WTS camp stove, 45 shipped.”",
+        "m2:Probably: Gear #p2 · Ana Alvarez's post “Selling a 2-person tent, used twice. 120 or best offer.”",
+        'm9:In the group: Gear #p4 · a post not read yet',
+      ]),
+    '#126: "Tent is up in Gear" gets its Probably link; "Glad to have him in Gear" (same sender, near the post, a shared word) gets none; #127: a link to a post known only from its comments reads "a post not read yet" ' +
+      JSON.stringify(vUnder),
+  );
+  await p.click('nav a[data-tab="stats"]');
+  await gsCustom(p, '2026-11-17', '2026-11-21');
+  await ready();
+  const V = await lkRead(p);
+  ok(
+    V.c2g.includes('Gear #p4 a post not read yet named in Cam #9 · 0 replies to it in Cam') &&
+      !V.c2g.some(l => /\?/.test(l)),
+    '#127: Chat to group lists a post not read yet as such, with no "?" for its author ' + JSON.stringify(V.c2g),
+  );
+  await mcPick(p, 'gear');
+  await until(p, () => S.gLoaded === 7);
+  const stub = await p.evaluate(() => {
+    const x = Object.assign({}, gLive(), { bare: true });
+    return { line: gLine(x, x.byRef.get('p4')), card: gCiteText(x.byRef.get('p4')) };
+  });
+  await p.evaluate(() => {
+    location.hash = '#posts';
+  });
+  stub.posts = await until(p, () => {
+    const c = document.getElementById('p4');
+    return c ? c.textContent.replace(/\s+/g, ' ').trim() : null;
+  });
+  await p.click('nav a[data-tab="days"]');
+  stub.day = await until(p, () => {
+    const s = document.querySelector('#days-list article[data-day="2026-11-21"] .gday-post[data-post="p4"]');
+    return s ? s.textContent.replace(/\s+/g, ' ').trim() : null;
+  });
+  ok(
+    stub.line === '#p4 [time unknown] a post not read yet (post, 1 comment)' &&
+      stub.card === 'A post not read yet' &&
+      /^#p4\s*A post not read yet/.test(stub.posts) &&
+      /Known so far only through its comments or a notification/.test(stub.posts) &&
+      /^Gear #p4 On a post not read yet: Gear #p4\/c1 Eli Ito: Interested/.test(stub.day) &&
+      ![stub.line, stub.card, stub.posts, stub.day].some(t => /\?/.test(t)),
+    '#127: a post known only from its comments reads "a post not read yet" in its Ask line, its citation card, Posts and By day, never "?" ' +
+      JSON.stringify(stub),
+  );
+  ok(p.errors.length === 0, '#126/#127 linked: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
   // a page of chats only: no With section, no switch, nothing under messages
   p = await mcOpen({});

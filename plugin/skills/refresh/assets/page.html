@@ -3290,7 +3290,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "8.0";
+  const PAGE_VERSION = "8.1";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -4422,6 +4422,21 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     d.append(h, el("div", null, c.text || ""));
     return d;
   }
+  /* a post's number, author and age; a stub (B76, #127) says it hasn't been read yet */
+  function gPostRow(p) {
+    const r = el("div", "row");
+    const who = gStub(p) ? el("span", "note", "A post not read yet") : el("b", null, p.who || "?");
+    r.append(el("span", "n", "#p" + p.n), who, el("span", "note", p.age || ""));
+    return r;
+  }
+  const gPostText = p =>
+    gStub(p)
+      ? el(
+          "p",
+          "note",
+          "Known so far only through its comments or a notification. Its author and text come once a refresh reads it in the group's feed.",
+        )
+      : el("p", null, p.text || "");
   function renderPosts() {
     const v = $("#v-posts");
     if (!v) return;
@@ -4442,14 +4457,13 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     posts.forEach(p => {
       const card = el("article", "item gpost" + (gIsNew(p) ? " new" : ""));
       card.id = "p" + p.n;
-      const r = el("div", "row");
-      r.append(el("span", "n", "#p" + p.n), el("b", null, p.who || "?"), el("span", "note", p.age || ""));
+      const r = gPostRow(p);
       if (gIsNew(p)) r.append(el("span", "chip open", "new post"));
       const cs = gCmts(p);
       const fresh = cs.filter(gIsNew);
       if (fresh.length && !gIsNew(p))
         r.append(el("span", "chip open", fresh.length + (fresh.length > 1 ? " new comments" : " new comment")));
-      card.append(r, el("p", null, p.text || ""));
+      card.append(r, gPostText(p));
       if ((p.photos || []).length)
         card.append(el("p", "note", "📷 " + p.photos.length + (p.photos.length > 1 ? " photos" : " photo")));
       const old = cs.filter(c => !gIsNew(c));
@@ -4482,9 +4496,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const build = () => {
       if (built) return;
       built = el("div", "gthread");
-      const r = el("div", "row");
-      r.append(el("span", "n", "#p" + p.n), el("b", null, p.who || "?"), el("span", "note", p.age || ""));
-      built.append(r, el("p", null, p.text || ""));
+      built.append(gPostRow(p), gPostText(p));
       if ((p.photos || []).length)
         built.append(el("p", "note", "📷 " + p.photos.length + (p.photos.length > 1 ? " photos" : " photo")));
       cs.forEach(c => {
@@ -9284,6 +9296,12 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const w = String(who || "").toLowerCase();
     return !!w && gMe().some(x => w === x || w.startsWith(x + " "));
   };
+  /* B76 (#127): a post stored only from its comments or a notification (the feed pass never read its card): {pid, n,
+     firstSeen, lastAct}, no author or text. It shows as "a post not read yet", never "?". */
+  const G_UNREAD = "a post not read yet";
+  const gStub = p => !!p && !p.who && !p.text;
+  /* "Ana Alvarez's post", "your post", or "a post not read yet" */
+  const gWhose = it => (it.stub ? G_UNREAD : it.who === "You" ? "your post" : it.who + "'s post");
   /* posts ({id: post}) and comments ({id: {pid, comments}}) as {posts, items, byRef, order, ncm}: items in post order,
      each post then its comments; order the same posts by newest activity last (what Ask reads word for word first) */
   function gCtx(posts, cmts) {
@@ -9301,8 +9319,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const item = (p, c, post) => {
       const w = gWhen(c || p);
       const you = c ? !!c.byYou : gMine(p.who);
-      const full = (c || p).who || "?";
-      const it = { p, c, ref: "p" + p.n + (c ? "/c" + c.c : ""), o: items.length, full, who: you ? "You" : full };
+      const stub = !c && gStub(p);
+      const full = (c || p).who || (stub ? "" : "?");
+      const it = { p, c, ref: "p" + p.n + (c ? "/c" + c.c : ""), o: items.length, full, who: you ? "You" : full, stub };
       Object.assign(it, { text: (c || p).text || "", ms: w.ms, hr: w.hr, d: gYmd(w.ms), photos: 0, parent: null });
       it.post = post || it;
       items.push(it);
@@ -9347,11 +9366,11 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   function gLine(x, it) {
     let s =
       (x.bare ? "#" + it.ref : "[" + x.key + "#" + it.ref + "]") + " [" + (gWhenText(it) || "time unknown") + "] ";
-    s += it.who;
+    s += it.stub ? G_UNREAD : it.who;
     if (!it.c)
       s += " (post" + (it.photos ? ", " + plural(it.photos, "photo") : "") + ", " + plural(it.n, "comment") + ")";
     else if (it.parent) s += " (replying to c" + it.parent.c.c + " " + it.parent.who + ")";
-    return s + ": " + it.text.replace(/\s+/g, " ").trim();
+    return it.stub ? s : s + ": " + it.text.replace(/\s+/g, " ").trim();
   }
   /* a search or read bound in a group: a post ("#p12", "p12", "#12"; "/c3" keeps the comment) or a date */
   function gBound(v) {
@@ -9415,7 +9434,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     if (!it) return "";
     const b = it.text.replace(/\s+/g, " ").trim();
     const cut = s => (Array.from(s).length > 100 ? cutCp(s, 100) + "…" : s);
-    const L = [it.who + " · " + (it.c ? "comment" : "post") + (gWhenText(it) ? " · " + gWhenText(it) : "")];
+    const head = it.stub ? "A post not read yet" : it.who + " · " + (it.c ? "comment" : "post");
+    const L = [head + (gWhenText(it) ? " · " + gWhenText(it) : "")];
     if (b) L.push(cut(b));
     if (it.photos) L.push("📷 " + plural(it.photos, "photo"));
     return L.join("\n");
@@ -17348,7 +17368,11 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
           if (pi.photos) head.append(" ", el("span", "note", "📷 " + plural(pi.photos, "photo")));
         } else
           head.append(
-            el("span", "note", "On " + pi.who + "'s post" + (pi.d ? " from " + dayOf(pi.d) : "") + ": "),
+            el(
+              "span",
+              "note",
+              "On " + (pi.stub ? G_UNREAD : pi.who + "'s post") + (pi.d ? " from " + dayOf(pi.d) : "") + ": ",
+            ),
             trunc(oneLine(pi.text), 100),
           );
         sec.append(head);
@@ -17431,7 +17455,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
      A group's `chat` (meta/chat.chats.KEY.chat, set in Add a group or its Settings card) links it to a chat. Then:
      - Links from a chat message to a group post, worked out on the page with no Claude call (lkLinks). Certain: the
        message carries the post's address (…/posts/<id> or …/permalink/<id>, a stored post's pid). Probably: the
-       message says it's in the group ("up in the group", "posted it in the group", "on <the group's name>"), its
+       message says it's in the group ("up in the group", "posted it in the group", "posted it on <the group's name>"), its
        sender's full name is the post's author's, the post's estimated time falls from 6 hours before the message to 1
        hour after (a day later for a post known only by the day, whose age rounds down), and the post shares a word
        with the message or the message it replies to (not a common or selling word). The most shared words wins, then
@@ -17524,16 +17548,24 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     }
   }
   const lkEsc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  /* "up in the group", "posted it in the group", "check the group", "on Gear Swap" */
+  /* "up in the group", "posted it in the group", "check the group"; the group's name or tag only after a posting word
+     ("up in Gear", "posted it on Gear Swap", "listed in Gear", "put it up on Gear") or before "group" ("the Gear
+     group"): a bare "in Gear" is often the community itself ("glad to have him in Gear", B75, #126) */
   function lkSayRe(g) {
     const names = [g.name, g.tag].filter(Boolean).map(s => lkEsc(String(s).toLowerCase()).replace(/\s+/g, "\\s+"));
-    const what = ["group"].concat(names).join("|");
-    return new RegExp(
-      "(?:^|[^\\p{L}\\p{N}])(?:in|on|to|into)\\s+(?:the\\s+|our\\s+|this\\s+|that\\s+)?(?:(?:fb|facebook)\\s+)?(?:" +
-        what +
-        ")(?![\\p{L}\\p{N}])(?!\\s+chat)|(?:^|[^\\p{L}])check\\s+(?:the\\s+)?group(?![\\p{L}])",
-      "iu",
-    );
+    const pre = "(?:^|[^\\p{L}\\p{N}])";
+    const end = "(?![\\p{L}\\p{N}])(?!\\s+chat)";
+    const parts = [
+      pre + "(?:in|on|to|into)\\s+(?:the\\s+|our\\s+|this\\s+|that\\s+)?(?:(?:fb|facebook)\\s+)?group" + end,
+      "(?:^|[^\\p{L}])check\\s+(?:the\\s+)?group(?![\\p{L}])",
+    ];
+    if (names.length) {
+      const nm = "(?:the\\s+)?(?:" + names.join("|") + ")";
+      const cue =
+        "(?:up\\s+(?:in|on)|(?:posted|listed|put)(?:\\s+(?:it|this|that|them))?\\s+(?:up\\s+)?(?:in|on|to|into))";
+      parts.push(pre + cue + "\\s+" + nm + end, pre + nm + "\\s+(?:(?:fb|facebook)\\s+)?group" + end);
+    }
+    return new RegExp(parts.join("|"), "iu");
   }
   /* the post id in a Facebook address (a Messenger link may wrap it in l.facebook.com/l.php?u=…) */
   function lkPid(u) {
@@ -17638,9 +17670,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   function lkLine(L, g) {
     const p = el("div", "lk-under note" + (L.sure ? " sure" : ""));
     p.dataset.post = L.it.ref;
-    const whose = L.it.who === "You" ? "your post" : L.it.who + "'s post";
     p.append(L.sure ? "In the group: " : "Probably: ", xCite(g, L.it.ref));
-    p.append(" · " + whose + " “" + trunc(oneLine(L.it.text), 80) + "”");
+    p.append(" · " + gWhose(L.it) + (L.it.stub ? "" : " “" + trunc(oneLine(L.it.text), 80) + "”"));
     return p;
   }
   /* the line under message m in Messages, when a linked group's post goes with it (null while the group is read) */
@@ -17877,7 +17908,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     list.slice(0, 10).forEach(a => {
       const li = el("li");
       li.dataset.post = a.it.ref;
-      li.append(xCite(g, a.it.ref), " ", el("b", null, a.it.who), ": " + trunc(oneLine(a.it.text), 90) + " ");
+      li.append(xCite(g, a.it.ref), " ");
+      if (a.it.stub) li.append(el("span", "note", G_UNREAD), " ");
+      else li.append(el("b", null, a.it.who), ": " + trunc(oneLine(a.it.text), 90) + " ");
       const sub = el("span", "note");
       sub.append("named in ");
       a.ls.forEach((L, k) => {
