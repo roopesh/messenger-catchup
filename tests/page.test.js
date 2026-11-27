@@ -18328,6 +18328,14 @@ async function groupsImport() {
       JSON.stringify({ li, n: [p0 && p0.n, p1 && p1.n], c: c0 && c0.comments.map(x => [x.c, x.byYou]) }) +
       ')',
   );
+  // G2a: each new post and comment gets the time its age puts it (read at the import's own time)
+  const hrs = (x, h) => Date.parse(x.at) === Date.parse(x.firstSeen) - h * 3600000;
+  ok(
+    hrs(p0, 0) && hrs(p1, 1) && hrs(c0.comments[0], 1) && hrs(c0.comments[1], 1),
+    'G2a: a group import stores each new post and comment its estimated time (at): "1 hours ago" and "1h" one hour before it was read (' +
+      JSON.stringify([p0.at, p1.at, p1.firstSeen, c0.comments[0].at]) +
+      ')',
+  );
   // the same capture again: nothing changes
   const w0 = await mcNWrites(p);
   await p.evaluate(t => {
@@ -18404,8 +18412,8 @@ async function groupsImport() {
       pv.folded === '2 earlier comments' &&
       pv.news === 2 &&
       pv.fb === 'https://www.facebook.com/groups/' + G + '/posts/' + post(2).pid + '/' &&
-      JSON.stringify(pv.tabs) === '["summary","posts"]',
-    'G1-18: Posts lists the group newest activity first (#p3 new, #p1 with 2 new comments, 2 earlier folded), each with its Facebook link; a group shows only Summary and Posts (' +
+      JSON.stringify(pv.tabs) === '["summary","posts","ask"]',
+    'G1-18: Posts lists the group newest activity first (#p3 new, #p1 with 2 new comments, 2 earlier folded), each with its Facebook link; a group shows only Summary, Posts and (G2a) Ask (' +
       JSON.stringify(pv) +
       ')',
   );
@@ -18715,6 +18723,414 @@ async function settledMentions() {
   ok(q.errors.length === 0, 'B69 settled mentions, several chats: no page errors ' + JSON.stringify(q.errors));
   await q.context().close();
 }
+/* F25 G2a: Ask over a group (its own Ask tab) and groups in All chats' Ask. Gear Swap holds two posts read at a fixed
+   time (GA_READ, noon in the page's zone): #p1 (Dee's rules, "3 days ago", three comments, one yours) and #p2 (Ana's
+   tent, "5h", two photos, three comments, one a reply). Decoys with the same words sit outside gear's KEY_ names. */
+const GA_G = '1000000000000001';
+const GA_READ = '2026-11-20T20:00:00.000Z';
+const GA_ENTRY = {
+  kind: 'group',
+  name: 'Gear Swap',
+  tag: 'Gear',
+  color: 2,
+  order: 3,
+  state: 'active',
+  group: GA_G,
+  url: 'https://www.facebook.com/groups/' + GA_G + '/',
+  start: { days: 7 },
+  read: 'all',
+  rollup: true,
+};
+function gaDocs() {
+  const pid = k => String(2000000000000000 + k);
+  const c = (k, n, who, text, age, x = {}) =>
+    Object.assign({ c: n, cid: String(4000000000000000 + k * 100 + n), rid: null, parent: null, who, uid: '9101' }, x, {
+      text,
+      age,
+      firstSeen: GA_READ,
+    });
+  return {
+    'meta/chat-gear': { kind: 'group', group: GA_G, nextP: 3, lastImport: '2026-11-21T20:00:00.000Z' },
+    ['gear_posts/p' + pid(1)]: {
+      pid: pid(1),
+      n: 1,
+      who: 'Dee Diaz',
+      age: '3 days ago',
+      text: 'Group rules: price in the post, mark sold items.',
+      photos: [],
+      count: 3,
+      firstSeen: GA_READ,
+      lastAct: '2026-11-20T18:00:00.000Z',
+    },
+    ['gear_posts/p' + pid(2)]: {
+      pid: pid(2),
+      n: 2,
+      who: 'Ana Alvarez',
+      age: '5h',
+      at: '2026-11-20T15:00:00.000Z',
+      text: 'Selling a 2-person tent, used twice. 120 or best offer.',
+      photos: ['801', '802'],
+      count: 3,
+      firstSeen: GA_READ,
+      lastAct: '2026-11-20T19:00:00.000Z',
+    },
+    ['gear_comments/p' + pid(1)]: {
+      pid: pid(1),
+      comments: [
+        c(1, 1, 'Ben Brooks', 'Can we post wanted ads too?', '2d'),
+        c(1, 2, 'Dee Diaz', 'Yes, start with WTB.', '1d'),
+        c(1, 3, 'Sam Stone', 'Thanks, noted.', '20h', { byYou: true }),
+      ],
+    },
+    ['gear_comments/p' + pid(2)]: {
+      pid: pid(2),
+      comments: [
+        c(2, 1, 'Ben Brooks', 'Still available? Can do 100 for the tent.', '4h'),
+        c(2, 2, 'Ana Alvarez', '110 and it is yours.', '3h', { rid: '5000000000000002', parent: '4000000000000201' }),
+        c(2, 3, 'Cy Chen', 'Sammy, you had one like this, any good?', '1h'),
+      ],
+    },
+    /* not gear's: the page's own (unprefixed) and a chat's, never read for gear */
+    'posts/p999': { pid: '999', n: 1, who: 'Ana Alvarez', text: 'decoy tent', firstSeen: GA_READ },
+    'cam_posts/p998': { pid: '998', n: 1, who: 'Ana Alvarez', text: 'decoy tent', firstSeen: GA_READ },
+  };
+}
+const gaSeed = (o = {}) =>
+  Object.assign({}, o, {
+    chats: Object.assign({ gear: GA_ENTRY }, o.chats || {}),
+    extra: Object.assign(gaDocs(), o.extra || {}),
+    opts: o.opts || { tools: true },
+  });
+const gaTools = p => p.evaluate(() => __rt.toolLog.map(x => Object.assign({}, x, { out: x.out && JSON.parse(x.out) })));
+const gaRows = (p, box) =>
+  p.$$eval('#' + box + ' .turn.assistant:last-of-type .xhits > li', ls =>
+    ls.map(l =>
+      l.classList.contains('xhit-h')
+        ? 'h:' + l.dataset.chat
+        : l.classList.contains('xhit')
+          ? l.dataset.chat + '#' + l.querySelector('.cite').textContent.replace(/^\S+ #/, '')
+          : 'note',
+    ),
+  );
+async function groupsAsk() {
+  let p = await mcOpen(gaSeed());
+  await mcPick(p, 'gear');
+  await until(p, () => S.gLoaded === 7);
+  const tabs = await p.$$eval('nav.tabs a', as => as.filter(a => !a.hidden).map(a => a.dataset.tab));
+  await p.click('nav a[data-tab="ask"]');
+  const head = {
+    h: await mcText(p, '#v-ask .sec-head h2'),
+    chat: !(await p.$eval('#chat', e => e.hidden)),
+    xchat: !(await p.$eval('#xchat', e => e.hidden)),
+    tools: await p.evaluate(() =>
+      xToolSet(newRec(), 1e6, [Object.assign({}, gLive(), { bare: true })]).map(t => t.name),
+    ),
+  };
+  ok(
+    JSON.stringify(tabs) === '["summary","posts","ask"]' &&
+      head.h === 'Ask about the group' &&
+      head.chat &&
+      !head.xchat &&
+      JSON.stringify(head.tools) === '["search_posts","read_posts"]',
+    "G2a: a group has an Ask tab of its own (Summary, Posts, Ask), with the group's tools: search_posts and read_posts " +
+      JSON.stringify({ tabs, head }),
+  );
+  await p.evaluate(
+    pl => (window.__toolPlan = pl),
+    [
+      { say: 'Looking.', calls: [{ name: 'search_posts', input: { words: 'tent' } }] },
+      {
+        calls: [
+          { name: 'read_posts', input: { from: '#p2' } },
+          { name: 'search_posts', input: { words: 'wtb', sender: 'dee' } },
+          { name: 'search_posts', input: { words: '', sender: 'Ben', from: '2026-11-20' } },
+          { name: 'read_posts', input: { from: '2026-11-17', to: '2026-11-17' } },
+          { name: 'read_posts', input: { from: '#p9' } },
+        ],
+      },
+      {
+        say: 'Ana is selling it [#p2]; Ben offered 100 [#p2/c1] and she said 110 [#p2/c2]. Rules: [#p1, #p1/c2].',
+      },
+    ],
+  );
+  const r = await hask(p, 'Is the tent still for sale?');
+  const log = await gaTools(p);
+  const recent = (r.prompt.split('\nRECENT (')[1] || '').split('\n').slice(1);
+  ok(
+    r.calls.length === 1 &&
+      r.prompt.includes('catch up on the Gear Swap Facebook group.') &&
+      r.prompt.includes('\n- GROUP: 2 posts and 6 comments stored, #p1 to #p2.') &&
+      r.prompt.includes('[#p12/c3] (comment 3 on it)') &&
+      r.prompt.includes("Search before saying something isn't in the group.") &&
+      r.prompt.includes('Never offer to dig deeper') &&
+      r.prompt.includes('read any stored post and comment now') &&
+      !/\[gear#|decoy/.test(r.prompt) &&
+      recent.length === 8 &&
+      /^#p1 \[about Nov 17\] Dee Diaz \(post, 3 comments\): Group rules/.test(recent[0]) &&
+      /^#p1\/c3 \[about Nov 19 4 PM\] You: Thanks, noted\.$/.test(recent[3]) &&
+      /^#p2 \[about Nov 20 7 AM\] Ana Alvarez \(post, 2 photos, 3 comments\): Selling/.test(recent[4]) &&
+      /^#p2\/c2 \[about Nov 20 9 AM\] Ana Alvarez \(replying to c1 Ben Brooks\): 110/.test(recent[6]),
+    "G2a: a group's Ask sends one request: the group's span, its posts by activity (newest last) each with its comments word for word as #pN/cM lines with estimated times, yours as You, and SEARCH_RULES said of the group (never offer to dig deeper) " +
+      JSON.stringify(recent.slice(0, 5)),
+  );
+  /* a call that throws at once is logged before the others of its round: find each by what it asked */
+  const call = (l, name, f) => l.find(x => x.name === name && f(x.input));
+  const s1 = call(log, 'search_posts', i => i.words === 'tent');
+  const rd = call(log, 'read_posts', i => i.from === '#p2');
+  const s2 = call(log, 'search_posts', i => i.words === 'wtb');
+  const s3 = call(log, 'search_posts', i => i.sender === 'Ben');
+  const rdDay = call(log, 'read_posts', i => i.from === '2026-11-17');
+  const rdBad = call(log, 'read_posts', i => i.from === '#p9');
+  ok(
+    s1.out.total === 2 &&
+      !('byChat' in s1.out) &&
+      JSON.stringify(s1.out.matches.map(l => l.split(' ')[0])) === '["#p2/c1","#p2"]' &&
+      s1.out.matches[0].endsWith('Ben Brooks: Still available? Can do 100 for the tent.') &&
+      s2.out.total === 1 &&
+      /^#p1\/c2 /.test(s2.out.matches[0]) &&
+      s3.out.total === 1 &&
+      /^#p2\/c1 /.test(s3.out.matches[0]),
+    "G2-02: search_posts finds the words in posts and comments (newest first, #pN and #pN/cM), by author and from a date, and nothing outside the group's KEY_ documents " +
+      JSON.stringify([s1.out, s2.out.total, s3.out.total]),
+  );
+  ok(
+    rd.out.from === '#p2' &&
+      rd.out.to === '#p2/c3' &&
+      rd.out.lines.length === 4 &&
+      /^#p2 /.test(rd.out.lines[0]) &&
+      rd.out.lines[3].endsWith('Cy Chen: Sammy, you had one like this, any good?') &&
+      rdDay.out.lines.length === 4 &&
+      /^#p1 /.test(rdDay.out.lines[0]) &&
+      /No stored posts there in gear/.test(rdBad.err),
+    "G2a: read_posts reads a post with every comment word for word, or the posts of a day; a post that isn't stored says so " +
+      JSON.stringify([rd.out, rdDay.out.lines.length, rdBad.err]),
+  );
+  const cites = await p.$$eval('#chat .turn.assistant:last-of-type .txt .cite', cs => cs.map(c => c.textContent));
+  ok(
+    JSON.stringify(cites) === '["Gear #p2","Gear #p2/c1","Gear #p2/c2","Gear #p1","Gear #p1/c2"]' &&
+      /^Read the 2 posts with the newest activity word for word\. Searched “tent” \(2\), “wtb” by dee \(1\), “” by Ben \(2026-11-20 to …\) \(1\)\. Read Gear #p2–#p2\/c3, Gear #p1–#p1\/c3\.$/.test(
+        r.note,
+      ),
+    "G2a: the group's answer cites #pN and #pN/cM as Gear #p2/c1, and the note says what was read and searched " +
+      JSON.stringify([cites, r.note]),
+  );
+  // the match list: the group's own, no chips per chat or order, Photos only
+  const rows = await gaRows(p, 'chat');
+  const chips = await p.$$eval('#chat .turn.assistant:last-of-type .xchips button', bs => bs.map(b => b.textContent));
+  const ordHidden = await p.$eval('#chat .turn.assistant:last-of-type .xorder', e => e.hidden);
+  await p.click('#chat .turn.assistant:last-of-type .xchips button[data-act="photos"]');
+  const photoRows = await gaRows(p, 'chat');
+  ok(
+    JSON.stringify(rows) === '["gear#p2/c1","gear#p2"]' &&
+      JSON.stringify(chips) === '["Photos only"]' &&
+      ordHidden &&
+      JSON.stringify(photoRows) === '["gear#p2"]' &&
+      /^Matching posts and comments, newest first/.test(
+        await mcText(p, '#chat .turn.assistant:last-of-type .matches > .note'),
+      ),
+    'G2-02: under the answer the page lists every match in the group, #pN/cM tagged, with Photos only (a post with photos) ' +
+      JSON.stringify({ rows, chips, ordHidden, photoRows }),
+  );
+  // F41: a group citation's card; saved in qa with scope "group" and chat "gear", listed under Earlier questions
+  await p.focus('#chat .turn.assistant:last-of-type .txt .cite[data-i="p2/c1"]');
+  const card = await mcText(p, '#citecard');
+  await p.evaluate(() => citeHide());
+  const row = await until(p, () => (S.qaAll || []).find(x => x.scope === 'group'));
+  const list = await mcText(p, '#qa-list');
+  ok(
+    card === 'Ben Brooks · comment · about Nov 20 8 AM\nStill available? Can do 100 for the tent.' &&
+      row &&
+      row.chat === 'gear' &&
+      row.q === 'Is the tent still for sale?' &&
+      row.sent.searches.length === 3 &&
+      /Is the tent still for sale\?/.test(list) &&
+      /this group's posts and comments · searched “tent” \(2\)/.test(list) &&
+      (await p.$$eval('#qa-list .cite', cs => cs.map(c => c.textContent)))[0] === 'Gear #p2',
+    'G2a: a citation shows its card (who, comment, when, its words); the answer is saved in qa (scope "group", chat "gear") and listed under Earlier questions with its citations ' +
+      JSON.stringify({ card, row: row && { chat: row.chat, scope: row.scope }, list: list.slice(0, 120) }),
+  );
+  // a citation opens the post in Posts, its earlier comments unfolded, the comment marked
+  await flashReset(p);
+  await p.click('#chat .turn.assistant:last-of-type .txt .cite[data-i="p1/c2"]');
+  const opened = await until(
+    p,
+    () => {
+      const t = document.querySelector('#p1c2[data-flashed]');
+      return location.hash === '#posts' && t && t.closest('details').open && !document.getElementById('v-posts').hidden;
+    },
+    null,
+    3000,
+  );
+  ok(!!opened, 'G2a: Gear #p1/c2 opens Posts at #p1 with its earlier comments unfolded and c2 marked');
+  // without tools: the question's words found in the group go in the prompt
+  const noTools = await p.evaluate(
+    () => xPrompt('tent', [Object.assign({}, gLive(), { bare: true })], [], 200000, false).text,
+  );
+  ok(
+    /\nMATCHES \(2 of 2, newest first\):\n#p2\/c1 \[/.test(noTools) &&
+      noTools.includes('- MATCHES: posts and comments holding') &&
+      !noTools.includes('- SEARCH:'),
+    "G2a: without tools, a group's prompt carries the posts and comments holding the question's words",
+  );
+  ok(p.errors.length === 0, "G2a group's Ask: no page errors " + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // G2-01: All chats' Ask covers the group too: lines and citations by tag, chips and filters by group
+  p = await mcOpen(gaSeed(xaSeed()));
+  await p.evaluate(
+    pl => (window.__toolPlan = pl),
+    [
+      { calls: [{ name: 'search_messages', input: { words: 'tent' } }] },
+      {
+        calls: [
+          { name: 'read_posts', input: { group: 'gear', from: '#p2' } },
+          { name: 'read_messages', input: { chat: 'gear', from: '#1' } },
+          { name: 'read_posts', input: { group: 'cam', from: '#p1' } },
+          { name: 'search_messages', input: { words: 'tent', chat: 'gear', from: '#p2' } },
+        ],
+      },
+      {
+        say: 'Ana sells a tent [gear#p2]; Ben offered 100 [gear#p2/c1, #p2/c2]. A tripod [cam#2]. By tag [Gear#p1]. Bare [#p2].',
+      },
+    ],
+  );
+  await p.evaluate(() => {
+    const c = S.rawDb.collection.bind(S.rawDb);
+    window.__colls = [];
+    S.rawDb.collection = n => (window.__colls.push(n), c(n));
+  });
+  await p.click('nav a[data-tab="ask"]');
+  const xh = await mcText(p, '#v-ask .sec-head h2');
+  const x = await xask(p, 'Who has a tent?');
+  const xl = await gaTools(p);
+  const colls = await p.evaluate(() => window.__colls);
+  ok(
+    colls.includes('gear_posts') &&
+      colls.includes('gear_comments') &&
+      !colls.some(n => /(^|_)(posts|comments)$/.test(n) && !/^gear_/.test(n)),
+    'G2-04: Ask reads a group only through its KEY_ collections (gear_posts, gear_comments) ' + JSON.stringify(colls),
+  );
+  ok(
+    xh === 'Ask about your chats and groups' &&
+      x.prompt.includes('\n- CHATS AND GROUPS (key: name):\n') &&
+      x.prompt.includes('\n  - gear: Gear Swap (Facebook group), 2 posts and 6 comments stored, #p1 to #p2') &&
+      x.prompt.includes('[gear#p12/c3] (comment 3 on it)') &&
+      x.prompt.includes("\n- POSTS: a group's posts and comments, one per line: [key#pN] [about day time]") &&
+      x.prompt.includes("isn't in the chats or groups") &&
+      x.prompt.includes('Never offer to dig deeper') &&
+      x.prompt.includes('read_posts (one group') &&
+      /\nRECENT, gear \(Gear Swap, a group: posts by activity, the newest last, each followed by its comments\):\n\[gear#p1\] \[about Nov 17\] /.test(
+        x.prompt,
+      ) &&
+      /\n\[gear#p2\/c3\] \[about Nov 20 11 AM\] Cy Chen: /.test(x.prompt) &&
+      !/decoy/.test(x.prompt),
+    "G2-01: All chats' Ask lists the group with the chats and gives its most active posts with their comments, every line [gear#pN/cM] " +
+      xh,
+  );
+  const xs = call(xl, 'search_messages', i => !i.chat);
+  const xr = call(xl, 'read_posts', i => i.group === 'gear');
+  const xbad1 = call(xl, 'read_messages', i => i.chat === 'gear');
+  const xbad2 = call(xl, 'read_posts', i => i.group === 'cam');
+  const xs2 = call(xl, 'search_messages', i => i.chat === 'gear');
+  ok(
+    xs.out.total === 2 &&
+      JSON.stringify(xs.out.byChat) === '{"trail":0,"cam":0,"book":0,"gear":2}' &&
+      JSON.stringify(xs.out.matches.map(l => l.split(' ')[0])) === '["[gear#p2/c1]","[gear#p2]"]' &&
+      xr.out.group === 'gear' &&
+      xr.out.lines.length === 4 &&
+      /^\[gear#p2\] /.test(xr.out.lines[0]) &&
+      /gear is a group: read its posts with read_posts/.test(xbad1.err) &&
+      /group must be one of: gear/.test(xbad2.err) &&
+      xs2.out.total === 2 &&
+      JSON.stringify(xs2.out.byChat) === '{"gear":2}',
+    "G2-01/G2-02: search_messages covers the group's posts and comments (counted per chat and group), read_posts reads a group's post with its comments, a chat's tools refuse a group and the reverse " +
+      JSON.stringify([xs.out.byChat, xbad1.err, xbad2.err]),
+  );
+  ok(
+    JSON.stringify(x.cites) === '["Gear #p2","Gear #p2/c1","Gear #p2/c2","Cam #2","Gear #p1","#p2 · which chat?"]' &&
+      /^Searched 3 chats and 1 group: Trail, Cam, Book, Gear\. Read Trail #\d+–#\d+, Cam #\d+–#\d+, Book #\d+–#\d+, Gear's 2 posts with the newest activity word for word\. Searched “tent” \(2\), “tent” in Gear \(#p2 to …\) \(2\)\. Read Gear #p2–#p2\/c3\.$/.test(
+        x.note,
+      ),
+    'G2-01: every citation names its chat or group by tag ([gear#p2/c1, #p2/c2] stays in Gear; a bare #p2 asks which); the note counts the group ' +
+      JSON.stringify([x.cites, x.note]),
+  );
+  const xrows = await gaRows(p, 'xchat');
+  const xchips = await xaChips(p);
+  await p.click('#xchat .xchips button[data-filt="gear"]');
+  const gearRows = await gaRows(p, 'xchat');
+  await p.click('#xchat .xorder button[data-order="chat"]');
+  const byChat = await gaRows(p, 'xchat');
+  ok(
+    JSON.stringify(xrows) === '["gear#p2/c1","gear#p2"]' &&
+      JSON.stringify(xchips) ===
+        '["all:All 2","trail:Trail 0:off","cam:Cam 0:off","book:Book 0:off","gear:Gear 2","photos:Photos only"]' &&
+      JSON.stringify(gearRows) === '["gear#p2/c1","gear#p2"]' &&
+      JSON.stringify(byChat) === '["h:gear","gear#p2/c1","gear#p2"]',
+    "G2-01/G2-02: the match list holds the group's posts and comments, with a chip for the group that filters by it, and By chat puts them under it " +
+      JSON.stringify({ xrows, xchips, gearRows, byChat }),
+  );
+  await p.focus('#xchat .turn.assistant:last-of-type .txt .cite[data-i="p2/c1"]');
+  const xcard = await mcText(p, '#citecard');
+  await p.evaluate(() => citeHide());
+  const xrow = await until(p, () => (S.qaAll || []).find(r => r.scope === 'chats'));
+  ok(
+    /^Ben Brooks · comment · about Nov 20 8 AM/.test(xcard) &&
+      xrow &&
+      JSON.stringify(xrow.chats) === '["trail","cam","book","gear"]' &&
+      xrow.toI.gear === 'p2' &&
+      xrow.sent.searches[1].chat === 'gear',
+    'G2-01: a group citation across chats shows its card; the answer is saved with the group among the keys it searched ' +
+      JSON.stringify({ xcard, chats: xrow && xrow.chats, toI: xrow && xrow.toI }),
+  );
+  await flashReset(p);
+  await p.click('#xchat .turn.assistant:last-of-type .txt .cite[data-i="p2/c1"]');
+  const xopen = await until(
+    p,
+    () => {
+      const t = document.querySelector('#p2c1[data-flashed]');
+      return document.getElementById('h1').textContent === 'Gear Swap' && location.hash === '#posts' && !!t;
+    },
+    null,
+    5000,
+  );
+  const xst = await p.evaluate(() => ({
+    h1: document.getElementById('h1').textContent,
+    hash: location.hash,
+    el: !!document.getElementById('p2c1'),
+    loaded: S.gLoaded,
+    after: S.goPostAfter,
+    posts: !document.getElementById('v-posts').hidden,
+  }));
+  ok(
+    !!xopen,
+    "G2-01: an answer's Gear #p2/c1 switches to Gear Swap and opens #p2 in Posts with c1 marked " + JSON.stringify(xst),
+  );
+  const gearList = await mcText(p, '#qa-list');
+  await mcPick(p, 'all');
+  await p.click('nav a[data-tab="ask"]');
+  const allList = await mcText(p, '#qa-list');
+  ok(
+    !/Who has a tent\?/.test(gearList) && /across 3 chats and 1 group \(Trail, Cam, Book, Gear\)/.test(allList),
+    "G2-01: the question across chats stays on All chats' Ask, saying it searched 3 chats and 1 group " +
+      JSON.stringify(allList.slice(0, 160)),
+  );
+  ok(p.errors.length === 0, "G2a All chats' Ask with a group: no page errors " + JSON.stringify(p.errors));
+  await p.context().close();
+
+  // without tools: the group's matches and its most active posts go in the prompt across chats
+  p = await mcOpen(gaSeed(xaSeed({ opts: {} })));
+  await p.click('nav a[data-tab="ask"]');
+  const x2 = await xask(p, 'tent');
+  ok(
+    /\nMATCHES \(2 of 2, newest first\):\n\[gear#p2\/c1\] /.test(x2.prompt) &&
+      x2.prompt.includes('- MATCHES: messages in any chat and posts and comments in any group') &&
+      !x2.prompt.includes('- SEARCH:') &&
+      x2.prompt.includes('\nRECENT, gear ('),
+    "G2-01: without tools, All chats' prompt carries the group's matching posts and comments and its most active posts",
+  );
+  ok(p.errors.length === 0, 'G2a across chats without tools: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 /* B67: reactions in the message lines Claude reads (who reacted, or "probably answered"), and the meaning table, the
    owner's corrections and the context rules in Ask's prompts. The owner is "Sam" (META). */
 async function reactions() {
@@ -18957,6 +19373,7 @@ const SECTIONS = {
   settledMentions,
   groupsAdd,
   groupsImport,
+  groupsAsk,
   importer,
   multiChat,
   multiChat2,

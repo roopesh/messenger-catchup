@@ -3052,7 +3052,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "7.4";
+  const PAGE_VERSION = "7.5";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -3179,8 +3179,8 @@
 
   /* ---------- routing ---------- */
   const TABS = ["summary", "posts", "ask", "messages", "days", "views", "stats"];
-  /* F25: a group has Summary and Posts; a chat has the rest */
-  const tabsFor = c => (isGroup(c) ? ["summary", "posts"] : TABS.filter(t => t !== "posts"));
+  /* F25: a group has Summary, Posts and (G2a) Ask; a chat has the rest */
+  const tabsFor = c => (isGroup(c) ? ["summary", "posts", "ask"] : TABS.filter(t => t !== "posts"));
   /* F1 stage C: All chats has its own tabs: Summary (the summary across chats and a card per chat), Ask (across every
      chat), By day (each day, a section per chat) and Stats (the chats compared) */
   const ALL_TABS = ["summary", "ask", "days", "stats"];
@@ -4146,16 +4146,34 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     a.onclick = e => {
       e.preventDefault();
       if (onGo) return onGo();
-      location.hash = "#posts";
-      requestAnimationFrame(() => {
-        const t = document.getElementById("p" + p.n + (c ? "c" + c.c : ""));
-        if (!t) return;
-        const d = t.closest("details");
-        if (d) d.open = true;
-        t.scrollIntoView({ block: "center" });
-      });
+      goPost("p" + p.n + (c ? "/c" + c.c : ""));
     };
     return a;
+  }
+  /* G2a: opens Posts at a post ("p12") or a comment ("p12/c3"), its earlier comments unfolded, the target marked. The
+     tab switches in code, as goMsg does (the artifact viewer can keep a #hash from reaching the page). Before the
+     group's posts and comments have both loaded, it waits for them (S.goPostAfter). */
+  const gRefOf = r => {
+    const m = /^#?p(\d+)(?:\/c(\d+))?$/.exec(String(r == null ? "" : r).replace(/\s+/g, ""));
+    return m ? { n: +m[1], c: m[2] ? +m[2] : null } : null;
+  };
+  function goPost(ref) {
+    const r = gRefOf(ref);
+    if (!r) return;
+    picked();
+    if (location.hash !== "#posts") history.pushState(null, "", "#posts");
+    route();
+    S.goPostAfter = S.gLoaded === 7 ? null : ref;
+    if (S.goPostAfter) return;
+    const t = (r.c && document.getElementById("p" + r.n + "c" + r.c)) || document.getElementById("p" + r.n);
+    if (!t) return;
+    const d = t.closest("details");
+    if (d) d.open = true;
+    requestAnimationFrame(() => {
+      t.scrollIntoView({ block: "center" });
+      t.classList.add("flash");
+      setTimeout(() => t.classList.remove("flash"), 2200);
+    });
   }
   function gComment(p, c) {
     const d = el("div", "gc" + (c.rid ? " reply" : "") + (gIsNew(c) ? " new" : ""));
@@ -8713,7 +8731,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     asking = true;
     try {
       /* F1 stage C: on All chats, one question over every chat */
-      await (S.view === "all" ? askAcross(q) : ask(q));
+      await (S.view === "all" ? askAcross(q) : isGroup(CUR) ? askGroup(q) : ask(q));
     } finally {
       asking = false;
     }
@@ -8814,8 +8832,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     }
   }
   /* ---------- Ask across chats (F1 stage C) ----------
-     On All chats, Ask is one question over every chat it can read: active and paused chats (not pending, hidden,
-     removed, or a Facebook group). Each ask reads every such chat fresh (its chunks, captions, people/index,
+     On All chats, Ask is one question over every chat it can read: active and paused chats (not pending, hidden or
+     removed), and since G2a (F25) active and paused Facebook groups too (their posts and comments, below: [key#pN/cM],
+     search_messages over them and read_posts). Each ask reads every such chat fresh (its chunks, captions, people/index,
      daySummaries and threading; the chat loaded on the page from memory), so a chat added or refreshed meanwhile is in
      the next question. Claude reads each chat's newest messages word for word and gets the same three tools, over every
      chat (search_messages, optionally one chat) or one chat (read_messages, day_summaries). Every line Claude reads
@@ -8827,6 +8846,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
      Newest first / By chat (remembered in this browser); all of it redraws on the page and sends nothing. The answer is
      saved in qa with scope "chats" and the chats it searched, so a chat added later shows as not searched. */
   const tagOfKey = k => (S.chats.find(c => c.key === k) || {}).tag || k;
+  /* the chats All chats' Stats and By day read (groups get theirs in G2b) */
   const xChats = () => S.chats.filter(c => isLive(c) && !isGroup(c));
   let xturns = [];
   const X_WAIT = 20000; /* a chat whose data doesn't come within this is left out of the question */
@@ -8897,6 +8917,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     }
   }
   const xLoad = () => Promise.all(xChats().map(xLoadChat));
+  /* G2a: what Ask across chats reads: every live chat, and every live group's posts and comments */
+  const xAskLoad = () => Promise.all(xAskChats().map(c => (isGroup(c) ? xLoadGroup(c) : xLoadChat(c))));
   /* runs fn with chat x as the page's chat, so the one-chat helpers (searchMsgs, lineFor, nameOf, capsOf, dayLines)
      read that chat; fn is synchronous, so nothing else runs before everything is put back */
   function inCtx(x, fn) {
@@ -8937,147 +8959,489 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     };
   }
   const xOrd = k => S.chats.findIndex(c => c.key === k);
-  /* newest first across chats: by time, then by chat order and number */
-  const xNewest = (a, b) => (b.ts || "").localeCompare(a.ts || "") || xOrd(a.key) - xOrd(b.key) || b.i - a.i;
+  /* newest first across chats: by time, then by chat order and number (a group's item by its place in the group) */
+  const xNewest = (a, b) =>
+    (b.ts || "").localeCompare(a.ts || "") || xOrd(a.key) - xOrd(b.key) || (b.o ?? b.i) - (a.o ?? a.i);
   /* the chat a key (or, as Claude may write it, a tag) names */
   function xChatOf(k) {
     const s = String(k == null ? "" : k).trim();
     if (!s) return null;
     return S.chats.find(c => c.key === s) || S.chats.find(c => String(c.tag).toLowerCase() === s.toLowerCase()) || null;
   }
-  /* every stored message in the chats searched holding all the words: [{x, m, hit}], newest first */
+  /* every stored message in the chats searched, and post and comment in the groups searched, holding all the words:
+     [{x, m (a chat's message) or it (a group's item), hit}], newest first */
   function xSearch(ctxs, q, o = {}) {
     const out = [];
-    ctxs.forEach(x =>
+    ctxs.forEach(x => {
+      if (x.g) {
+        gSearch(x, q, o).forEach(it => {
+          const hit = gHit(x, it);
+          out.push({ x, it, hit, ts: hit.ts, key: x.key, i: it.ref, o: it.o });
+        });
+        return;
+      }
       inCtx(x, () =>
         searchMsgs(q, o).forEach(m => out.push({ x, m, hit: xHit(x, m), ts: m.ts || "", key: x.key, i: m.i })),
-      ),
-    );
+      );
+    });
     return out.sort(xNewest);
   }
+  /* a found line for Claude, in its own chat or group */
+  const xFLine = f => (f.x.g ? gLine(f.x, f.it) : inCtx(f.x, () => xLine(f.x, f.m)));
+
+  /* ---------- a group's posts and comments for Ask (F25 G2a) ----------
+     A group's own Ask and All chats' Ask read a group only through its own KEY_posts and KEY_comments (chatDb, G2-04),
+     as one list: each post (#pN), then its comments by number (#pN/cM). Facebook gives only ages ("3h", "2 days
+     ago"), so each has an estimated time: its `at`, stored at import from the age then (groups imported before page
+     7.5 have none: worked out from firstSeen and the age). A group has no photo captions yet, so a search covers the
+     posts' and comments' text and their authors. */
+  /* when a Facebook time label read at now (ms) puts something: {ms, hr (to the hour)}, or null */
+  function gEst(age, now) {
+    const t = String(age == null ? "" : age)
+      .trim()
+      .toLowerCase();
+    if (!t || !Number.isFinite(now)) return null;
+    if (/^(just now|now|a few seconds ago)$/.test(t)) return { ms: now, hr: true };
+    const H = { m: 1 / 60, minute: 1 / 60, h: 1, hour: 1, d: 24, day: 24, w: 168, week: 168, month: 720 };
+    Object.assign(H, { y: 8760, year: 8760 });
+    const m =
+      /^(\d+)\s*(m|h|d|w|y)$/.exec(t) || /^(?:about )?(an?|\d+) (minute|hour|day|week|month|year)s?(?: ago)?$/.exec(t);
+    if (m) {
+      const n = /^\d/.test(m[1]) ? +m[1] : 1;
+      return { ms: now - n * H[m[2]] * 3600000, hr: H[m[2]] <= 1 };
+    }
+    if (/^yesterday\b/.test(t)) return { ms: now - 86400000, hr: false };
+    const s = t.replace(/ at /, " ");
+    const y = new Date(now).getFullYear();
+    let d = Date.parse(/\d{4}/.test(s) ? s : s + " " + y);
+    if (Number.isFinite(d) && d > now + 86400000 && !/\d{4}/.test(s)) d = Date.parse(s + " " + (y - 1));
+    return Number.isFinite(d) ? { ms: d, hr: false } : null;
+  }
+  /* a post's or comment's time: its stored estimate, else one from when it was first read */
+  function gWhen(x) {
+    const hr = /^(just now|now|\d+\s*[mh])$|minute|hour/.test(
+      String(x.age || "")
+        .trim()
+        .toLowerCase(),
+    );
+    const at = Date.parse(x.at);
+    if (Number.isFinite(at)) return { ms: at, hr };
+    return gEst(x.age, Date.parse(x.firstSeen)) || { ms: NaN, hr: false };
+  }
+  const gTz = () => validTz((S.page || {}).tz);
+  /* "YYYY-MM-DD" in the page's time zone */
+  function gYmd(ms) {
+    if (!Number.isFinite(ms)) return "";
+    const o = { timeZone: gTz(), year: "numeric", month: "2-digit", day: "2-digit" };
+    const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", o).formatToParts(ms).map(x => [x.type, x.value]));
+    return p.year + "-" + p.month + "-" + p.day;
+  }
+  const gHour = ms => new Intl.DateTimeFormat("en-US", { timeZone: gTz(), hour: "numeric" }).format(ms);
+  /* "about Nov 20 3 PM" (from an age in minutes or hours), "about Nov 20", or "" when unknown */
+  const gWhenText = it => (it.d ? "about " + dayOf(it.d) + (it.hr ? " " + gHour(it.ms) : "") : "");
+  /* the owner wrote it: the import's byYou on a comment; on a post, the owner's name or nickname as its author */
+  const gMine = who => {
+    const w = String(who || "").toLowerCase();
+    return !!w && gMe().some(x => w === x || w.startsWith(x + " "));
+  };
+  /* posts ({id: post}) and comments ({id: {pid, comments}}) as {posts, items, byRef, order, ncm}: items in post order,
+     each post then its comments; order the same posts by newest activity last (what Ask reads word for word first) */
+  function gCtx(posts, cmts) {
+    const by = {};
+    Object.entries(cmts || {}).forEach(([id, d]) => {
+      if (!d || !Array.isArray(d.comments)) return;
+      const pid = String(d.pid || id.replace(/^p/, "").replace(/-\d+$/, ""));
+      (by[pid] || (by[pid] = [])).push(...d.comments);
+    });
+    const ps = Object.values(posts || {})
+      .filter(p => p && Number.isInteger(p.n))
+      .sort((a, b) => a.n - b.n);
+    const items = [];
+    const blocks = new Map();
+    const item = (p, c, post) => {
+      const w = gWhen(c || p);
+      const you = c ? !!c.byYou : gMine(p.who);
+      const full = (c || p).who || "?";
+      const it = { p, c, ref: "p" + p.n + (c ? "/c" + c.c : ""), o: items.length, full, who: you ? "You" : full };
+      Object.assign(it, { text: (c || p).text || "", ms: w.ms, hr: w.hr, d: gYmd(w.ms), photos: 0, parent: null });
+      it.post = post || it;
+      items.push(it);
+      return it;
+    };
+    ps.forEach(p => {
+      const pi = item(p, null, null);
+      pi.photos = (p.photos || []).length;
+      const cs = (by[String(p.pid)] || []).filter(c => c && Number.isInteger(c.c)).sort((a, b) => a.c - b.c);
+      const ci = cs.map(c => item(p, c, pi));
+      const ids = new Map(ci.map(x => [x.c.rid || x.c.cid, x]));
+      ci.forEach(x => (x.parent = (x.c.parent && x.c.parent !== (x.c.rid || x.c.cid) && ids.get(x.c.parent)) || null));
+      pi.n = ci.length;
+      blocks.set(p, [pi].concat(ci));
+    });
+    const act = ps.slice().sort((a, b) => String(a.lastAct || "").localeCompare(String(b.lastAct || "")) || a.n - b.n);
+    const order = act.flatMap(p => blocks.get(p));
+    return { posts: ps, items, order, byRef: new Map(items.map(x => [x.ref, x])), ncm: items.length - ps.length };
+  }
+  /* the group on screen as gCtx, kept until its posts or comments change */
+  let G_LIVE = null;
+  function gLive() {
+    if (!isGroup(CUR)) return null;
+    if (!G_LIVE || G_LIVE.ps !== S.gposts || G_LIVE.cs !== S.gcmts || G_LIVE.key !== CUR.key)
+      G_LIVE = Object.assign({ c: CUR, key: CUR.key, g: true, ps: S.gposts, cs: S.gcmts }, gCtx(S.gposts, S.gcmts));
+    return G_LIVE;
+  }
+  /* what one group gives a question: its posts and comments, from memory when it's the group on screen, else read
+     fresh from its KEY_posts and KEY_comments */
+  async function xLoadGroup(c) {
+    if (c.key === CUR.key && (S.gLoaded & 3) === 3) return Object.assign({}, gLive(), { c });
+    const db = chatDb(S.rawDb, c);
+    try {
+      const [ps, cs] = await Promise.all([snapOnce(db.collection("posts")), snapOnce(db.collection("comments"))]);
+      return Object.assign({ c, key: c.key, g: true }, gCtx(collDocs(ps), collDocs(cs)));
+    } catch (e) {
+      return { c, key: c.key, g: true, err: e };
+    }
+  }
+  /* a line for Claude: "#p12 [about Nov 20] Ana (post, 2 photos, 4 comments): …" on the group's own Ask, with the
+     group's key on All chats' ("[gear#p12/c3] [about Nov 20 3 PM] Cy (replying to c2 Ben): …") */
+  function gLine(x, it) {
+    let s =
+      (x.bare ? "#" + it.ref : "[" + x.key + "#" + it.ref + "]") + " [" + (gWhenText(it) || "time unknown") + "] ";
+    s += it.who;
+    if (!it.c)
+      s += " (post" + (it.photos ? ", " + plural(it.photos, "photo") : "") + ", " + plural(it.n, "comment") + ")";
+    else if (it.parent) s += " (replying to c" + it.parent.c.c + " " + it.parent.who + ")";
+    return s + ": " + it.text.replace(/\s+/g, " ").trim();
+  }
+  /* a search or read bound in a group: a post ("#p12", "p12", "#12"; "/c3" keeps the comment) or a date */
+  function gBound(v) {
+    const s = String(v == null ? "" : v).trim();
+    const m = /^#?p?(\d+)(?:\/c(\d+))?$/i.exec(s.replace(/\s+/g, ""));
+    if (m) return { n: +m[1], c: m[2] ? +m[2] : null };
+    return /^\d{4}-\d\d-\d\d$/.test(s) ? { d: s } : null;
+  }
+  const gIn = (it, lo, hi) =>
+    (!lo || (lo.n != null ? it.p.n >= lo.n : it.post.d >= lo.d)) &&
+    (!hi || (hi.n != null ? it.p.n <= hi.n : !!it.post.d && it.post.d <= hi.d));
+  /* every post and comment holding all the words (in the text or the author's name), oldest first; from/to by post
+     number, or by date (each item by its own estimated day) */
+  function gSearch(x, q, o = {}) {
+    const words = String(q || "")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    const who = String(o.sender || "")
+      .trim()
+      .toLowerCase();
+    if (!words.length && !who) return [];
+    const lo = gBound(o.from),
+      hi = gBound(o.to);
+    const day = (it, b, end) =>
+      b.n != null ? (end ? it.p.n <= b.n : it.p.n >= b.n) : end ? it.d && it.d <= b.d : it.d >= b.d;
+    return x.items.filter(it => {
+      if ((lo && !day(it, lo, false)) || (hi && !day(it, hi, true))) return false;
+      const names = (it.who + " " + it.full).toLowerCase();
+      if (who && !names.includes(who)) return false;
+      const hay = names + " " + it.text.toLowerCase();
+      return words.every(w => hay.includes(w));
+    });
+  }
+  /* a match as the match list shows it */
+  const gHit = (x, it) => ({
+    key: x.key,
+    i: it.ref,
+    o: it.o,
+    ts: Number.isFinite(it.ms) ? new Date(it.ms).toISOString() : "",
+    d: it.d,
+    t: it.hr ? gHour(it.ms) : "",
+    who: it.who,
+    b: it.text,
+    photo: it.photos > 0,
+    caps: [],
+    g: true,
+  });
+  /* the posts from one bound to another (one post when to is left out), each with all its comments; "#p12/c40"
+     starts at that comment */
+  function gRead(x, from, to) {
+    const a = gBound(from),
+      b = gBound(to == null || to === "" ? from : to);
+    if (!a || !b) throw new Error("from and to must be posts (#p12) or dates (YYYY-MM-DD).");
+    const out = x.items.filter(it => gIn(it, a, b) && !(a.c && it.p.n === a.n && (!it.c || it.c.c < a.c)));
+    if (!out.length) throw new Error("No stored posts there in " + x.key + ".");
+    return out;
+  }
+  /* a citation's card: who, post or comment, when, and the start of its text (F41) */
+  function gCiteText(it) {
+    if (!it) return "";
+    const b = it.text.replace(/\s+/g, " ").trim();
+    const cut = s => (Array.from(s).length > 100 ? cutCp(s, 100) + "…" : s);
+    const L = [it.who + " · " + (it.c ? "comment" : "post") + (gWhenText(it) ? " · " + gWhenText(it) : "")];
+    if (b) L.push(cut(b));
+    if (it.photos) L.push("📷 " + plural(it.photos, "photo"));
+    return L.join("\n");
+  }
+  /* The tools for a question across chats (and groups), or for one group's own Ask (its one ctx is bare: lines and
+     citations without its key). search_messages (search_posts on a group's own Ask) covers every chat and group;
+     read_messages and day_summaries read one chat; read_posts (with a group) reads a group's posts, each with all
+     its comments. */
   function xToolSet(rec, budget, ctxs) {
     const { give, fit, mark } = toolKit(rec, budget);
     const keys = ctxs.map(x => x.key);
+    const cKeys = ctxs.filter(x => !x.g).map(x => x.key);
+    const gKeys = ctxs.filter(x => x.g).map(x => x.key);
+    const solo = ctxs.length === 1 && !!ctxs[0].bare;
+    const find = (k, list) => {
+      const c = xChatOf(k == null || k === "" ? (list.length === 1 ? list[0] : "") : k);
+      return (c && ctxs.find(y => y.key === c.key)) || null;
+    };
     const one = k => {
-      const c = xChatOf(k == null || k === "" ? (ctxs.length === 1 ? keys[0] : "") : k);
-      const x = c && ctxs.find(y => y.key === c.key);
+      const x = find(k, keys);
       if (!x) throw new Error("chat must be one of: " + keys.join(", ") + ".");
+      return x;
+    };
+    const oneChat = k => {
+      const x = find(k, cKeys);
+      if (x && x.g) throw new Error(x.key + " is a group: read its posts with read_posts.");
+      if (!x) throw new Error("chat must be one of: " + cKeys.join(", ") + ".");
+      return x;
+    };
+    const oneGroup = k => {
+      const x = find(k, gKeys);
+      if (!x || !x.g) throw new Error("group must be one of: " + gKeys.join(", ") + ".");
       return x;
     };
     const range = {
       from: { type: "string", description: "#number or YYYY-MM-DD" },
       to: { type: "string", description: "#number or YYYY-MM-DD" },
     };
-    const chat = { type: "string", description: "the chat's key: " + keys.join(", ") };
-    return [
-      {
-        name: "search_messages",
+    const pRange = {
+      from: { type: "string", description: "a post (#p12) or YYYY-MM-DD" },
+      to: { type: "string", description: "a post (#p12) or YYYY-MM-DD" },
+    };
+    const chat = { type: "string", description: "the chat's key: " + cKeys.join(", ") };
+    const tools = [];
+    const sDesc = solo
+      ? "Search every stored post and comment in the group, however old: their text and their authors' names. All words must appear (case-insensitive; part of a word counts, so 'pouch' finds 'pouches'). Optional from/to (a post #pN, or a date YYYY-MM-DD: when it was posted, estimated from Facebook's ages) and sender (its author). Returns the total and the newest matches as lines starting #pN (a post) or #pN/cM (comment M on it)."
+      : "Search every stored message in every chat (or one chat), however old: text, sender names, link previews, quoted messages and photo captions. All words must appear (case-insensitive; part of a word counts, so 'pouch' finds 'pouches'). Optional chat (a key, to search only that chat), from/to (YYYY-MM-DD; a #number only with a chat, since numbers restart in each chat) and sender. Returns the total, the count per chat and the newest matches as message lines starting [key#n]." +
+        (gKeys.length
+          ? " It also searches every post and comment in the groups (" +
+            gKeys.join(", ") +
+            "): their text and authors, as lines starting [key#pN] (a post) or [key#pN/cM] (comment M on it); with a group as chat, from/to can be a post (#pN)."
+          : "");
+    tools.push({
+      name: solo ? "search_posts" : "search_messages",
+      description: sDesc,
+      inputSchema: {
+        type: "object",
+        properties: Object.assign(
+          { words: { type: "string", description: "words that must all appear" } },
+          solo ? pRange : range,
+          { sender: { type: "string", description: "a name or part of one" } },
+          solo
+            ? {}
+            : {
+                chat: {
+                  type: "string",
+                  description:
+                    "a chat's" +
+                    (gKeys.length ? " or group's" : "") +
+                    " key to search only that one; leave out for all",
+                },
+              },
+        ),
+      },
+      execute: input => {
+        mark();
+        const q = String(input.words == null ? "" : input.words).trim();
+        const o = { from: input.from, to: input.to, sender: input.sender };
+        const ck = solo ? "" : String(input.chat == null ? "" : input.chat).trim();
+        const scope = ck ? [one(ck)] : ctxs;
+        const found = q || String(o.sender || "").trim() ? xSearch(scope, q, o) : [];
+        const r = { q, ms: found.map(f => f.hit) };
+        ["from", "to", "sender"].forEach(k => {
+          if (o[k] != null && String(o[k]).trim()) r[k] = String(o[k]).trim();
+        });
+        if (ck) r.chat = scope[0].key;
+        rec.searches.push(r);
+        rec.lastKind = "search";
+        rec.on();
+        if (!q && !r.sender) throw new Error("Give some words, a sender, or both.");
+        const shown = fit(found, TOOL_BYTES - 512, xFLine);
+        const out = { total: found.length };
+        if (!solo) {
+          out.byChat = {};
+          scope.forEach(x => (out.byChat[x.key] = 0));
+          found.forEach(f => out.byChat[f.key]++);
+        }
+        Object.assign(out, { shown: shown.length, newestFirst: true, matches: shown });
+        if (found.length > shown.length)
+          out.more = solo
+            ? "Narrow it with from/to, a sender or more words to see the rest."
+            : "Narrow it with chat, from/to, a sender or more words to see the rest.";
+        return give(JSON.stringify(out));
+      },
+    });
+    if (cKeys.length)
+      tools.push(
+        {
+          name: "read_messages",
+          description:
+            "Read one chat's stored messages word for word, oldest first, from one #number or date (YYYY-MM-DD: the whole day) to another. Use it to read around a search hit (say from #n-10 to #n+15) or a whole day. Returns as many lines as fit and where to continue.",
+          inputSchema: { type: "object", properties: Object.assign({ chat }, range), required: ["chat", "from"] },
+          execute: input => {
+            mark();
+            const x = oneChat(input.chat);
+            const res = inCtx(x, () => {
+              const a = boundOf(input.from, false);
+              if (a == null) throw new Error("from must be a #number or a date (YYYY-MM-DD).");
+              let b = boundOf(input.to == null || input.to === "" ? input.from : input.to, true);
+              if (b == null || (b === a && /^#?\d+$/.test(String(input.from).trim()))) b = Math.max(b ?? a, a + 30);
+              const ms = S.msgs.slice(idxOf(a), idxOf(b + 1));
+              if (!ms.length) throw new Error("No stored messages in that range of " + x.key + ".");
+              const ls = fit(ms, TOOL_BYTES - 256, m => xLine(x, m));
+              const out = { chat: x.key, from: ms[0].i, to: ms[Math.max(0, ls.length - 1)].i, lines: ls };
+              if (ls.length < ms.length) out.next = "#" + ms[ls.length].i;
+              return out;
+            });
+            rec.reads.push([res.from, res.to, x.key]);
+            rec.lastKind = "read";
+            rec.on();
+            return give(JSON.stringify(res));
+          },
+        },
+        {
+          name: "day_summaries",
+          description:
+            "One line per day of one chat, between two dates (YYYY-MM-DD) or message numbers: its message numbers, how many messages, and the day's summary where it has one, else its busiest topics. The numbers in these lines are that chat's: cite them as [key#n]. For an overview of a long stretch before searching or reading it; ask for one day alone to get its whole summary. Returns as many days as fit and where to continue.",
+          inputSchema: { type: "object", properties: Object.assign({ chat }, range), required: ["chat", "from"] },
+          execute: input => {
+            mark();
+            const x = oneChat(input.chat);
+            const res = inCtx(x, () => {
+              const a = boundOf(input.from, false),
+                b = boundOf(input.to == null || input.to === "" ? input.from : input.to, true);
+              if (a == null || b == null) throw new Error("from and to must be dates (YYYY-MM-DD) or #numbers.");
+              const day1 = (S.byI.get(a) || {}).d && (S.byI.get(a) || {}).d === (S.byI.get(b) || {}).d;
+              const ls = dayLines(a, b, day1 ? TOOL_BYTES - 512 : DAYSUM_LINE, TOOL_BYTES - 384);
+              if (!ls.length) throw new Error("No stored messages in that range of " + x.key + ".");
+              const out = { chat: x.key, cite: "[" + x.key + "#n]", days: ls.map(l => l.text) };
+              if (ls.next) out.next = ls.next;
+              return out;
+            });
+            rec.reads.push(["days", String(input.from), String(input.to || input.from), x.key]);
+            rec.lastKind = "read";
+            rec.on();
+            return give(JSON.stringify(res));
+          },
+        },
+      );
+    if (gKeys.length)
+      tools.push({
+        name: "read_posts",
         description:
-          "Search every stored message in every chat (or one chat), however old: text, sender names, link previews, quoted messages and photo captions. All words must appear (case-insensitive; part of a word counts, so 'pouch' finds 'pouches'). Optional chat (a key, to search only that chat), from/to (YYYY-MM-DD; a #number only with a chat, since numbers restart in each chat) and sender. Returns the total, the count per chat and the newest matches as message lines starting [key#n].",
+          "Read " +
+          (solo ? "the group's" : "one group's") +
+          " stored posts word for word, oldest post first, each with every stored comment on it: one post (#p12), from one post to another (#p12 to #p15), or the posts of a day or days (YYYY-MM-DD, when each was posted, estimated). Use it to read a post a search found, with all its comments, before you cite it. Returns as many lines as fit and where to continue.",
         inputSchema: {
           type: "object",
-          properties: Object.assign({ words: { type: "string", description: "words that must all appear" } }, range, {
-            sender: { type: "string", description: "a name or part of one" },
-            chat: { type: "string", description: "a chat's key to search only that chat; leave out for every chat" },
-          }),
+          properties: Object.assign(
+            solo ? {} : { group: { type: "string", description: "the group's key: " + gKeys.join(", ") } },
+            pRange,
+          ),
+          required: solo ? ["from"] : ["group", "from"],
         },
         execute: input => {
           mark();
-          const q = String(input.words == null ? "" : input.words).trim();
-          const o = { from: input.from, to: input.to, sender: input.sender };
-          const ck = String(input.chat == null ? "" : input.chat).trim();
-          const scope = ck ? [one(ck)] : ctxs;
-          const found = q || String(o.sender || "").trim() ? xSearch(scope, q, o) : [];
-          const r = { q, ms: found.map(f => f.hit) };
-          ["from", "to", "sender"].forEach(k => {
-            if (o[k] != null && String(o[k]).trim()) r[k] = String(o[k]).trim();
-          });
-          if (ck) r.chat = scope[0].key;
-          rec.searches.push(r);
-          rec.lastKind = "search";
+          const x = oneGroup(input.group);
+          const its = gRead(x, input.from, input.to);
+          const ls = fit(its, TOOL_BYTES - 384, it => gLine(x, it));
+          const last = its[Math.max(0, ls.length - 1)];
+          const out = Object.assign(solo ? {} : { group: x.key }, { from: "#" + its[0].ref, to: "#" + last.ref });
+          out.lines = ls;
+          if (ls.length < its.length) out.next = "#" + its[ls.length].ref;
+          rec.reads.push([its[0].ref, last.ref, x.key]);
+          rec.lastKind = "read";
           rec.on();
-          if (!q && !r.sender) throw new Error("Give some words, a sender, or both.");
-          const byChat = {};
-          scope.forEach(x => (byChat[x.key] = 0));
-          found.forEach(f => byChat[f.key]++);
-          const shown = fit(found, TOOL_BYTES - 512, f => inCtx(f.x, () => xLine(f.x, f.m)));
-          const out = { total: found.length, byChat, shown: shown.length, newestFirst: true, matches: shown };
-          if (found.length > shown.length)
-            out.more = "Narrow it with chat, from/to, a sender or more words to see the rest.";
           return give(JSON.stringify(out));
         },
-      },
-      {
-        name: "read_messages",
-        description:
-          "Read one chat's stored messages word for word, oldest first, from one #number or date (YYYY-MM-DD: the whole day) to another. Use it to read around a search hit (say from #n-10 to #n+15) or a whole day. Returns as many lines as fit and where to continue.",
-        inputSchema: { type: "object", properties: Object.assign({ chat }, range), required: ["chat", "from"] },
-        execute: input => {
-          mark();
-          const x = one(input.chat);
-          const res = inCtx(x, () => {
-            const a = boundOf(input.from, false);
-            if (a == null) throw new Error("from must be a #number or a date (YYYY-MM-DD).");
-            let b = boundOf(input.to == null || input.to === "" ? input.from : input.to, true);
-            if (b == null || (b === a && /^#?\d+$/.test(String(input.from).trim()))) b = Math.max(b ?? a, a + 30);
-            const ms = S.msgs.slice(idxOf(a), idxOf(b + 1));
-            if (!ms.length) throw new Error("No stored messages in that range of " + x.key + ".");
-            const ls = fit(ms, TOOL_BYTES - 256, m => xLine(x, m));
-            const out = { chat: x.key, from: ms[0].i, to: ms[Math.max(0, ls.length - 1)].i, lines: ls };
-            if (ls.length < ms.length) out.next = "#" + ms[ls.length].i;
-            return out;
-          });
-          rec.reads.push([res.from, res.to, x.key]);
-          rec.lastKind = "read";
-          rec.on();
-          return give(JSON.stringify(res));
-        },
-      },
-      {
-        name: "day_summaries",
-        description:
-          "One line per day of one chat, between two dates (YYYY-MM-DD) or message numbers: its message numbers, how many messages, and the day's summary where it has one, else its busiest topics. The numbers in these lines are that chat's: cite them as [key#n]. For an overview of a long stretch before searching or reading it; ask for one day alone to get its whole summary. Returns as many days as fit and where to continue.",
-        inputSchema: { type: "object", properties: Object.assign({ chat }, range), required: ["chat", "from"] },
-        execute: input => {
-          mark();
-          const x = one(input.chat);
-          const res = inCtx(x, () => {
-            const a = boundOf(input.from, false),
-              b = boundOf(input.to == null || input.to === "" ? input.from : input.to, true);
-            if (a == null || b == null) throw new Error("from and to must be dates (YYYY-MM-DD) or #numbers.");
-            const day1 = (S.byI.get(a) || {}).d && (S.byI.get(a) || {}).d === (S.byI.get(b) || {}).d;
-            const ls = dayLines(a, b, day1 ? TOOL_BYTES - 512 : DAYSUM_LINE, TOOL_BYTES - 384);
-            if (!ls.length) throw new Error("No stored messages in that range of " + x.key + ".");
-            const out = { chat: x.key, cite: "[" + x.key + "#n]", days: ls.map(l => l.text) };
-            if (ls.next) out.next = ls.next;
-            return out;
-          });
-          rec.reads.push(["days", String(input.from), String(input.to || input.from), x.key]);
-          rec.lastKind = "read";
-          rec.on();
-          return give(JSON.stringify(res));
-        },
-      },
-    ];
+      });
+    return tools;
   }
   const X_SEARCH_HAVE =
     "\n- SEARCH: three tools over every stored message in every chat, photo captions included: search_messages (by words, dates, sender; every chat, or one), read_messages (one chat, word for word: a range of numbers or a whole day) and day_summaries (one chat, a line per day, with its summary where it has one). Use them for whatever the lines above don't settle: older messages, things only in photos, exact wording, and anything in a chat whose newest messages don't cover it.";
+  /* G2a: with a group in the question, search_messages covers its posts and comments, and read_posts reads them */
+  const X_SEARCH_HAVE_G =
+    "\n- SEARCH: four tools: search_messages (by words, dates, sender; every chat and group, or one) over every stored message in every chat, photo captions included, and every post and comment in every group; read_messages (one chat, word for word: a range of numbers or a whole day), day_summaries (one chat, a line per day, with its summary where it has one) and read_posts (one group: posts word for word, each with all its comments). Use them for whatever the lines above don't settle: older messages and posts, things only in photos, exact wording, and anything in a chat or group whose newest lines don't cover it.";
   const X_FMT =
     'one per line: [key#number] [day time] sender (replying to who: "quoted original"): text, with [photo] (or [photo: what it shows]), link previews, links and {reactions} (who reacted, when known). The key names the chat. Numbers restart in each chat, so cam#412 and tea#412 are different messages. Senders are named as full name (that chat\'s nickname) where the full name is known, else as Messenger shows them. People are kept separately in each chat: the same full name in two chats is the same person, so say so when it helps.';
-  function xRules(tools, rx = true) {
+  /* a group's lines: "#p12 …" on its own Ask, "[gear#p12] …" across chats */
+  const gFmt = (k, e = "") =>
+    "one per line: " +
+    k +
+    "pN" +
+    e +
+    " [about day time] author (post, its photos and comments): text for post N, and " +
+    k +
+    "pN/cM" +
+    e +
+    ' [about day time] author (replying to cK who): text for comment M on post N. Times are estimates from Facebook\'s ages ("3h", "2 days ago"). Post numbers are the group\'s own and never change; comment numbers count within their post.';
+  const G_SEARCH_HAVE =
+    "\n- SEARCH: two tools over every stored post and comment in the group: search_posts (by words, dates, author) and read_posts (posts word for word, each with all its comments). Use them for whatever the lines above don't settle: older posts, comments on posts not shown above, exact wording.";
+  function xRules(tools, rx = true, groups = false) {
     return (
-      "- Answer only from these chats. If they don't contain the answer, say so plainly.\n- Cite every claim with the chat's key and the message number in square brackets, like [cam#123] or [cam#12, tea#15]. Never write a bare [#123]: the same number is in every chat.\n- Say which chat something is in when it matters.\n- When asked whether something needs a reply, check later messages in that chat for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble." +
+      (groups
+        ? "- Answer only from these chats and groups. If they don't contain the answer, say so plainly.\n- Cite every claim with the chat's key and the message number in square brackets, like [cam#123] or [cam#12, tea#15], and a group's posts and comments with its key and their numbers, like [gear#p12] (post 12) or [gear#p12/c3] (comment 3 on it). Never write a bare [#123]: the same number is in every chat.\n- Say which chat or group something is in when it matters.\n- When asked whether something needs a reply, check later messages in that chat (or later comments on that post) for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble."
+        : "- Answer only from these chats. If they don't contain the answer, say so plainly.\n- Cite every claim with the chat's key and the message number in square brackets, like [cam#123] or [cam#12, tea#15]. Never write a bare [#123]: the same number is in every chat.\n- Say which chat something is in when it matters.\n- When asked whether something needs a reply, check later messages in that chat for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble.") +
       rxRules(rx) +
-      (tools ? SEARCH_RULES.replace("isn't in the chat", "isn't in the chats") : "")
+      (tools
+        ? SEARCH_RULES.replace("isn't in the chat", groups ? "isn't in the chats or groups" : "isn't in the chats")
+        : "")
     );
   }
-  /* The prompt for a question across chats, within cap: who and what, each chat's span, then (without tools) the
-     question's own words found in every chat, so the answer still rests on each chat's matches, and each chat's newest
-     messages word for word, an equal share each (what a chat doesn't need goes to the others). */
+  /* a group's own Ask: its rules, SEARCH_RULES' included (search before saying it isn't there, never offer to dig
+     deeper), said of posts and comments */
+  function gRules(tools) {
+    return (
+      "- Answer only from this group's posts and comments. If they don't contain the answer, say so plainly.\n- Cite every claim with post and comment numbers in square brackets, like [#p12] (post 12), [#p12/c3] (comment 3 on it) or [#p12/c3, #p14].\n- When asked whether something needs a reply, check later comments on that post for an answer first, and say who answered and where.\n- Be concise. Use short bullets for lists. No preamble." +
+      (tools
+        ? SEARCH_RULES.replace("isn't in the chat", "isn't in the group")
+            .replace("read any stored message now", "read any stored post and comment now")
+            .replace("which messages or dates", "which posts or dates")
+        : "")
+    );
+  }
+  /* "12 posts and 40 comments stored, #p1 to #p12" */
+  const gSpanText = x =>
+    x.posts.length
+      ? plural(x.posts.length, "post") +
+        " and " +
+        plural(x.ncm, "comment") +
+        " stored, #p" +
+        x.posts[0].n +
+        " to #p" +
+        x.posts[x.posts.length - 1].n
+      : "no posts stored yet";
+  /* The prompt for a question across chats (and groups), within cap: who and what, each chat's span, then (without
+     tools) the question's own words found in every chat and group, so the answer still rests on their matches, and
+     each chat's newest messages and each group's posts with the newest activity word for word, an equal share each
+     (what one doesn't need goes to the others). A group's own Ask (G2a) is the same over its one bare ctx. */
   function xPrompt(q, ctxs, hist, cap, tools) {
     const extra = hist.reduce((n, t) => n + u8(t.content), 0);
     const room0 = Math.floor(upfront(cap, tools)) - MARGIN - extra;
+    const own = ctxs.length === 1 && ctxs[0].bare ? ctxs[0] : null;
+    const hasG = ctxs.some(x => x.g);
     const chatLine = x => {
+      if (x.g)
+        return (
+          "  - " +
+          x.key +
+          ": " +
+          x.c.name +
+          " (Facebook group" +
+          (x.c.state === "paused" ? ", paused: not refreshed now" : "") +
+          "), " +
+          gSpanText(x)
+        );
       const ms = x.msgs;
       if (!ms.length) return "  - " + x.key + ": " + x.c.name + " (no messages stored yet)";
       const a = ms[0],
@@ -9098,20 +9462,45 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         (span ? " (" + span + ")" : "")
       );
     };
-    const head =
-      "You are helping " +
-      OWNER() +
-      ' (shown as "You" in the data) catch up on their Facebook Messenger group chats. This question covers every chat below.\n\nWhat you have:\n- CHATS (key: name):\n' +
-      ctxs.map(chatLine).join("\n") +
-      "\n- MESSAGES: " +
-      X_FMT +
-      "\n- RECENT: each chat's newest messages, word for word." +
-      (tools ? X_SEARCH_HAVE : "\n- MATCHES: messages in any chat holding the question's own words, newest first.") +
-      "\n\nRules:\n" +
-      xRules(
-        tools,
-        ctxs.some(x => hasRx(x.msgs)),
-      );
+    const head = own
+      ? "You are helping " +
+        OWNER() +
+        ' (shown as "You" in the data) catch up on the ' +
+        own.c.name +
+        " Facebook group.\n\nWhat you have:\n- GROUP: " +
+        gSpanText(own) +
+        ".\n- POSTS: " +
+        gFmt("#") +
+        "\n- RECENT: the posts with the newest activity, each with its comments, word for word." +
+        (tools ? G_SEARCH_HAVE : "\n- MATCHES: posts and comments holding the question's own words, newest first.") +
+        "\n\nRules:\n" +
+        gRules(tools)
+      : "You are helping " +
+        OWNER() +
+        ' (shown as "You" in the data) catch up on their Facebook Messenger group chats' +
+        (hasG
+          ? " and Facebook groups. This question covers every chat and group below.\n\nWhat you have:\n- CHATS AND GROUPS (key: name):\n"
+          : ". This question covers every chat below.\n\nWhat you have:\n- CHATS (key: name):\n") +
+        ctxs.map(chatLine).join("\n") +
+        "\n- MESSAGES: " +
+        X_FMT +
+        (hasG ? "\n- POSTS: a group's posts and comments, " + gFmt("[key#", "]") + " The key names the group." : "") +
+        (hasG
+          ? "\n- RECENT: each chat's newest messages and each group's posts with the newest activity (each with its comments), word for word."
+          : "\n- RECENT: each chat's newest messages, word for word.") +
+        (tools
+          ? hasG
+            ? X_SEARCH_HAVE_G
+            : X_SEARCH_HAVE
+          : hasG
+            ? "\n- MATCHES: messages in any chat and posts and comments in any group holding the question's own words, newest first."
+            : "\n- MATCHES: messages in any chat holding the question's own words, newest first.") +
+        "\n\nRules:\n" +
+        xRules(
+          tools,
+          ctxs.some(x => !x.g && hasRx(x.msgs)),
+          hasG,
+        );
     let room = room0 - u8(head) - 512;
     const parts = [];
     const read = {};
@@ -9121,10 +9510,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       const ls = [];
       let n = 0;
       for (const f of found) {
-        const s = clipBytes(
-          inCtx(f.x, () => xLine(f.x, f.m)),
-          2048,
-        );
+        const s = clipBytes(xFLine(f), 2048);
         if (n + u8(s) + 1 > room / 2) break;
         ls.push(s);
         n += u8(s) + 1;
@@ -9134,47 +9520,65 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         room -= n + 64;
       }
     }
-    /* each chat's newest lines, oldest first; a chat with less than its share gives the rest to the others */
+    /* each chat's newest lines and each group's most active posts, oldest first; one with less than its share gives
+       the rest to the others */
+    const cnt = x => (x.g ? x.order.length : x.msgs.length);
     const lines = new Map(ctxs.map(x => [x.key, []]));
-    let left = ctxs.filter(x => x.msgs.length);
+    let left = ctxs.filter(cnt);
     while (left.length && room > 256) {
       const share = Math.floor(room / left.length);
       const next = [];
       left.forEach(x => {
         const L = lines.get(x.key);
         let used = 0,
-          k = x.msgs.length - 1 - L.length;
-        inCtx(x, () => {
+          k = cnt(x) - 1 - L.length;
+        const take = () => {
           for (; k >= 0; k--) {
-            const s = clipBytes(xLine(x, x.msgs[k]), 2048);
+            const s = clipBytes(x.g ? gLine(x, x.order[k]) : xLine(x, x.msgs[k]), 2048);
             const b = u8(s) + 1;
             if (used + b > share) break;
             L.unshift(s);
             used += b;
           }
-        });
+        };
+        if (x.g) take();
+        else inCtx(x, take);
         room -= used;
         if (k >= 0 && used > 0) next.push(x);
       });
-      /* every chat filled its share, or none could add a line: nothing is left to hand on */
+      /* every one filled its share, or none could add a line: nothing is left to hand on */
       if (next.length === left.length || !next.length) break;
       left = next;
     }
     ctxs.forEach(x => {
       const L = lines.get(x.key);
       if (!L.length) return;
+      if (x.g) {
+        read[x.key] = { posts: new Set(x.order.slice(x.order.length - L.length).map(it => it.p.n)).size };
+        parts.push(
+          (own ? "RECENT" : "RECENT, " + x.key + " (" + x.c.name + ", a group") +
+            (own ? " (" : ": ") +
+            "posts by activity, the newest last, each followed by its comments):\n" +
+            L.join("\n"),
+        );
+        return;
+      }
       read[x.key] = [x.msgs[x.msgs.length - L.length].i, x.msgs[x.msgs.length - 1].i];
       parts.push("RECENT, " + x.key + " (" + x.c.name + ", oldest first):\n" + L.join("\n"));
     });
     const text = head + "\n\n" + parts.join("\n\n");
     return { text, bytes: u8(text) + extra, fits: u8(text) <= room0, P: { read } };
   }
-  /* "Read Trail #3–#11, Cam #0–#7 word for word." */
-  const xReadNote = P =>
+  /* "Read Trail #3–#11, Cam #0–#7, Gear's 4 posts with the newest activity word for word." (own: a group's own Ask) */
+  const xReadNote = (P, own) =>
     Object.keys(P.read).length
       ? "Read " +
         Object.entries(P.read)
-          .map(([k, [a, b]]) => tagOfKey(k) + " #" + a + (b !== a ? "–#" + b : ""))
+          .map(([k, r]) =>
+            Array.isArray(r)
+              ? tagOfKey(k) + " #" + r[0] + (r[1] !== r[0] ? "–#" + r[1] : "")
+              : (own ? "the " : tagOfKey(k) + "'s ") + plural(r.posts, "post") + " with the newest activity",
+          )
           .join(", ") +
         " word for word."
       : "";
@@ -9200,8 +9604,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     return recStatus(rec);
   }
   /* A citation across chats: "Cam #412", opening that chat at that message; a chat that's gone says so and opens
-     nothing; a number with no chat (or an unknown one) is "#412 · which chat?" */
+     nothing; a number with no chat (or an unknown one) is "#412 · which chat?". A group's (G2a) is "Gear #p12/c3",
+     opening the post in its Posts with the comment marked. */
   var XA_LAST = null; /* the chats the last question across chats read (F41) */
+  var GA_LAST = null; /* the group the last question on a group's own Ask read */
   function xCite(c, n) {
     if (!c) {
       const s = el("span", "cite bad", "#" + n + " · which chat?");
@@ -9221,6 +9627,11 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     citeHook(
       b,
       () => {
+        if (isGroup(c)) {
+          const live = c.key === CUR.key && (S.gLoaded & 3) === 3 ? gLive() : null;
+          const x = live || (GA_LAST || []).concat(XA_LAST || []).find(y => y.key === c.key && y.byRef);
+          return x ? gCiteText(x.byRef.get(String(n))) : "";
+        }
         if (!XD.ctxs) xCtxs(); /* starts loading every chat; a later hover finds it */
         const x = (XA_LAST || []).concat(XD.ctxs || []).find(y => y.key === c.key && y.byI);
         const live = c.key === CUR.key && S.msgs.length;
@@ -9231,12 +9642,13 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     );
     return b;
   }
-  /* Claude's [cam#412] and [cam#412, tea#15] (a key or a tag) as citations; a bare number after a keyed one in the
-     same brackets is that chat's; anything else in brackets stays text */
-  function renderXCites(container, text) {
+  /* Claude's [cam#412] and [cam#412, tea#15] (a key or a tag) as citations, and a group's [gear#p12] and
+     [gear#p12/c3]; a bare number after a keyed one in the same brackets is that chat's, and with dflt (a group's own
+     Ask) a bare [#p12/c3] is dflt's; a group's bare number is its post; anything else in brackets stays text */
+  function renderXCites(container, text, dflt) {
     container.textContent = "";
-    const re = /\[([^[\]]*#\s*\d+[^[\]]*)\]/g;
-    const part = /^\s*([A-Za-z0-9_.~:@+-]*)\s*#\s*(\d+)\s*$/;
+    const re = /\[([^[\]]*#\s*p?\d+[^[\]]*)\]/g;
+    const part = /^\s*([A-Za-z0-9_.~:@+-]*)\s*#\s*(p\s*\d+(?:\s*\/\s*c\s*\d+)?|\d+)\s*$/;
     let last = 0,
       m;
     while ((m = re.exec(text))) {
@@ -9245,29 +9657,40 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       container.append(text.slice(last, m.index));
       let prev = null;
       ps.forEach((p, k) => {
-        const c = p[1] ? xChatOf(p[1]) : prev;
+        const c = p[1] ? xChatOf(p[1]) : prev || dflt || null;
         if (p[1]) prev = c;
         if (k) container.append(" ");
-        container.append(xCite(c, parseInt(p[2], 10)));
+        const r = p[2].replace(/\s+/g, "");
+        const g = !!c && isGroup(c);
+        const ref = /^p/.test(r) ? r : g ? "p" + r : parseInt(r, 10);
+        container.append(xCite(c && !g && typeof ref === "string" ? null : c, ref));
       });
       last = re.lastIndex;
     }
     container.append(text.slice(last));
   }
+  /* the chats and groups a question across chats covers: every active and paused one (G2a: groups too) */
+  const xAskChats = () => S.chats.filter(isLive);
+  /* "3 chats and 1 group" */
+  const xCount = keys => {
+    const g = keys.filter(k => isGroup(S.chats.find(c => c.key === k))).length;
+    return plural(keys.length - g, "chat") + (g ? " and " + plural(g, "group") : "");
+  };
   /* a saved answer's scope line: the chats it searched, and any it can read now that it didn't */
   function xScopeNote(x) {
     const ks = Array.isArray(x.chats) ? x.chats : [];
-    const not = xChats().filter(c => !ks.includes(c.key));
+    const not = xAskChats().filter(c => !ks.includes(c.key));
     return (
       "across " +
-      plural(ks.length, "chat") +
+      xCount(ks) +
       (ks.length ? " (" + ks.map(tagOfKey).join(", ") + ")" : "") +
       (not.length ? " · not searched: " + not.map(c => c.tag).join(", ") : "")
     );
   }
   /* Under an answer across chats: the page's own matches in every chat it searched, one list at a time (the question's
      words, or one of Claude's searches), with a chip per chat (its count; none: disabled), Photos only, and Newest
-     first or By chat. Every change redraws here; nothing goes to Claude. */
+     first or By chat. Every change redraws here; nothing goes to Claude. G2a: groups' posts and comments too; on a
+     group's own Ask (solo) only its matches, with Photos only and no chips per chat or order. */
   const X_ORDER = "mcAskOrder";
   function xOrder(v) {
     try {
@@ -9277,7 +9700,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     return v === "chat" ? "chat" : "new";
   }
   const nMatches = n => n.toLocaleString("en-US") + (n === 1 ? " match" : " matches");
-  function xMatchBox(q, rec, ctxs) {
+  function xMatchBox(q, rec, ctxs, solo = false) {
     const lists = [];
     const seen = new Set();
     const ws = sigWords(q);
@@ -9320,7 +9743,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       li.dataset.chat = h.key;
       const tx = el("span", "tx");
       const meta = el("span", "meta");
-      meta.append(xCite(chatOfKey(h.key), h.i), " · " + (dayOf(h.d) ? dayOf(h.d) + " " : "") + h.t + " · ");
+      const when = h.g
+        ? (dayOf(h.d) ? "about " + dayOf(h.d) + (h.t ? " " + h.t : "") : "time unknown") + " · "
+        : (dayOf(h.d) ? dayOf(h.d) + " " : "") + h.t + " · ";
+      meta.append(xCite(chatOfKey(h.key), h.i), " · " + when);
       meta.append(el("span", "who", h.who));
       tx.append(meta);
       tx.append(document.createTextNode(trunc(h.b.replace(/\s+/g, " "), 220) || (h.photo ? "[photo]" : "")));
@@ -9372,12 +9798,14 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         };
         chips.append(b);
       };
-      chip("All", "all", hs.length);
-      keys.forEach(k => {
-        const n = hs.filter(h => h.key === k).length;
-        if (!n && st.filt === k) st.filt = "all";
-        chip(chatOfKey(k).tag, k, n, chatOfKey(k));
-      });
+      if (!solo) {
+        chip("All", "all", hs.length);
+        keys.forEach(k => {
+          const n = hs.filter(h => h.key === k).length;
+          if (!n && st.filt === k) st.filt = "all";
+          chip(chatOfKey(k).tag, k, n, chatOfKey(k));
+        });
+      }
       chips.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.filt === st.filt)));
       const ph = el("button", null, "Photos only");
       ph.type = "button";
@@ -9417,8 +9845,18 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       head.append(b);
     });
     more.onclick = fill;
+    const hasG = ctxs.some(x => x.g);
+    ord.hidden = solo;
     box.append(
-      el("div", "note", "Matching messages in every chat searched (found by the page, so every match is listed):"),
+      el(
+        "div",
+        "note",
+        solo
+          ? "Matching posts and comments, newest first (found by the page, so every match is listed):"
+          : hasG
+            ? "Matching messages, posts and comments in every chat and group searched (found by the page, so every match is listed):"
+            : "Matching messages in every chat searched (found by the page, so every match is listed):",
+      ),
     );
     if (lists.length > 1) box.append(head);
     box.append(chips, bar, list, more);
@@ -9431,17 +9869,23 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     draw();
     return box;
   }
-  async function askAcross(q) {
+  /* All chats' Ask (every chat and, G2a, every group), and a group's own Ask: the same path, over every live chat and
+     group, or the group on screen alone (own: its ctx is bare, its turns and saved questions its own) */
+  const askAcross = q => xAsk(q, null);
+  const askGroup = q => xAsk(q, CUR);
+  async function xAsk(q, own) {
     await capWait();
     if (u8(q) > S.promptCap / 2) {
       $("#ask-note").textContent = "That question is too long to send. Shorten it.";
       return;
     }
-    const box = $("#xchat");
+    const box = own ? $("#chat") : $("#xchat");
+    const list = own ? turns : xturns;
+    const render = own ? (t, s) => renderXCites(t, s, own) : renderXCites;
     addTurn("user", q, box);
     $("#ask-in").value = "";
-    const out = addTurn("assistant", "Reading your chats…", box, renderXCites);
-    xturns.push({ role: "user", content: q });
+    const out = addTurn("assistant", own ? "Reading the group…" : "Reading your chats…", box, render);
+    list.push({ role: "user", content: q });
     ctl = new AbortController();
     const sig = ctl.signal;
     $("#ask-go").disabled = true;
@@ -9449,8 +9893,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     $("#ask-note").textContent = "";
     let ctxs = null;
     try {
-      const all = await xLoad();
-      XA_LAST = all; /* F41: the citations in its answer read their messages from these */
+      const all = own ? [Object.assign(await xLoadGroup(own), { bare: true })] : await xAskLoad();
+      /* F41: the citations in its answer read their messages from these */
+      if (own) GA_LAST = all;
+      else XA_LAST = all;
       if (sig.aborted) throw Object.assign(new Error("stopped"), { code: "cancelled" });
       ctxs = all.filter(x => !x.err);
       const bad = all.filter(x => x.err);
@@ -9462,7 +9908,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         });
         return sendFitted(
           cap => {
-            const hist = chatTurns(cap, xturns);
+            const hist = chatTurns(cap, list);
             return Object.assign(xPrompt(q, ctxs, hist, cap, tools), { hist, cap });
           },
           m =>
@@ -9477,7 +9923,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
                     const a = answerOf(text, rec);
                     if (rec.cut && a === text && rec.cut >= text.length) return;
                     rec.shown = true;
-                    renderXCites(out, a);
+                    render(out, a);
                   },
                 },
                 tools ? { tools: xToolSet(rec, m.cap - MARGIN - m.bytes - TOOL_SPARE, ctxs) } : {},
@@ -9496,9 +9942,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       }
       const { res, P, retried, rec } = r;
       const text = answerOf(res.text, rec);
-      renderXCites(out, text);
+      render(out, text);
       const note = [
-        "Searched " + plural(ctxs.length, "chat") + ": " + ctxs.map(x => x.c.tag).join(", ") + ".",
+        own ? "" : "Searched " + xCount(ctxs.map(x => x.key)) + ": " + ctxs.map(x => x.c.tag).join(", ") + ".",
         bad.length
           ? "Couldn't read " +
             bad.map(x => x.c.name).join(", ") +
@@ -9506,25 +9952,40 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
             (bad.length === 1 ? "it wasn't" : "they weren't") +
             " searched."
           : "",
-        xReadNote(P) + (retried ? " (sent a smaller set: the first was too large)" : ""),
+        xReadNote(P, !!own) + (retried ? " (sent a smaller set: the first was too large)" : ""),
         xSearchNote(rec),
       ]
         .filter(Boolean)
         .join(" ");
-      out.parentNode.append(el("div", "note sent", note));
-      const mb = xMatchBox(q, rec, ctxs);
+      if (note) out.parentNode.append(el("div", "note sent", note));
+      const mb = xMatchBox(q, rec, ctxs, !!own);
       if (mb) out.parentNode.append(mb);
-      xturns.push({ role: "assistant", content: text });
-      if (S.rawDb) {
+      list.push({ role: "assistant", content: text });
+      const db = own ? S.db : S.rawDb;
+      if (db) {
         try {
-          const row = {
-            q,
-            a: text,
-            at: new Date().toISOString(),
-            scope: "chats",
-            chats: ctxs.map(x => x.key),
-            toI: Object.fromEntries(ctxs.map(x => [x.key, x.msgs.length ? x.msgs[x.msgs.length - 1].i : null])),
-          };
+          /* a group's own: scope "group", and chatDb adds its chat: KEY */
+          const row = own
+            ? { q, a: text, at: new Date().toISOString(), scope: "group" }
+            : {
+                q,
+                a: text,
+                at: new Date().toISOString(),
+                scope: "chats",
+                chats: ctxs.map(x => x.key),
+                toI: Object.fromEntries(
+                  ctxs.map(x => [
+                    x.key,
+                    x.g
+                      ? x.posts.length
+                        ? "p" + x.posts[x.posts.length - 1].n
+                        : null
+                      : x.msgs.length
+                        ? x.msgs[x.msgs.length - 1].i
+                        : null,
+                  ]),
+                ),
+              };
           const sr = recSent(rec);
           if (sr) {
             sr.searches.forEach((s, k) => {
@@ -9532,19 +9993,23 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
             });
             row.sent = sr;
           }
-          await S.rawDb.collection("qa").add(row);
+          await db.collection("qa").add(row);
         } catch (e) {
           $("#ask-note").textContent = "Answer shown but not saved.";
         }
       }
     } catch (e) {
-      xturns.pop();
-      if (e.text) renderXCites(out, e.text);
+      list.pop();
+      if (e.text) render(out, e.text);
       else out.textContent = "";
       $("#ask-note").textContent =
-        e && e.code === "no_chats" ? "Couldn't read any chat's messages here. Try again." : errCopy(e);
+        e && e.code === "no_chats"
+          ? own
+            ? "Couldn't read the group's posts here. Try again."
+            : "Couldn't read any chat's messages here. Try again."
+          : errCopy(e);
       /* the page's own matches need no Claude: they show even when the request failed or was declined */
-      const mb = ctxs && ctxs.length && e.code !== "cancelled" ? xMatchBox(q, null, ctxs) : null;
+      const mb = ctxs && ctxs.length && e.code !== "cancelled" ? xMatchBox(q, null, ctxs, !!own) : null;
       if (mb) out.parentNode.append(mb);
     } finally {
       $("#ask-go").disabled = false;
@@ -9552,8 +10017,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       ctl = null;
     }
   }
-  /* The Ask tab names what it covers: the chat on screen, or every chat on All chats (each keeps its own conversation).
-     route() runs it before the rest of the script has, so it touches the page's elements only. */
+  /* The Ask tab names what it covers: the chat on screen, the group on screen (G2a), or every chat (and group) on All
+     chats (each keeps its own conversation). route() runs it before the rest of the script has, so it touches the
+     page's elements and S only (isLive and the like aren't defined yet). */
   function askMode(all) {
     const v = document.getElementById("v-ask");
     const h = v && v.querySelector(".sec-head h2"),
@@ -9564,20 +10030,39 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const set = (n, k, s) => {
       if (n[k] !== s) n[k] = s;
     };
-    set(h, "textContent", all ? "Ask about your chats" : H.h);
+    const grp = !all && !!CUR && CUR.kind === "group";
+    const hasG = all && S.chats.some(c => c.kind === "group" && (c.state === "active" || c.state === "paused"));
+    set(
+      h,
+      "textContent",
+      all ? (hasG ? "Ask about your chats and groups" : "Ask about your chats") : grp ? "Ask about the group" : H.h,
+    );
     set(
       p,
       "textContent",
       all
-        ? "One question over every chat: Claude reads each chat's newest messages and searches all their messages and photo captions. Every message it cites names its chat (Cam #412) and opens it there. Under the answer, the page lists every exact match: filter them by chat, or put them in chat order."
-        : H.p,
+        ? hasG
+          ? "One question over every chat and group: Claude reads each chat's newest messages and each group's most active posts, and searches all their messages, posts, comments and photo captions. Every message it cites names its chat (Cam #412), every post or comment its group (Gear #p12/c3), and opens it there. Under the answer, the page lists every exact match: filter them by chat or group, or put them in chat order."
+          : "One question over every chat: Claude reads each chat's newest messages and searches all their messages and photo captions. Every message it cites names its chat (Cam #412) and opens it there. Under the answer, the page lists every exact match: filter them by chat, or put them in chat order."
+        : grp
+          ? "Claude reads the posts with the newest activity word for word and searches every post and comment in this group for the rest. It cites a post as #p12 and a comment on it as #p12/c3; each opens the post in Posts. Under the answer, the page lists every exact match."
+          : H.p,
     );
-    set(t, "placeholder", all ? "Who's selling a tripod? What's planned for Saturday?" : H.ph);
+    set(
+      t,
+      "placeholder",
+      all
+        ? "Who's selling a tripod? What's planned for Saturday?"
+        : grp
+          ? "Is the tent still for sale? Who asked about Saturday?"
+          : H.ph,
+    );
     document.getElementById("chat").hidden = all;
     document.getElementById("xchat").hidden = !all;
     /* a note from the other mode's last question doesn't belong here */
-    if (askMode.all !== undefined && askMode.all !== all) document.getElementById("ask-note").textContent = "";
-    askMode.all = all;
+    const mode = all ? "all" : grp ? "group" : "chat";
+    if (askMode.all !== undefined && askMode.all !== mode) document.getElementById("ask-note").textContent = "";
+    askMode.all = mode;
   }
 
   /* ---------- All chats: By day, Stats and the summary across chats (F1 stage C, part 2) ----------
@@ -10347,17 +10832,26 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
               " · " +
               (x.scope === "chats"
                 ? xScopeNote(x)
-                : x.scope === "all"
-                  ? "all stored messages"
-                  : x.scope === "deeper"
-                    ? "looked deeper"
-                    : "catch-up window") +
+                : x.scope === "group"
+                  ? "this group's posts and comments"
+                  : x.scope === "all"
+                    ? "all stored messages"
+                    : x.scope === "deeper"
+                      ? "looked deeper"
+                      : "catch-up window") +
               (sentShort(x) ? " · " + sentShort(x) : ""),
           ),
         );
         const t = el("div", "txt");
         t.style.whiteSpace = "pre-wrap";
-        (x.scope === "chats" ? renderXCites : renderCites)(t, x.a || "");
+        /* G2a: a group's own answer cites [#p12/c3], its group's */
+        if (x.scope === "group")
+          renderXCites(
+            t,
+            x.a || "",
+            S.chats.find(c => c.key === chatOf(x)),
+          );
+        else (x.scope === "chats" ? renderXCites : renderCites)(t, x.a || "");
         d.append(s, t);
         const rm = el("button", "link qa-rm", "Remove");
         rm.type = "button";
@@ -11002,7 +11496,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   }
   /* F25: a group capture (the helper's groupCapture): posts and comments go into this group's KEY_posts/p<pid> and
      KEY_comments/p<pid>. A post seen for the first time gets the page's next post number (meta/chat-KEY.nextP, given
-     once, never reused); a comment, the next number within its post. Re-pasting the same capture changes nothing. */
+     once, never reused); a comment, the next number within its post. Re-pasting the same capture changes nothing. G2a:
+     each new post and comment also gets `at`, when its Facebook age ("3h") puts it, read now (Ask's dates). */
   async function importGroup(cap, done, R) {
     const body = { posts: cap.posts, comments: cap.comments, notifs: cap.notifs };
     if (!Array.isArray(cap.posts) || !cap.comments || typeof cap.comments !== "object" || !Array.isArray(cap.notifs))
@@ -11063,6 +11558,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         lastAct: !old || (x.count || 0) > (old.count || 0) || (cap.comments[pid] || []).length ? now : old.lastAct,
       });
       if (!old) newPosts++;
+      const est = !doc.at && x.who ? gEst(x.age, Date.parse(now)) : null;
+      if (est) doc.at = new Date(est.ms).toISOString();
       delete doc.known;
       await ref.set(doc);
       const list = cap.comments[pid];
@@ -11077,7 +11574,11 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       const add = list
         .filter(y => y && y.cid && !seen.has(keyOf(y)))
         .reverse()
-        .map(y => Object.assign({}, y, { c: ++c, byYou: mine(y.who), firstSeen: now }));
+        .map(y => {
+          const est = gEst(y.age, Date.parse(now));
+          const at = est ? { at: new Date(est.ms).toISOString() } : {};
+          return Object.assign({}, y, { c: ++c, byYou: mine(y.who), firstSeen: now }, at);
+        });
       newCmts += add.length;
       if (add.length) await cref.set({ pid, comments: have.concat(add) });
     }
@@ -16515,6 +17016,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       daySums: new Map(),
       daySumsIn: undefined,
       goAfterLoad: null,
+      goPostAfter: null,
+      gLoaded: 0,
       reports: null,
       caps: null,
       threading: null,
@@ -16615,19 +17118,25 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     if (isGroup(CUR)) {
       S.gposts = {};
       S.gcmts = {};
+      /* 1: posts read, 2: comments read, 4: its meta/chat-KEY read (which draws Posts again): a citation waits for all
+         three, so no redraw replaces the post it marked */
+      S.gLoaded = 0;
       const redraw = () => {
         renderPosts();
         renderGroupSummary();
         renderHeader();
+        if (S.goPostAfter && S.gLoaded === 7) goPost(S.goPostAfter);
       };
       on(db.collection("posts"), q => {
         S.gposts = {};
         q.docs.forEach(d => (S.gposts[d.id] = d.data()));
+        S.gLoaded |= 1;
         redraw();
       });
       on(db.collection("comments"), q => {
         S.gcmts = {};
         q.docs.forEach(d => (S.gcmts[d.id] = d.data()));
+        S.gLoaded |= 2;
         redraw();
       });
     }
@@ -16639,8 +17148,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         setMeta(S.chatMeta ? Object.assign(pagePart(S.page), S.chatMeta) : null);
         /* F25: what's new in a group is what came with its last import (meta/chat-KEY.lastImport) */
         if (isGroup(CUR)) {
+          S.gLoaded |= 4;
           renderPosts();
           renderGroupSummary();
+          if (S.goPostAfter && S.gLoaded === 7) goPost(S.goPostAfter);
         }
       });
     on(db.collection("summary"), q => {
@@ -16814,7 +17325,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     if (CUR.key !== key) loadChat(c);
     showView();
     if (i != null) {
-      if (S.byI.has(i)) goMsg(i);
+      /* G2a: a group's citation names a post or comment ("p12/c3"), opened in its Posts */
+      if (isGroup(c)) goPost(i);
+      else if (S.byI.has(i)) goMsg(i);
       else S.goAfterLoad = i;
     }
   }
