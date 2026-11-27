@@ -18205,6 +18205,41 @@ async function groupsAdd() {
     'G1-02: the same group again (another link form) is refused, naming it',
   );
   await p.keyboard.press('Escape');
+  /* as after its first read: an active group has Pause */
+  await p.evaluate(() => {
+    const m = __rt.get('meta/chat');
+    __rt.write(
+      'meta/chat',
+      Object.assign({}, m, {
+        chats: Object.assign({}, m.chats, { gear: Object.assign({}, m.chats.gear, { state: 'active' }) }),
+      }),
+    );
+  });
+  await mcSettings(p);
+  await until(p, () =>
+    /Pause this group/.test((document.querySelector('.chatrow[data-chat="gear"]') || {}).textContent || ''),
+  );
+  const gRow = await p.$eval('.chatrow[data-chat="gear"]', x => x.textContent);
+  ok(
+    (await p.$eval('#with-gear', x => x.value)) === 'book' &&
+      gRow.includes("shown beside this group's posts and citations") &&
+      gRow.includes('Pause this group') &&
+      gRow.includes('Pausing stops refreshes of this group until you resume it. Its posts stay on the page.') &&
+      !gRow.includes('Queued replies') &&
+      !/this chat/.test(gRow),
+    "G1-03: a group's Settings card says group (no chat wording, no Queued replies) and shows Goes with a chat (" +
+      gRow.slice(0, 300) +
+      ')',
+  );
+  w0 = await mcNWrites(p);
+  await p.selectOption('#with-gear', '');
+  await until(p, () => !__rt.get('meta/chat').chats.gear.chat);
+  const wl = await p.evaluate(n => __rt.writes.slice(n), w0);
+  ok(
+    wl.length === 1 && JSON.stringify(wl[0].v.chats) === '{"gear":{"chat":null}}',
+    "G1-03: changing a group's Goes with a chat after adding writes only that field (" + JSON.stringify(wl) + ')',
+  );
+  await p.keyboard.press('Escape');
   await p.click('#h1');
   const items = await p.$$eval('#picker-list > *', xs =>
     xs.map(x => (x.classList.contains('pick-head') ? '#' + x.textContent : x.dataset.key)),
