@@ -736,15 +736,28 @@ async function importer() {
   );
   ok((await p.textContent('#eyebrow')).includes('Trail Crew'), 'boot: eyebrow shows the thread name');
   ok((await p.textContent('#window')).includes('No messages stored yet'), 'boot: empty store message');
+  ok(await p.isHidden('#imp'), 'F44: the Import capture box is hidden on load');
   let r = await paste(p, JSON.stringify(cap(range(1, 3))));
   ok(
     r && !r.ok && /Gap|must start at #0/.test(r.msg) && !(await get(p, 'chunks/c0000')),
     'first import that does not start at #0 is refused (' + (r && r.msg) + ')',
   );
+  // F44 (#124): the box was hidden before; a refused paste shows it, open, with the message for a manual retry
+  ok(
+    !(await p.isHidden('#imp')) &&
+      (await p.$eval('#imp', d => d.open)) &&
+      /Gap|must start at #0/.test(await p.textContent('#imp-note')),
+    'F44: a refused paste shows the Import capture box, open, with the message',
+  );
+  await p.evaluate(() => (document.getElementById('imp').hidden = true));
   // first import: 120 messages, crosses the 82-message chunk size, one photo, one GIF
   const first = range(0, 119, i => mk(i, i === 10 ? { p: '777', b: '' } : {}));
   r = await paste(p, JSON.stringify(cap(first, { photos: [{ i: 10, k: 0, type: 'image/png', b64: PNG }], gifs: [5] })));
   ok(r && r.ok && r.src === 'paste' && r.fresh === 120, 'first import by paste: ok, 120 new (' + (r && r.msg) + ')');
+  ok(
+    await p.isHidden('#imp'),
+    'F44: a successful paste leaves the Import capture box hidden (the toast says how it went)',
+  );
   ok(
     r && /IMPORT OK: 120 new messages, #0–#119 \(chunks c0000, c0082\)/.test(r.msg) && /1 photo stored/.test(r.msg),
     'first import: message names both chunks and the photo',

@@ -2,6 +2,19 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.65.0] - 2026-11-27
+**The Import capture box stays hidden unless a paste fails** (F44, #124; the owner's pick, B). MINOR. Page 8.0.
+
+### Changed
+- Refreshes import by pasting on an empty spot of the page; no refresh uses the Import capture box. The page used to open the box after every paste and write the result into it.
+  - Now the box is hidden. A successful paste shows only the toast.
+  - A refused or failed paste shows the box, open, with the message and the box for a manual retry.
+  - Nothing else stays on screen after the toast: the owner's answer was that nobody would look. The result is still stored in `refresh/lastImport` for Claude.
+- Chat and group pages share the box, so both get this.
+
+### Tests
+- page (importer): hidden on load; still hidden after a successful paste; shown and open, with the message, after a refused paste.
+
 ## [1.64.0] - 2026-11-27
 **Settings that are easy to use: a list, then a screen per chat or group** (F43, #109). MINOR. Page 7.9.
 

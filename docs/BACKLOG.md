@@ -22,7 +22,6 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | F1 | P3 | feature | Several chats per page: stages A (v1.35.0), B (v1.38.0, v1.39.0) and C (v1.55.0, v1.57.0) shipped; left: the polish noticed in stage A and the options not built |
 | F25 | P2 | feature | Facebook groups on the page: stage G1 (read groups) shipped in v1.47.0–v1.48.0 and G2 (find: Ask, Stats, By day, linked stats with a chat, Probably links) in v1.61.0–v1.63.0; next G3 (commenting, with photos) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; option C step 1 (the `reply-check` skill) in v1.34.0; measured (0.2% of a 5-hour session per check); scheduling it ("schedule reply checks") in v1.37.0; left: arm it on the owner's account (every 10 minutes, 5 AM–10 PM) and check it, then make the interval and hours changeable in the page |
-| F44 | P3 | feature | Import capture box: hide or remove it (#124); refreshes import by paste, and the page opens the box after every paste |
 | F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
 
 ## Bugs
@@ -85,11 +84,6 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 - **Shipped, stage G2 (find), in three releases (owner, Nov 27):** v1.61.0 (G2a: a group's own Ask, groups in All chats' Ask, each post and comment's estimated time `at`), v1.62.0 (G2b: a group's Stats and By day, groups in All chats' Stats and By day), v1.63.0 (G2c, #119: "With <the other>" in a linked chat's and group's Stats with the design's seven views, and "Probably:" links under chat messages). Its live checks are in L1. Not built: the design's "not it" button that hides a wrong Probably link (not in the owner's Nov 27 decisions; it would need a stored choice); asked and agreed prices in Deals (no price is stored).
 - **Then, stage G3 (comment):** a comment on a post or a reply to a comment from the page, with photos (one per comment; several as a thread under your comment), through the outbox.
 - **Known limits (G1):** a reply to a reply gets a reply as its parent, though not always the one it names (Facebook's indent and labels don't say which); comment counts include hidden ones the page can't read (26 said, 22 loaded); notifications were only read in the survey (opening the page clears the red badge).
-### F44 · P3 · Import capture box: hide or remove it (#124)
-- **Asked (owner, Nov 27):** does the Import capture box have to be visible?
-- **Known:** refreshes import by pasting on an empty spot; a document-level paste listener does it, and no skill step uses `#imp-in`/`#imp-go`. After every paste the page opens the box and writes the result into `#imp-note`, besides the toast. The page tests' import helper uses the box's button.
-- **Options:** remove it; show it only after a refused or failed paste; or stop auto-opening it and move it to a troubleshooting spot.
-- **Open questions:** which option; whether the last import's result should stay visible after the toast; groups get the same.
 ### F33 · P3 · Windowed loading of day summaries for very long histories
 - **Today (v1.32.0):** the page listens to the whole `daySummaries` collection, as it does its other collections, and By day, Ask, Views and the `day_summaries` tool use the summaries in memory. The owner's page has about 55 days, roughly 0.5 MB. F29 built a window (the newest days live, older ones read on demand) and dropped it after three reviews kept finding faults in it; this item is that work, done in small pieces when it's needed.
 - **Trigger:** only when a page's day summaries pass about a year of days, or a load time or size threshold measured on the real runtime. Measure first; don't build ahead of it.

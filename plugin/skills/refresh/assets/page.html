@@ -3237,7 +3237,8 @@
         </p>
       </div>
     </details>
-    <details class="item" id="imp">
+    <!-- F44 (#124): hidden; a refused or failed paste shows it with the message and a manual retry -->
+    <details class="item" id="imp" hidden>
       <summary>
         <h3>Import capture</h3>
         <div class="note">Claude uses this during a refresh; you don't need to.</div>
@@ -3289,7 +3290,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "7.9";
+  const PAGE_VERSION = "8.0";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -14168,7 +14169,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       note.textContent = R.msg;
       if (pasted) {
         const d = $("#imp");
-        if (d) d.open = true;
+        if (d && R.ok === false) {
+          d.hidden = false;
+          d.open = true;
+        }
         toast([el("b", null, R.msg)], sticky);
       }
     };
