@@ -2,6 +2,17 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.60.1] - 2026-11-27
+**A group's first read keeps what it read** (B72, #103). PATCH. Helper 4.2; page 7.2 (only its embedded copy of the helper changes).
+
+### Fixed
+- A group read's run buffer (`mc_g_<run>`) lived in facebook.com's localStorage, and something on Facebook wiped it between commands. The owner's first read of their group lost 61 posts after one `groupPost` (#103), and the cause is still unknown.
+- The installed helper (4.2) now keeps the buffer in Tampermonkey's own storage (`@grant GM_getValue`, `GM_setValue`, `GM_deleteValue`), which a page's scripts can't touch. An injected copy keeps using localStorage.
+- `groupFeed`, `groupPost` and `notifs` each answer with `buf`, the buffer's counts, so a loss shows at once. `references/groups.md` says to stop and report a drop rather than capture. Tampermonkey may ask once to approve the new storage permissions when the helper updates.
+
+### Tests
+- sim (B72): with Tampermonkey storage, the buffer keeps all 8 posts after localStorage is cleared between `groupFeed` and `groupPost`, the answers carry the counts, and `groupCapture` empties it.
+
 ## [1.60.0] - 2026-11-26
 **Reactions added after a message was stored are read** (B69). MINOR: the refresh procedure and the page's import change. Page 7.1, helper 4.1.
 

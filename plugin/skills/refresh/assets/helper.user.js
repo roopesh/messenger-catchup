@@ -1,13 +1,16 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      4.1
+// @version      4.2
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on. It downloads GIFs from Facebook's image servers for your page (the permission Tampermonkey asks for).
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
 // @match        https://www.facebook.com/notifications*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
 // @connect      fbsbx.com
 // @connect      fbcdn.net
 // @updateURL    https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js
@@ -39,13 +42,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '4.1';
+  window.__mcHelper = '4.2';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '4.1');
+  root.setAttribute('data-mc-helper', '4.2');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -2743,14 +2746,28 @@
     Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t))))
       .map(x => x.toString(16).padStart(2, '0'))
       .join('');
+  /* B72 (#103): the buffer lives in Tampermonkey's own storage when the helper has it (installed 4.2+): something on
+     facebook.com wiped the localStorage key between a group read's commands (61 posts gone after one groupPost), and
+     a page's scripts can't touch userscript storage. An injected copy (no GM storage) keeps using localStorage. */
+  const GMS = typeof GM_getValue === 'function' && typeof GM_setValue === 'function';
+  const gGet = k => (GMS ? GM_getValue(k, null) : localStorage.getItem(k));
+  const gSet = (k, v) => (GMS ? GM_setValue(k, v) : localStorage.setItem(k, v));
+  const gDel = k => (GMS && typeof GM_deleteValue === 'function' ? GM_deleteValue(k) : localStorage.removeItem(k));
   const gBuf = run => {
     try {
-      return JSON.parse(localStorage.getItem(gKey(run)) || 'null') || { posts: {}, comments: {}, notifs: [] };
+      return JSON.parse(gGet(gKey(run)) || 'null') || { posts: {}, comments: {}, notifs: [] };
     } catch (e) {
       return { posts: {}, comments: {}, notifs: [] };
     }
   };
-  const gSave = (run, b) => localStorage.setItem(gKey(run), JSON.stringify(b));
+  const gSave = (run, b) => gSet(gKey(run), JSON.stringify(b));
+  /* what the buffer holds now, in every command's answer, so a buffer that shrank shows at once */
+  const gCount = b => ({
+    store: GMS ? 'gm' : 'local',
+    posts: Object.keys(b.posts || {}).length,
+    comments: Object.values(b.comments || {}).reduce((n, c) => n + (c || []).length, 0),
+    notifs: (b.notifs || []).length,
+  });
   /* a post's age in hours from Facebook's English time label ("17 hours ago", "about an hour ago", "3 days ago",
      "Yesterday at 4:05 PM", "November 3 at 4:05 PM", "March 2, 2025"); null when it can't be read */
   function ageHours(t) {
@@ -2832,6 +2849,7 @@
     posts.forEach(x => (b.posts[x.pid] = Object.assign(b.posts[x.pid] || {}, x)));
     gSave(a.run, b);
     return Object.assign({}, res, {
+      buf: gCount(b),
       posts: undefined,
       read: posts.length,
       counts: Object.fromEntries(posts.filter(x => changed.includes(x.pid)).map(x => [x.pid, x.count])),
@@ -2937,7 +2955,7 @@
     const b = gBuf(a.run);
     b.comments[pid] = comments;
     gSave(a.run, b);
-    return Object.assign({}, res, { comments: undefined, read: comments.length });
+    return Object.assign({}, res, { comments: undefined, read: comments.length, buf: gCount(b) });
   }
   /* notifs{since, more}: on /notifications/, reads the items without clicking any (a click marks it read): each
      {id (notif_id), kind (notif_t), group, post, comment, reply, unread, age, text}. Stops at the item `since` (a
@@ -2980,6 +2998,7 @@
     b.notifs = items;
     gSave(a.run, b);
     return {
+      buf: gCount(b),
       reachedSince: cut >= 0,
       read: items.length,
       newest: items.length ? items[0].id : null,
@@ -3007,7 +3026,7 @@
     );
     const text = JSON.stringify(cap);
     window.__capText = text;
-    localStorage.removeItem(gKey(a.run));
+    gDel(gKey(a.run));
     document.body.innerHTML = '';
     const bt = document.createElement('button');
     bt.id = '__copy';
@@ -3057,7 +3076,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '4.1' }),
+    ping: () => ({ v: '4.2' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

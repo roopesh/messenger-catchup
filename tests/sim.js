@@ -1970,6 +1970,46 @@ sim('G1: groupPost', { s: 20 }, async b => {
   );
   await ctx.close();
 });
+/* B72 (#103): something on facebook.com wiped the run buffer's localStorage key between a group read's commands. An
+   installed helper (Tampermonkey storage, stubbed here over sessionStorage so it survives page loads) keeps the buffer
+   when localStorage is cleared between groupFeed and groupPost; every command answers with the buffer's counts. */
+sim('B72: the group run buffer survives localStorage being cleared', { s: 20 }, async b => {
+  const { ctx, p } = await fresh(b);
+  await ctx.addInitScript(() => {
+    window.GM_getValue = (k, d) => sessionStorage.getItem('__gm_' + k) ?? d;
+    window.GM_setValue = (k, v) => sessionStorage.setItem('__gm_' + k, v);
+    window.GM_deleteValue = k => sessionStorage.removeItem('__gm_' + k);
+  });
+  const run = 'run' + Date.now();
+  await gOpen(p, '', '?sorting_setting=CHRONOLOGICAL', { g_posts: '8' });
+  const f = await bridge(p, 'groupFeed', { run });
+  await p.evaluate(() => localStorage.clear());
+  await p.goto(gUrl('posts/2000000000000004/'));
+  await p.waitForTimeout(500);
+  const g = await bridge(p, 'groupPost', { run });
+  await p.goto(gUrl(''));
+  await p.waitForTimeout(400);
+  await bridge(p, 'groupCapture', { run, group: GROUP });
+  const cap = JSON.parse((await p.evaluate(() => window.__capText)) || 'null');
+  const left = await p.evaluate(r => sessionStorage.getItem('__gm_mc_g_' + r), run);
+  ok(
+    f &&
+      f.buf &&
+      f.buf.store === 'gm' &&
+      f.buf.posts === 8 &&
+      g &&
+      g.buf.posts === 8 &&
+      g.buf.comments === g.read &&
+      cap &&
+      cap.posts.length === 8 &&
+      cap.comments['2000000000000004'].length === g.read &&
+      left === null,
+    'B72: with Tampermonkey storage the buffer keeps all 8 posts after localStorage is cleared, each answer carries the counts, and groupCapture empties it (' +
+      JSON.stringify([f && f.buf, g && g.buf, cap && cap.posts.length, left]) +
+      ')',
+  );
+  await ctx.close();
+});
 sim('G1: a run buffer and groupCapture', { s: 25 }, async b => {
   const { ctx, p } = await fresh(b);
   const run = 'run' + Date.now();
