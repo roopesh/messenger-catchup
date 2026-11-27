@@ -19694,7 +19694,385 @@ async function groupsStats() {
   ok(p.errors.length === 0, 'G2b All chats without groups: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 }
+/* F25 G2c: Camera Club (cam) linked to Gear Swap (gaDocs, plus Ben's stove #p3 at 10 AM Nov 19 with Eli's comment, and
+   Ana's "Sold, thanks all." on #p2 at 11:30 AM Nov 20). Cam's messages, in the page's zone:
+   #0 Nov 19 10:30 Ben: the stove post's address (certain #p3); #1 Nov 19 11:00 Dee: "My tent is up in the group" (Dee's
+   only post is Nov 17's rules: too early, no shared word); #2 Nov 20 7:20 Ana: "My tent is up in the group now"
+   (probably #p2, 20 min after it); #3 Ben and #4 Cy reply to #2; #5 7:40 Cy: "Ana's tent is up in the group" (Cy has
+   no post); #6 10:00 Ana asks you about the tent (a mention); #7 10:20 your reply to it; #8 Nov 21 9:00 Dee on the
+   stove; #9 Nov 21 10:00 Gus (in the chat only). The summary's one deal: Ana's tent (#2, #6, #7), sold at #7. */
+const LK_P3 = '2000000000000003';
+function lkMsgs() {
+  const L = [];
+  const add = (d, hm, f, fn, b, o = {}) => {
+    const [h, mi] = hm.split(':').map(Number);
+    const wd = DOW[new Date(d + 'T12:00:00Z').getUTCDay()];
+    const t = wd + ' ' + (h % 12 || 12) + ':' + String(mi).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+    L.push(Object.assign({ i: L.length, t, d, f, b, m: 'mid.lk' + L.length }, fn ? { fn } : {}, o));
+  };
+  add('2026-11-19', '10:30', 'Ben', 'Ben Brooks', 'Stove is here', {
+    l: ['https://www.facebook.com/groups/' + GA_G + '/posts/' + LK_P3 + '/'],
+  });
+  add('2026-11-19', '11:00', 'Dee', 'Dee Diaz', 'My tent is up in the group');
+  add('2026-11-20', '7:20', 'Ana', 'Ana Alvarez', 'My tent is up in the group now');
+  add('2026-11-20', '7:25', 'Ben', 'Ben Brooks', 'Nice, what size?', { r: 'Ana', pi: 2 });
+  add('2026-11-20', '7:30', 'Cy', 'Cy Chen', 'Looks great', { r: 'Ana', pi: 2 });
+  add('2026-11-20', '7:40', 'Cy', 'Cy Chen', "Ana's tent is up in the group");
+  add('2026-11-20', '10:00', 'Ana', 'Ana Alvarez', 'Sam, still want the tent?');
+  add('2026-11-20', '10:20', 'You', null, 'Yes please', { r: 'Ana', pi: 6 });
+  add('2026-11-21', '9:00', 'Dee', 'Dee Diaz', 'Anyone tried that stove?');
+  add('2026-11-21', '10:00', 'Gus', 'Gus Gray', 'Morning all');
+  return L;
+}
+function lkSeed(link = 'cam') {
+  const msgs = lkMsgs();
+  const docs = gaDocs();
+  const pc = docs['gear_comments/p2000000000000002'];
+  pc.comments.push(
+    Object.assign(
+      {},
+      pc.comments[1],
+      { c: 4, cid: '4000000000000204', rid: null, parent: null },
+      {
+        text: 'Sold, thanks all.',
+        age: '30m',
+      },
+    ),
+  );
+  return {
+    chats: { gear: Object.assign({}, GA_ENTRY, link ? { chat: link } : {}) },
+    extra: Object.assign(docs, {
+      ['gear_posts/p' + LK_P3]: {
+        pid: LK_P3,
+        n: 3,
+        who: 'Ben Brooks',
+        age: '26h',
+        at: '2026-11-19T18:00:00.000Z',
+        text: 'WTS camp stove, 45 shipped.',
+        photos: [],
+        count: 1,
+        firstSeen: GA_READ,
+        lastAct: '2026-11-19T19:00:00.000Z',
+      },
+      ['gear_comments/p' + LK_P3]: {
+        pid: LK_P3,
+        comments: [
+          {
+            c: 1,
+            cid: '4000000000000301',
+            rid: null,
+            parent: null,
+            who: 'Eli Ito',
+            uid: '9102',
+            text: 'Is the stove still around?',
+            age: '25h',
+            at: '2026-11-19T19:00:00.000Z',
+            firstSeen: GA_READ,
+          },
+        ],
+      },
+      'gear_posts/p2000000000000002': Object.assign({}, docs['gear_posts/p2000000000000002'], { n: 2 }),
+      'meta/chat-gear': Object.assign({}, docs['meta/chat-gear'], { nextP: 4 }),
+      'cam_chunks/c0000': { start: 0, msgs },
+      'cam_summary/current': {
+        version: 2,
+        convs: [],
+        open: [],
+        answered: [],
+        deals: [
+          {
+            kind: 'sale',
+            tag: 'Tent',
+            conv: 'c1',
+            text: 'Ana sells her tent',
+            refs: [[2], [6], [7]],
+            status: 'sold',
+            statusAt: 7,
+          },
+        ],
+        mentions: [{ note: 'Ana asked you about the tent', refs: [[6]] }],
+        toI: 9,
+      },
+      'cam_threading/current': { convs: [], links: {}, to: 9, note: '' },
+      'meta/chat-cam': {
+        lastI: 9,
+        anchorMids: msgs.slice(-3).map(m => m.m),
+        caughtUpI: -1,
+        markerMode: 'caught',
+        lastRefresh: 'Sat 10:05 AM',
+        key: 'cam',
+        thread: MC_THREAD.cam,
+        chatUrl: MC_URL('cam'),
+        threadName: 'Camera Club',
+        shortName: 'Camera',
+        chunkSize: 82,
+      },
+    }),
+  };
+}
+/* the With section as text: each part's lines (li, or p) */
+const lkRead = p =>
+  p.evaluate(() => {
+    const s = document.querySelector('#st-body [data-sec="linked"]');
+    if (!s) return null;
+    const t = e => e.textContent.replace(/\s+/g, ' ').trim();
+    const part = k => {
+      const d = s.querySelector('[data-lk="' + k + '"]');
+      return d ? [...d.querySelectorAll('li, p, .st-tile')].map(t) : null;
+    };
+    return {
+      h: t(s.querySelector('h3')),
+      with: s.dataset.with,
+      bars: [...s.querySelectorAll('.st-chart[data-chart="lktime"] g[data-k]')].map(g => g.dataset.v).join(','),
+      heat: [...s.querySelectorAll('.st-chart')].map(c => c.dataset.chart).join(','),
+      people: part('people'),
+      c2g: part('chat2group'),
+      deals: part('deals'),
+      you: part('you'),
+      topics: part('topics'),
+    };
+  });
+async function groupsLinked() {
+  let p = await mcOpen(gaSeed(lkSeed()));
+  await mcPick(p, 'cam');
+  await until(p, () => S.msgs.length === 10);
+  await p.click('nav a[data-tab="messages"]');
+  const under = await until(p, () => {
+    const ls = [...document.querySelectorAll('#msgs .lk-under')];
+    return ls.length === 2 ? ls.map(l => l.closest('.msg').id + ':' + l.textContent.replace(/\s+/g, ' ').trim()) : null;
+  });
+  ok(
+    JSON.stringify(under) ===
+      JSON.stringify([
+        "m0:In the group: Gear #p3 · Ben Brooks's post “WTS camp stove, 45 shipped.”",
+        "m2:Probably: Gear #p2 · Ana Alvarez's post “Selling a 2-person tent, used twice. 120 or best offer.”",
+      ]),
+    "G2-05: under a chat message, the linked group's post it goes with: certain from the post's address (#0), \"Probably:\" from the sender, the time and a shared word (#2); none for Dee's (her post is days earlier) or Cy's (no post of his) " +
+      JSON.stringify(under),
+  );
+  const rules = await p.evaluate(() => {
+    const g = { name: 'Gear Swap', tag: 'Gear' };
+    const say = [
+      'tent up in the group',
+      'Posted it in the FB group!',
+      'check the group',
+      "it's on Gear Swap now",
+      'grouping these',
+      'the group chat is quiet',
+      'my group of friends',
+      'I said so in the group chat',
+    ].map(t => lkSayRe(g).test(t));
+    const pid = [
+      'https://www.facebook.com/groups/123/posts/456/',
+      'https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.facebook.com%2Fgroups%2F123%2Fpermalink%2F789%2F',
+      'https://www.facebook.com/permalink.php?story_fbid=321&id=9',
+      'https://example.com/posts/1',
+    ].map(lkPid);
+    const sold = ['Sold, thanks all.', 'SOLD', 'It is sold now', 'Group rules: mark sold items.', 'not sold yet'].map(
+      lkSold,
+    );
+    return { say, pid, sold, words: [...lkWords('Selling my Tents, posted in the group: 2 tents!')] };
+  });
+  ok(
+    JSON.stringify(rules) ===
+      JSON.stringify({
+        say: [true, true, true, true, false, false, false, false],
+        pid: ['456', '789', '321', null],
+        sold: [true, true, true, false, false],
+        words: ['tent'],
+      }),
+    'G2c: what counts as saying it is in the group (also by the group\'s name), a post\'s address (wrapped by Messenger too), "sold", and the words matched (no common or selling words, plurals folded) ' +
+      JSON.stringify(rules),
+  );
+  await flashReset(p);
+  await p.click('#m2 .lk-under .cite');
+  const opened = await until(
+    p,
+    () => CUR.key === 'gear' && location.hash === '#posts' && !!document.querySelector('#p2[data-flashed]'),
+  );
+  ok(!!opened, 'G2-05: "Probably: Gear #p2" under the chat message opens Gear Swap\'s Posts at #p2');
+  await mcPick(p, 'cam');
+  await until(p, () => CUR.key === 'cam' && S.msgs.length === 10);
+  await p.click('nav a[data-tab="stats"]');
+  await gsCustom(p, '2026-11-17', '2026-11-21');
+  const ready = () =>
+    until(
+      p,
+      () =>
+        /^Nov 17/.test(document.getElementById('st-span').textContent) &&
+        !!document.querySelector('#st-body [data-sec="linked"] [data-lk="topics"]'),
+    );
+  await ready();
+  const C = await lkRead(p);
+  const showLabels = () =>
+    p.evaluate(() =>
+      [...document.querySelectorAll('#v-stats .st-show label')]
+        .filter(l => l.offsetParent)
+        .map(l => l.textContent.trim()),
+    );
+  const cShow = await showLabels();
+  const people = [
+    'Ana Alvarez both 2 Cam messages · 1 post · 2 comments Cam #6 Gear #p2/c4',
+    'Ben Brooks both 2 Cam messages · 1 post · 2 comments Cam #3 Gear #p2/c1',
+    'Dee Diaz both 2 Cam messages · 1 post · 1 comment Cam #8 Gear #p1/c2',
+    'Cy Chen both 2 Cam messages · 0 posts · 1 comment Cam #5 Gear #p2/c3',
+    'You both 1 Cam message · 0 posts · 1 comment Cam #7 Gear #p1/c3',
+    'Eli Ito Gear only 0 Cam messages · 0 posts · 1 comment Gear #p3/c1',
+    'Gus Gray Cam only 1 Cam message · 0 posts · 0 comments Cam #9',
+    "5 people wrote in both. Cam's members (everyone with a stored message there, you too) wrote 87.5% of Gear's comments (7 of 8).",
+    "Each row opens that person's newest message and post or comment in this span.",
+  ];
+  ok(
+    C.h === 'With Gear Swap' &&
+      C.with === 'gear' &&
+      C.bars === '1,1,6,11,2' &&
+      C.heat === 'lktime,lkheat-chat,lkheat-group' &&
+      JSON.stringify(cShow.slice(-1)) === '["With Gear Swap"]',
+    "G2c: a linked chat's Stats ends with “With Gear Swap” (and its switch under Show): one timeline of Cam's messages and Gear's posts and comments per day, stacked, and a weekday-by-hour map for each " +
+      JSON.stringify({ h: C.h, bars: C.bars, heat: C.heat, cShow }),
+  );
+  ok(
+    JSON.stringify(C.people) === JSON.stringify(people),
+    'G2-05: people in both, matched by full name ("both", "Cam only", "Gear only"), each opening their newest message and post or comment, and the share of Gear\'s comments by Cam\'s members ' +
+      JSON.stringify(C.people),
+  );
+  const c2g = [
+    "2 Gear posts named in Cam: 1 certain (the post's address), 1 probably.",
+    'Typical gap from the post to the message: 30 min after it (certain, 1 link); 20 min after it (probably, 1 link). Only posts known to the hour count here.',
+    'Gear #p2 Ana Alvarez: Selling a 2-person tent, used twice. 120 or best offer. named in Cam #2 (probably) · 2 replies to it in Cam',
+    'Gear #p3 Ben Brooks: WTS camp stove, 45 shipped. named in Cam #0 · 0 replies to it in Cam',
+  ];
+  ok(
+    JSON.stringify(C.c2g) === JSON.stringify(c2g),
+    "G2-07: chat to group: Gear posts named in Cam, certain and probably apart, the typical gap for each, and the chat's replies to each " +
+      JSON.stringify(C.c2g),
+  );
+  const deals = [
+    'Ana Alvarez: 1 deal in Cam · 1 sold in the chat, posted to sold 3 h · 1 post in Gear · 1 marked sold in Gear (in its comments) · 1 deal linked to a Gear post (0 certain, 1 probably) Cam #2 Gear #p2',
+    'Ben Brooks: 0 deals in Cam · 1 post in Gear',
+    'Dee Diaz: 0 deals in Cam · 1 post in Gear',
+    "Deals are Cam's summary's, sold at the message that says so. A Gear post counts as marked sold when it, or its author's comment on it, says so (it starts “Sold”, says “is sold”, or has SOLD in capitals). Asked and agreed prices aren't stored, so they aren't shown.",
+  ];
+  ok(
+    JSON.stringify(C.deals) === JSON.stringify(deals),
+    'G2-06: deals per seller: the chat summary\'s (posted, sold, posted to sold), Gear posts and those marked sold in their comments (not Dee\'s rules, "mark sold items"), the link to the group counted as probably; no prices, as none are stored ' +
+      JSON.stringify(C.deals),
+  );
+  const you = [
+    '1your Cam messages',
+    '0your Gear posts',
+    '1your Gear comments',
+    '1 of 1to you in Cam, answered',
+    '0 of 1to you in Gear, answered',
+    '20 minyour reply in Cam, median of 1',
+    '—your reply in Gear, median',
+    'Not answered yet: Gear #p2/c3',
+  ];
+  const topics = ['tent 4 in Cam · 2 in Gear', 'stove 2 in Cam · 2 in Gear'];
+  ok(
+    JSON.stringify(C.you.slice(0, 8)) === JSON.stringify(you) &&
+      JSON.stringify(C.topics.slice(0, 2)) === JSON.stringify(topics) &&
+      C.topics.length === 3,
+    "G2c: you (your messages and comments; Ana's question answered by your reply in 20 min; Cy naming you in Gear not answered yet, opening it) and shared topics (words in two or more on each side, each side's count) " +
+      JSON.stringify({ you: C.you, topics: C.topics }),
+  );
+  /* a shared word opens its trend in this chat */
+  await p.click('#st-body [data-lk="topics"] li[data-word="tent"] button');
+  const trend = await until(p, () =>
+    document.getElementById('st-word').value === 'tent' &&
+    /mention/.test(document.querySelector('#st-words .note').textContent)
+      ? document.querySelector('#st-words .note').textContent
+      : null,
+  );
+  ok(!!trend, 'G2c: a shared topic opens Word trends for it (' + trend + ')');
+  /* the switch under Show hides and shows the section */
+  await p.click('#v-stats input[data-sec="linked"]');
+  const hid = await until(
+    p,
+    () =>
+      !document.querySelector('#st-body [data-sec="linked"]') && !!document.querySelector('#st-body [data-sec="top"]'),
+  );
+  await p.click('#v-stats input[data-sec="linked"]');
+  await ready();
+  ok(!!hid, 'G2c: Show › With Gear Swap switches the section off and on');
+  // the group's Stats: the same figures, "With Camera Club"
+  await mcPick(p, 'gear');
+  await until(p, () => S.gLoaded === 7);
+  await p.click('nav a[data-tab="stats"]');
+  await ready();
+  const G = await lkRead(p);
+  const gShow = await showLabels();
+  ok(
+    G.h === 'With Camera Club' &&
+      G.with === 'cam' &&
+      G.bars === C.bars &&
+      JSON.stringify([G.people, G.c2g, G.deals, G.you]) === JSON.stringify([C.people, C.c2g, C.deals, C.you]) &&
+      JSON.stringify(G.topics.slice(0, 2)) === JSON.stringify(topics) &&
+      !(await p.$('#st-body [data-lk="topics"] button')) &&
+      JSON.stringify(gShow) === '["Numbers","Volume","Top 10","Day and hour","With Camera Club"]',
+    "G2c: the group's Stats ends with “With Camera Club”, the same figures read from the chat's stored messages and summary " +
+      JSON.stringify({ h: G.h, gShow, people: G.people && G.people.length }),
+  );
+  /* the section sits within the page, and at phone width each chart is redrawn to fit (G2b's check) */
+  const over = () => p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  const fit = { wide: await over() };
+  await p.setViewportSize({ width: 390, height: 844 });
+  await until(p, () => {
+    const s = document.querySelector('#st-body [data-sec="linked"] .st-chart svg');
+    return s && s.viewBox.baseVal.width < 390;
+  });
+  fit.phone = await over();
+  ok(
+    fit.wide <= 0 && fit.phone <= 0,
+    'G2c PH: the With section fits the screen, at 1000 px and at 390 px ' + JSON.stringify(fit),
+  );
+  await p.setViewportSize({ width: 1000, height: 900 });
+  // unlinked in Settings: the section, its switch and the lines under messages go
+  await mcSettings(p);
+  await p.selectOption('#with-gear', '');
+  await until(p, () => !__rt.get('meta/chat').chats.gear.chat);
+  await p.keyboard.press('Escape');
+  await until(p, () => !document.querySelector('#st-body [data-sec="linked"]'));
+  await mcPick(p, 'cam');
+  await until(p, () => CUR.key === 'cam' && S.msgs.length === 10);
+  await p.click('nav a[data-tab="messages"]');
+  await until(p, () => !!document.getElementById('m2'));
+  const unl = { under: await p.$$eval('#msgs .lk-under', x => x.length) };
+  await p.click('nav a[data-tab="stats"]');
+  await until(p, () => !!document.querySelector('#st-body [data-sec="top"]'));
+  unl.sec = await p.$$eval('#st-body [data-sec="linked"]', x => x.length);
+  unl.show = await showLabels();
+  ok(
+    unl.under === 0 && unl.sec === 0 && !unl.show.some(l => /^With/.test(l)),
+    'G2c: once the group is unlinked in Settings, neither Stats has a With section or switch and no message has a link under it ' +
+      JSON.stringify(unl),
+  );
+  ok(p.errors.length === 0, 'G2c linked stats: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  // a page of chats only: no With section, no switch, nothing under messages
+  p = await mcOpen({});
+  await mcPick(p, 'cam');
+  await until(p, () => CUR.key === 'cam' && S.msgs.length === 8);
+  await p.click('nav a[data-tab="messages"]');
+  await until(p, () => !!document.getElementById('m7'));
+  const plain = { under: await p.$$eval('#msgs .lk-under', x => x.length) };
+  await p.click('nav a[data-tab="stats"]');
+  await until(p, () => !!document.querySelector('#st-body [data-sec="top"]'));
+  plain.sec = await p.$$eval('#st-body [data-sec="linked"]', x => x.length);
+  plain.show = await showLabels();
+  ok(
+    plain.under === 0 &&
+      plain.sec === 0 &&
+      JSON.stringify(plain.show) ===
+        '["Numbers","Volume","Top 10","Day and hour","Conversations","Deals","People","Engagement","Word trends"]',
+    'G2c: a page of chats only is as before (no With section or switch, nothing under messages) ' +
+      JSON.stringify(plain),
+  );
+  ok(p.errors.length === 0, 'G2c chats only: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 const SECTIONS = {
+  groupsLinked,
   reactions,
   lateReactions,
   settledMentions,

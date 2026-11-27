@@ -2639,8 +2639,40 @@
   #v-stats.xall .st-show,
   #v-stats.xall #st-reset,
   #v-stats.grp .st-show .st-chat,
-  #v-stats.grp #st-reset {
+  #v-stats.grp #st-reset,
+  #v-stats:not(.haslink) .st-show .st-link {
     display: none;
+  }
+  /* G2c: a chat and its group, linked: the With section's parts, and a link under a chat message */
+  .lk-part {
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+    margin-top: 10px;
+    overflow-wrap: anywhere;
+  }
+  .lk-part ul {
+    margin: 4px 0;
+    padding-left: 20px;
+  }
+  .lk-part li {
+    margin: 3px 0;
+  }
+  .lk-heat {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+    gap: 8px 16px;
+  }
+  /* a chart in a grid cell is drawn to the cell's width, so the cell must not grow to the chart's */
+  .lk-heat > * {
+    min-width: 0;
+  }
+  .lk-h {
+    margin: 4px 0 2px;
+    font-size: 0.85rem;
+  }
+  .lk-under {
+    margin-top: 2px;
+    overflow-wrap: anywhere;
   }
   /* a group's By day (G2b): a block per post, its comments that day under it */
   .gday-post {
@@ -2923,6 +2955,9 @@
         <label class="st-chat"><input type="checkbox" data-sec="people" checked /> People</label>
         <label class="st-chat"><input type="checkbox" data-sec="engage" checked /> Engagement</label>
         <label class="st-chat"><input type="checkbox" data-sec="words" checked /> Word trends</label>
+        <label class="st-link"
+          ><input type="checkbox" data-sec="linked" checked /> With <span id="st-link-name">its group</span></label
+        >
       </div>
     </div>
     <div class="st-body" id="st-body"></div>
@@ -3092,7 +3127,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "7.7";
+  const PAGE_VERSION = "7.8";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -6861,6 +6896,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       document.querySelectorAll(".msg.tap").forEach(x => x.classList.remove("tap"));
       r.classList.toggle("tap", on);
     });
+    /* G2c: a post in the linked group this message goes with ("Probably: Gear #p12 · …") */
+    const under = !o.ctx && lkUnder(m);
+    if (under) c.insertBefore(under, sub);
     if (!o.ctx && composingAt(m.i, "row")) c.append(composer(m, "row"));
     r.append(c);
     return r;
@@ -10117,6 +10155,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
      beside a chat's messages and listed by day, each labeled by its tag; with groups on the page, All chats' Show
      (All, Chats, Groups) filters them as it does the cards. */
   var XD = { ctxs: null, at: 0, busy: null, v: 0, n: 0 };
+  /* G2c: a linked chat's or group's other side, read for its Stats and Messages (lkCtx), and the links worked out */
+  var LKS = { m: new Map(), v: 0, live: null, links: new Map() };
   const XD_AGE = 60000;
   function xCtxs() {
     const live = xAskChats();
@@ -15727,8 +15767,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     return box;
   }
   /* The weekday-by-hour heatmap: one hue, stronger where more was posted (none: the faint line colour) */
-  function stHeatChart(A, label, unit = n => plural(n, "message")) {
-    const { box, tip, say } = stBox("heat", label + " Arrow keys step through the hours.");
+  /* G2c: name tells two maps on one tab apart */
+  function stHeatChart(A, label, unit = n => plural(n, "message"), name = "heat") {
+    const { box, tip, say } = stBox(name, label + " Arrow keys step through the hours.");
     const max = Math.max(1, ...A.wk);
     const tipOf = (d, h) => [ST_DOW[d] + ", " + stHourSpan(h), unit(A.wk[d * 24 + h])];
     let cd = -1,
@@ -16510,7 +16551,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     if (!st.hide.has("heat")) body.append(stHeatSec(A));
     const X = stCtx(B, sp.lo, sp.hi, -1, "main", sp);
     stPart2(body, X);
-    if (!body.children.length && st.hide.has("words"))
+    if (!body.children.length && st.hide.has("words") && (st.hide.has("linked") || !lkPairs().length))
       body.append(el("p", "empty", "Every section is switched off. Tick one under Show."));
     return X;
   }
@@ -16751,13 +16792,20 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const st = S.stats;
     const key = [S.msgs, PEOPLE, S.photos, S.gifs, S.threading, S.summary, S.meta, S.digestsIn, st.v, stToday()];
     key.push(S.view === "all", XD && XD.v, S.chats);
-    key.push(CUR, S.gposts, S.gcmts, S.gLoaded, S.allShow);
+    key.push(CUR, S.gposts, S.gcmts, S.gLoaded, S.allShow, LKS.v);
     if (!force && renderStats.k && key.every((x, j) => x === renderStats.k[j])) return;
     renderStats.k = key;
     v.classList.toggle("xall", S.view === "all");
     /* G2b: a group's Stats has the timeframes and the first four sections; its header names posts and comments */
     const grp = S.view !== "all" && isGroup(CUR);
     v.classList.toggle("grp", grp);
+    /* G2c: a linked chat and group each get "With <the other>" (and its switch under Show) */
+    const pairs = lkPairs();
+    v.classList.toggle("haslink", pairs.length > 0);
+    if (pairs.length) {
+      const nm = pairs.length > 1 ? "its groups" : isGroup(CUR) ? pairs[0].c.name : pairs[0].g.name;
+      if ($("#st-link-name").textContent !== nm) $("#st-link-name").textContent = nm;
+    }
     const hp = v.querySelector(".sec-head p");
     if (hp) {
       if (renderStats.head == null) renderStats.head = hp.textContent;
@@ -16814,7 +16862,10 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     if (st.day && !isDay(st.day)) st.day = null;
     if (st.person != null) st.ctx = stPersonView(frag, B, sp);
     else if (st.day) st.ctx = stDayView(frag, B, sp);
-    else st.ctx = stMain(frag, B, sp);
+    else {
+      st.ctx = stMain(frag, B, sp);
+      if (!st.hide.has("linked")) pairs.forEach(pr => frag.append(lkSec(pr, sp.lo, sp.hi)));
+    }
     body.insertBefore(frag, stWordsSec);
     stWordsFill(false);
     body.querySelectorAll(".st-chart").forEach(c => c._draw());
@@ -17080,7 +17131,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         " counted.";
     stSpanLine(line, false);
     const h = S.stats.hide;
-    if (["tiles", "volume", "top", "heat"].every(k => h.has(k)))
+    const pairs = lkPairs();
+    if (["tiles", "volume", "top", "heat"].concat(pairs.length ? ["linked"] : []).every(k => h.has(k)))
       add(el("p", "empty", "Every section is switched off. Tick one under Show."));
     if (!h.has("tiles")) add(gNumbers(A));
     if (!h.has("volume")) add(gVolume(A, F));
@@ -17097,6 +17149,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
           c => stNum(c) + (c === 1 ? " post or comment" : " posts and comments"),
         ),
       );
+    if (!h.has("linked")) pairs.forEach(pr => add(lkSec(pr, F.lo, F.hi)));
     body.querySelectorAll(".st-chart").forEach(c => c._draw());
     stW = body.clientWidth;
   }
@@ -17206,6 +17259,715 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       };
       box.append(more);
     }
+  }
+
+  /* ---------- a chat and its group, linked (F25 G2c) ----------
+     A group's `chat` (meta/chat.chats.KEY.chat, set in Add a group or its Settings card) links it to a chat. Then:
+     - Links from a chat message to a group post, worked out on the page with no Claude call (lkLinks). Certain: the
+       message carries the post's address (…/posts/<id> or …/permalink/<id>, a stored post's pid). Probably: the
+       message says it's in the group ("up in the group", "posted it in the group", "on <the group's name>"), its
+       sender's full name is the post's author's, the post's estimated time falls from 6 hours before the message to 1
+       hour after (a day later for a post known only by the day, whose age rounds down), and the post shares a word
+       with the message or the message it replies to (not a common or selling word). The most shared words wins, then
+       the nearest in time; with no word shared there's no link. Messages shows the link under the message.
+     - "With <other>" in the chat's Stats and in the group's Stats (lkSec): one timeline, people in both, chat to
+       group, deals, when each is busy, you, and shared topics, over the Stats timeframe. "Probably" links are always
+       counted apart from certain ones.
+     The other side is read once (lkCtx: a group's posts and comments, a chat's messages and summary) and again when
+     it's a minute old; the side on screen comes from memory. */
+  /* (LKS, the cache, is declared with XD, above: Stats reads it before this runs) */
+  function lkGroupsOf(c) {
+    return isGroup(c) ? [] : S.chats.filter(g => isGroup(g) && isLive(g) && g.chat === c.key);
+  }
+  function lkChatOf(g) {
+    return (g && g.chat && S.chats.find(c => c.key === g.chat && !isGroup(c) && isLive(c))) || null;
+  }
+  /* the chat and group pairs the screen shows: a chat with each group linked to it, or a group with its chat */
+  function lkPairs() {
+    if (!CUR || S.view === "all") return [];
+    if (isGroup(CUR)) {
+      const c = lkChatOf(CUR);
+      return c ? [{ c, g: CUR }] : [];
+    }
+    return lkGroupsOf(CUR).map(g => ({ c: CUR, g }));
+  }
+  /* the chat on screen as a context like xLoadChat's, with its summary and outbox; kept until any of them changes */
+  function lkLive() {
+    const k = [CUR, S.msgs, S.byI, PEOPLE, S.threading, S.summary, S.outbox, S.caps];
+    if (!LKS.live || k.some((v, j) => v !== LKS.live.k[j]))
+      LKS.live = {
+        k,
+        x: {
+          c: CUR,
+          key: CUR.key,
+          msgs: S.msgs,
+          byI: S.byI,
+          P: PEOPLE,
+          threading: S.threading,
+          summary: S.summary,
+          outbox: S.outbox,
+          caps: S.caps,
+          daySums: S.daySums,
+          digests: S.digests,
+          live: true,
+        },
+      };
+    return LKS.live.x;
+  }
+  async function lkLoadChat(c) {
+    const db = chatDb(S.rawDb, c);
+    const [x, sm] = await Promise.all([
+      xLoadChat(c),
+      snapOnce(db.collection("summary")).then(
+        q => mergeSummary(collDocs(q)),
+        () => null,
+      ),
+    ]);
+    return Object.assign(x, { summary: sm, outbox: [] });
+  }
+  /* a chat's or group's context: the one on screen from memory, another read (null until it has been) */
+  function lkCtx(c) {
+    if (c.key === CUR.key) return isGroup(c) ? ((S.gLoaded & 3) === 3 ? gLive() : null) : lkLive();
+    let e = LKS.m.get(c.key);
+    if (S.rawDb && (!e || (!e.busy && Date.now() - e.at > XD_AGE))) {
+      if (!e) LKS.m.set(c.key, (e = { x: null, at: 0, busy: null }));
+      e.busy = (isGroup(c) ? xLoadGroup(c) : lkLoadChat(c))
+        .then(
+          x => (e.x = x),
+          err => (e.x = e.x || { c, key: c.key, err }),
+        )
+        .finally(() => {
+          e.at = Date.now();
+          e.busy = null;
+          LKS.v++;
+          renderStats();
+          lkPaint();
+        });
+    }
+    return e && e.x ? Object.assign(e.x, { c }) : null;
+  }
+  /* runs fn with chat x as the page's chat (its summary too) */
+  function lkIn(x, fn) {
+    if (x.live) return fn();
+    const keep = S.summary;
+    S.summary = x.summary || null;
+    try {
+      return inCtx(x, fn);
+    } finally {
+      S.summary = keep;
+    }
+  }
+  const lkEsc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  /* "up in the group", "posted it in the group", "check the group", "on Gear Swap" */
+  function lkSayRe(g) {
+    const names = [g.name, g.tag].filter(Boolean).map(s => lkEsc(String(s).toLowerCase()).replace(/\s+/g, "\\s+"));
+    const what = ["group"].concat(names).join("|");
+    return new RegExp(
+      "(?:^|[^\\p{L}\\p{N}])(?:in|on|to|into)\\s+(?:the\\s+|our\\s+|this\\s+|that\\s+)?(?:(?:fb|facebook)\\s+)?(?:" +
+        what +
+        ")(?![\\p{L}\\p{N}])(?!\\s+chat)|(?:^|[^\\p{L}])check\\s+(?:the\\s+)?group(?![\\p{L}])",
+      "iu",
+    );
+  }
+  /* the post id in a Facebook address (a Messenger link may wrap it in l.facebook.com/l.php?u=…) */
+  function lkPid(u) {
+    let s = String(u || "");
+    try {
+      s = decodeURIComponent(s);
+    } catch (e) {}
+    const m =
+      /facebook\.com\/groups\/[^/?#\s]+\/(?:posts|permalink)\/([\w-]+)/i.exec(s) ||
+      /facebook\.com\/[^?#\s]*[?&](?:story_fbid|multi_permalinks)=([\w-]+)/i.exec(s);
+    return m ? m[1] : null;
+  }
+  /* words not worth matching or listing: the common ones, and those every selling post or group mention has */
+  const LK_SKIP = new Set(
+    "group groups post posted posting posts check facebook up listed listing put sale sell selling sold seller wts wtb fs price obo offer offers pending available interested link here now today just also still thanks thank please yes".split(
+      " ",
+    ),
+  );
+  /* a text's words worth matching: lower case, 3 letters or more, a plural's s taken off; skip: more to leave out */
+  function lkWords(t, skip) {
+    const out = new Set();
+    String(t || "")
+      .toLowerCase()
+      .replace(/https?:\/\/\S+/g, " ")
+      .split(/[^\p{L}\p{N}]+/u)
+      .forEach(w => {
+        if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) w = w.slice(0, -1);
+        if (w.length < 3 || STOPW.has(w) || LK_SKIP.has(w) || (skip && skip.has(w))) return;
+        out.add(w);
+      });
+    return out;
+  }
+  /* each person's key across a chat and a group: "you", a full name in lower case, or null (no full name known) */
+  const lkKeyOf = pk => (pk === "Y" ? "you" : pk[0] === "F" ? pk.slice(1).trim().toLowerCase() : null);
+  const lkPKey = pk => lkKeyOf(pk) || "chat:" + pk;
+  const lkWho = it =>
+    it.who === "You"
+      ? "you"
+      : String(it.full || it.who)
+          .trim()
+          .toLowerCase();
+  const lkReplies = n => stNum(n) + (n === 1 ? " reply" : " replies");
+  /* The links from chat x's messages to group gx's posts, and each message's replies: {byI: Map(i -> {i, j, tm, it (the
+     post), ptm, sure}), kids: Map(i -> [j]) (the stored messages replying to i: their Messenger reply, else threading's
+     reply or answer link)}; kept until either side changes. In chat x's context. */
+  function lkLinks(x, gx) {
+    const ck = x.key + "|" + gx.key;
+    const old = LKS.links.get(ck);
+    if (old && old.msgs === x.msgs && old.items === gx.items && old.th === x.threading && old.P === x.P) return old;
+    const B = xBase(x),
+      GB = gStatBase(gx);
+    const ptm = new Map(GB.rows.map(r => [r.it, r.tm]));
+    const posts = gx.items.filter(it => !it.c);
+    const byPid = new Map(posts.map(it => [String(it.p.pid), it]));
+    const byWho = new Map();
+    posts.forEach(it => ptm.has(it) && (byWho.get(lkWho(it)) || byWho.set(lkWho(it), []).get(lkWho(it))).push(it));
+    const say = lkSayRe(gx.c);
+    const skip = lkWords([gx.c.name, gx.c.tag].join(" "));
+    const pw = new Map();
+    const byI = new Map(),
+      kids = new Map();
+    const L = (x.threading && x.threading.links) || {};
+    x.msgs.forEach((m, j) => {
+      const lk = L[m.i];
+      const par = Number.isInteger(m.pi)
+        ? m.pi
+        : Array.isArray(lk) && ST_RE.has(lk[1]) && Number.isInteger(lk[0])
+          ? lk[0]
+          : null;
+      if (par != null && par !== m.i) (kids.get(par) || kids.set(par, []).get(par)).push(j);
+      const tm = B.tm[j];
+      const urls = (Array.isArray(m.l) ? m.l : []).concat(String(m.b || "").match(/https?:\/\/\S+/g) || []);
+      for (const u of urls) {
+        const it = byPid.get(String(lkPid(u)));
+        if (it) return byI.set(m.i, { i: m.i, j, tm, it, ptm: ptm.has(it) ? ptm.get(it) : null, sure: true });
+      }
+      if (tm < 0 || !say.test(String(m.b || ""))) return;
+      const who = lkKeyOf(B.people[B.who[j]].key);
+      const mine = who && byWho.get(who);
+      if (!mine) return;
+      const up = Number.isInteger(m.pi) ? x.byI.get(m.pi) : null;
+      const words = lkWords((m.b || "") + " " + (m.q || (up && up.b) || ""), skip);
+      if (!words.size) return;
+      let best = null;
+      mine.forEach(it => {
+        const t = ptm.get(it);
+        if (t < tm - 360 || t > tm + 60 + (it.hr ? 0 : DAY_MIN)) return;
+        if (!pw.has(it)) pw.set(it, lkWords(it.text, skip));
+        const has = pw.get(it);
+        let n = 0;
+        words.forEach(w => has.has(w) && n++);
+        const dt = Math.abs(t - tm);
+        if (n && (!best || n > best.n || (n === best.n && dt < best.dt))) best = { n, dt, it, t };
+      });
+      if (best) byI.set(m.i, { i: m.i, j, tm, it: best.it, ptm: best.t, sure: false });
+    });
+    const out = { msgs: x.msgs, items: gx.items, th: x.threading, P: x.P, byI, kids };
+    LKS.links.set(ck, out);
+    return out;
+  }
+  /* "posted it in the group" under a chat message: "Probably: Gear #p12 · Ana's post “…”" (certain: "In the group:") */
+  function lkLine(L, g) {
+    const p = el("div", "lk-under note" + (L.sure ? " sure" : ""));
+    p.dataset.post = L.it.ref;
+    const whose = L.it.who === "You" ? "your post" : L.it.who + "'s post";
+    p.append(L.sure ? "In the group: " : "Probably: ", xCite(g, L.it.ref));
+    p.append(" · " + whose + " “" + trunc(oneLine(L.it.text), 80) + "”");
+    return p;
+  }
+  /* the line under message m in Messages, when a linked group's post goes with it (null while the group is read) */
+  function lkUnder(m) {
+    if (!CUR || isGroup(CUR)) return null;
+    for (const g of lkGroupsOf(CUR)) {
+      const gx = lkCtx(g);
+      if (!gx || gx.err || !gx.items) continue;
+      const L = lkLinks(lkLive(), gx).byI.get(m.i);
+      if (L) return lkLine(L, g);
+    }
+    return null;
+  }
+  /* adds the lines to Messages once the linked group has been read */
+  function lkPaint() {
+    if (!CUR || isGroup(CUR) || !lkGroupsOf(CUR).length) return;
+    document.querySelectorAll("#msgs .msg[id^='m']").forEach(r => {
+      if (r.querySelector(".lk-under")) return;
+      const m = S.byI.get(+r.id.slice(1));
+      const x = m && lkUnder(m);
+      const c = x && r.querySelector(":scope > .c");
+      if (c) c.insertBefore(x, c.querySelector(":scope > .sub"));
+    });
+  }
+  /* a part of the section: a small heading and what follows */
+  function lkPart(k, title, ...kids) {
+    const d = el("div", "lk-part");
+    d.dataset.lk = k;
+    d.append(el("h4", "st-h", title), ...kids.filter(Boolean));
+    return d;
+  }
+  const lkP = (...xs) => {
+    const p = el("p", "note");
+    p.append(...xs);
+    return p;
+  };
+  /* "With <the other>": the section a chat's or group's Stats ends with for each linked pair */
+  function lkSec(pr, lo, hi) {
+    const { c, g } = pr;
+    const other = isGroup(CUR) ? c : g;
+    const s = stSec(
+      "linked",
+      "With " + other.name,
+      c.name +
+        " (chat) and " +
+        g.name +
+        " (group) together over this timeframe, counted on this page. People are matched by full name. The group's times come from Facebook's ages (“3h”, “2d”), so they're estimates. “Probably” links (a message saying it's in the group, by the post's author, near its time, sharing a word with it) are counted apart from certain ones (the post's address in the message).",
+    );
+    s.dataset.with = other.key;
+    const x = lkCtx(c),
+      gx = lkCtx(g);
+    if (!x || !gx) {
+      s.append(el("p", "note", S.rawDb ? "Reading " + other.name + "…" : other.name + " can't load in this view."));
+      return s;
+    }
+    if (x.err || gx.err) {
+      s.append(el("p", "note", "Couldn't read " + other.name + " just now."));
+      return s;
+    }
+    lkIn(x, () => lkParts(s, x, gx, lo, hi));
+    return s;
+  }
+  function lkParts(s, x, gx, lo, hi) {
+    const c = x.c,
+      g = gx.c;
+    const B = xBase(x),
+      A = statsAgg(B, lo, hi),
+      GB = gStatBase(gx),
+      GA = gAgg(GB, lo, hi);
+    const LN = lkLinks(x, gx);
+    const inSpan = v => v != null && v >= lo && v < hi;
+    const [ja, jb] = stJs(B, lo, hi);
+    const spanJs = [];
+    for (let j = ja; j < jb; j++) if (B.tm[j] >= lo && B.tm[j] < hi) spanJs.push(j);
+    s.append(
+      lkTimeline(c, g, A, GA, lo, hi),
+      lkPeople(c, g, B, A, GB, spanJs, lo, hi),
+      lkChatToGroup(c, g, LN, inSpan),
+      lkDeals(c, g, B, GB, gx, LN, inSpan),
+      lkHeat(c, g, A, GA),
+      lkYou(c, g, x, gx, B, A, GB, GA, LN, inSpan),
+      lkTopics(c, g, x, B, GB, spanJs, lo, hi),
+    );
+  }
+  /* one timeline: the chat's messages and the group's posts and comments per bar, stacked */
+  function lkTimeline(c, g, A, GA, lo, hi) {
+    const bk = A.bk,
+      n = bk.edges.length - 1;
+    const tot = k => A.bars[k] + GA.bp[k] + GA.bc[k];
+    let best = 0;
+    for (let k = 1; k < n; k++) if (tot(k) > tot(best)) best = k;
+    const parts = k => [
+      plural(A.bars[k], c.tag + " message"),
+      plural(GA.bp[k], g.tag + " post"),
+      plural(GA.bc[k], g.tag + " comment"),
+    ];
+    const cols = [
+      ["var(--c1)", c.tag + " messages"],
+      ["var(--c2)", g.tag + " posts"],
+      ["var(--c3)", g.tag + " comments"],
+    ];
+    const lg = el("ul", "st-legend");
+    cols.forEach(([col, t]) => {
+      const li = el("li");
+      const i = el("i");
+      i.style.background = col;
+      li.append(i, t);
+      lg.append(li);
+    });
+    const busiest = tot(best) ? "Busiest: " + stBarText(bk, best) + ", " + parts(best).join(", ") + "." : "";
+    const head = bk.kind[0].toUpperCase() + bk.kind.slice(1);
+    return lkPart(
+      "timeline",
+      "One timeline",
+      lg,
+      stBarChart({
+        name: "lktime",
+        n,
+        val: tot,
+        segs: k => [
+          ["var(--c1)", A.bars[k]],
+          ["var(--c2)", GA.bp[k]],
+          ["var(--c3)", GA.bc[k]],
+        ],
+        tip: k => [stBarText(bk, k)].concat(parts(k).map((t, x) => [cols[x][0], t])),
+        tick: k => stTick(bk, k),
+        strides: ST_STRIDES[bk.kind],
+        label:
+          c.tag +
+          " messages, " +
+          g.tag +
+          " posts and comments per " +
+          bk.kind +
+          ", " +
+          stSpanText(lo, hi) +
+          "." +
+          (busiest ? " " + busiest : ""),
+      }),
+      busiest ? lkP(busiest) : null,
+      stTable([head, c.tag + " messages", g.tag + " posts", g.tag + " comments"], () =>
+        Array.from({ length: n }, (_, k) => [stBarText(bk, k), stNum(A.bars[k]), stNum(GA.bp[k]), stNum(GA.bc[k])]),
+      ),
+    );
+  }
+  /* people in both, matched by full name: each one's messages, posts and comments, with their newest of each */
+  function lkPeople(c, g, B, A, GB, spanJs, lo, hi) {
+    const by = new Map();
+    const row = k =>
+      by.get(k) || by.set(k, { k, name: "", msgs: 0, posts: 0, cmts: 0, last: null, glast: null }).get(k);
+    const members = new Set();
+    B.people.forEach((p, id) => {
+      const k = lkPKey(p.key);
+      members.add(k);
+      if (!A.byP[id]) return;
+      const r = row(k);
+      r.msgs += A.byP[id];
+      r.name = r.name || stName(B, id);
+    });
+    spanJs.forEach(j => (by.get(lkPKey(B.people[B.who[j]].key)).last = S.msgs[j].i));
+    let gc = 0,
+      gcm = 0;
+    GB.rows.forEach(({ it, tm }) => {
+      if (tm < lo || tm >= hi) return;
+      const k = lkWho(it);
+      const r = row(k);
+      r.name = r.name || it.who;
+      if (it.c) r.cmts++;
+      else r.posts++;
+      r.glast = it.ref;
+      if (it.c) {
+        gc++;
+        if (members.has(k)) gcm++;
+      }
+    });
+    const tot = r => r.msgs + r.posts + r.cmts;
+    const rows = [...by.values()].sort((p, q) => tot(q) - tot(p) || p.name.localeCompare(q.name));
+    const ul = el("ul", "lk-people");
+    rows.slice(0, 15).forEach(r => {
+      const li = el("li");
+      li.dataset.who = r.k;
+      const both = r.msgs > 0 && r.posts + r.cmts > 0;
+      const badge = both ? "both" : r.msgs ? c.tag + " only" : g.tag + " only";
+      li.append(el("b", null, r.name), " ", el("span", "chip" + (both ? " open" : ""), badge), " ");
+      const n =
+        plural(r.msgs, c.tag + " message") + " · " + plural(r.posts, "post") + " · " + plural(r.cmts, "comment");
+      li.append(el("span", "note", n));
+      if (r.last != null) li.append(" ", xCite(c, r.last));
+      if (r.glast) li.append(" ", xCite(g, r.glast));
+      ul.append(li);
+    });
+    const nb = rows.filter(r => r.msgs > 0 && r.posts + r.cmts > 0).length;
+    const share = gc
+      ? c.tag +
+        "'s members (everyone with a stored message there, you too) wrote " +
+        stPct(gcm, gc) +
+        " of " +
+        g.tag +
+        "'s comments (" +
+        stNum(gcm) +
+        " of " +
+        stNum(gc) +
+        ")."
+      : "No " + g.tag + " comments in this span.";
+    return lkPart(
+      "people",
+      "People in both",
+      rows.length ? ul : el("p", "note", "Nobody wrote in either in this span."),
+      stMoreNote(rows.length - 15, "person", "people"),
+      lkP((nb === 1 ? "1 person" : stNum(nb) + " people") + " wrote in both. " + share),
+      rows.length ? lkP("Each row opens that person's newest message and post or comment in this span.") : null,
+    );
+  }
+  /* chat to group: posts named in the chat (certain and probably apart), the typical gap, and the chat's replies */
+  function lkChatToGroup(c, g, LN, inSpan) {
+    const ann = new Map();
+    LN.byI.forEach(L => {
+      if (!inSpan(L.tm)) return;
+      const a = ann.get(L.it) || ann.set(L.it, { it: L.it, sure: false, ls: [], re: new Set() }).get(L.it);
+      a.sure = a.sure || L.sure;
+      a.ls.push(L);
+      (LN.kids.get(L.i) || []).forEach(j => a.re.add(j));
+    });
+    const list = [...ann.values()].sort((p, q) => q.re.size - p.re.size || q.it.p.n - p.it.p.n);
+    const sure = list.filter(a => a.sure).length;
+    const gap = ok => {
+      const ds = [];
+      LN.byI.forEach(L => inSpan(L.tm) && L.sure === ok && L.it.hr && L.ptm != null && ds.push(L.tm - L.ptm));
+      const m = stMedian(ds);
+      if (m == null) return "none " + (ok ? "certain" : "probably");
+      const t = m < 0 ? stDur(-m) + " before the post" : stDur(m) + " after it";
+      return t + " (" + (ok ? "certain" : "probably") + ", " + plural(ds.length, "link") + ")";
+    };
+    const ul = el("ul", "lk-ann");
+    list.slice(0, 10).forEach(a => {
+      const li = el("li");
+      li.dataset.post = a.it.ref;
+      li.append(xCite(g, a.it.ref), " ", el("b", null, a.it.who), ": " + trunc(oneLine(a.it.text), 90) + " ");
+      const sub = el("span", "note");
+      sub.append("named in ");
+      a.ls.forEach((L, k) => {
+        if (k) sub.append(", ");
+        sub.append(xCite(c, L.i), L.sure ? "" : " (probably)");
+      });
+      sub.append(" · " + lkReplies(a.re.size) + " to " + (a.ls.length === 1 ? "it" : "them") + " in " + c.tag);
+      li.append(sub);
+      ul.append(li);
+    });
+    return lkPart(
+      "chat2group",
+      "Chat to group",
+      lkP(
+        plural(list.length, g.tag + " post") +
+          " named in " +
+          c.tag +
+          ": " +
+          stNum(sure) +
+          " certain (the post's address), " +
+          stNum(list.length - sure) +
+          " probably.",
+      ),
+      lkP(
+        "Typical gap from the post to the message: " +
+          gap(true) +
+          "; " +
+          gap(false) +
+          ". Only posts known to the hour count here.",
+      ),
+      list.length ? ul : null,
+      stMoreNote(list.length - 10, "post"),
+    );
+  }
+  /* a post or comment saying it's sold: it starts "Sold" (or "SPF", "Sale pending"), says "is sold", "been sold" or
+     "now sold", or has SOLD in capitals; never a rule like "mark sold items" */
+  const lkSold = t => {
+    const s = String(t || "");
+    return (
+      /^[^\p{L}\p{N}]*(?:sold|spf|sale pending)(?![\p{L}])/iu.test(s) ||
+      /(?:^|[^\p{L}])(?:is|been|now|it's|its)\s+sold(?![\p{L}])/iu.test(s) ||
+      /(?:^|[^\p{L}])SOLD(?![\p{L}])/u.test(s)
+    );
+  };
+  /* deals per seller: the chat summary's deals (posted, sold, posted to sold), the group's posts and those marked sold,
+     and the chat's deals linked to a group post (certain and probably apart) */
+  function lkDeals(c, g, B, GB, gx, LN, inSpan) {
+    const by = new Map();
+    const row = (k, name) => by.get(k) || by.set(k, { k, name, deals: [], sold: [], posts: [], gsold: [] }).get(k);
+    (S.summary ? stDealList(B) : []).forEach(d => {
+      if (d.seller < 0 || d.seller >= B.people.length) return;
+      const k = lkPKey(B.people[d.seller].key);
+      if (inSpan(d.t0)) row(k, stName(B, d.seller)).deals.push(d);
+      if (d.st === "sold" && inSpan(d.ts)) row(k, stName(B, d.seller)).sold.push(d);
+    });
+    GB.rows.forEach(({ it, tm }) => {
+      if (it.c || !inSpan(tm)) return;
+      const r = row(lkWho(it), it.who);
+      r.posts.push(it);
+      const said = lkSold(it.text)
+        ? "post"
+        : gx.items.some(y => y.post === it && y.c && y.who === it.who && lkSold(y.text))
+          ? "comments"
+          : null;
+      if (said) r.gsold.push({ it, said });
+    });
+    const linked = d => {
+      const ls = (Array.isArray(d.x.refs) ? d.x.refs : [])
+        .map(r => LN.byI.get(Array.isArray(r) ? r[0] : r))
+        .filter(Boolean);
+      return ls.length ? (ls.some(L => L.sure) ? "sure" : "probably") : null;
+    };
+    const size = r => r.deals.length + r.posts.length;
+    const rows = [...by.values()]
+      .filter(r => r.deals.length || r.sold.length || r.posts.length)
+      .sort((p, q) => size(q) - size(p) || p.name.localeCompare(q.name));
+    const ul = el("ul", "lk-deals");
+    rows.slice(0, 15).forEach(r => {
+      const li = el("li");
+      li.dataset.who = r.k;
+      li.append(el("b", null, r.name), ": ");
+      const bits = [plural(r.deals.length, "deal") + " in " + c.tag];
+      if (r.sold.length) {
+        const w = r.sold.filter(d => d.t0 != null).map(d => Math.max(0, d.ts - d.t0));
+        const m = stMedian(w);
+        const t = m == null ? "" : ", posted to sold " + stDur(m) + (w.length > 1 ? " (median)" : "");
+        bits.push(stNum(r.sold.length) + " sold in the chat" + t);
+      }
+      bits.push(plural(r.posts.length, "post") + " in " + g.tag);
+      if (r.gsold.length) {
+        const inC = r.gsold.filter(z => z.said === "comments").length;
+        const where =
+          inC === r.gsold.length ? "in its comments" : inC ? stNum(inC) + " in its comments" : "in the post";
+        bits.push(stNum(r.gsold.length) + " marked sold in " + g.tag + " (" + where + ")");
+      }
+      const lk = r.deals.map(linked);
+      const ns = lk.filter(v => v === "sure").length,
+        np = lk.filter(v => v === "probably").length;
+      if (ns + np)
+        bits.push(
+          plural(ns + np, "deal") +
+            " linked to a " +
+            g.tag +
+            " post (" +
+            stNum(ns) +
+            " certain, " +
+            stNum(np) +
+            " probably)",
+        );
+      li.append(bits.join(" · "));
+      r.deals.slice(0, 3).forEach(d => li.append(" ", xCite(c, d.i0)));
+      r.gsold.slice(0, 3).forEach(z => li.append(" ", xCite(g, z.it.ref)));
+      ul.append(li);
+    });
+    return lkPart(
+      "deals",
+      "Deals",
+      S.summary ? null : lkP("No summary for " + c.name + " yet: its deals show once a refresh has written one."),
+      rows.length ? ul : el("p", "note", "No deals or posts in this span."),
+      stMoreNote(rows.length - 15, "seller"),
+      lkP(
+        "Deals are " +
+          c.tag +
+          "'s summary's, sold at the message that says so. A " +
+          g.tag +
+          " post counts as marked sold when it, or its author's comment on it, says so (it starts “Sold”, says “is sold”, or has SOLD in capitals). Asked and agreed prices aren't stored, so they aren't shown.",
+      ),
+    );
+  }
+  /* when each place is busy: G2b's weekday-by-hour map for each */
+  function lkHeat(c, g, A, GA) {
+    const two = el("div", "lk-heat");
+    const one = (tag, chart) => {
+      const d = el("div");
+      d.append(el("h5", "lk-h", tag), chart);
+      two.append(d);
+    };
+    one(c.tag, stHeatChart(A, c.tag + " messages by weekday and hour.", undefined, "lkheat-chat"));
+    const unit = n => stNum(n) + (n === 1 ? " post or comment" : " posts and comments");
+    one(g.tag, stHeatChart(GA, g.tag + " posts and comments by weekday and hour.", unit, "lkheat-group"));
+    return lkPart(
+      "heat",
+      "When each is busy",
+      two,
+      lkP(
+        "In the page's time zone. " +
+          g.tag +
+          " counts only what's known to the hour (" +
+          stNum(GA.timed) +
+          " of " +
+          stNum(GA.total) +
+          "): Facebook gives anything a day old or more by the day.",
+      ),
+    );
+  }
+  /* you: your messages and comments, what was asked of you in each and whether you answered, and how fast */
+  function lkYou(c, g, x, gx, B, A, GB, GA, LN, inSpan) {
+    const ids = z => (z.refs || []).map(r => (Array.isArray(r) ? r[0] : r)).filter(Number.isInteger);
+    let ct = 0,
+      ca = 0;
+    const cw = [],
+      open = [];
+    ((S.summary && S.summary.mentions) || []).forEach(z => {
+      const i = ids(z)[0];
+      const j = i == null ? -1 : stJ(i);
+      if (j < 0 || !inSpan(B.tm[j])) return;
+      ct++;
+      const mine = (LN.kids.get(i) || []).filter(k => B.who[k] === B.you).sort((p, q) => p - q);
+      if (mine.length) cw.push(Math.max(0, B.tm[mine[0]] - B.tm[j]));
+      if (z.answered || mine.length || ownAnswered(i, x.byI, x.outbox)) ca++;
+      else open.push(xCite(c, i));
+    });
+    let gt = 0,
+      ga = 0;
+    const gw = [];
+    const me = gMe().map(n => new RegExp("(^|\\W)" + lkEsc(n) + "(\\W|$)"));
+    GB.rows.forEach(({ it, tm }) => {
+      if (!it.c || it.who === "You" || !inSpan(tm)) return;
+      const t = String(it.text || "").toLowerCase();
+      if (!(it.parent && it.parent.who === "You") && !me.some(r => r.test(t))) return;
+      gt++;
+      const ans = gx.items.find(y => y.post === it.post && y.c && y.who === "You" && y.c.c > it.c.c);
+      if (!ans) return open.push(xCite(g, it.ref));
+      ga++;
+      if (ans.hr && it.hr) gw.push(Math.max(0, Math.round((ans.ms - it.ms) / 60000)));
+    });
+    const med = w => (w.length ? stDur(stMedian(w)) : "—");
+    const of = w => ", median" + (w.length ? " of " + w.length : "");
+    const left = el("p", "note");
+    if (open.length) {
+      left.append("Not answered yet:");
+      open.slice(0, 10).forEach(b => left.append(" ", b));
+    }
+    return lkPart(
+      "you",
+      "You",
+      stTiles([
+        ["msgs", B.you >= 0 ? A.byP[B.you] : 0, "your " + c.tag + " messages"],
+        ["posts", GA.you.posts, "your " + g.tag + " posts"],
+        ["cmts", GA.you.cmts, "your " + g.tag + " comments"],
+        ["casked", S.summary ? ca + " of " + ct : "—", "to you in " + c.tag + ", answered"],
+        ["gasked", ga + " of " + gt, "to you in " + g.tag + ", answered"],
+        ["cwait", med(cw), "your reply in " + c.tag + of(cw)],
+        ["gwait", med(gw), "your reply in " + g.tag + of(gw)],
+      ]),
+      open.length ? left : null,
+      lkP(
+        "To you in " +
+          c.tag +
+          ": the summary's mentions of you, answered by your reply, your yes or no reaction, or the summary; the reply time runs to your reply. In " +
+          g.tag +
+          ": comments replying to yours or naming you, answered when you commented on that post after; a reply time only when both are known to the hour.",
+      ),
+    );
+  }
+  /* shared topics: words in at least two messages and two posts or comments, with each side's count */
+  function lkTopics(c, g, x, B, GB, spanJs, lo, hi) {
+    const skip = lkWords([c.name, c.tag, g.name, g.tag].join(" "));
+    const cn = new Map(),
+      gn = new Map();
+    const count = (m, t) => lkWords(t, skip).forEach(w => !/^\d+$/.test(w) && m.set(w, (m.get(w) || 0) + 1));
+    spanJs.forEach(j => count(cn, x.msgs[j].b));
+    GB.rows.forEach(({ it, tm }) => tm >= lo && tm < hi && count(gn, it.text));
+    const least = t => Math.min(t.n, t.g);
+    const both = [...cn]
+      .filter(([w, n]) => n >= 2 && (gn.get(w) || 0) >= 2)
+      .map(([w, n]) => ({ w, n, g: gn.get(w) }))
+      .sort((p, q) => least(q) - least(p) || q.n + q.g - (p.n + p.g) || p.w.localeCompare(q.w))
+      .slice(0, 12);
+    const ul = el("ul", "lk-words");
+    both.forEach(t => {
+      const li = el("li");
+      li.dataset.word = t.w;
+      let w = el("b", null, t.w);
+      if (!isGroup(CUR)) {
+        w = el("button", "link", t.w);
+        w.type = "button";
+        w.title = "Show “" + t.w + "” in Word trends";
+        w.onclick = () => {
+          stWordIn.value = t.w;
+          stWordApply();
+          stWordsSec.scrollIntoView({ block: "start" });
+        };
+      }
+      li.append(w, " " + stNum(t.n) + " in " + c.tag + " · " + stNum(t.g) + " in " + g.tag);
+      ul.append(li);
+    });
+    return lkPart(
+      "topics",
+      "Shared topics",
+      both.length ? ul : el("p", "note", "No word came up twice in both in this span."),
+      lkP(
+        "Words in at least two messages and two posts or comments, each counted once per message, post or comment, leaving out common words and those every sale or group mention has." +
+          (isGroup(CUR) ? "" : " Tap a word for its trend in this chat."),
+      ),
+    );
   }
 
   /* ---------- several chats (F1, stage A) ----------
