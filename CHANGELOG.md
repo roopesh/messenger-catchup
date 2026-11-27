@@ -2,6 +2,15 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.60.2] - 2026-11-27
+**A refresh never overwrites the page's refresh phrase** (B73, seen on the owner's page Nov 27). PATCH. No page or helper change.
+
+### Fixed
+- The owner's page-wide `refreshPhrase` had become "refresh pa", their new group's phrase. Nothing on the page writes that field, so a run wrote it, most likely the one that first read the group. That's why All chats kept saying "refresh pa" after B71's page fix. `references/chats.md` now says a refresh, or adding a chat or group, never writes a page-wide field: only setup sets `refreshPhrase`, and an added chat's "refresh <name>" is never stored. The owner's page was set back to their phrase ("refresh") with their OK.
+
+### Tests
+- Python (TestRefreshPhraseGuard): chats.md carries the rule.
+
 ## [1.60.1] - 2026-11-27
 **A group's first read keeps what it read** (B72, #103). PATCH. Helper 4.2; page 7.2 (only its embedded copy of the helper changes).
 
