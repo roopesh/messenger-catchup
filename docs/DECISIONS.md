@@ -60,6 +60,7 @@ Each entry has what was decided, why, and what was rejected.
 | Optional but recommended | Works without it (Claude injects the same code each run) but is faster, and jump links land exactly | Required install |
 | Event bridge plus `sessionStorage` results; start, then poll in calls ≤ 25 s | The tool's JS call times out at 45 s | One long call |
 | Generic helper uses new names (`mc-*`) | Can run beside the old `cc-*` helper without clashing | Reusing the old names |
+| Late reactions (B69, the owner's choice, Nov 26): each refresh reads reactions again on stored messages back to the catch-up marker (400 messages, 60 s, newest first) and on the open questions and Needs you messages of the last 3 days found by id, with who reacted (20, 45 s); the page updates `x`/`xw` in place | A 👍 the owner gives a question after it was stored never reached the store, so Ask and the build read it as open. A run with nothing new pastes only when the helper's digest of the reactions differs from the last one the page stored (`rxSum`), so quiet hours don't open the page | A: only the screen or so before the anchor (minutes-old questions only); B alone (a scroll per message, no wider recheck); pasting the recheck on every run with nothing new |
 
 ## Outbox (posting replies)
 | Decision | Why |

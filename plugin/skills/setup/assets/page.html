@@ -3052,7 +3052,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "7.0";
+  const PAGE_VERSION = "7.1";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -12895,6 +12895,75 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
     const a = await claude.use("assets");
     if (a) packUsage(a, false);
   });
+  /* B69 (helper 4.1): cap.rx, the reactions the helper read again on stored messages, [{m, x?, xw?}] by Messenger id
+     (no x: none now). Kept: an entry with a string m that names a stored message (#lastI or older), an x that is a
+     short string, an xw of the capture's shape; anything else is left out. */
+  function rxEntries(cap, lastI) {
+    if (!Array.isArray(cap.rx) || cap.lab) return [];
+    const byM = new Map(S.msgs.map(m => [m.m, m.i]));
+    const seen = new Set();
+    const out = [];
+    for (const e of cap.rx.slice(0, 2000)) {
+      if (!e || typeof e !== "object" || Array.isArray(e) || typeof e.m !== "string" || !e.m || seen.has(e.m)) continue;
+      if (e.x != null && (typeof e.x !== "string" || e.x.length > 300)) continue;
+      if (e.xw != null && !xwOk(e.xw)) continue;
+      const i = byM.get(e.m);
+      if (i == null || i > lastI) continue;
+      seen.add(e.m);
+      out.push({ i, m: e.m, x: e.x || "", xw: e.xw || null });
+    }
+    return out;
+  }
+  /* each entry's chunk read fresh, only x and xw changed (an x that changed without an xw drops the old xw, which no
+     longer matches it), written back when something differs and read back. Returns {changed: [i], chunks: [id]}. */
+  async function rxApply(list, size) {
+    const starts = Object.keys(S.chunks)
+      .map(id => [id, S.chunks[id].start ?? ((S.chunks[id].msgs || [])[0] || {}).i])
+      .filter(x => Number.isInteger(x[1]))
+      .sort((a, b) => a[1] - b[1]);
+    const chunkOf = i => {
+      let id = null;
+      for (const [c, st] of starts) if (st <= i) id = c;
+      return id || "c" + String(Math.floor(i / size) * size).padStart(4, "0");
+    };
+    const by = new Map();
+    list.forEach(e => {
+      const c = chunkOf(e.i);
+      if (!by.has(c)) by.set(c, []);
+      by.get(c).push(e);
+    });
+    const changed = [];
+    const chunks = [];
+    const key = m => JSON.stringify([m.i, m.m, m.b, m.x || "", m.xw || null]);
+    for (const [c, es] of by) {
+      const g = await S.db.doc("chunks/" + c).get();
+      const d = g.exists ? g.data() : null;
+      if (!d || !Array.isArray(d.msgs)) continue;
+      const msgs = d.msgs.map(x => Object.assign({}, x));
+      const mine = [];
+      for (const e of es) {
+        const m = msgs.find(x => x.i === e.i && x.m === e.m);
+        if (!m) continue;
+        const xNew = (m.x || "") !== e.x;
+        const xw = e.xw || (xNew ? null : m.xw || null);
+        if (!xNew && JSON.stringify(xw) === JSON.stringify(m.xw || null)) continue;
+        if (e.x) m.x = e.x;
+        else delete m.x;
+        if (xw) m.xw = xw;
+        else delete m.xw;
+        mine.push(e.i);
+      }
+      if (!mine.length) continue;
+      await S.db.doc("chunks/" + c).set(Object.assign({}, d, { msgs }));
+      const b = await S.db.doc("chunks/" + c).get();
+      const bd = b.exists ? b.data() : null;
+      if (!bd || JSON.stringify((bd.msgs || []).map(key)) !== JSON.stringify(msgs.map(key)))
+        return { err: "Reactions saved, but the read-back of " + c + " didn't match. Tell Claude." };
+      changed.push(...mine);
+      chunks.push(c);
+    }
+    return { changed: changed.sort((a, b) => a - b), chunks: chunks.sort() };
+  }
   async function importCore(raw, opts) {
     const src = (opts && opts.src) || "button";
     const R = { src, ok: false };
@@ -13081,6 +13150,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       if (!slotOk(ph) || !/^image\/(jpeg|png|webp|gif)$/.test(ph.type || "") || !ph.b64)
         return done("Photo for #" + ph.i + " is malformed. Nothing saved.");
     }
+    const rxIn = rxEntries(cap, lastI);
     const phfail = cap.lab || !Array.isArray(cap.phfail) ? [] : cap.phfail.filter(slotOk);
     const phskip = cap.lab || !Array.isArray(cap.phskip) ? [] : cap.phskip.filter(slotOk);
     const size = meta.chunkSize || 82;
@@ -13133,6 +13203,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
           (photos.length
             ? "; " + photos.length + " photo" + (photos.length > 1 ? "s" : "") + " verified" + dryPh
             : "") +
+          (rxIn.length ? "; reactions on " + rxIn.length + " stored messages to compare" : "") +
           ". Nothing written.",
         { ok: true, fresh: fresh.length, chunks: writes.map(w => w.id), photos: phInfo },
       );
@@ -13149,6 +13220,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       const z = fresh[fresh.length - 1];
       const upd = {
         lastI: z.i,
+        lastFromI: fresh[0].i /* B69: where this refresh's messages start, the recheck's reach with no marker */,
         lastMid: z.m,
         lastT: z.t,
         anchorMids: S.msgs
@@ -13190,8 +13262,37 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         writes.map(w => w.id).join(", ") +
         "). Checksum and read-back OK.";
     }
+    /* B69: reactions read again on stored messages: their x and xw updated in place */
+    let rxChunks = [];
+    if (rxIn.length) {
+      const RX = await rxApply(rxIn, size);
+      if (RX.err) return done(msgPart + " " + RX.err, { state: "failed" });
+      rxChunks = RX.chunks;
+      R.rx = { n: rxIn.length, changed: RX.changed };
+      msgPart += RX.changed.length
+        ? " Reactions changed on " +
+          RX.changed.length +
+          " stored message" +
+          (RX.changed.length > 1 ? "s" : "") +
+          " (#" +
+          RX.changed.join(", #") +
+          "; chunk" +
+          (rxChunks.length > 1 ? "s " : " ") +
+          rxChunks.join(", ") +
+          ")."
+        : " Reactions on " + rxIn.length + " stored messages: no changes.";
+    }
+    if (typeof cap.rxsum === "string" && /^[0-9a-f]{16}$/.test(cap.rxsum) && Array.isArray(cap.rx))
+      await S.db.doc("meta/chat").update({ rxSum: cap.rxsum });
     R.fresh = fresh.length;
-    R.chunks = [...new Set((repaired ? repaired.chunks : []).concat(writes.map(w => w.id)))].sort();
+    R.chunks = [
+      ...new Set(
+        (repaired ? repaired.chunks : []).concat(
+          writes.map(w => w.id),
+          rxChunks,
+        ),
+      ),
+    ].sort();
     /* Photos and GIFs are stored by storePhotos (importCapture calls it with R.plan once the messages are saved). A
        re-paste skips photos already stored, so pasting again after a partial import is safe and finishes the job. */
     plan.lastI = fresh.length ? fresh[fresh.length - 1].i : lastI;
@@ -13320,7 +13421,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   /* the helper this page shipped with: npm run sync writes it from assets/helper.user.js's @version. A Chrome is
      behind when its helper is older than this or than versions.helper, whichever is higher: versions.helper is
      written by Claude, and a stale one (v1.35.0 refreshes wrote 2.1 while shipping 2.3) hid every notice. */
-  const HELPER_VERSION = "4.0";
+  const HELPER_VERSION = "4.1";
   const VERSIONS_FRESH_DAYS = 30; /* a Chrome not used for a refresh in 30 days is left out */
   const NO_NAME = "Chrome"; /* the key a run writes when list_connected_browsers gives no name: any of the named ones */
   const INSTALL_DOCS = "https://github.com/roopesh/messenger-catchup#install";

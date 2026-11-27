@@ -2,6 +2,23 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.60.0] - 2026-11-26
+**Reactions added after a message was stored are read** (B69). MINOR: the refresh procedure and the page's import change. Page 7.1, helper 4.1.
+
+### Added
+- Each refresh reads reactions again on stored messages back to the chat's catch-up marker (the last Mark caught up; with none, back to where the last refresh's messages start), newest first, at most 400 messages and 60 s (`rxBack`, `rxMax`, `rxMs`). A first try that scrolled as the scan does took 68 s for 400 on the mock; going straight to the top of what has loaded and waiting only for the next batch takes 13 s (EXPERIMENTS §17).
+- It also finds the open questions and Needs you messages of the last 3 days by id, as `jump` does but read-only, and reads who reacted (`xw`) from the "Message reactions" list, closed with Escape, never clicked inside (`rxIds`, at most 20 and 45 s).
+- The capture carries them by Messenger id (`rx: [{m, x?, xw?}]`, with the digest `rxsum`); the scan result's `rx` says how far it got and why it stopped (`cap`: `max`, `time`, `stalled`, `top`).
+- The page updates those stored messages' `x` and `xw` in place in their chunks and nothing else (an `x` that changed with no `xw` drops the old `xw`), ignores malformed entries and ones that name no stored message, names the changed messages and their chunks in the toast, and keeps `meta/chat.rxSum` and `lastFromI`.
+- A run with nothing new captures only when the reactions differ from the last stored ones (`rxSum`): `full` then captures `rx` alone, with no reload or verify (`rxOnly`).
+- `catchup.py recheck` prints the helper's args from WORK and `meta/chat`; `build` takes reactions the page updated on stored messages (anything else changed is still refused) and prints `RX` for one on a question still open; `relink` takes `closeOpen` with its `answered`, for a question a reaction answered when there's nothing new to build.
+- `references/reactions.md` › Late reactions has the procedure; SKILL.md step 3 points to it. `helper.md`, `database.md` and `writing-the-build.md` describe the args, the result, the capture field and the build's lines.
+
+### Tests
+- sim (B69): a reaction added after #90 and #95 were stored is in the next capture's `rx`; the same reactions again give `same:true`; with nothing new, `full` captures `rx` alone when they changed and nothing when they didn't; a first scan rechecks nothing; the cap keeps the newest (`max`, `time`, `top`); rechecks by id read who reacted on a message far up the chat, one with none, skip a new one and report one not found, installed and in Tampermonkey's sandbox (B68's mode).
+- page (`lateReactions`): the import updates `x`/`xw` of stored messages in two chunks in place, changes nothing else, ignores seven malformed or unknown entries, keeps `rxSum` and `lastFromI`; a reactions-only capture with no change writes no chunk, one with a change updates the store and the page.
+- Python (`TestLateReactions`): a build adopts updated reactions and prints `RX`, closing in the same build prints nothing, another changed field is still refused; `relink` closes a question and rejects a bad close; `recheck`'s args (marker, last refresh, none, the 3-day window, never the user's own).
+
 ## [1.59.0] - 2026-11-26
 **Reply checks are hourly** (F40, #92). MINOR: setup's reply-check procedure changes. No page or helper change.
 

@@ -385,6 +385,7 @@ class TestSkillReferences(unittest.TestCase):
                 "check-day-summaries",
                 "day-summaries",
                 "days",
+                "recheck",
                 "relink",
                 "restore",
                 "restore-summary",
@@ -1361,7 +1362,7 @@ class TestSkillRoom(unittest.TestCase):
         conversation reuses WORK without bootstrapping, so messages a dead run imported would never be built."""
         step3 = step(self.skill, 3)
         self.assertIn(
-            "**Nothing new** (`err:null, win:0`), unless WORK is behind (its `base` below `meta/chat.lastI`: `references/troubleshooting.md`)",
+            "**Nothing new** (`err:null, win:0`; `rxOnly`: Late reactions), unless WORK is behind (its `base` below `meta/chat.lastI`: `references/troubleshooting.md`)",
             step3,
         )
         self.assertNotIn("unless bootstrap said", step3)
@@ -1417,7 +1418,7 @@ class TestSkillRoom(unittest.TestCase):
 
     def test_quote_match_check_carries_its_reason(self):
         """SKILL.md no longer spells out the two doubtful quote matches: the CHECK line prints the reason."""
-        self.assertIn("`CHECK quote match (…)` (a doubtful quote match, the reason in brackets", step(self.skill, 6))
+        self.assertIn("`CHECK quote match (…)` (doubtful, the reason in brackets", step(self.skill, 6))
         py = in_skill("scripts", "catchup.py")
         self.assertIn('"CHECK quote match (%s)" % doubt', py)
         for reason in ("short quote, same text", "quote found inside the text, not at its start"):
@@ -2221,7 +2222,8 @@ class TestReactions(unittest.TestCase):
         open_rule = re.search(r"^- `open`:.*$", skill, re.M).group(0)
         self.assertIn("A reaction can answer, or settle a mention: `references/reactions.md`.", open_rule)
         self.assertIn('"see who reacted" (closed with Escape; never a click inside it)', skill)
-        self.assertIn("`full` with a fresh `run` id and `me` (`ownerName`, `ownerAliases`)", skill)
+        self.assertIn("`full` with a fresh `run` id, `me` (`ownerName`, `ownerAliases`)", skill)
+        self.assertIn("`catchup.py recheck`'s output (`references/reactions.md` › Late reactions)", skill)
         self.assertIn("`references/reactions.md`", section(in_skill("references", "writing-the-build.md"), "Reactions"))
 
     def test_the_helper_reads_only_the_reactions_dialog_and_closes_it_with_escape(self):
