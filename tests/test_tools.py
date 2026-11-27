@@ -1916,14 +1916,15 @@ class TestScheduling(unittest.TestCase):
         return section(self.ref(), "Reply checks")
 
     def test_reply_checks_are_a_recurring_task_tied_to_this_computer(self):
-        """F30 step 2: a recurring task tied to this computer (posting needs the user's Chrome), its cron carrying both
-        the interval and the hours, its prompt naming the reply-check skill and the page; no tool: change nothing."""
+        """F30 step 2: a recurring task tied to this computer (posting needs the user's Chrome), hourly at :33 (F40: the
+        schedulers refuse anything shorter), its cron carrying the hours, its prompt naming the reply-check skill and the page; no tool: change nothing."""
         rc = self.reply_checks()
         for must in (
             "`create_trigger` with `requires_local_device:true`",
             "say so and change nothing",
-            "`*/<every> <hours> * * *`",
-            "`*/10 5-21 * * *`",
+            "`33 <hours> * * *`",
+            "`33 5-21 * * *`",
+            "`create_trigger` refuses anything shorter",
             "Keep it only if its result confirms the tie",
             '"Automatically approve"',
             "can pause the task",
