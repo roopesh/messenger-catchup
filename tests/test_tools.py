@@ -163,6 +163,15 @@ class TestDocsCheck(unittest.TestCase):
         self.assertIn("`Docs:", read("CLAUDE.md"))
 
 
+class TestRefreshPhraseGuard(unittest.TestCase):
+    """B73: a run wrote a group's "refresh <name>" over the page's refreshPhrase; only setup sets it"""
+
+    def test_chats_reference_forbids_writing_page_wide_fields(self):
+        c = in_skill("references", "chats.md")
+        self.assertIn("Never write a page-wide field while refreshing or adding a chat or group", c)
+        self.assertIn("only setup sets it", c)
+
+
 class TestVersions(unittest.TestCase):
     def test_helper_version_strings_agree(self):
         src = in_skill("assets", "helper.user.js")
