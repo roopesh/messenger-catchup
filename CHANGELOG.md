@@ -2,6 +2,15 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.60.4] - 2026-11-27
+**A group's first read clears its old error note** (seen on the owner's page Nov 27). PATCH. No page or helper change.
+
+### Fixed
+- After the owner's group finally read (61 posts, 396 comments), its `meta/chat.chats` entry still carried the failed reads' note ("First read keeps losing its posts…"). The page shows that note only while nothing is stored, so nobody saw it, but it was wrong. `references/groups.md` now sets `reason:null` with `state:"active"`, as a chat's first refresh already does.
+
+### Docs
+- BACKLOG L1: what was seen on the owner's page on Nov 27 (the group's first read, B69's reaction recheck, B67's who-reacted read, F41's hover card) and what's still to see.
+
 ## [1.60.3] - 2026-11-27
 **Ask doesn't offer to "dig deeper"** (B74, #106; the owner, Nov 27). PATCH. Page 7.3.
 
