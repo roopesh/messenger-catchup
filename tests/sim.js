@@ -2325,6 +2325,236 @@ sim('B67: who reacted: the cap, a list that stays open, a list that never opens'
   );
   await ctx.close();
 });
+/* B69: reactions added after a message was stored. The first run stored #0-#99; a refresh reads the window #100-#119
+   and, with rxBack, the stored messages back to the catch-up marker again, newest first, carrying their reactions by
+   Messenger id (rx) with the helper's digest of them (rxsum); rxIds are read by id, with who reacted. */
+const STOPS119 = ['mid.$mock119', 'mid.$mock118', 'mid.$mock117']; /* nothing new in the 120-message mock */
+const rxOf = (cap, i) => (cap.rx || []).find(e => e.m === 'mid.$mock' + i);
+const rxIds = cap => (cap.rx || []).map(e => +e.m.replace('mid.$mock', ''));
+const range = (a, b) => Array.from({ length: b - a + 1 }, (_, k) => a + k);
+sim('B69: a late reaction on a stored message', { s: 30 }, async b => {
+  const { ctx, p, capOf } = await fresh(b);
+  await mode(p, {});
+  let r = await bridge(p, 'scan', { stops: STOPS99, base: 99, rxBack: 30 });
+  await bridge(p, 'capture', { base: 99 });
+  let cap = await capOf();
+  const sum0 = r && r.rx && r.rx.sum;
+  ok(
+    r &&
+      !r.err &&
+      r.win === 20 &&
+      r.rx.back === 30 &&
+      r.rx.read === 30 &&
+      r.rx.cap === '' &&
+      r.rx.n === 30 &&
+      r.rx.same === false &&
+      /^30:[0-9a-f]{16}$/.test(sum0) &&
+      JSON.stringify(rxIds(cap)) === JSON.stringify(range(70, 99)) &&
+      cap.rx.every(e => !e.x && !e.xw) &&
+      cap.rxsum === sum0 &&
+      cap.count === 20,
+    'B69: rxBack 30 reads #70-#99 again (the anchor counts), oldest first, none with reactions yet, beside the 20 new (' +
+      JSON.stringify(r && [r.err, r.win, r.rx]) +
+      ')',
+  );
+  // later the owner gives #90 a 👍 and Ben reacts to #95: the next run's recheck carries both
+  await mode(p, { myrx: '90:👍', rx: '95:😂' });
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99, rxBack: 30, rxSum: sum0 });
+  await bridge(p, 'capture', { base: 99 });
+  cap = await capOf();
+  const sum1 = r && r.rx && r.rx.sum;
+  ok(
+    r &&
+      !r.err &&
+      r.rx.same === false &&
+      sum1 !== sum0 &&
+      rxOf(cap, 90).x === '1 👍' &&
+      rxOf(cap, 95).x === '1 😂' &&
+      cap.rx.filter(e => e.x).length === 2 &&
+      !cap.rx.some(e => e.xw) &&
+      cap.msgs.every(m => m.i >= 100),
+    'B69: a reaction added after #90 and #95 were stored is in the next capture’s rx, by id (' +
+      JSON.stringify([rxOf(cap, 90), rxOf(cap, 95), r && r.rx]) +
+      ')',
+  );
+  await mode(p, { myrx: '90:👍', rx: '95:😂' }); /* the capture blanked the page */
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99, rxBack: 30, rxSum: sum1 });
+  ok(r && !r.err && r.rx.same === true, 'B69: the same reactions again: same:true (' + JSON.stringify(r && r.rx) + ')');
+  // nothing new: with reactions that differ from the last stored ones, full captures them at once (no reload)
+  await mode(p, { myrx: '110:👍' });
+  r = await bridge(p, 'full', { stops: STOPS119, base: 119, rxBack: 30, rxSum: sum0, run: 'b69a' });
+  cap = await capOf();
+  ok(
+    r &&
+      r.stage === 'captured' &&
+      r.rxOnly === true &&
+      r.run === 'b69a' &&
+      r.scan.win === 0 &&
+      /^count 0 /.test(r.capture || '') &&
+      cap.count === 0 &&
+      JSON.stringify(rxIds(cap)) === JSON.stringify(range(90, 119)) &&
+      rxOf(cap, 110).x === '1 👍',
+    'B69: nothing new but a reaction changed: full captures the rx alone, with no reload or verify (' +
+      JSON.stringify(r && [r.stage, r.rxOnly, r.capture, r.scan && r.scan.rx]) +
+      ')',
+  );
+  const sum2 = r && r.scan && r.scan.rx.sum;
+  await mode(p, { myrx: '110:👍' });
+  r = await bridge(p, 'full', { stops: STOPS119, base: 119, rxBack: 30, rxSum: sum2, run: 'b69b' });
+  ok(
+    r && r.stage === 'scan' && !r.err && r.win === 0 && r.rx.same === true && !(await capOf()).rx,
+    'B69: nothing new and the same reactions as last stored: no capture (' + JSON.stringify(r && [r.stage, r.rx]) + ')',
+  );
+  // a first run reads nothing again: nothing is stored
+  await mode(p, {});
+  r = await bridge(p, 'scan', { first: { count: 50 }, base: -1, rxBack: 30, rxIds: ['mid.$mock10'] });
+  ok(
+    r && !r.err && r.rx.read === 0 && r.rx.n === 0 && r.rx.ids.want === 1 && r.rx.ids.read === 0,
+    'B69: a first scan rechecks nothing (' + JSON.stringify(r && r.rx) + ')',
+  );
+  await ctx.close();
+});
+sim('B69: the recheck’s cap keeps the newest', { s: 30 }, async b => {
+  const { ctx, p, capOf } = await fresh(b);
+  await mode(p, { rx: '50:👍,98:👍' });
+  let r = await bridge(p, 'scan', { stops: STOPS99, base: 99, rxBack: 90, rxMax: 25 });
+  await bridge(p, 'capture', { base: 99 });
+  let cap = await capOf();
+  ok(
+    r &&
+      !r.err &&
+      r.rx.back === 90 &&
+      r.rx.read === 25 &&
+      r.rx.cap === 'max' &&
+      JSON.stringify(rxIds(cap)) === JSON.stringify(range(75, 99)) &&
+      rxOf(cap, 98).x === '1 👍' &&
+      !rxOf(cap, 50),
+    'B69: rxMax 25 of 90 asked: the newest 25 (#75-#99), cap "max" (' + JSON.stringify(r && r.rx) + ')',
+  );
+  await mode(p, { rx: '50:👍,98:👍' });
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99, rxBack: 90, rxMs: 1 });
+  await bridge(p, 'capture', { base: 99 });
+  cap = await capOf();
+  const ids = rxIds(cap);
+  ok(
+    r &&
+      !r.err &&
+      r.rx.cap === 'time' &&
+      r.rx.read < 90 &&
+      r.rx.read === ids.length &&
+      ids[ids.length - 1] === 99 &&
+      JSON.stringify(ids) === JSON.stringify(range(100 - ids.length, 99)),
+    'B69: out of time: what loaded, newest first (#' + ids[0] + '-#99), cap "time" (' + JSON.stringify(r && r.rx) + ')',
+  );
+  await mode(p, { rx: '50:👍,98:👍' });
+  r = await bridge(p, 'scan', { stops: STOPS99, base: 99, rxBack: 500, topMs: 600 });
+  ok(
+    r && !r.err && r.rx.read === 100 && r.rx.cap === 'top',
+    'B69: rxBack past the start of the chat: all 100 stored, cap "top" (' + JSON.stringify(r && r.rx) + ')',
+  );
+  await ctx.close();
+});
+/* a recheck cut short by time: its digest covers the newest N it read ("N:hex"), so a later quiet run that reads at
+   least N compares those and captures nothing, whatever the cap did; a change in the newest N still captures */
+sim('B69: a time-capped recheck doesn’t capture on quiet runs', { s: 30 }, async b => {
+  const { ctx, p } = await fresh(b);
+  const M = { rx: '50:👍,98:👍' };
+  await mode(p, M);
+  let r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxMs: 1 });
+  const sumT = r && r.rx && r.rx.sum;
+  const n = sumT ? +sumT.split(':')[0] : 0;
+  ok(
+    r && !r.err && r.rx.cap === 'time' && n === r.rx.read && n > 0 && n < 90,
+    'B69: the capped run’s digest names how many it read (' + JSON.stringify(r && r.rx) + ')',
+  );
+  await mode(p, M);
+  r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxSum: sumT });
+  ok(
+    r && !r.err && r.rx.read === 90 && r.rx.same === true,
+    'B69: a later run that reads more compares the newest ' +
+      n +
+      ': same, nothing to capture (' +
+      JSON.stringify(r && r.rx) +
+      ')',
+  );
+  await mode(p, M);
+  r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxMs: 1, rxSum: sumT });
+  ok(
+    r && !r.err && (r.rx.read >= n ? r.rx.same === true : r.rx.same === false),
+    'B69: capped again: same when it read at least ' + n + ', else it captures (' + JSON.stringify(r && r.rx) + ')',
+  );
+  await mode(p, Object.assign({ myrx: '119:👍' }, M));
+  r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxSum: sumT });
+  ok(
+    r && !r.err && r.rx.same === false,
+    'B69: a reaction in the newest ' + n + ' still captures (' + JSON.stringify(r && r.rx) + ')',
+  );
+  const older = 119 - n; /* just older than the newest n, inside the 90 asked for */
+  await mode(p, { rx: '50:👍,98:👍,' + older + ':😂' });
+  r = await bridge(p, 'scan', { stops: STOPS119, base: 119, rxBack: 90, rxSum: sumT });
+  ok(
+    r && !r.err && r.rx.same === true,
+    'B69: a change older than the newest ' +
+      n +
+      ' (#' +
+      older +
+      ') waits for a run with new messages (' +
+      JSON.stringify(r && r.rx) +
+      ')',
+  );
+  await ctx.close();
+});
+/* by id: #60 (an open question: Cy 👍 and you 👍) and #20 (no reactions) are older than the range (#90-#99) and not
+   loaded when the scan ends; #105 is new (read as part of the window, never by id) */
+const RXID_MODE = { rx: '60:👍', myrx: '60:👍', ask: JSON.stringify({ 60: 'Can anyone bring the stove?' }) };
+const rxIdCase = helper => async b => {
+  const { ctx, p, capOf } = await fresh(b, helper);
+  await mode(p, RXID_MODE);
+  const r = await bridge(p, 'scan', {
+    stops: STOPS99,
+    base: 99,
+    rxBack: 10,
+    rxIds: ['mid.$mock60', 'mid.$mock20', 'mid.$mock105', 'mid.$nosuch'],
+    rxIdMs: 30000,
+  });
+  const s = await rxState(p);
+  await bridge(p, 'capture', { base: 99 });
+  const cap = await capOf();
+  ok(
+    r &&
+      !r.err &&
+      JSON.stringify(r.rx.ids) ===
+        JSON.stringify({ want: 3, read: 1, none: 1, noopen: 0, empty: 0, notfound: 1, cap: false }) &&
+      JSON.stringify(rxIds(cap)) === JSON.stringify(range(90, 99).concat([20, 60])) &&
+      JSON.stringify(rxOf(cap, 60)) ===
+        JSON.stringify({
+          m: 'mid.$mock60',
+          x: '2 👍',
+          xw: [
+            ['Cy Chen', '👍'],
+            ['You', '👍'],
+          ],
+        }) &&
+      JSON.stringify(rxOf(cap, 20)) === JSON.stringify({ m: 'mid.$mock20' }) &&
+      !r.warn.length,
+    'B69' +
+      (helper === 'sandbox' ? ' (sandbox)' : '') +
+      ': rxIds found by id far up the chat: #60 read with who reacted, #20 has none, a new one skipped, one not found (' +
+      JSON.stringify(r && [r.err, r.rx, r.warn, rxOf(cap, 60)]) +
+      ')',
+  );
+  ok(
+    s.opened === 1 && s.inside === 0 && s.open === 0 && s.mine['mid.$mock60'] === '👍',
+    'B69' +
+      (helper === 'sandbox' ? ' (sandbox)' : '') +
+      ': one list opened and closed with Escape, nothing clicked inside, your reaction still there (' +
+      JSON.stringify(s) +
+      ')',
+  );
+  await ctx.close();
+};
+sim('B69: rechecks by id read who reacted', { s: 30 }, rxIdCase(true));
+sim('B69: rechecks by id in Tampermonkey’s sandbox', { s: 30 }, rxIdCase('sandbox'));
 sim('F: Enter or line breaks not accepted', { s: 25 }, async b => {
   const { ctx, p, state, waitTip, row } = await freshF(b);
   let s, r;

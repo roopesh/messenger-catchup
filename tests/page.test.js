@@ -18425,6 +18425,254 @@ async function groupsImport() {
   ok(p.errors.length === 0, 'G1 import: no page errors ' + JSON.stringify(p.errors));
   await p.context().close();
 }
+/* B69: a capture's rx (helper 4.1), the reactions read again on stored messages by Messenger id: the import updates
+   those messages' x and xw in place, in their chunks, and nothing else; it ignores malformed entries and ones that name
+   no stored message; it keeps the helper's digest (meta/chat.rxSum) and where the refresh's messages start (lastFromI) */
+async function lateReactions() {
+  const p = await open(SEED());
+  const first = range(0, 99, i =>
+    mk(
+      i,
+      i === 10
+        ? { x: '1 👍', xw: [['Ana Alvarez', '👍']] }
+        : i === 20
+          ? { x: '1 😂', xw: [['Ben Brooks', '😂']] }
+          : i === 50
+            ? { x: '1 ❤️' }
+            : {},
+    ),
+  );
+  let r = await paste(p, JSON.stringify(cap(first)));
+  ok(r && r.state === 'done', 'B69: the first capture (#0-#99) imports ' + JSON.stringify(r && r.msg));
+  const before = { c0: await get(p, 'chunks/c0000'), c82: await get(p, 'chunks/c0082') };
+  const XW10 = [
+    ['Ana Alvarez', '👍'],
+    ['You', '👍'],
+  ];
+  const rx = [
+    { m: 'mid.10', x: '2 👍', xw: XW10 },
+    { m: 'mid.20' },
+    { m: 'mid.30', x: '1 😂' },
+    { m: 'mid.50', x: '1 ❤️' },
+    { m: 'mid.90', x: '1 👍', xw: [['You', '👍']] },
+    null,
+    'mid.40',
+    { m: 5, x: '1 👍' },
+    { m: 'mid.60', x: 7 },
+    { m: 'mid.61', x: '1 👍', xw: 'not a list' },
+    { m: 'mid.62', x: '1 👍', xw: [['You']] },
+    { m: 'mid.nosuch', x: '1 👍' },
+    { m: 'mid.101', x: '1 👍' },
+  ];
+  r = await paste(p, JSON.stringify(Object.assign(cap(range(100, 104)), { rx, rxsum: '30:0123456789abcdef' })));
+  const c0 = await get(p, 'chunks/c0000');
+  const c82 = await get(p, 'chunks/c0082');
+  const mt = await get(p, 'meta/chat');
+  ok(
+    r &&
+      r.state === 'done' &&
+      /IMPORT OK: 5 new messages, #100–#104/.test(r.msg) &&
+      r.msg.includes('Reactions changed on 4 stored messages (#10, #20, #30, #90; chunks c0000, c0082).') &&
+      JSON.stringify(r.chunks) === JSON.stringify(['c0000', 'c0082']),
+    'B69: the import names the stored messages whose reactions changed and their chunks (' +
+      JSON.stringify(r && [r.msg, r.chunks]) +
+      ')',
+  );
+  ok(
+    c0.msgs[10].x === '2 👍' &&
+      JSON.stringify(c0.msgs[10].xw) === JSON.stringify(XW10) &&
+      !('x' in c0.msgs[20]) &&
+      !('xw' in c0.msgs[20]) &&
+      c0.msgs[30].x === '1 😂' &&
+      !('xw' in c0.msgs[30]) &&
+      c0.msgs[50].x === '1 ❤️' &&
+      c82.msgs[90 - 82].x === '1 👍' &&
+      JSON.stringify(c82.msgs[90 - 82].xw) === JSON.stringify([['You', '👍']]),
+    'B69: x and xw updated in place: a new count and who reacted, a reaction taken away, a new one, one unchanged (' +
+      JSON.stringify([c0.msgs[10], c0.msgs[20], c0.msgs[30], c82.msgs[8]]) +
+      ')',
+  );
+  const strip = m => {
+    const o = Object.assign({}, m);
+    delete o.x;
+    delete o.xw;
+    return o;
+  };
+  const same = (a, b, skip) =>
+    a.msgs.length === b.msgs.length &&
+    a.msgs.every((m, k) =>
+      skip.includes(m.i)
+        ? JSON.stringify(strip(m)) === JSON.stringify(strip(b.msgs[k]))
+        : JSON.stringify(m) === JSON.stringify(b.msgs[k]),
+    );
+  ok(
+    same(before.c0, c0, [10, 20, 30]) &&
+      same({ msgs: before.c82.msgs }, { msgs: c82.msgs.slice(0, before.c82.msgs.length) }, [90]) &&
+      c82.msgs.length === before.c82.msgs.length + 5 &&
+      c0.start === before.c0.start &&
+      !('x' in c0.msgs[60]) &&
+      !('x' in c0.msgs[61]) &&
+      !('x' in c0.msgs[62]) &&
+      !('x' in c0.msgs[40]) &&
+      !('x' in c82.msgs[101 - 82]),
+    'B69: nothing else changes: every other message and field as before, malformed entries and a new message’s entry ignored',
+  );
+  ok(
+    mt.rxSum === '30:0123456789abcdef' && mt.lastFromI === 100 && mt.lastI === 104,
+    'B69: meta/chat keeps the helper’s digest (rxSum) and where this refresh’s messages start (lastFromI) (' +
+      JSON.stringify([mt.rxSum, mt.lastFromI, mt.lastI]) +
+      ')',
+  );
+  // a reactions-only capture (nothing new): the same reactions change nothing; a new one is stored
+  r = await paste(
+    p,
+    JSON.stringify(Object.assign(cap([], { base: 104 }), { rx: rx.slice(0, 5), rxsum: '5:1111111111111111' })),
+  );
+  const c0b = await get(p, 'chunks/c0000');
+  ok(
+    r &&
+      r.state === 'done' &&
+      /^Nothing new: everything in this capture is already stored\. Reactions on 5 stored messages: no changes\./.test(
+        r.msg,
+      ) &&
+      JSON.stringify(c0b) === JSON.stringify(c0) &&
+      (await get(p, 'meta/chat')).rxSum === '5:1111111111111111',
+    'B69: a reactions-only capture with nothing changed writes no chunk and keeps the new digest (' +
+      JSON.stringify(r && r.msg) +
+      ')',
+  );
+  r = await paste(
+    p,
+    JSON.stringify(
+      Object.assign(cap([], { base: 104 }), { rx: [{ m: 'mid.40', x: '1 👍' }], rxsum: '0:2222222222222222' }),
+    ),
+  );
+  const c0c = await get(p, 'chunks/c0000');
+  ok(
+    r &&
+      r.state === 'done' &&
+      r.msg.includes('Reactions changed on 1 stored message (#40; chunk c0000).') &&
+      c0c.msgs[40].x === '1 👍' &&
+      (await p.evaluate(() => S.byI.get(40).x)) === '1 👍',
+    'B69: a reactions-only capture updates the store and the page (' + JSON.stringify(r && r.msg) + ')',
+  );
+  ok(p.errors.length === 0, 'B69: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
+/* B69: a mention you answered with your own yes or no reaction leaves Needs you, its counts and the picker's: from who
+   reacted (xw, also read later), a reaction sent from this page, or the build's `answered` on the mention. A laugh,
+   someone else's 👍 or a count alone (x) don't. needsIn decides, for every place that counts. An open question to you
+   that you answered the same way leaves the open count. */
+async function settledMentions() {
+  const p = await open(SEED());
+  const msgs = [
+    mk(0, { f: 'Ben', b: 'Sam, the permit came through' }),
+    mk(1, { f: 'Ana', b: 'Sam, can you bring the stove?', x: '1 👍', xw: [['You', '👍🏽']] }),
+    mk(2, { f: 'Ben', b: 'Sam is late again', x: '1 😂', xw: [['You', '😂']] }),
+    mk(3, { f: 'Cy', b: 'Sam, ok for Friday?', x: '1 👍', xw: [['Dee Diaz', '👍']] }),
+    mk(4, { f: 'Dee', b: 'Sam, still selling?', x: '1 👍' }),
+    mk(5, { f: 'Ana', b: 'Sam, lot at 7?' }),
+    mk(6, { f: 'Ben', b: 'Who has a map?' }),
+  ];
+  await paste(p, JSON.stringify(cap(msgs)));
+  await p.evaluate(() => {
+    __rt.write('outbox/r1', {
+      kind: 'react',
+      i: 5,
+      mid: 'mid.5',
+      emoji: '👍',
+      state: 'sent',
+      queuedAt: '2026-11-26T10:00:00Z',
+    });
+    __rt.write('threading/current', {
+      convs: [{ id: 'a', title: 'A', members: [0, 1, 2, 3, 4, 5, 6] }],
+      links: {},
+      to: 6,
+      note: '',
+    });
+    __rt.write('summary/current', {
+      version: 2,
+      convs: [{ id: 'a', tag: '', synopsis: [], outcome: '', key: [] }],
+      open: [
+        { conv: 'a', ask: 1, to: 'Sam', note: '' },
+        { conv: 'a', ask: 6, to: 'anyone', note: '' },
+      ],
+      answered: [],
+      deals: [],
+      mentions: [
+        { note: 'permit', refs: [[0]], answered: 'You: 👍 (reaction)' },
+        { note: 'stove', refs: [[1]] },
+        { note: 'late', refs: [[2]] },
+        { note: 'friday', refs: [[3]] },
+        { note: 'selling', refs: [[4]] },
+        { note: 'lot', refs: [[5]] },
+      ],
+      toI: 6,
+      generatedAt: 'now',
+    });
+  });
+  await p.waitForTimeout(400);
+  const st = await p.evaluate(() => ({
+    needs: needsIn(S.summary, () => true).map(x => x.note),
+    other: needsIn(S.summary, () => true, { byI: null, outbox: S.outbox }).map(x => x.note),
+    cards: [...document.querySelectorAll('#v-summary .item.mention')].length,
+    strip: $('#strip').textContent,
+  }));
+  ok(
+    JSON.stringify(st.needs) === JSON.stringify(['late', 'friday', 'selling']),
+    'B69: Needs you leaves out a mention you answered with your 👍 (xw), one with your 👍 sent from the page, and one the build marked answered; a laugh, someone else’s 👍 and a count alone stay (' +
+      JSON.stringify(st.needs) +
+      ')',
+  );
+  ok(
+    st.cards === 3 && /3mentions of you/.test(st.strip) && /1open questions/.test(st.strip),
+    'B69: the Needs you cards and the strip agree (3 mentions; 1 open question: the one to you answered by your 👍 leaves it) (' +
+      JSON.stringify(st) +
+      ')',
+  );
+  ok(
+    JSON.stringify(st.other) === JSON.stringify(['stove', 'late', 'friday', 'selling']),
+    'B69: for a chat whose messages aren’t loaded, the page’s own sent reaction and the build’s mark still count (' +
+      JSON.stringify(st.other) +
+      ')',
+  );
+  ok(p.errors.length === 0, 'B69 settled mentions: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+  // several chats: the picker's and All chats' "need you" counts (needsOf) follow the same rule. Trail (on screen):
+  // your 👍 on #8 (xw); Camera Club: a 👍 sent from the page on #6; Book Club: your laugh on #3 (still needs you)
+  const seed = mcSeed();
+  seed['chunks/c0000'].msgs[8] = Object.assign({}, seed['chunks/c0000'].msgs[8], { x: '1 👍', xw: [['You', '👍']] });
+  seed['book_chunks/c0000'].msgs[3] = Object.assign({}, seed['book_chunks/c0000'].msgs[3], {
+    x: '1 😂',
+    xw: [['You', '😂']],
+  });
+  seed['cam_outbox/r1'] = {
+    kind: 'react',
+    i: 6,
+    mid: seed['cam_chunks/c0000'].msgs[6].m,
+    emoji: '👍',
+    state: 'sent',
+    queuedAt: '2026-11-26T10:00:00Z',
+  };
+  const q = await open(seed);
+  const counts = await until(
+    q,
+    () => {
+      const v = Object.fromEntries(S.chats.map(c => [c.key, needsOf(c).length]));
+      return S.chats.every(c => (LIGHT.get(c.key) || {}).sum && (LIGHT.get(c.key) || {}).outbox) ? v : null;
+    },
+    null,
+    8000,
+  );
+  ok(
+    counts && counts.trail === 0 && counts.cam === 0 && counts.book === 1,
+    'B69: the picker’s and All chats’ counts: 0 for Trail (your 👍), 0 for Camera Club (your 👍 sent from the page), 1 for Book Club (a laugh) (' +
+      JSON.stringify(counts) +
+      ')',
+  );
+  ok(q.errors.length === 0, 'B69 settled mentions, several chats: no page errors ' + JSON.stringify(q.errors));
+  await q.context().close();
+}
 /* B67: reactions in the message lines Claude reads (who reacted, or "probably answered"), and the meaning table, the
    owner's corrections and the context rules in Ask's prompts. The owner is "Sam" (META). */
 async function reactions() {
@@ -18663,6 +18911,8 @@ async function reactions() {
 }
 const SECTIONS = {
   reactions,
+  lateReactions,
+  settledMentions,
   groupsAdd,
   groupsImport,
   importer,

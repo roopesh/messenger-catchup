@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      4.0
+// @version      4.1
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on. It downloads GIFs from Facebook's image servers for your page (the permission Tampermonkey asks for).
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -39,13 +39,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '4.0';
+  window.__mcHelper = '4.1';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '4.0');
+  root.setAttribute('data-mc-helper', '4.1');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -671,14 +671,44 @@
           grownAt = Date.now(),
           len = R.order.length;
         R.nudges = 0;
+        /* B69: rxBack, the stored messages whose reactions to read again (back to the chat's catch-up marker): once
+           the anchor is found the scan goes on up until that many stored messages have loaded (the anchor counts),
+           newest first, at most RX_MAX of them and RX_MS from the anchor; it stops early at the top or when nothing
+           older loads for RX_STALL. A first scan has nothing stored. */
+        const RX_MAX = OPT.rxMax != null ? Math.max(0, +OPT.rxMax || 0) : 400;
+        const RX_MS = +OPT.rxMs || 60000;
+        const RX_STALL = Math.min(STALL, 15000);
+        const RXASK = FIRST ? 0 : Math.max(0, Math.floor(+OPT.rxBack || 0));
+        const RXB = Math.min(RXASK, RX_MAX);
+        let rxT0 = 0,
+          rxEnd = '';
         for (let r = 0; r < 1500; r++) {
-          if (hit()) {
-            if (++extra > 2) break;
+          const h = hit();
+          if (h) {
+            if (!rxT0) rxT0 = Date.now();
+            if (RXB && !rxEnd) {
+              if (h === '__top__' || R.order.indexOf(h) + 1 >= RXB) rxEnd = 'done';
+              else if (Date.now() - rxT0 > RX_MS) rxEnd = 'time';
+              else if (Date.now() - grownAt > RX_STALL) rxEnd = 'stalled';
+            }
+            if ((!RXB || rxEnd) && ++extra > 2) break;
           }
           s = sc();
-          const st = Math.round(s.clientHeight * 0.6);
-          s.scrollTop = s.scrollTop > st ? s.scrollTop - st : 0;
-          await sleep(s.scrollTop < 5 ? 1500 : 500);
+          if (h && RXB && !rxEnd) {
+            /* rechecking (B69): only reactions are read, and every loaded message is in the list, on screen or not,
+               so go straight to the top of what has loaded and wait just until the next older batch arrives */
+            const n0 = log().querySelectorAll('[data-message-id]').length;
+            s.scrollTop = 0;
+            for (let w = 0; w < 10; w++) {
+              await sleep(150);
+              if (log().querySelectorAll('[data-message-id]').length > n0) break;
+            }
+            await sleep(300);
+          } else {
+            const st = Math.round(s.clientHeight * 0.6);
+            s.scrollTop = s.scrollTop > st ? s.scrollTop - st : 0;
+            await sleep(s.scrollTop < 5 ? 1500 : 500);
+          }
           collect();
           R.steps++;
           const grew = R.order.length > len;
@@ -727,6 +757,18 @@
         }
         R.anchor = anchor;
         R.win = anchor === '__top__' ? R.order.slice() : R.order.slice(R.order.indexOf(anchor) + 1);
+        /* the stored messages read again (B69), oldest first; the newest when it stopped short */
+        const ai = anchor === '__top__' ? -1 : R.order.indexOf(anchor);
+        const rxGot = Math.min(RXB, ai + 1);
+        const rxRange = rxGot > 0 ? R.order.slice(ai + 1 - rxGot, ai + 1) : [];
+        R.rx = {
+          back: RXASK,
+          read: rxGot,
+          cap: RXASK > RXB && rxGot === RXB ? 'max' : rxGot < RXB ? (rxEnd && rxEnd !== 'done' ? rxEnd : 'top') : '',
+          ms: rxT0 && RXB ? Date.now() - rxT0 : 0,
+          n: 0,
+          same: false,
+        };
         /* B41: Messenger shows a sender's avatar once per group of messages, on the group's last message. So within a run
            of one shown name, each avatar names the messages from the end of the previous group up to itself, and no others:
            two people who share a shown name and post back to back each keep their own name. Messages after the run's last
@@ -980,6 +1022,48 @@
         const want = R.win.filter(rxWorth);
         const RW = (R.rxw = { want: want.length, read: 0, noopen: 0, empty: 0, cap: false, stuck: false });
         R.xw = {};
+        /* one message's list: opened from its reactions, read, closed with Escape. 'none' when it has no reactions
+           (nothing to open), 'noopen', 'empty', or the rows. C counts into RW or the rechecks' (B69) counts */
+        const whoRead = async (id, C) => {
+          const e = await bring(id);
+          if (!e) {
+            if (C === RW) C.noopen++;
+            else C.notfound++;
+            return 'notfound';
+          }
+          if (C !== RW && R.info[id])
+            /* a recheck: the reactions as they are now, beside who gave them */
+            R.info[id].rx = Array.from(e.querySelectorAll('[aria-label]'))
+              .map(x => x.getAttribute('aria-label'))
+              .filter(l => /reactions? with/.test(l));
+          const pill = e.querySelector('[aria-label*="see who reacted"]');
+          if (!pill) {
+            if (C !== RW && R.info[id] && !R.info[id].rx.length) return 'none';
+            C.noopen++;
+            return 'noopen';
+          }
+          if (document.activeElement) document.activeElement.blur();
+          pill.click();
+          let d = null;
+          for (let w = 0; w < 20 && !d; w++) {
+            await sleep(150);
+            d = rxDialog();
+          }
+          if (!d) {
+            C.noopen++;
+            return 'noopen';
+          }
+          let rows = [];
+          for (let w = 0; w < 10 && !rows.length; w++) {
+            await sleep(200);
+            rows = rxRows(rxDialog() || d);
+          }
+          if (rows.length) C.read++;
+          else C.empty++;
+          if (!(await rxEsc())) RW.stuck = true;
+          R.steps++;
+          return rows.length ? rows : 'empty';
+        };
         if (want.length && RXW_MAX) {
           const t0 = Date.now();
           if (rxDialog() && !(await rxEsc())) RW.stuck = true;
@@ -989,37 +1073,107 @@
               RW.cap = true;
               break;
             }
-            const e = await bring(id);
-            const pill = e && e.querySelector('[aria-label*="see who reacted"]');
-            if (!pill) {
-              RW.noopen++;
-              continue;
-            }
-            if (document.activeElement) document.activeElement.blur();
-            pill.click();
-            let d = null;
-            for (let w = 0; w < 20 && !d; w++) {
-              await sleep(150);
-              d = rxDialog();
-            }
-            if (!d) {
-              RW.noopen++;
-              continue;
-            }
-            let rows = [];
-            for (let w = 0; w < 10 && !rows.length; w++) {
-              await sleep(200);
-              rows = rxRows(rxDialog() || d);
-            }
-            if (rows.length) {
-              R.xw[id] = rows;
-              RW.read++;
-            } else RW.empty++;
-            if (!(await rxEsc())) RW.stuck = true;
-            R.steps++;
+            const rows = await whoRead(id, RW);
+            if (Array.isArray(rows)) R.xw[id] = rows;
           }
         }
         R.tReactions = Date.now() - R.t0;
+        /* B69: rxIds, stored messages Claude names (open questions and Needs you messages of the last few days): each
+           found by its id as jump does (scrolling up from what has loaded, read-only: no Reply), and who reacted read
+           as above. At most RXID_MAX and RXID_MS a run, newest first; one not found in time keeps what's stored. */
+        R.phase = 'rechecks';
+        const RXID_MAX = OPT.rxIdMax != null ? Math.max(0, +OPT.rxIdMax || 0) : 20;
+        const RXID_MS = +OPT.rxIdMs || 45000;
+        const inWin = new Set(R.win);
+        const IDS = [
+          ...new Set(
+            (Array.isArray(OPT.rxIds) ? OPT.rxIds : []).filter(m => typeof m === 'string' && m && !inWin.has(m)),
+          ),
+        ].slice(0, RXID_MAX);
+        const RI = (R.rx.ids = { want: IDS.length, read: 0, none: 0, noopen: 0, empty: 0, notfound: 0, cap: false });
+        const rxWho = {};
+        if (IDS.length && !FIRST) {
+          const t0 = Date.now();
+          const lost = () => IDS.filter(m => !R.order.includes(m));
+          if (lost().length) {
+            /* older than what has loaded: up from the top of the list until they load, the top, a stall or the time */
+            s = sc();
+            s.scrollTop = 0;
+            await sleep(1000);
+            collect();
+            let n = R.order.length,
+              grown = Date.now(),
+              still = 0;
+            while (lost().length && Date.now() - t0 < RXID_MS && Date.now() - grown < RX_STALL) {
+              s = sc();
+              const st = Math.round(s.clientHeight * 0.6);
+              s.scrollTop = s.scrollTop > st ? s.scrollTop - st : 0;
+              await sleep(s.scrollTop < 5 ? 1500 : 500);
+              collect();
+              R.steps++;
+              if (R.order.length > n) {
+                n = R.order.length;
+                grown = Date.now();
+                still = 0;
+              } else if (s.scrollTop < 5 && !loadingTop(s) && ++still > 4) break;
+            }
+          }
+          if (rxDialog() && !(await rxEsc())) RW.stuck = true;
+          const byAge = IDS.filter(m => R.order.includes(m)).sort((a, b) => posOf(b) - posOf(a));
+          RI.notfound = IDS.length - byAge.length;
+          for (const id of byAge) {
+            if (RW.stuck) break;
+            if (Date.now() - t0 > RXID_MS) {
+              RI.cap = true;
+              break;
+            }
+            const rows = await whoRead(id, RI);
+            if (rows === 'none') RI.none++;
+            if (Array.isArray(rows) || rows === 'none') rxWho[id] = Array.isArray(rows) ? rows : null;
+          }
+        }
+        /* what the capture carries for stored messages (rx): [{m, x?, xw?}], the range oldest first, then the messages
+           read by id that aren't in it; x as the capture writes it, none when the message has no reactions now */
+        const xOf = m =>
+          m && m.rx && m.rx.length
+            ? m.rx.map(r => r.replace(/; see who reacted to this\.?/, '').replace(/ reactions? with /, ' ')).join('; ')
+            : '';
+        const rxEnt = id => {
+          const o = { m: id };
+          const x = xOf(R.info[id]);
+          if (x) o.x = x;
+          return o;
+        };
+        const rxl = rxRange.map(rxEnt);
+        Object.keys(rxWho)
+          .sort((a, b) => posOf(a) - posOf(b))
+          .forEach(id => {
+            let o = rxl.find(e => e.m === id);
+            if (!o) rxl.push((o = rxEnt(id)));
+            if (rxWho[id]) o.xw = rxWho[id];
+          });
+        R.rxl = rxl;
+        R.rx.n = rxl.length;
+        /* the digest, "N:hex": over the newest N stored messages read (x only) and the messages read by id (x, xw).
+           A run that stopped short of last time's N (time, a stall) can't compare and captures; one that read at least
+           N compares the newest N, so a recheck capped by time doesn't capture on every quiet run. A change older
+           than N waits for the next run with new messages, which always carries the whole read. */
+        const hex = async v =>
+          [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(v))))]
+            .slice(0, 8)
+            .map(x => x.toString(16).padStart(2, '0'))
+            .join('');
+        const byIdPart = Object.keys(rxWho)
+          .sort((a, b) => posOf(a) - posOf(b))
+          .map(id => Object.assign(rxEnt(id), rxWho[id] ? { xw: rxWho[id] } : {}));
+        const sumOf = n => hex([rxRange.slice(rxRange.length - n).map(rxEnt), byIdPart]);
+        if (rxl.length) {
+          R.rxsum = rxRange.length + ':' + (await sumOf(rxRange.length));
+          R.rx.sum = R.rxsum;
+          const was = typeof OPT.rxSum === 'string' ? OPT.rxSum.match(/^(\d{1,4}):([0-9a-f]{16})$/) : null;
+          R.rx.same = !!was && +was[1] <= rxRange.length && (await sumOf(+was[1])) === was[2];
+        }
+        R.tRechecks = Date.now() - R.t0;
         /* Warnings: what the reader may have read wrong, for the refresh report (R3). */
         const ref = k => (OPT.base != null ? '#' + (+OPT.base + 1 + k) : 'new message ' + (k + 1));
         const W = [];
@@ -1068,12 +1222,15 @@
           W.push(
             'who reacted: the "Message reactions" list didn\'t close with Escape, so the helper stopped reading it (the reload closes it)',
           );
-        if (!RW.read && RW.noopen + RW.empty >= 2)
+        const RI2 = R.rx.ids || {};
+        const noR = RW.noopen + (RI2.noopen || 0);
+        const emR = RW.empty + (RI2.empty || 0);
+        if (!RW.read && !RI2.read && noR + emR >= 2)
           W.push(
             'who reacted: the "Message reactions" list ' +
-              (RW.noopen ? "didn't open" : 'had no rows the helper could read') +
+              (noR ? "didn't open" : 'had no rows the helper could read') +
               ' for ' +
-              (RW.noopen + RW.empty) +
+              (noR + emR) +
               ' message(s): those keep only their count (x). Messenger may have changed it',
           );
         R.warn = W;
@@ -1096,6 +1253,8 @@
             parents: R.parents,
             anchor: R.anchor,
             replyCount: R.replyCount,
+            rx: R.rxl || [],
+            rxsum: R.rxsum || null,
           }),
         );
         R.phase = 'done';
@@ -1120,6 +1279,7 @@
       scroller: R.scroller || null,
       warn: R.warn || [],
       rxw: R.rxw || null,
+      rx: R.rx || null,
       ms: Date.now() - R.t0,
       labels: (R.win || []).slice(-40).map(id => (R.info[id].label || '').slice(0, 90)),
     };
@@ -1523,6 +1683,12 @@
         phfail,
         phskip,
       };
+      /* B69: reactions read again on stored messages, by Messenger id, for the page to update in place; rxsum, the
+         helper's digest of them, which the page keeps (meta/chat.rxSum) so a run with nothing new can tell nothing changed */
+      if (Array.isArray(R.rx) && R.rx.length) {
+        cap.rx = R.rx;
+        cap.rxsum = R.rxsum;
+      }
       if (OPT && typeof OPT.run === 'string' && OPT.run) cap.run = OPT.run.slice(0, 64);
       if (threadId()) cap.thread = threadId(); /* the page imports it only into this chat (F1) */
       const text = JSON.stringify(cap);
@@ -2181,7 +2347,8 @@
      query is the same chat. One Messenger tab moves between a page's chats. */
   const threadId = () => (location.pathname.match(/\/t\/(\d+)/) || [])[1] || null;
   /* Full refresh pipeline: scan, reload, verify after the reload, then capture. State rides in sessionStorage across the reload. */
-  /* the scan's options from a command's args: me (the user's names) and rxw, rxwMs (B67: who reacted) since 4.0 */
+  /* the scan's options from a command's args: me (the user's names) and rxw, rxwMs (B67: who reacted) since 4.0;
+     rxBack, rxIds, rxSum and the caps rxMax, rxMs, rxIdMax, rxIdMs (B69: reactions read again on stored messages) since 4.1 */
   const scanOpt = a => ({
     base: a.base,
     stallMs: a.stallMs,
@@ -2189,10 +2356,37 @@
     me: Array.isArray(a.me) ? a.me : [],
     rxw: a.rxw,
     rxwMs: a.rxwMs,
+    rxBack: a.rxBack,
+    rxIds: a.rxIds,
+    rxSum: a.rxSum,
+    rxMax: a.rxMax,
+    rxMs: a.rxMs,
+    rxIdMax: a.rxIdMax,
+    rxIdMs: a.rxIdMs,
   });
   async function full(a) {
     sessionStorage.removeItem('mc_result');
     const r = await mcScan(a.stops, a.first, scanOpt(a));
+    /* B69: nothing new, but the reactions read again differ from the last ones the page stored (rxSum): capture them
+       now. There are no new messages to verify, so no reload. */
+    if (!r.err && !r.win && r.rx && r.rx.n && !r.rx.same) {
+      const o = {
+        stage: 'captured',
+        rxOnly: true,
+        run: a.run || null,
+        thread: threadId(),
+        scan: r,
+        warn: r.warn || [],
+      };
+      try {
+        o.capture = await mcCapture(a.base, { run: a.run });
+      } catch (e) {
+        o.err = String(e);
+      }
+      o.ms = r.ms;
+      sessionStorage.setItem('mc_result', JSON.stringify(o));
+      return o;
+    }
     if (r.err || !r.win) {
       const o = Object.assign({ stage: 'scan', run: a.run || null, thread: threadId() }, r);
       sessionStorage.setItem('mc_result', JSON.stringify(o));
@@ -2863,7 +3057,7 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '4.0' }),
+    ping: () => ({ v: '4.1' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

@@ -1004,6 +1004,122 @@ class TestRelink(unittest.TestCase):
         self.assertIn("WARN link 7 -> 5 crosses conversations (pics1106 -> gear1106)", out)
 
 
+class TestLateReactions(unittest.TestCase):
+    """B69: the page updates a stored message's reactions (x, xw) in place; a build takes that, a relink closes the
+    question a reaction answered with nothing new to build, and `recheck` gives the helper its arguments."""
+
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.e = Env(self.t.name)
+        self.e.seed()
+        self.e.build(self.e.run(SCENARIO), SPEC)  # #8 (Ana, "new topic") is an open question
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def test_a_build_takes_reactions_the_page_updated(self):
+        self.e.msgs[8] = dict(self.e.msgs[8], x="1 👍", xw=[["You", "👍"]])  # updated in its chunk after it was built
+        self.e.msgs[2] = dict(self.e.msgs[2], x="1 ❤️")
+        run = self.e.run([msg(11, "Dee", "later", h=13, mi=40)])
+        out = self.e.build(run, {"join": {"gear1106": [11]}})
+        self.assertIn("RX 8 (Ana: new topic) reactions changed: 👍 You -> an open question", out)
+        self.assertNotIn("RX 2 ", out, "#2 is neither an open question nor a mention")
+        al = r(os.path.join(self.e.work, "all.json"))
+        self.assertEqual((al[8]["x"], al[8]["xw"], al[2]["x"]), ("1 👍", [["You", "👍"]], "1 ❤️"))
+        self.assertEqual(len(al), 12)
+
+    def test_closing_it_in_the_same_build_prints_nothing(self):
+        self.e.msgs[8] = dict(self.e.msgs[8], x="1 👍", xw=[["You", "👍"]])
+        run = self.e.run([msg(11, "Dee", "later", h=13, mi=40)])
+        ans = [{"conv": "gear1106", "ask": 8, "answer": "You: 👍 (reaction)", "refs": [8]}]
+        out = self.e.build(run, {"join": {"gear1106": [11]}, "closeOpen": [8], "answered": ans})
+        self.assertNotIn("RX 8", out)
+        self.assertEqual(r(os.path.join(run, "out", "merged", "summary.json"))["open"], [])
+
+    def test_anything_else_changed_is_still_refused(self):
+        self.e.msgs[8] = dict(self.e.msgs[8], x="1 👍", b="edited")
+        run = self.e.run([msg(11, "Dee", "later", h=13, mi=40)])
+        with self.assertRaisesRegex(AssertionError, "stored copy differs"):
+            self.e.build(run, {"join": {"gear1106": [11]}})
+
+    def relink(self, spec):
+        p = os.path.join(self.t.name, "relink.json")
+        w(p, spec)
+        run = os.path.join(self.t.name, "rrun")
+        shutil.rmtree(run, ignore_errors=True)
+        self.e.listing(run)
+        return quiet(catchup.relink, self.e.work, run, p), os.path.join(run, "out")
+
+    def test_relink_closes_a_question_with_nothing_new(self):
+        ans = [{"conv": "gear1106", "ask": 8, "answer": "You: 👍 (reaction)", "refs": [8]}]
+        out, d = self.relink({"closeOpen": [8], "answered": ans})
+        self.assertIn("relink ok: 0 change(s), 1 question(s) closed", out)
+        s = r(os.path.join(d, "merged", "summary.json"))
+        self.assertEqual(s["open"], [])
+        self.assertEqual(s["answered"][0], ans[0])
+        self.assertEqual(len(s["answered"]), 2)
+        self.assertEqual(r(os.path.join(self.e.work, "base", "summary.json")), s, "WORK's base follows")
+
+    def test_relink_close_rejects(self):
+        for spec, msg_re in (
+            ({"closeOpen": [3]}, "no open question asks at #3"),
+            ({"answered": [{"conv": "gear1106", "ask": 8, "answer": "x", "refs": [8]}]}, "with its"),
+            ({"closeOpen": [8], "open": []}, 'takes only a non-empty "relink"'),
+        ):
+            before = r(os.path.join(self.e.work, "base", "summary.json"))
+            with self.assertRaisesRegex(AssertionError, msg_re):
+                self.relink(spec)
+            self.assertEqual(r(os.path.join(self.e.work, "base", "summary.json")), before, "WORK untouched")
+
+    def test_a_mention_answered_by_your_reaction_is_settled(self):
+        self.e.msgs[1] = dict(self.e.msgs[1], x="1 👍", xw=[["You", "👍"]])  # #1 is SPEC's mention
+        run = self.e.run([msg(11, "Dee", "later", h=13, mi=40)])
+        out = self.e.build(run, {"join": {"gear1106": [11]}})
+        self.assertIn("RX 1 (Ben: I have one, $120) reactions changed: 👍 You -> a Needs you mention", out)
+        quiet(catchup.restore, self.e.work)
+        out = self.e.build(run, {"join": {"gear1106": [11]}, "settle": [{"ref": 1, "answer": "You: 👍 (reaction)"}]})
+        self.assertNotIn("RX 1", out)
+        ms = r(os.path.join(run, "out", "merged", "summary.json"))["mentions"]
+        self.assertEqual(ms, [{"note": "Ben offered one", "refs": [[1]], "answered": "You: 👍 (reaction)"}])
+        self.assertEqual(self.recheck(11, None, None, None)["rxIds"], ["mid.8"], "a settled mention isn't rechecked")
+
+    def test_relink_settles_a_mention_with_nothing_new(self):
+        out, d = self.relink({"settle": [{"ref": 1, "answer": "You: 👍 (reaction)"}]})
+        self.assertIn("1 mention(s) settled", out)
+        self.assertEqual(r(os.path.join(d, "merged", "summary.json"))["mentions"][0]["answered"], "You: 👍 (reaction)")
+        for spec, msg_re in (
+            ({"settle": [{"ref": 5, "answer": "x"}]}, "no mention cites #5"),
+            ({"settle": [{"ref": 1, "answer": ""}]}, "one short line"),
+        ):
+            with self.assertRaisesRegex(AssertionError, msg_re):
+                self.relink(spec)
+
+    def recheck(self, *flags):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            catchup.recheck(self.e.work, *flags)
+        return json.loads(buf.getvalue())
+
+    def test_recheck_arguments(self):
+        # open question #8 (Ana) and the mention #1 (Ben), newest first; back to the marker, else the last refresh
+        self.assertEqual(
+            self.recheck(10, 4, None, "0123456789abcdef"),
+            {"rxBack": 6, "rxIds": ["mid.8", "mid.1"], "rxSum": "0123456789abcdef"},
+        )
+        self.assertEqual(self.recheck(10, None, 7, None), {"rxBack": 4, "rxIds": ["mid.8", "mid.1"]})
+        self.assertEqual(self.recheck(10, -1, None, None)["rxBack"], 0, "no marker, no last refresh: none")
+        self.assertEqual(self.recheck(10, 10, 3, None)["rxBack"], 0, "caught up through the newest")
+
+    def test_recheck_ids_only_from_the_last_days_and_never_yours(self):
+        s = r(os.path.join(self.e.work, "base", "summary.json"))
+        s["open"].append({"conv": "gear1106", "ask": 3, "to": "Ben", "note": ""})  # #3 is your own message
+        w(os.path.join(self.e.work, "base", "summary.json"), s)
+        al = r(os.path.join(self.e.work, "all.json"))
+        al[1]["d"] = "2026-11-02"  # four days before the newest
+        w(os.path.join(self.e.work, "all.json"), al)
+        self.assertEqual(self.recheck(10, None, None, None)["rxIds"], ["mid.8"])
+
+
 class Refused(Exception):
     """The database or the batch tool refused a write; nothing was written."""
 

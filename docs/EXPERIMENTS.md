@@ -241,3 +241,19 @@ print(us == open('assets/helper.user.js').read())
 | 50,000 | 50,000, 757 ms | 1,834 (1,859), 45 ms | 460 (685), 52 ms |
 
 - **Tests:** the page section `olderByDay` (O1–O9) counts rows, never time; every case fails on page 2.8 except the filter check and the no-errors lines.
+
+## 17. Reading reactions again (B69, helper 4.1, Nov 26)
+- **Mock, 1,000 messages** (`tests/mock/messenger.html` with `mock_total` 1000, 100 messages with a 👍, nothing new: stops at #999; one headless run on the builder's Mac; the mock loads 20 older messages 250 ms after the top is reached). The scan's `ms` and the recheck's own `rx.ms`:
+
+| Run | Scan | Recheck |
+|---|---|---|
+| no recheck | 3.8 s | none |
+| `rxBack` 100 | 6.3 s | 3.4 s |
+| `rxBack` 400 | 15.4 s | 12.6 s |
+| `rxBack` 999 (capped at 400, `cap:"max"`) | 15.4 s | 12.6 s |
+| `rxBack` 400 + 10 `rxIds` older than the range | 48.5 s | 12.7 s + about 33 s by id |
+
+- **First try was slow:** the recheck first scrolled as the scan does (0.6 of a screen, 500 ms a step, 1.5 s at the top): 400 messages took 67.6 s. The recheck reads only reactions, which every loaded message holds on screen or not, so it now goes straight to the top of what has loaded and waits only until the next batch arrives (up to 1.5 s, then 0.3 s): 12.6 s, the same 400 entries (same digest).
+- **The caps:** 400 messages, more than a busy day after the marker, and 60 s: on the mock 400 take about 13 s; Messenger loads each batch over the network, so 60 s leaves several times that, and a far-back marker on a busy chat still can't add more than a minute per chat (three chats: three minutes of a scheduled run's 15). By id: 20 messages and 45 s; each one older than the range costs about 3 s on the mock (scrolled to by position), so 10 fit easily and a capped run reads the newest first.
+- **Not measured:** the real Messenger's batch size and load time (L1).
+
