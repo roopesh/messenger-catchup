@@ -2,6 +2,16 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.60.5] - 2026-11-27
+**A group's Settings card can change its linked chat** (#110; the owner, Nov 27). PATCH. Page 7.4.
+
+### Fixed
+- "Goes with a chat" was only on the Add a group form: after adding, the page didn't show which chat a group goes with and couldn't change it. A group's card in Settings now has it (the shown chats, or None), and a change writes only that field.
+- A group's card was worded as a chat ("this chat's messages", "Pause this chat"), and offered Queued replies, which groups don't have until F25 G3. It now says group and posts, with no replies select.
+
+### Tests
+- page (groupsAdd): the group card's wording, its Goes with a chat select showing the link set when adding, and a change writing one field.
+
 ## [1.60.4] - 2026-11-27
 **A group's first read clears its old error note** (seen on the owner's page Nov 27). PATCH. No page or helper change.
 

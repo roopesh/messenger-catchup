@@ -3052,7 +3052,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "7.3";
+  const PAGE_VERSION = "7.4";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -17224,6 +17224,8 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         const at = movable.indexOf(c);
         if (at >= 0 && movable.length > 1) dragRow(row, h, c);
         const ctl = el("div", "fields");
+        /* a group's card says "group" and has no replies yet (commenting is F25 G3) */
+        const kind = isGroup(c) ? "group" : "chat";
         const ti = el("input");
         ti.type = "text";
         ti.maxLength = TAG_MAX;
@@ -17233,7 +17235,13 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         ti.addEventListener("keydown", e => e.key === "Enter" && saveTag(c, ti.value));
         const tw = field(
           "tag-" + c.key,
-          "Short tag (up to " + TAG_MAX + " letters), shown beside this chat's messages and citations",
+          "Short tag (up to " +
+            TAG_MAX +
+            " letters), shown beside this " +
+            kind +
+            "'s " +
+            (isGroup(c) ? "posts" : "messages") +
+            " and citations",
           ti,
         );
         tw.append(ts);
@@ -17246,7 +17254,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
             setNote(c.key, "Couldn't save that. Try again.", true);
           }
         };
-        ctl.append(tw, field("auto-" + c.key, "Queued replies in this chat", as));
+        ctl.append(tw);
+        if (isGroup(c)) ctl.append(withChatField(c));
+        else ctl.append(field("auto-" + c.key, "Queued replies in this chat", as));
         if (multi() && c.home)
           ctl.append(el("p", "note", "Scheduled runs always refresh this chat: it's the first chat."));
         else if (multi()) {
@@ -17260,7 +17270,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
               setNote(c.key, "Couldn't save that. Try again.", true);
             }
           };
-          ctl.append(field("every-" + c.key, "How often scheduled runs refresh this chat", es));
+          ctl.append(field("every-" + c.key, "How often scheduled runs refresh this " + kind, es));
         }
         row.append(ctl);
         const acts = el("div", "btns");
@@ -17287,7 +17297,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
             b.setAttribute("aria-label", t + ": " + c.name);
             b.disabled = !movable[at + d];
           });
-        if (c.state === "active") act("Pause this chat", () => setState(c, "paused"));
+        if (c.state === "active") act("Pause this " + kind, () => setState(c, "paused"));
         if (c.state === "paused") act("Resume", () => setState(c, "active"));
         if (c.state === "hidden") act("Bring back", () => setState(c, c.was || "active"));
         if (!c.home && c.state !== "hidden") {
@@ -17302,7 +17312,15 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
         /* what Pause does (chats.md: a paused chat's refreshes are skipped; it stays on the page) */
         if (c.state === "active")
           row.append(
-            el("p", "note", "Pausing stops refreshes of this chat until you resume it. Its messages stay on the page."),
+            el(
+              "p",
+              "note",
+              "Pausing stops refreshes of this " +
+                kind +
+                " until you resume it. Its " +
+                (isGroup(c) ? "posts" : "messages") +
+                " stay on the page.",
+            ),
           );
         if (S.rmOpen === c.key) row.append(rmBox(c));
         row.append(note(c.key));
@@ -17315,6 +17333,27 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       const pair = document.getElementById(keep.replace(/^mv-(up|dn)/, (x, d) => "mv-" + (d === "up" ? "dn" : "up")));
       (kept.disabled && pair ? pair : kept).focus();
     }
+  }
+  /* A group's "Goes with a chat", changeable after adding (Add a group sets it first) */
+  function withChatField(c) {
+    const ws = el("select");
+    [["", "None"]]
+      .concat(S.chats.filter(x => !isGroup(x) && isShown(x)).map(x => [x.key, x.name]))
+      .forEach(([v, t]) => {
+        const o = el("option", null, t);
+        o.value = v;
+        if (v === (c.chat || "")) o.selected = true;
+        ws.append(o);
+      });
+    ws.onchange = async () => {
+      try {
+        await saveChats({ [c.key]: { chat: ws.value || null } });
+        setNote(c.key, "Saved.");
+      } catch (e) {
+        setNote(c.key, "Couldn't save that. Try again.", true);
+      }
+    };
+    return field("with-" + c.key, "Goes with a chat", ws);
   }
   function everySelect(id, val, perChat) {
     const s = el("select");
