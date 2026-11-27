@@ -3052,7 +3052,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "7.2";
+  const PAGE_VERSION = "7.3";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -8098,7 +8098,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   /* limits() is local and quick; if it hangs, the contract's cap is used after a second */
   const capWait = () => Promise.race([S.capReady, new Promise(r => setTimeout(r, 1000))]);
   /* What was read word for word and what as summaries: the note under an answer or a built view */
-  function sentNote(P, view, retried) {
+  /* B74 (#106): with tools, the older part isn't "summaries only": the tools read any message, and the search note
+     after this one lists what they read */
+  function sentNote(P, view, retried, tools) {
     if (!P.raw.length) return "";
     const span = "#" + P.rawLo + "–#" + P.rawHi;
     const read = view ? "Built from " : "Read ";
@@ -8123,7 +8125,9 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
           P.rawLo +
           ": " +
           (P.dropped == null
-            ? "summaries only."
+            ? tools
+              ? "summaries, plus what the tools read (below)."
+              : "summaries only."
             : P.hasBefore
               ? "summaries back to #" + P.dropped + "; nothing older."
               : "nothing included.");
@@ -8186,7 +8190,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   const SEARCH_HAVE =
     "\n- SEARCH: three tools over every stored message, photo captions included: search_messages (by words, dates, sender), read_messages (word for word: a range of numbers or a whole day) and day_summaries (a line per day, with its summary where it has one). Use them for whatever the lines above don't settle: details of older messages, things only in photos, exact wording.";
   const SEARCH_RULES =
-    "\n- Search before saying something isn't in the chat. When a search finds nothing, try other words, a synonym or a broader word. Read around a hit before you cite it.\n- Write nothing until your final answer: no remarks before or between searches.";
+    "\n- Search before saying something isn't in the chat. When a search finds nothing, try other words, a synonym or a broader word. Read around a hit before you cite it.\n- Write nothing until your final answer: no remarks before or between searches.\n- Never offer to dig deeper, look later or read more in a follow-up: these tools read any stored message now, so read what the answer needs. If you stop short, say which messages or dates you didn't read and suggest a narrower question.";
   /* What a search matches in: the message, who sent it, its link preview, the message it quotes and its photos */
   function hayOf(m) {
     return (
@@ -8774,7 +8778,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
       const { res, P, retried, rec, tools } = r;
       const text = answerOf(res.text, rec);
       renderCites(out, text);
-      const note = [sentNote(P, false, retried), searchNote(rec)].filter(Boolean).join(" ");
+      const note = [sentNote(P, false, retried, tools), searchNote(rec)].filter(Boolean).join(" ");
       if (note) out.parentNode.append(el("div", "note sent", note));
       const mb = matchBox(q, rec);
       if (mb) out.parentNode.append(mb);

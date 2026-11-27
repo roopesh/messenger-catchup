@@ -2,6 +2,18 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.60.3] - 2026-11-27
+**Ask doesn't offer to "dig deeper"** (B74, #106; the owner, Nov 27). PATCH. Page 7.3.
+
+### Fixed
+- An Ask answer offered to "dig deeper into … history I only have as summaries", and its note said "Older than #N: summaries only". In the same answer, its tools had read older ranges word for word.
+  - Since F32, Ask's tools read any stored message, so there's no later deeper look to offer.
+  - The tools rules now say: never offer to dig deeper, look later or read more in a follow-up; read what the answer needs now; if stopping short, say what wasn't read and suggest a narrower question.
+  - With tools, the note says "Older than #N: summaries, plus what the tools read (below)". Without tools (where Look deeper still exists), it's unchanged.
+
+### Tests
+- page (askSearch): the tools prompt carries the new rule (AS2); the note with tools never says "summaries only" (B74).
+
 ## [1.60.2] - 2026-11-27
 **A refresh never overwrites the page's refresh phrase** (B73, seen on the owner's page Nov 27). PATCH. No page or helper change.
 

@@ -15686,12 +15686,19 @@ async function askSearch() {
         /\n- SEARCH: three tools over every stored message/.test(r.prompt) &&
         /- Search before saying something isn't in the chat/.test(r.prompt) &&
         /read them with read_messages first/.test(r.prompt) &&
+        /- Never offer to dig deeper, look later or read more in a follow-up/.test(r.prompt) &&
         /- MESSAGES: every message from #\d+ to #1199/.test(r.prompt) &&
         /- OLDER HISTORY: #0 to #/.test(r.prompt) &&
         call.bytes <= 98304,
       'AS2: one call; the prompt is the whole history (newest word for word, summaries from #0) within 96 KiB, with the SEARCH line and its rules (' +
         call.bytes +
         ' bytes)',
+    );
+    ok(
+      /Older than #\d+: summaries, plus what the tools read \(below\)\./.test(r.note) && !/summaries only/.test(r.note),
+      'B74: with tools the note never says "summaries only": the older part is summaries plus what the tools read (' +
+        r.note.slice(0, 160) +
+        ')',
     );
     const [plaid, backpack, read1, lining, days, bad] = [
       log.find(x => x.input.words === 'plaid'),
