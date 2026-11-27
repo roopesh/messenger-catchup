@@ -2,6 +2,27 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.61.0] - 2026-11-27
+**Ask and search over a Facebook group's posts and comments** (F25 stage G2a). MINOR. Page 7.5.
+
+### Added
+- **A group's own Ask tab** (a group now has Summary, Posts and Ask). Claude reads the group's posts with the newest activity, each with its comments, word for word. It searches the rest with two tools:
+  - `search_posts`: words, author and dates, over post and comment text and authors' names.
+  - `read_posts`: a post with every comment on it, a run of posts, or a day's posts.
+  - It cites a post as `#p12` and a comment as `#p12/c3`. Each citation shows the hover card (F41) and opens the post in Posts, its earlier comments unfolded and the comment marked.
+  - The tools rules are Ask's own, said of posts and comments, including "never offer to dig deeper" (v1.60.3).
+  - The answer is saved in `qa` (`scope:"group"`, `chat: KEY`) and listed under Earlier questions. Under it, the page lists every match, with Photos only.
+- **All chats' Ask includes groups** (G2-01). Active and paused groups are read with the chats: each group's most active posts word for word, `search_messages` over their posts and comments too, and `read_posts` for one group. Group citations read `[gear#p12/c3]` and show as "Gear #p12/c3". They open the group's Posts at that post. The match list has a chip per group, and By chat lists a group's matches under it. Saved questions say "across 3 chats and 1 group".
+- Ask reads a group only through its own `KEY_posts` and `KEY_comments` (G2-04).
+- Each new post and comment a group import stores gets `at`: the time its Facebook age ("3h", "2 days ago") puts it, read at the import. Search uses it for dates. Posts stored before page 7.5 get an estimate from `firstSeen` and the age.
+
+### Not yet
+- Group photos have no captions yet (G1 stores only their ids), so a group search covers text and authors. Stats, By day, linked stats and loose links for groups are G2b and G2c.
+
+### Tests
+- page (groupsAsk, new): the group's tabs and tools; the prompt (span, posts by activity with their comments, estimated times, "You", the rules); `search_posts` by words, author and date; `read_posts` by post, day and a missing post; citations, their card and opening Posts at the comment; the match list and Photos only; the saved row. Across chats: the group in the prompt, the tools (and their refusals between chats and groups), tagged citations, chips and By chat, the saved row, a citation switching to the group. Also G2-04 (only `gear_posts` and `gear_comments` read) and the prompts without tools.
+- page (groupsImport): a new post and comment get `at`; G1-18 expects the Ask tab.
+
 ## [1.60.5] - 2026-11-27
 **A group's Settings card can change its linked chat** (#110; the owner, Nov 27). PATCH. Page 7.4.
 

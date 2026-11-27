@@ -20,7 +20,7 @@ Everything open: bugs, risks, gaps between docs and code, cleanup, tests and fea
 | R19 | P3 | risk | Claude's own maintenance writes (link cleanup, a backfill) hold the refresh lock while the user's approval waits, often past the lock's 20 minutes |
 | R17 | P3 | risk | Between a merge and its release, the page's "helper is behind" notice points at the old helper: marketplace installs get the new skill at the merge, but `releases/latest` still serves the old userscript |
 | F1 | P3 | feature | Several chats per page: stages A (v1.35.0), B (v1.38.0, v1.39.0) and C (v1.55.0, v1.57.0) shipped; left: the polish noticed in stage A and the options not built |
-| F25 | P2 | feature | Facebook groups on the page: stage G1 (read groups) shipped in v1.47.0–v1.48.0; next G2 (Ask, search, Stats, linked stats, loose links) and G3 (commenting, with photos) |
+| F25 | P2 | feature | Facebook groups on the page: stage G1 (read groups) shipped in v1.47.0–v1.48.0, G2a (Ask and search over posts and comments) in v1.61.0; next G2b (Stats, By day), G2c (linked stats, loose links) and G3 (commenting, with photos) |
 | F30 | P2 | feature | Send queued replies without a full refresh: part 1 ("send replies", replies first) in v1.27.0; option C step 1 (the `reply-check` skill) in v1.34.0; measured (0.2% of a 5-hour session per check); scheduling it ("schedule reply checks") in v1.37.0; left: arm it on the owner's account (every 10 minutes, 5 AM–10 PM) and check it, then make the interval and hours changeable in the page |
 | F33 | P3 | feature | Windowed loading of day summaries for very long histories (deferred from F29; only past about a year of days, or a measured threshold) |
 
@@ -81,7 +81,10 @@ What's left of R13 (closed in v1.35.1): the owner's decided option E + S (Nov 21
 ### F25 · P2 · Facebook groups on the page
 - **Asked (owner, Nov 14):** catch up with Facebook group posts too. Design reviewed by the owner (answers and comments folded in, Nov 25): https://claude.ai/artifact/GgfBMy76BJ4b4UQtbxf8EC.
 - **Shipped, stage G1 (read):** v1.47.0 (helper reads a group's feed, posts and notifications) and v1.48.0 (Add a group, the group capture and import, Posts and Summary views, Needs you from mentions, replies and notifications, All's Show filter and Show in All, Catching up, the refresh steps in `references/groups.md`).
-- **Next, stage G2 (find):** Ask and search over posts and comments, Stats per group, linked stats for a chat and its group (the design's seven views), loose links ("<bag> up in the group" → "Probably: …"), and a By day for groups.
+- **Stage G2 (find), in three releases (owner, Nov 27):**
+  - **G2a, shipped in v1.61.0:** a group's own Ask (`search_posts`, `read_posts`, citations `#pN/cM` opening Posts) and groups in All chats' Ask (`[key#pN/cM]`, a chip per group), with each new post and comment's estimated time (`at`). Group photos have no captions yet, so a group search covers text and authors. Live check left: L-05 (Ask with a group filter on claude.ai; citations open the right post).
+  - **G2b, next:** Stats per group (posts and comments per day, most active) and across, and a By day for groups.
+  - **G2c:** linked stats for a chat and its group with all seven of the design's views, and loose links ("<bag> up in the group" → "Probably: …" under the chat message). The owner sets the linked chat in Settings.
 - **Then, stage G3 (comment):** a comment on a post or a reply to a comment from the page, with photos (one per comment; several as a thread under your comment), through the outbox.
 - **Known limits (G1):** a reply to a reply gets a reply as its parent, though not always the one it names (Facebook's indent and labels don't say which); comment counts include hidden ones the page can't read (26 said, 22 loaded); notifications were only read in the survey (opening the page clears the red badge).
 ### F33 · P3 · Windowed loading of day summaries for very long histories
