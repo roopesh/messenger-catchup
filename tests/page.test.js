@@ -18816,6 +18816,24 @@ async function groupsAsk() {
   let p = await mcOpen(gaSeed());
   await mcPick(p, 'gear');
   await until(p, () => S.gLoaded === 7);
+  /* #114: a group's Refreshing help is about the group on Facebook, never the Messenger tab */
+  const helpText = () => p.$eval('section.method', e => e.innerText);
+  const gHelp = await helpText();
+  await mcPick(p, 'cam');
+  await until(p, () => !document.body.classList.contains('groupview'));
+  const cHelp = await helpText();
+  await mcPick(p, 'gear');
+  await until(p, () => S.gLoaded === 7 && document.body.classList.contains('groupview'));
+  ok(
+    /opens the group on facebook\.com/.test(gHelp) &&
+      !/Messenger/.test(gHelp) &&
+      /refresh Gear Swap/.test(gHelp) &&
+      /reads your open Messenger tab/.test(cHelp) &&
+      !/opens the group on facebook\.com/.test(cHelp),
+    "#114: a group's Refreshing help says Claude opens the group on Facebook (no Messenger wording); a chat's is unchanged (" +
+      gHelp.slice(0, 160) +
+      ')',
+  );
   const tabs = await p.$$eval('nav.tabs a', as => as.filter(a => !a.hidden).map(a => a.dataset.tab));
   await p.click('nav a[data-tab="ask"]');
   const head = {

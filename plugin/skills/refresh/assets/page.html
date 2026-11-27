@@ -2463,6 +2463,11 @@
   .ctag.c4 {
     border-color: var(--c4);
   }
+  body.groupview .method .chat-help,
+  body.groupview .method #jump,
+  body:not(.groupview) .method .group-help {
+    display: none;
+  }
   body.allchats #window,
   body.allchats #marker,
   body.allchats #strip {
@@ -2909,7 +2914,26 @@
 
   <section class="method block">
     <div class="sec-head"><h2>Refreshing</h2></div>
-    <ul>
+    <!-- #114: a group's own help (body.groupview); the chat's list below is hidden there -->
+    <ul class="group-help">
+      <li>
+        To read new posts and comments, ask Claude in chat to <b data-rp>refresh my catch-up</b>. Claude opens the group
+        on facebook.com in your own Chrome, reads the posts and comments that came in since the last refresh, adds them
+        here and rebuilds the summary. It also reads your Facebook notifications from the group, which clears your red
+        badge. This page can't reach Facebook itself.
+      </li>
+      <li>
+        <b>Your computer has to be online.</b> Every refresh, scheduled or not, uses Facebook in your Chrome: the
+        computer must be on and awake, the screen unlocked, Chrome open with the Claude in Chrome extension connected
+        and Facebook signed in. Keep the Claude Desktop app open on that computer too, signed in to the same account. If
+        any of this isn't so, that run is skipped and the next one catches up.
+      </li>
+      <li>
+        <b>Posts</b> lists the newest activity first and marks what the last refresh brought. <b>Ask Claude</b> covers
+        every stored post and comment.
+      </li>
+    </ul>
+    <ul class="chat-help">
       <li>
         To pull new messages, ask Claude in chat to <b data-rp>refresh my catch-up</b>. Claude reads your open Messenger
         tab in your own Chrome, scrolls back only to the last message already stored, appends the new ones here and
@@ -3052,7 +3076,7 @@
   let THREAD = "",
     CHAT = "https://www.facebook.com/messages/";
   /* Generic Messenger Catch-up (v1.1): everything about the chat and its owner comes from meta/chat, written by Claude at setup. */
-  const PAGE_VERSION = "7.5";
+  const PAGE_VERSION = "7.6";
   const CFG = () => S.meta || {};
   /* an added chat is refreshed by name (F1); the page's own phrase refreshes its first chat. B71: All chats says the
      page's phrase (S.page, the first chat's meta), never the phrase of the chat loaded last (a group wrote "refresh pa") */
@@ -17307,6 +17331,7 @@ Skin-tone variants (👍🏽) count as the base emoji. An emoji that isn't in th
   function showView() {
     const all = S.view === "all";
     document.body.classList.toggle("allchats", all);
+    document.body.classList.toggle("groupview", !all && isGroup(CUR));
     route();
     applyCfg();
     renderRefresh(); /* its line names what to ask Claude: this chat's phrase, or the page's on All chats */
