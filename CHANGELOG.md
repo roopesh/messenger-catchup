@@ -2,6 +2,18 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.59.0] - 2026-11-26
+**Reply checks are hourly** (F40, #92). MINOR: setup's reply-check procedure changes. No page or helper change.
+
+### Changed
+- Setup schedules reply checks hourly at :33, away from the refreshes near the top of the hour. Asked for every N minutes, it sets hourly and says so in one line; "send replies" still posts right away.
+  - Why: `create_trigger` refused anything shorter when the owner armed a 10-minute check ("minimum interval is 1 hour"). A test from a Claude Desktop chat on Nov 26 was refused too, although the Desktop docs say a task Claude sets up "isn't held to the once-per-hour limit".
+  - The reference said 5–30 minutes, a claim never checked against the tool.
+- README, STATUS and setup's routing say hourly.
+
+### Notes
+- A 10-minute loop in a Claude Code terminal (`/loop 10m`) can drive Chrome unattended while the terminal stays open. It stays undocumented as an option, per the owner's pick (stay hourly).
+
 ## [1.58.2] - 2026-11-26
 **All chats names the page's refresh phrase** (B71, seen on the owner's page Nov 26). PATCH. Page 7.0.
 
