@@ -2,6 +2,27 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.62.0] - 2026-11-27
+**Stats and By day for a Facebook group, and groups in All chats' Stats and By day** (F25 stage G2b, #116). MINOR. Page 7.7.
+
+### Added
+- **A group's Stats tab** (G2-03). It uses the same timeframes and chart style as a chat's Stats:
+  - Numbers: posts, comments, people posting, photos, the busiest day and hour, your posts and your comments.
+  - Posts and comments per day (or hour, week or month), stacked, with a table.
+  - Most active: posts and comments together, each person's split under the name.
+  - Day and hour: a weekday-by-hour heatmap.
+  - Facebook gives anything a day old or more only by the day ("2d"), so the busiest hour and the heatmap count only posts and comments whose time is known to the hour. The note says how many that is.
+  - Only the Numbers, Volume, Top 10 and Day and hour switches show for a group.
+- **A group's By day tab:** a card per day, newest first, with that day's posts and comments placed by their estimated time (`at`, else the age from when it was first read). It has a block per post: the post if it came that day, else a line naming it, then that day's comments on it. Each entry cites `#pN` or `#pN/cM` and opens Posts at that comment. Groups have no day summaries yet, so nothing is summarized.
+- **All chats' Stats and By day include groups.** In Stats, a group's row counts its posts and comments beside the chats' messages, with its tag, its people, photos and most active person. In By day, a group's section on a day lists that day's posts and comments with tagged citations ("Gear #p2/c1"), which open the group's Posts. With groups on the page, both tabs have All chats' Show (All, Chats, Groups). It's the same choice as on the cards, and the button you pressed keeps the focus. A page with only chats looks as before.
+
+### Not yet
+- Linked stats for a chat and its group, and loose links, are G2c.
+
+### Tests
+- page (groupsStats, new): a group's Stats over a fixed range (span line, tiles, stacked bars and table, most active with ties, the heatmap from posts and comments known to the hour, the four switches, Today), its By day (days, blocks per post, an older post named, replies, citations opening Posts), both at 390 px. All chats with a group: Stats rows and the All sum, Show on Stats, By day and the cards, By day's group sections and a citation opening the group. A page without groups is unchanged.
+- page (groupsImport, groupsAsk): a group's tabs now include By day and Stats.
+
 ## [1.61.1] - 2026-11-27
 **A group's Refreshing help is about the group** (#114). PATCH. Page 7.6.
 
