@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      4.4
+// @version      4.5
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on. It downloads GIFs from Facebook's image servers for your page (the permission Tampermonkey asks for).
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -42,13 +42,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '4.4';
+  window.__mcHelper = '4.5';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '4.4');
+  root.setAttribute('data-mc-helper', '4.5');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -1431,8 +1431,8 @@
   /* capture: the window's messages and photos. OPT.skip (helper 2.1, references/photos.md › Backfill) = {"<i>": [k or
      "aid", ...]}: photos the page already holds, never fetched. Each photo is {i, k, aid?, type, b64}: k is its tile's
      place in the message, aid its attachment id. phfail lists the photos it couldn't get ({i, k, aid?, e}: e "fetch",
-     or "unloaded" when the image never loaded), so the page keeps them owed and a later run retries them (R15); phskip
-     lists the photos skipped. */
+     or "unloaded" when the image never loaded; for a GIF, "gif: " and why, #134), so the page keeps them owed and a
+     later run retries them (R15); phskip lists the photos skipped. */
   async function mcCapture(BASE, OPT) {
     return await (async () => {
       const R = JSON.parse(sessionStorage.getItem('__mcsave'));
@@ -1591,7 +1591,7 @@
           fr.readAsDataURL(blob);
         });
       /* F39: Tampermonkey's download, which the helper's @connect lets read Facebook's image servers; an injected
-         copy has none, and then GIFs stay links as before */
+         copy has none, and then its GIFs go in phfail ("no-download") */
       const gmGet = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : null;
       const gmBlob = u =>
         new Promise((res, rej) =>
@@ -1628,6 +1628,7 @@
       const gifs = [];
       const failed = [];
       const phfail = [];
+      const gifFailed = [];
       const phskip = [];
       const SKIP = (OPT && OPT.skip) || {};
       for (const [k, id] of R.win.entries()) {
@@ -1639,15 +1640,31 @@
         if (!tiles.length) {
           if (!m.ph.gif) continue;
           gifs.push(i);
-          /* F39: the GIF itself, stored like a photo (slot k), up to 3 MB; one that won't download stays a link */
-          for (const [j, u] of (gmGet ? m.ph.gu || [] : []).slice(0, 4).entries()) {
+          /* F39: the GIF itself, stored like a photo (slot k), up to 3 MB. #134: one that isn't stored goes in phfail
+             with why (no https address read, slot 0; no Tampermonkey download; too large; wrong type; the download's
+             error or HTTP status), so the page keeps its slot owed and a later run retries it, as for a photo */
+          const gu = (m.ph.gu || []).slice(0, 4);
+          const gifFail = (k, why) => {
+            const f = { i, k, e: 'gif: ' + why };
+            phfail.push(f);
+            gifFailed.push(f);
+          };
+          if (!gu.length && !sk.includes(0)) gifFail(0, 'no-url');
+          for (const [j, u] of gu.entries()) {
             if (sk.includes(j)) continue;
+            if (!gmGet) {
+              gifFail(j, 'no-download');
+              continue;
+            }
             try {
               const bl = await gmBlob(u);
-              if (!/^image\/(webp|gif|png|jpeg)$/.test(bl.type) || bl.size > GIF_MAX) continue;
+              if (!/^image\/(webp|gif|png|jpeg)$/.test(bl.type)) throw 'type ' + (bl.type || 'none');
+              if (bl.size > GIF_MAX) throw 'too-large ' + (bl.size / 1048576).toFixed(1) + ' MB';
               photos.push({ i, k: j, type: bl.type, b64: lined(await b64(bl)) });
               gifStored++;
-            } catch (e) {}
+            } catch (e) {
+              gifFail(j, typeof e === 'number' ? 'HTTP ' + e : typeof e === 'string' ? e : 'error');
+            }
           }
           continue;
         }
@@ -1734,6 +1751,7 @@
         ' gifs ' +
         gifs +
         (gifStored ? ' (stored ' + gifStored + ')' : '') +
+        (gifFailed.length ? ' FAILED ' + gifFailed.map(f => '#' + f.i + ' (' + f.e + ')').join(', ') : '') +
         ' you ' +
         out.filter(o => o.f === 'You').map(o => o.i) +
         (guessed.length ? ' DATES-GUESSED ' + guessed : '')
@@ -3384,7 +3402,7 @@
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
     groupComment: (a, id) => mcGroupComment(a, id),
-    ping: () => ({ v: '4.4' }),
+    ping: () => ({ v: '4.5' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which
