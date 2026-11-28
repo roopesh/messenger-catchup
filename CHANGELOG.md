@@ -24,6 +24,7 @@ One entry per release. Every merged PR is a release: it bumps `VERSION` and adds
 - sim (S): a reply check reads an active group's `KEY_outbox` and hands its queued comment over.
 - Python: `catchup.py chats` for a group (its outbox, its `auto` or the default, `postUrl`); outbox.md says what to do with every `groupComment` result, and the group and post are checked before anything is typed.
 - The mock group page has Lexical comment boxes: a post's "Write a comment…", and a reply box per comment holding the person's name.
+- **Fixed a test that depended on the time of day:** `page.test.js` computed "today" in the runner's zone (UTC on CI), while the page runs in America/Los_Angeles. From 4 PM Pacific on, today's test messages were the page's tomorrow, and G2b's "All chats' Stats without groups" counted none. It failed this PR's first CI run at 03:18 UTC and fails the same way locally with `TZ=UTC`. The test process now runs in the page's zone (`PAGE_TZ`). Every page test passes under `TZ=UTC` as well.
 
 ## [1.65.2] - 2026-11-27
 **Opening a group post reads the post too, so a post read only through its comments gets filled** (B77, #128). PATCH. Helper 4.3, page 8.2.

@@ -3,6 +3,12 @@
    catch-up markers, date entry, outbox, Ask Claude, Views and known bugs.
    Run from the repo root after tests/sim.js (it writes tests/out/sim_caps.json): node tests/page.test.js
    known() marks a docs/BACKLOG.md bug as a KNOWN line that doesn't fail the run; FIXED? means one now passes. None open right now. */
+/* The page runs in PAGE_TZ (open()'s timezoneId), so this process computes its dates (TODAY, ymd) in that zone too. In
+   the runner's own zone (UTC on CI) "today" turned into the page's tomorrow every evening after 4 PM Pacific, and a
+   test counting today's messages found none (seen on PR #132's CI at 03:18 UTC). Set before any Date is made; the
+   sections' child processes inherit it. */
+const PAGE_TZ = 'America/Los_Angeles';
+process.env.TZ = PAGE_TZ;
 const { chromium } = require('playwright');
 const fs = require('fs');
 const os = require('os');
@@ -563,7 +569,7 @@ async function open(seed, page = PAGE, ctxOpts) {
       {
         viewport: { width: 1000, height: 900 },
         locale: 'en-US',
-        timezoneId: 'America/Los_Angeles',
+        timezoneId: PAGE_TZ,
       },
       cOpts,
     ),
