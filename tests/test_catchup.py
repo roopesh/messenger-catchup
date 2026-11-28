@@ -5670,6 +5670,27 @@ class TestRunPlan(unittest.TestCase):
         )
         self.assertIn("paddle_posts", c["collections"].values())
 
+    def test_G3a_chats_gives_a_groups_outbox_its_approval_and_where_its_posts_are(self):
+        """G3a (#131): a group's queued comments live in its KEY_outbox; `auto` follows the group's own setting, else
+        outboxAuto (as a chat's); postUrl is where groupComment runs for a row's pid."""
+        self.meta["outboxAuto"] = False
+        base = {"kind": "group", "name": "Gear Swap", "tag": "Gear", "state": "active", "order": 1, "group": "100"}
+        self.meta["chats"]["gear"] = dict(base)
+        self.meta["chats"]["swap"] = dict(base, name="Swap", tag="Swap", group="gear.swap", auto=True)
+        mf = os.path.join(self.t.name, "meta.json")
+        with open(mf, "w") as f:
+            json.dump(self.meta, f)
+        gear, swap = chats_out(mf, "gear"), chats_out(mf, "swap")
+        self.assertEqual(gear["collections"]["outbox"], "gear_outbox")
+        self.assertEqual((gear["auto"], swap["auto"]), (False, True))
+        self.assertEqual(gear["postUrl"], "https://www.facebook.com/groups/100/posts/{pid}/")
+        self.assertEqual(swap["postUrl"].format(pid="2000"), "https://www.facebook.com/groups/gear.swap/posts/2000/")
+        self.meta["outboxAuto"] = True
+        with open(mf, "w") as f:
+            json.dump(self.meta, f)
+        self.assertTrue(chats_out(mf, "gear")["auto"], "a group with no auto of its own follows outboxAuto")
+        self.assertNotIn("postUrl", chats_out(mf, "cam"), "a chat has no postUrl")
+
     def test_the_first_chat_first_then_the_skipped_ones_in_the_order_they_were_left(self):
         self.at(0)
         self.assertEqual(self.plan({"keys": ["chess", "cam"]})["order"], ["trail", "chess", "cam", "book"])

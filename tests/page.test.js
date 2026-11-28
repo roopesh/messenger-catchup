@@ -3,6 +3,12 @@
    catch-up markers, date entry, outbox, Ask Claude, Views and known bugs.
    Run from the repo root after tests/sim.js (it writes tests/out/sim_caps.json): node tests/page.test.js
    known() marks a docs/BACKLOG.md bug as a KNOWN line that doesn't fail the run; FIXED? means one now passes. None open right now. */
+/* The page runs in PAGE_TZ (open()'s timezoneId), so this process computes its dates (TODAY, ymd) in that zone too. In
+   the runner's own zone (UTC on CI) "today" turned into the page's tomorrow every evening after 4 PM Pacific, and a
+   test counting today's messages found none (seen on PR #132's CI at 03:18 UTC). Set before any Date is made; the
+   sections' child processes inherit it. */
+const PAGE_TZ = 'America/Los_Angeles';
+process.env.TZ = PAGE_TZ;
 const { chromium } = require('playwright');
 const fs = require('fs');
 const os = require('os');
@@ -563,7 +569,7 @@ async function open(seed, page = PAGE, ctxOpts) {
       {
         viewport: { width: 1000, height: 900 },
         locale: 'en-US',
-        timezoneId: 'America/Los_Angeles',
+        timezoneId: PAGE_TZ,
       },
       cOpts,
     ),
@@ -18450,7 +18456,7 @@ async function groupsAdd() {
   ok(
     (await p.$eval('#with-gear', x => x.value)) === 'book' &&
       JSON.stringify(gLabels) ===
-        JSON.stringify(['Tag', 'Goes with a chat', 'Read', 'Scheduled refresh', 'Show in All']) &&
+        JSON.stringify(['Tag', 'Goes with a chat', 'Read', 'Queued comments', 'Scheduled refresh', 'Show in All']) &&
       (await p.inputValue('#read-gear')) === 'mine' &&
       !(await p.isChecked('#rollup-gear')) &&
       !(await p.$('#photos-gear')) &&
@@ -18459,7 +18465,7 @@ async function groupsAdd() {
       gRow.includes('Pausing stops refreshes of this group until you resume it. Its posts stay on the page.') &&
       !gRow.includes('Queued replies') &&
       !/this chat/.test(gRow),
-    "G1-03/F43: a group's screen says group (no chat wording, no Queued replies, no photos) and shows Goes with a chat, Read and Show in All as set when adding (" +
+    "G1-03/F43: a group's screen says group (no chat wording, no photos), shows Goes with a chat, Read and Show in All as set when adding, and (G3a) its own Queued comments (" +
       JSON.stringify([gLabels, gRow.slice(0, 300)]) +
       ')',
   );
@@ -19096,6 +19102,132 @@ const gaRows = (p, box) =>
           : 'note',
     ),
   );
+/* F25 G3a (#131), G3-01: on Gear Swap's Posts, "Comment here" on a post and "Reply here" on a comment queue a
+   kind:"comment" row in gear_outbox (pid, n, and for a reply c, cid, rid and to); a draft survives Posts' redraws; the
+   queued chip, Summary's "Your comments" with Cancel, and the group's own auto as for a chat's replies. */
+async function groupsComment() {
+  const p = await mcOpen(gaSeed());
+  await mcPick(p, 'gear');
+  await until(p, () => S.gLoaded === 7);
+  await p.click('nav a[data-tab="posts"]');
+  const rows = () =>
+    p.evaluate(() =>
+      [...__rt.store]
+        .filter(([k]) => k.startsWith('gear_outbox/'))
+        .map(([k, v]) => Object.assign({ id: k }, v))
+        .sort((a, b) => a.queuedAt.localeCompare(b.queuedAt)),
+    );
+  // a comment on #p2 (Ana's tent)
+  await p.click('#p2 > .gacts button.rh');
+  await p.fill('#p2 > .compose textarea', 'Is it still available?');
+  await p.click('#p2 > .compose button.primary');
+  await until(p, () => [...__rt.store.keys()].some(k => k.startsWith('gear_outbox/')));
+  let r = await rows();
+  const chip = await until(p, () => (document.querySelector('#p2 > .gacts .pt') || {}).textContent);
+  ok(
+    r.length === 1 &&
+      r[0].kind === 'comment' &&
+      r[0].pid === '2000000000000002' &&
+      r[0].n === 2 &&
+      r[0].c === null &&
+      r[0].cid === null &&
+      r[0].rid === null &&
+      r[0].to === 'Ana Alvarez' &&
+      r[0].snip === 'Selling a 2-person tent, used twice. 120 or best offer.' &&
+      r[0].text === 'Is it still available?' &&
+      r[0].state === 'queued' &&
+      !!Date.parse(r[0].queuedAt) &&
+      chip === 'comment queued' &&
+      !(await p.$('#p2 > .compose')),
+    'G3-01: Comment here on #p2 queues one kind:"comment" row in gear_outbox (pid, n 2, to Ana Alvarez, the post as snip), the composer closes and #p2 says "comment queued" (' +
+      JSON.stringify([r, chip]) +
+      ')',
+  );
+  // a reply to #p2/c2 (Ana's reply, folded under earlier comments): the draft survives a redraw of Posts
+  await p.evaluate(() => (document.querySelector('#p2 details').open = true));
+  await p.click('#p2c2 > .gacts button.rh');
+  await p.fill('#p2c2 > .compose textarea', 'Deal, 110 it is');
+  await p.evaluate(() => renderPosts());
+  const kept = await p.evaluate(() => {
+    const ta = document.querySelector('#p2c2 > .compose textarea');
+    const att = [...document.querySelectorAll('#p2c2 > .compose button')].find(b => b.textContent === 'Attach photo');
+    return [ta && ta.value, document.querySelector('#p2 details').open, !!att && att.hidden];
+  });
+  await p.click('#p2c2 > .compose button.primary');
+  await until(p, () => [...__rt.store.keys()].filter(k => k.startsWith('gear_outbox/')).length === 2);
+  r = await rows();
+  ok(
+    kept[0] === 'Deal, 110 it is' &&
+      kept[1] === true &&
+      kept[2] === true &&
+      r.length === 2 &&
+      r[1].kind === 'comment' &&
+      r[1].pid === '2000000000000002' &&
+      r[1].n === 2 &&
+      r[1].c === 2 &&
+      r[1].cid === '4000000000000202' &&
+      r[1].rid === '5000000000000002' &&
+      r[1].to === 'Ana Alvarez' &&
+      r[1].snip === '110 and it is yours.' &&
+      r[1].text === 'Deal, 110 it is' &&
+      (await until(p, () => (document.querySelector('#p2c2 > .gacts .pt') || {}).textContent)) === 'reply queued',
+    'G3-01: Reply here on #p2/c2 (text only: no Attach photo) keeps its draft through a redraw of Posts (its comments stay unfolded), then queues a row with c 2, its cid and rid, and to Ana Alvarez (' +
+      JSON.stringify([kept, r[1]]) +
+      ')',
+  );
+  // Summary lists them under "Your comments", worded by the page default (wait for my OK); Cancel works
+  await p.click('nav a[data-tab="summary"]');
+  await until(p, () => document.querySelectorAll('#v-summary .item.ob').length === 2);
+  const ob = await p.evaluate(() => ({
+    h: document.querySelector('#ob-slot h2').textContent,
+    sub: document.querySelector('#ob-slot .sec-head p').textContent,
+    items: [...document.querySelectorAll('#ob-slot .item.ob .note')].map(n => n.textContent),
+  }));
+  await p.click('#ob-slot button:text("Cancel this comment")');
+  await until(p, id => (__rt.get(id) || {}).state === 'cancelled', r[0].id);
+  const c0 = await get(p, r[0].id);
+  await p.click('nav a[data-tab="posts"]');
+  const gone = await until(p, () => !(document.querySelector('#p2 > .gacts .pt') || {}).textContent);
+  ok(
+    ob.h === 'Your comments' &&
+      /^2 queued\. On its next run Claude shows them to you in chat/.test(ob.sub) &&
+      ob.items.some(t => t.includes("comment on Ana Alvarez's post #p2 · “Selling a 2-person tent")) &&
+      ob.items.some(t => t.includes("reply to Ana Alvarez's comment #p2/c2 · “110 and it is yours.”")) &&
+      c0.state === 'cancelled' &&
+      !!Date.parse(c0.cancelledAt) &&
+      !!gone,
+    'G3-01: Summary lists both under "Your comments" (comment on #p2, reply to #p2/c2) and Cancel this comment cancels the row and clears its chip (' +
+      JSON.stringify([ob, c0.state]) +
+      ')',
+  );
+  // the group's own auto, as a chat's: its screen's Queued comments, a chip on its row, and the outbox's wording
+  await mcSet(p, 'gear');
+  await p.selectOption('#auto-gear', 'on');
+  await until(p, () => __rt.get('meta/chat').chats.gear.auto === true);
+  const rowText = await until(
+    p,
+    () =>
+      /comments: automatic/.test((document.getElementById('set-row-gear') || {}).textContent || '') &&
+      document.getElementById('set-row-gear').textContent,
+  );
+  await p.click('#settings-close');
+  await p.click('nav a[data-tab="summary"]');
+  const sub2 = await until(
+    p,
+    () =>
+      /Claude posts these on its next run/.test(
+        (document.querySelector('#ob-slot .sec-head p') || {}).textContent || '',
+      ) && document.querySelector('#ob-slot .sec-head p').textContent,
+  );
+  ok(
+    !!rowText && !!sub2 && /^1 queued\./.test(sub2),
+    "G3-01: the group's own auto (Settings › Queued comments) shows as a chip on its row and makes its queued comments post on the next run (" +
+      JSON.stringify([rowText, sub2]) +
+      ')',
+  );
+  ok(p.errors.length === 0, 'G3-01: no page errors ' + JSON.stringify(p.errors));
+  await p.context().close();
+}
 async function groupsAsk() {
   let p = await mcOpen(gaSeed());
   await mcPick(p, 'gear');
@@ -20733,6 +20865,7 @@ const SECTIONS = {
   groupsAdd,
   groupsImport,
   groupsAsk,
+  groupsComment,
   groupsStats,
   importer,
   multiChat,

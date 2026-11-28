@@ -51,8 +51,14 @@
          time links with comment_id (and reply_comment_id), "View N replies" buttons beside a comment, 10 comments at
          first and 10 more each time the dialog's scroller reaches its end, and a "Most relevant" sort menu
          (Newest, All comments) that resets on every post and collapses replies.
+         Commenting (G3a): each comment in the dialog has a Reply button that opens a reply box under it, named
+         "Reply to <name>" and holding that person's name as a mention and a space; the post has its own "Write a
+         comment…" box. Both run Lexical (the module script below): Enter posts, shift+Enter starts a new line. A posted
+         comment shows 300 ms later as a new article by the user (mock_g_me, "Sam Stone") with a new comment_id (a reply:
+         its parent's comment_id and a new reply_comment_id), and lands in window.mockComments.
          Modes (localStorage): mock_g_posts (number of posts, 40), mock_g_bump ("k:n,k:n": post k got n new comments,
-         minutes ago, so it rises in Recent activity), mock_g_novirt (no virtualizing). */
+         minutes ago, so it rises in Recent activity), mock_g_novirt (no virtualizing), mock_g_wrongname (a reply box
+         names someone else), mock_g_me (the user's name). */
       const MODE = k => localStorage.getItem("mock_" + k);
       const P = location.pathname.match(/\/groups\/([\w.]+)\/(?:posts\/(\d+))?/) || [];
       const G = P[1] || "1000000000000001";
@@ -67,6 +73,8 @@
           BUMP[+k] = +n;
         });
       window.mockVotes = [];
+      window.mockComments = [];
+      const ME = MODE("g_me") || "Sam Stone";
       const age = h =>
         h < 1 ? Math.round(h * 60) + " minutes ago" : h < 2 ? "about an hour ago" : Math.round(h) + " hours ago";
       const short = h => (h < 1 ? Math.round(h * 60) + "m" : Math.round(h) + "h");
@@ -291,7 +299,8 @@
               ? p.cmts.slice().sort((a, b) => (a.cid % 3) - (b.cid % 3) || a.cid - b.cid)
               : p.cmts.slice().sort((a, b) => a.h - b.h);
           let shown = 0;
-          const article = (aria, who, href, short, text) => {
+          let posted = 0;
+          const article = (aria, who, href, short, text, onReply) => {
             const ar = el("div", { role: "article", "aria-label": aria });
             const uh = "/groups/" + G + "/user/" + (9100 + NAMES.indexOf(who)) + "/";
             ar.append(el("a", { href: uh }), el("a", { href: uh }, who)); /* the avatar link (no text), then the name */
@@ -299,31 +308,59 @@
             ar.append(el("a", { href }, short));
             /* a comment can hold a photo too: never one of the post's */
             if (/^Comment 0 on/.test(text)) ar.append(el("a", { href: "/photo/?fbid=3999999999999999" }));
+            const rb = el("div", { role: "button" }, "Reply");
+            rb.onclick = onReply;
+            ar.append(rb);
             const w = el("div");
             w.append(ar);
             return w;
           };
-          /* a thread block, as Facebook nests them: the comment's article in a div, then a div of reply blocks */
-          function block(c, parentWho, base) {
+          /* a thread block, as Facebook nests them: the comment's article in a div, then a div of reply blocks. top: the
+             top-level comment's address, for a reply (a reply's link is its comment_id and its own reply_comment_id) */
+          function block(c, parentWho, top) {
             const b = el("div");
             b.className = "blk";
-            const href = base
-              ? base + "&reply_comment_id=" + c.rid
+            const href = top
+              ? top + "&reply_comment_id=" + c.rid
               : "/groups/" + G + "/posts/" + p.pid + "/?comment_id=" + c.cid;
+            const base = top || href;
             const aria = parentWho
               ? "Reply by " + c.who + " to " + parentWho + "'s comment " + age(c.h)
               : "Comment by " + c.who + " " + age(c.h);
-            b.append(article(aria, c.who, href, short(c.h), c.text));
             const reps = el("div");
-            b.append(reps);
-            const rs = c.replies || [];
-            if (rs.length) {
-              const v = el("div", { role: "button" }, "View " + rs.length + (rs.length > 1 ? " replies" : " reply"));
-              v.onclick = () =>
+            if (!c.replies) c.replies = [];
+            const rs = c.replies;
+            let v = null;
+            const expand = () => {
+              if (!v) return;
+              v.remove();
+              v = null;
+              rs.forEach(r => reps.append(block(r, c.who, base)));
+            };
+            /* G3a: Reply opens a box under the comment holding the person's name (another's in mock_g_wrongname) */
+            const openReply = () => {
+              if (b.querySelector(":scope > .rbox")) return;
+              const nm = MODE("g_wrongname") ? NAMES[(NAMES.indexOf(c.who) + 1) % 4] : c.who;
+              const box = el("div", { role: "textbox", contenteditable: "true", "aria-label": "Reply to " + nm });
+              box.className = "rbox";
+              box.dataset.mention = nm;
+              box.mockSend = text =>
                 setTimeout(() => {
-                  v.remove();
-                  rs.forEach(r => reps.append(block(r, c.who, href)));
-                }, 200);
+                  expand();
+                  const r = { rid: String(5900000000000000 + ++posted), who: ME, h: 1 / 60, text };
+                  rs.push(r); /* kept when the sort redraws the comments */
+                  reps.append(block(r, c.who, base));
+                  const cid = new URL(base, location.href).searchParams.get("comment_id");
+                  window.mockComments.push({ pid: p.pid, cid, rid: r.rid, to: c.who, text });
+                }, 300);
+              b.insertBefore(box, reps);
+              window.mockEditor(box);
+              box.focus();
+            };
+            b.append(article(aria, c.who, href, short(c.h), c.text, openReply), reps);
+            if (rs.length) {
+              v = el("div", { role: "button" }, "View " + rs.length + (rs.length > 1 ? " replies" : " reply"));
+              v.onclick = () => setTimeout(expand, 200);
               b.append(v);
             }
             return b;
@@ -339,8 +376,115 @@
             if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4 && shown < p.cmts.length)
               setTimeout(more, 200);
           });
+          /* G3a: the post's own comment box (its editor starts in the module script) */
+          const cbox = el("div", {
+            role: "textbox",
+            contenteditable: "true",
+            "aria-label": "Write a comment…",
+            "data-mock-editor": "post",
+          });
+          cbox.mockSend = text =>
+            setTimeout(() => {
+              const c = { cid: String(4000000000000000 + p.k * 100 + 90 + ++posted), who: ME, h: 1 / 60, text };
+              p.cmts.push(c); /* kept when the sort redraws the comments */
+              shown++;
+              scroller.append(block(c));
+              window.mockComments.push({ pid: p.pid, cid: c.cid, rid: null, to: null, text });
+            }, 300);
+          inner.append(cbox);
         }
       }
+    </script>
+    <script type="module">
+      /* G3a: a comment box as Facebook's: Lexical (core, with the commands @lexical/plain-text registers, as in
+         messenger.html), Enter posts (the box's mockSend gets its text, then it empties), shift+Enter starts a new line.
+         A reply box starts with the person's name (data-mention) as a mention and a space. Served by tests/run.js. */
+      import * as L from "/node_modules/lexical/dist/Lexical.prod.js";
+      class MentionNode extends L.TextNode {
+        static getType() {
+          return "mention";
+        }
+        static clone(n) {
+          return new MentionNode(n.__text, n.__key);
+        }
+        static importJSON(j) {
+          return new MentionNode(j.text);
+        }
+        exportJSON() {
+          return Object.assign(super.exportJSON(), { type: "mention" });
+        }
+        createDOM(c) {
+          const d = super.createDOM(c);
+          d.setAttribute("spellcheck", "false");
+          return d;
+        }
+      }
+      window.mockEditor = box => {
+        const editor = L.createEditor({ namespace: "mock-fb", nodes: [MentionNode], onError: e => console.error(e) });
+        editor.setRootElement(box);
+        const fill = name => {
+          const root = L.$getRoot();
+          root.clear();
+          const para = L.$createParagraphNode();
+          if (name) para.append(new MentionNode(name).setMode("token"), L.$createTextNode(" "));
+          root.append(para);
+        };
+        editor.update(() => fill(box.dataset.mention));
+        const sel = () => {
+          const s = L.$getSelection();
+          return L.$isRangeSelection(s) ? s : null;
+        };
+        const P = L.COMMAND_PRIORITY_EDITOR;
+        const on = (cmd, fn) => editor.registerCommand(cmd, fn, P);
+        on(L.CONTROLLED_TEXT_INSERTION_COMMAND, x => {
+          const s = sel();
+          if (!s) return false;
+          s.insertText(typeof x === "string" ? x : x.data || "");
+          return true;
+        });
+        on(L.DELETE_CHARACTER_COMMAND, back => {
+          const s = sel();
+          if (!s) return false;
+          s.deleteCharacter(back);
+          return true;
+        });
+        on(L.REMOVE_TEXT_COMMAND, () => {
+          const s = sel();
+          if (!s) return false;
+          s.removeText();
+          return true;
+        });
+        on(L.INSERT_LINE_BREAK_COMMAND, start => {
+          const s = sel();
+          if (!s) return false;
+          s.insertLineBreak(start);
+          return true;
+        });
+        on(L.KEY_BACKSPACE_COMMAND, e => {
+          if (!sel()) return false;
+          e.preventDefault();
+          return editor.dispatchCommand(L.DELETE_CHARACTER_COMMAND, true);
+        });
+        on(L.SELECT_ALL_COMMAND, () => {
+          L.$selectAll();
+          return true;
+        });
+        editor.registerCommand(
+          L.KEY_ENTER_COMMAND,
+          e => {
+            if (!sel()) return false;
+            if (e) e.preventDefault();
+            if (e && e.shiftKey) return editor.dispatchCommand(L.INSERT_LINE_BREAK_COMMAND, false);
+            const text = editor.getEditorState().read(() => L.$getRoot().getTextContent());
+            if (!text.trim()) return true;
+            box.mockSend(text);
+            editor.update(() => fill(null));
+            return true;
+          },
+          L.COMMAND_PRIORITY_HIGH,
+        );
+      };
+      document.querySelectorAll("[data-mock-editor]").forEach(b => window.mockEditor(b));
     </script>
   </body>
 </html>

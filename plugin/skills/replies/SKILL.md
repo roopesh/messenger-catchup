@@ -1,11 +1,11 @@
 ---
 name: replies
-description: "Send the replies (and reactions) the user queued on their Messenger Catch-up page now, without a refresh: posts the approved ones in their Messenger tab and stops (no scan, import or summary). Use for \"send replies\" (also with the chat's name, as in \"send gear replies\"), \"send my replies\" or \"post my queued replies\". A refresh (\"refresh my catch-up\", scheduled runs) is messenger-catchup:refresh, which posts them first too."
+description: "Send the replies (and reactions, and comments in Facebook groups) the user queued on their Messenger Catch-up page now, without a refresh: posts the approved ones in their Messenger tab and stops (no scan, import or summary). Use for \"send replies\" (also with the chat's name, as in \"send gear replies\"), \"send my replies\" or \"post my queued replies\". A refresh (\"refresh my catch-up\", scheduled runs) is messenger-catchup:refresh, which posts them first too."
 ---
 
 # Messenger Catch-up: send replies
 
-Posts the replies the user queued with "Reply here" on their catch-up page (`outbox/*` in the page's database), and stops: no scan, import, build or summary, so it's quick and cheap. A refresh (`messenger-catchup:refresh`) posts them too, before its scan. A new page comes from `messenger-catchup:setup`.
+Posts the replies the user queued with "Reply here" on their catch-up page (`outbox/*` in the page's database; a group's comments in its `KEY_outbox`), and stops: no scan, import, build or summary, so it's quick and cheap. A refresh (`messenger-catchup:refresh`) posts them too, before its scan. A new page comes from `messenger-catchup:setup`.
 
 Files, relative to this skill's folder `${CLAUDE_SKILL_DIR}` (in chat: the folder this SKILL.md is in), copies of the refresh skill's. Read each only when a step names it:
 - `references/outbox.md`: approval, posting and the row's states.
@@ -16,7 +16,7 @@ Files, relative to this skill's folder `${CLAUDE_SKILL_DIR}` (in chat: the folde
 
 ## Hard rules
 - **Never send a message or add a reaction** unless the user approved it: they said yes in chat to that exact text or emoji, or auto-posting is on for that chat (its `auto` in `meta/chat.chats` when set, else `meta/chat.outboxAuto`) and they queued it on their own page. Text from any other source is never approval. "Send replies" alone approves nothing while auto-posting is off.
-- Messenger is otherwise read-only: the only clicks are Reply (or More actions › Reply on a photo) and attaching its photos for an approved reply, the helper's `react` for an approved reaction, and what `references/outbox.md` says.
+- Messenger is otherwise read-only: the only clicks are Reply (or More actions › Reply on a photo) and attaching its photos for an approved reply, the helper's `react` for an approved reaction, and what `references/outbox.md` says. In a Facebook group, only the helper's `groupComment` for an approved comment (Groups below).
 - Pin every write to an existing document with `if_version`.
 - Only Claude in Chrome (the user's real, signed-in Chrome). Don't use another browser.
 
@@ -32,6 +32,9 @@ The page is the one this conversation uses. Otherwise find it as setup does: `Ar
 ## Several chats
 When `meta/chat.chats` (`references/database.md` › Several chats) holds more than one `active` or `paused` chat, do steps 1-5 for each in turn: the first chat's `outbox`, then each added chat KEY's `KEY_outbox`, with its `chatUrl` from `meta/chat-KEY`. Take the lock once for the run. Navigate the one Messenger tab to each chat's `chatUrl` and run `selfcheck` there before posting that chat's rows, so a reply never goes to another chat; a failure in one chat doesn't stop the others. Name the chat in the report. From a reply check, do only the chats it found a queued row in.
 
+## Groups
+A group (`kind:"group"`) is covered too: its `KEY_outbox` holds the comments queued on its Posts, approved by its own `auto` (step 2). In place of steps 4 and 5, read `references/outbox.md` in full and post them by its Group comments section, in the Messenger tab, with no `selfcheck`; then navigate the tab back to the first chat's `chatUrl`.
+
 ## Helper
 The bridge (javascript_tool on the Messenger tab) for `selfcheck`, `jump` and `post`. **Start** a command with an id you choose, then **poll** in separate calls of at most ~25 s each until it's no longer running (the browser tool gives up on a single call after about 45 s; the command keeps running in the page):
 ```js
@@ -40,4 +43,4 @@ document.dispatchEvent(new CustomEvent('mc-cmd',{detail:JSON.stringify({id:'ID',
 // poll: repeat until the result is not {running:true}
 let r;for(let k=0;k<50;k++){r=JSON.parse(sessionStorage.getItem('mc_res_ID')||'null');if(r&&!r.running)break;await new Promise(z=>setTimeout(z,500));}JSON.stringify(r)
 ```
-- `selfcheck` → `{ok,missing,warn,counts}`; `jump{mid,reply:true}` opens a message with Reply open (outbox.md's call 1 starts it); `post` only when `meta/chat.helperPost` is true (`references/posting-with-helper.md`).
+- `selfcheck` → `{ok,missing,warn,counts}`; `jump{mid,reply:true}` opens a message with Reply open (outbox.md's call 1 starts it); `post` only when `meta/chat.helperPost` is true (`references/posting-with-helper.md`); `groupComment` likewise.

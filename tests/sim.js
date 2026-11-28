@@ -2035,6 +2035,145 @@ sim('B77: groupPost puts the open post in the run buffer', { s: 25 }, async b =>
   );
   await ctx.close();
 });
+/* G3a (F25, #131): groupComment posts an approved comment on a group's post, or a reply to a comment, on the mock's
+   Lexical comment boxes. Post 4 (10 posts) has comments c0-c5 (4000000000000400-405); c0 has two replies, Cy Chen's
+   (5000000000004000) and Dee Diaz's (5000000000004001), behind "View 2 replies"; c1 is Cy Chen's. */
+const G3_PID = '2000000000000004';
+const g3Args = o => Object.assign({ group: GROUP, pid: G3_PID, me: ['Sam Stone'], helperPost: true }, o);
+const g3State = p =>
+  p.evaluate(() => ({
+    posted: window.mockComments.slice(),
+    box: document.querySelector('[aria-label="Write a comment…"]').innerText.trim(),
+    rboxes: [...document.querySelectorAll('.rbox')].map(b => [b.getAttribute('aria-label'), b.innerText.trim()]),
+  }));
+sim('G3-02, G3-05: groupComment posts a comment on a post and replies to comments', { s: 35 }, async b => {
+  const { ctx, p } = await fresh(b);
+  await gOpen(p, 'posts/' + G3_PID + '/', '', { g_posts: '10' });
+  // G3-02: a comment on the post, through the post's own box; the group may be given as a list (its id or name)
+  const r1 = await bridge(p, 'groupComment', g3Args({ group: ['gear.swap', GROUP], text: 'Is the stove still here?' }));
+  let s = await g3State(p);
+  ok(
+    r1 &&
+      r1.sent === true &&
+      r1.rid === null &&
+      r1.id === r1.cid &&
+      r1.who === 'Sam Stone' &&
+      s.posted.length === 1 &&
+      s.posted[0].cid === r1.cid &&
+      s.posted[0].rid === null &&
+      s.posted[0].text === 'Is the stove still here?' &&
+      !s.box,
+    'G3-02: a comment on the post is typed in the post\'s "Write a comment…" box, posted with Enter, and confirmed by its new comment_id, by the user (' +
+      JSON.stringify([r1, s]) +
+      ')',
+  );
+  // G3-05: a reply to Cy Chen's comment: the reply box names Cy Chen, the reply goes under c1
+  const r2 = await bridge(
+    p,
+    'groupComment',
+    g3Args({ cid: '4000000000000401', to: 'Cy Chen', text: 'Thanks, sounds good' }),
+  );
+  s = await g3State(p);
+  ok(
+    r2 &&
+      r2.sent === true &&
+      r2.cid === '4000000000000401' &&
+      /^59/.test(r2.rid) &&
+      r2.id === r2.rid &&
+      s.posted.length === 2 &&
+      s.posted[1].to === 'Cy Chen' &&
+      s.posted[1].cid === '4000000000000401' &&
+      s.posted[1].text === 'Cy Chen Thanks, sounds good',
+    "G3-05: a reply to a comment opens that comment's Reply, the box names Cy Chen (Facebook's mention, then the text), and the reply is confirmed by its reply_comment_id (" +
+      JSON.stringify([r2, s.posted[1]]) +
+      ')',
+  );
+  // G3-05: a reply to a reply behind "View 2 replies" (Dee Diaz's), two lines
+  const r3 = await bridge(
+    p,
+    'groupComment',
+    g3Args({ cid: '4000000000000400', rid: '5000000000004001', to: 'Dee Diaz', text: 'Two of them\nboth unused' }),
+  );
+  s = await g3State(p);
+  ok(
+    r3 &&
+      r3.sent === true &&
+      r3.cid === '4000000000000400' &&
+      s.posted.length === 3 &&
+      s.posted[2].to === 'Dee Diaz' &&
+      s.posted[2].text === 'Dee Diaz Two of them\nboth unused',
+    'G3-05: a reply to a reply is found by its reply_comment_id after "View 2 replies", names Dee Diaz, and keeps its line break (' +
+      JSON.stringify([r3, s.posted[2]]) +
+      ')',
+  );
+  // what groupPost reads next: the user's comments, by their name (the page marks them byYou)
+  const g = await bridge(p, 'groupPost', {});
+  const mine = ((g && g.comments) || []).filter(c => c.who === 'Sam Stone');
+  ok(
+    mine.length === 3 &&
+      mine.some(c => c.cid === r1.cid && !c.rid && c.text === 'Is the stove still here?') &&
+      mine.some(c => c.rid === r2.rid && c.parent === '4000000000000401'),
+    "G3-02: the next groupPost reads the user's 3 new comments with their ids and text, so a refresh can settle them (" +
+      JSON.stringify(mine) +
+      ')',
+  );
+  await ctx.close();
+});
+sim('G3-03: groupComment never types on another post or group, or in a wrong box', { s: 30 }, async b => {
+  const { ctx, p } = await fresh(b);
+  await gOpen(p, 'posts/' + G3_PID + '/', '', { g_posts: '10' });
+  const r = {};
+  r.post = await bridge(p, 'groupComment', g3Args({ pid: '2000000000000005', text: 'Wrong post' }));
+  r.group = await bridge(p, 'groupComment', g3Args({ group: '1000000000000009', text: 'Wrong group' }));
+  r.optin = await bridge(p, 'groupComment', g3Args({ helperPost: undefined, text: 'Not opted in' }));
+  r.args = await bridge(p, 'groupComment', g3Args({ cid: '4000000000000401', text: 'No to' }));
+  r.gone = await bridge(p, 'groupComment', g3Args({ cid: '4000000000000499', to: 'Ana Alvarez', text: 'No such' }));
+  let s = await g3State(p);
+  ok(
+    r.post.err === 'wrong-post' &&
+      r.group.err === 'wrong-group' &&
+      r.optin.err === 'not-opted-in' &&
+      r.args.err === 'bad-args' &&
+      r.gone.err === 'comment-not-found' &&
+      Object.values(r).every(x => x.sent === false && x.entered === false) &&
+      !s.posted.length &&
+      !s.box &&
+      !s.rboxes.length,
+    'G3-03: another post (wrong-post), another group (wrong-group), no opt-in, no `to` for a reply, a comment not on the post: refused before anything is typed, nothing posted (' +
+      JSON.stringify([Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v.err])), s]) +
+      ')',
+  );
+  // the user's own draft in the post's box is left as it is
+  await p.evaluate(async () => {
+    const box = document.querySelector('[aria-label="Write a comment…"]');
+    box.focus();
+    await new Promise(z => setTimeout(z, 150));
+    document.execCommand('insertText', false, 'my draft');
+  });
+  const d = await bridge(p, 'groupComment', g3Args({ text: 'Over a draft' }));
+  s = await g3State(p);
+  ok(
+    d.err === 'box-not-empty' && s.box === 'my draft' && !s.posted.length,
+    "G3-03: a draft in the post's box: refused, the draft left as it is, nothing posted (" +
+      JSON.stringify([d.err, s]) +
+      ')',
+  );
+  // a reply box that names someone else: refused, nothing typed in it
+  await gOpen(p, 'posts/' + G3_PID + '/', '', { g_posts: '10', g_wrongname: '1' });
+  const w = await bridge(p, 'groupComment', g3Args({ cid: '4000000000000401', to: 'Cy Chen', text: 'To Cy' }));
+  s = await g3State(p);
+  ok(
+    w.err === 'wrong-reply-target' &&
+      !s.posted.length &&
+      s.rboxes.length === 1 &&
+      s.rboxes[0][0] === 'Reply to Dee Diaz' &&
+      s.rboxes[0][1] === 'Dee Diaz',
+    'G3-05: a reply box that names another person (Dee Diaz, not Cy Chen) is refused before typing; nothing posted (' +
+      JSON.stringify([w, s]) +
+      ')',
+  );
+  await ctx.close();
+});
 /* B72 (#103): something on facebook.com wiped the run buffer's localStorage key between a group read's commands. An
    installed helper (Tampermonkey storage, stubbed here over sessionStorage so it survives page loads) keeps the buffer
    when localStorage is cleared between groupFeed and groupPost; every command answers with the buffer's counts. */
@@ -3234,7 +3373,7 @@ sim('S: reply check', { s: 15 }, async b => {
   );
   await s.ctx.close();
   // several chats: only active ones are read (paused, pending, hidden and deleted skipped), and only those with a
-  // queued row are handed over
+  // queued row are handed over; an active group's KEY_outbox (its queued comments, G3a) is read like a chat's
   const CHATS = {
     home: { home: true, state: 'active' },
     book: { state: 'active' },
@@ -3242,7 +3381,21 @@ sim('S: reply check', { s: 15 }, async b => {
     pend: { state: 'pending' },
     old: { state: 'hidden' },
     gone: { state: 'deleted' },
+    gear: { kind: 'group', state: 'active', group: '1000000000000001' },
   };
+  const comment = (text, state) => ({
+    kind: 'comment',
+    pid: '2000000000000004',
+    n: 4,
+    c: null,
+    cid: null,
+    rid: null,
+    to: 'Ana Alvarez',
+    snip: 'Post 4 about trail packs and stoves',
+    text,
+    state,
+    queuedAt: iso(NOW, -3),
+  });
   const skipped = {
     'chess_outbox/r1': row('Cy', 112, 'Paused chat', iso(NOW, -5)),
     'pend_outbox/r1': row('Cy', 112, 'Pending chat', iso(NOW, -5)),
@@ -3256,6 +3409,7 @@ sim('S: reply check', { s: 15 }, async b => {
         'meta/chat': Object.assign({}, SMETA, { chats: CHATS }),
         'refresh/status': { state: 'idle' },
         'book_outbox/r1': row('Ben', 111, 'Still have the book?', iso(NOW, -2)),
+        'gear_outbox/r1': comment('Is the stove still here?', 'queued'),
       },
       skipped,
     ),
@@ -3263,9 +3417,14 @@ sim('S: reply check', { s: 15 }, async b => {
   let found = await replyCheck(s);
   ok(
     JSON.stringify(s.log) ===
-      JSON.stringify(['get meta/chat', 'query outbox', 'query book_outbox', 'hand over to replies for book']) &&
-      JSON.stringify(found) === '["book"]',
-    "S: reply check, several chats: meta/chat, then each active chat's outbox (1 + 2 reads); an added chat's queued row is handed over for that chat only; paused, pending, hidden and deleted chats are never read (" +
+      JSON.stringify([
+        'get meta/chat',
+        'query outbox',
+        'query book_outbox',
+        'query gear_outbox',
+        'hand over to replies for book,gear',
+      ]) && JSON.stringify(found) === '["book","gear"]',
+    "S: reply check, several chats and a group: meta/chat, then each active chat's and group's outbox (1 + 3 reads); an added chat's queued reply and the group's queued comment are handed over for those only; paused, pending, hidden and deleted chats are never read (" +
       JSON.stringify(s.log) +
       ')',
   );
@@ -3277,6 +3436,7 @@ sim('S: reply check', { s: 15 }, async b => {
         'meta/chat': Object.assign({}, SMETA, { chats: CHATS }),
         'refresh/status': { state: 'idle' },
         'book_outbox/r1': row('Ben', 111, 'On its way', iso(NOW, -30), 'sending'),
+        'gear_outbox/r1': comment('Is the stove still here?', 'sending'),
       },
       skipped,
     ),
@@ -3284,9 +3444,14 @@ sim('S: reply check', { s: 15 }, async b => {
   found = await replyCheck(s);
   ok(
     JSON.stringify(s.log) ===
-      JSON.stringify(['get meta/chat', 'query outbox', 'query book_outbox', 'say No replies waiting.']) &&
-      found === null,
-    'S: reply check, several chats, nothing queued in an active chat: one line and stop (' +
+      JSON.stringify([
+        'get meta/chat',
+        'query outbox',
+        'query book_outbox',
+        'query gear_outbox',
+        'say No replies waiting.',
+      ]) && found === null,
+    'S: reply check, several chats and a group, nothing queued in an active chat or group (a comment still sending): one line and stop (' +
       JSON.stringify(s.log) +
       ')',
   );

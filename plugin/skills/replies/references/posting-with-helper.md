@@ -8,6 +8,7 @@ Read this when `meta/chat.helperPost` is true and there are replies to post (a r
 - It doesn't change who approves a reply. SKILL.md's hard rule (never send unless the user approved that reply) and outbox.md's approval step apply to every row.
 - Pass `helperPost:true` only when `meta/chat.helperPost` is true. Without it the helper refuses (`err:"not-opted-in"`). Only this bridge command can post: no page link, URL or page script can.
 - It needs helper 2.0 or later (`data-mc-helper`, or an injected copy of `assets/helper.user.js`). With an older installed helper, post by outbox.md's three calls.
+- The same switch lets the helper's `groupComment` (4.4) post the comments the user queued on a Facebook group's Posts: they post only that way, so with it off they wait (`references/outbox.md` › Group comments).
 
 ## Posting one row
 The same order as outbox.md › Posting, with `post` as the browser step:
