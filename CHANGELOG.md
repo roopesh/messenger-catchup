@@ -2,6 +2,29 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.66.0] - 2026-11-27
+**Comment on a group's post, or reply to a comment, from the page** (F25 G3a, #131). MINOR. Helper 4.4, page 8.3.
+
+### Added
+- **Page 8.3:** a group's Posts has "Comment here" on each post and "Reply here" on each comment. They open the chat's inline reply box (the same composer, drafts kept through redraws), text only. Queuing writes a `kind:"comment"` row to the group's `KEY_outbox`: `pid` and `n` for the post, and for a reply `c`, `cid`, `rid` and `to`. The post or comment then shows "comment queued" or "reply queued".
+  - The group's Summary lists them under "Your comments", with Cancel, and Dismiss for a failed or unconfirmed one, as a chat's replies.
+  - A group's Settings screen has "Queued comments" (its own `auto`), with a chip on its row when it differs from the page default. All chats' card names a group's waiting comment as `#pN` or `#pN/cM`.
+- **Helper 4.4:** `groupComment{group, pid, cid, rid, to, text, me, helperPost:true}` posts one approved comment, only with helper posting on.
+  - Before typing, the tab must be on that group and post (else `wrong-group` or `wrong-post`).
+  - A reply: it finds the comment by its ids (sorted Newest, scrolling, opening "View N replies"), clicks its Reply, and checks the reply box names `to`. A comment on the post: the post's own "Write a comment…" box, which must be empty.
+  - It types as `post` does (Lexical: a moment after focus, `insertText`, shift+Enter between lines), presses Enter, and confirms the new comment by its `comment_id` and author. Any step it can't find ends with a reason and nothing typed or sent.
+  - `press`, `key` and `clear` moved out of `post` to be shared; `groupPost`'s dialog, ids, sort and scroller helpers too (no change in what it reads).
+- **Refresh and replies:** `references/outbox.md` › Group comments (approval by the group's `auto`, else `outboxAuto`; post only by `groupComment`; settling a `sending` row from the group's next read: a comment `byYou`, stored after `queuedAt`, with the same text, or that text after the person's name). `references/groups.md` posts them first in a group's refresh, opens the posts of `sending` rows and settles them after the import. "Send replies" and reply checks cover groups. `catchup.py chats` gives a group's `postUrl`.
+- Not posted on Facebook yet: the first real comment is live check L-06, with the owner (L1).
+
+### Tests
+- page (G3-01): Comment here and Reply here queue the right rows (pid, n, c, cid, rid, to), a draft survives a redraw, the chips, Summary's "Your comments" with Cancel, and the group's own auto.
+- sim (G3-02, G3-05): on the mock group page, a comment on the post, a reply to a comment (the box names the person), and a reply to a reply behind "View 2 replies" with a line break; the next `groupPost` reads them as the user's.
+- sim (G3-03): another post or group, no opt-in, no `to`, a missing comment, the user's draft in the box and a reply box naming someone else are all refused with nothing typed or posted.
+- sim (S): a reply check reads an active group's `KEY_outbox` and hands its queued comment over.
+- Python: `catchup.py chats` for a group (its outbox, its `auto` or the default, `postUrl`); outbox.md says what to do with every `groupComment` result, and the group and post are checked before anything is typed.
+- The mock group page has Lexical comment boxes: a post's "Write a comment…", and a reply box per comment holding the person's name.
+
 ## [1.65.2] - 2026-11-27
 **Opening a group post reads the post too, so a post read only through its comments gets filled** (B77, #128). PATCH. Helper 4.3, page 8.2.
 

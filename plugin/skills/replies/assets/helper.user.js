@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Messenger Catch-up Helper
 // @namespace    https://claude.ai/
-// @version      4.3
+// @version      4.4
 // @description  Jump-to-message links for your Messenger Catch-up page, plus the scan/verify/capture steps Claude runs during a refresh (and, for Facebook groups, reading their posts, comments and notifications). Read-only except opening the Reply box when you follow a Reply link, and posting a reply you queued only if you turned that on. It downloads GIFs from Facebook's image servers for your page (the permission Tampermonkey asks for).
 // @match        https://www.facebook.com/messages/*
 // @match        https://www.facebook.com/groups/*
@@ -42,13 +42,13 @@
     return false;
   };
   const prev = window.__mcHelper;
-  window.__mcHelper = '4.3';
+  window.__mcHelper = '4.4';
   const V = window.__mcHelper;
   if (had.some(h => !below(h, V))) {
     window.__mcHelper = prev;
     return;
   }
-  root.setAttribute('data-mc-helper', '4.3');
+  root.setAttribute('data-mc-helper', '4.4');
   /* still the copy that owns the page: it gives way only when data-mc-helper holds a newer version (a newer copy
      injected later takes over the same way); an attribute removed or rewritten by anything else doesn't silence it */
   const owns = () => !below(V, String(root.getAttribute('data-mc-helper') || ''));
@@ -1921,6 +1921,23 @@
       }, 5000);
     })();
   }
+  /* Keys for an editor: Messenger's box and a Facebook comment box both run Lexical, which acts on keydown */
+  const press = (el, o) => {
+    o = Object.assign({ bubbles: true, cancelable: true }, o);
+    el.dispatchEvent(new KeyboardEvent('keydown', o));
+    el.dispatchEvent(new KeyboardEvent('keyup', o));
+  };
+  const key = (el, shift) => press(el, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, shiftKey: shift });
+  /* Lexical undoes DOM edits it didn't make, so a box is cleared with keys: select all (ctrl+A, or cmd+A on a Mac),
+     then Backspace. Lexical also needs a moment after focus before it takes input. */
+  const clear = async el => {
+    el.focus();
+    await sleep(120);
+    press(el, { key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true });
+    press(el, { key: 'a', code: 'KeyA', keyCode: 65, metaKey: true });
+    press(el, { key: 'Backspace', code: 'Backspace', keyCode: 8 });
+    await sleep(150);
+  };
   /* post{mid,to,snip,text,helperPost}: sends one approved reply, and only when the user turned helper posting on
      (meta/chat.helperPost, which Claude passes as helperPost:true). Only this bridge command reaches it: no link, URL hash
      or page can. It opens Reply on the message (jump, with the More actions fallback), checks that the "Replying to" bar
@@ -1999,12 +2016,6 @@
         .map(N)
         .filter(Boolean);
     const same = (x, y) => JSON.stringify(lines(x)) === JSON.stringify(lines(y));
-    const press = (el, o) => {
-      o = Object.assign({ bubbles: true, cancelable: true }, o);
-      el.dispatchEvent(new KeyboardEvent('keydown', o));
-      el.dispatchEvent(new KeyboardEvent('keyup', o));
-    };
-    const key = (el, shift) => press(el, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, shiftKey: shift });
     /* F35: a name in mentions written as "@Name" in the text is typed as "@" plus the name, which opens Messenger's mention
        list; when the list offers exactly that name, ArrowDown moves the pick to it and Tab makes it a mention (a span
        with spellcheck="false" holding "@Name"). Otherwise it stays plain text, listed in missed. */
@@ -2058,16 +2069,6 @@
         a.tags[(await tag(name)) ? 'tagged' : 'missed'].push(name);
         rest = rest.slice(at + 1 + name.length);
       }
-    };
-    /* Messenger's editor (Lexical) undoes DOM edits it didn't make, so the box is cleared with keys: select all
-       (ctrl+A, or cmd+A on a Mac), then Backspace. Lexical also needs a moment after focus before it takes input. */
-    const clear = async el => {
-      el.focus();
-      await sleep(120);
-      press(el, { key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true });
-      press(el, { key: 'a', code: 'KeyA', keyCode: 65, metaKey: true });
-      press(el, { key: 'Backspace', code: 'Backspace', keyCode: 8 });
-      await sleep(150);
     };
     const mark = stage => {
       const st = { running: true, stage, entered: stage === 'typing' || stage === 'enter', mid: a.mid };
@@ -2864,12 +2865,11 @@
      {cid, rid (a reply's own id), parent (the comment or reply it answers), who, uid, text, age}. post (4.3): the post
      itself as a feed card gives it, {pid, who, uid, age, text, more, photos, count?}, or null; with run, the buffer
      keeps it unless this run's feed read the card, and the answer says body: true or false. */
-  async function mcGroupPost(a) {
-    a = a || {};
-    const t0 = Date.now();
+  /* An open post's dialog (groupPost, groupComment). It shows before its comments load (live check, Nov 25): wait up
+     to 15 s for a comment or the sort button too. */
+  async function postDialog() {
     const dlg = () =>
       Array.from(document.querySelectorAll('[role="dialog"][aria-labelledby]')).find(d => d.getClientRects().length);
-    /* the dialog shows before its comments load (live check, Nov 25): wait for a comment or the sort button too */
     const ready = x =>
       x.querySelector('[role="article"][aria-label^="Comment by"]') ||
       Array.from(x.querySelectorAll('[role="button"][aria-haspopup="menu"]')).some(b =>
@@ -2877,6 +2877,47 @@
       );
     let d = null;
     for (let k = 0; k < 60 && !((d = dlg()) && ready(d)); k++) await sleep(250);
+    return d;
+  }
+  /* a comment's ids and age from its time link (comment_id, and reply_comment_id on a reply) */
+  const cIds = ar => {
+    const l = ar.querySelector('a[href*="comment_id"]');
+    const h = l ? l.getAttribute('href') : '';
+    return { cid: qp(h, 'comment_id'), rid: qp(h, 'reply_comment_id'), age: l ? N(l.textContent) : '' };
+  };
+  /* the post's comment sort set to Newest first (it resets on every post; it changes only the viewer's view) */
+  async function sortNewest(d) {
+    const sb = Array.from(d.querySelectorAll('[role="button"][aria-haspopup="menu"]')).find(b =>
+      /^Most relevant/.test(N(b.innerText)),
+    );
+    if (!sb) return false;
+    sb.click();
+    let it = null;
+    for (let k = 0; k < 12 && !it; k++) {
+      await sleep(200);
+      it = Array.from(document.querySelectorAll('[role="menu"] [role="menuitem"]')).find(x =>
+        /^Newest/.test(N(x.innerText)),
+      );
+    }
+    if (!it) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return false;
+    }
+    it.click();
+    await sleep(800);
+    return true;
+  }
+  /* the element that scrolls a dialog's comments */
+  const dScroller = d => {
+    const f = d.querySelector('[role="article"]');
+    for (let x = f && f.parentElement; x && x !== d; x = x.parentElement)
+      if (/(auto|scroll)/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight) return x;
+    return null;
+  };
+  async function mcGroupPost(a) {
+    a = a || {};
+    const t0 = Date.now();
+    const d = await postDialog();
     if (!d) return { err: 'no-post', detail: 'no post dialog: open /groups/<g>/posts/<p>/ first' };
     const pid = (location.pathname.match(/\/posts\/(\d+)/) || [])[1] || null;
     /* B77 (#128): the post's own author, text, age, photos and count, above its comments, read like a feed card (no
@@ -2901,39 +2942,10 @@
     if (pf.count == null) delete pf.count;
     const post = pid && pf.who ? Object.assign({ pid }, pf) : null;
     const known = new Set(Array.isArray(a.known) ? a.known.map(String) : []);
-    let sorted = 'relevant';
-    if (a.newest !== false) {
-      const sb = Array.from(d.querySelectorAll('[role="button"][aria-haspopup="menu"]')).find(b =>
-        /^Most relevant/.test(N(b.innerText)),
-      );
-      if (sb) {
-        sb.click();
-        let it = null;
-        for (let k = 0; k < 12 && !it; k++) {
-          await sleep(200);
-          it = Array.from(document.querySelectorAll('[role="menu"] [role="menuitem"]')).find(x =>
-            /^Newest/.test(N(x.innerText)),
-          );
-        }
-        if (it) {
-          it.click();
-          sorted = 'newest';
-          await sleep(800);
-        } else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      }
-    }
+    const sorted = a.newest !== false && (await sortNewest(d)) ? 'newest' : 'relevant';
     const arts = () => Array.from(d.querySelectorAll('[role="article"]'));
-    const ids = ar => {
-      const l = ar.querySelector('a[href*="comment_id"]');
-      const h = l ? l.getAttribute('href') : '';
-      return { cid: qp(h, 'comment_id'), rid: qp(h, 'reply_comment_id'), age: l ? N(l.textContent) : '' };
-    };
-    const scroller = () => {
-      const f = arts()[0];
-      for (let x = f && f.parentElement; x && x !== d; x = x.parentElement)
-        if (/(auto|scroll)/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight) return x;
-      return null;
-    };
+    const ids = cIds;
+    const scroller = () => dScroller(d);
     const cap = a.maxComments || 400;
     for (let still = 0, k = 0; still < 3 && k < 80 && arts().length < cap; k++) {
       if (sorted === 'newest' && known.size && arts().some(ar => known.has(ids(ar).cid))) break;
@@ -2989,6 +3001,267 @@
       comments: undefined,
       read: comments.length,
       buf: gCount(b),
+    });
+  }
+  /* groupComment{group, pid, cid, rid, to, text, me, helperPost} (G3a, F25): posts one approved comment on a group's
+     post, or with cid a reply to that comment (rid: the reply's own id, for a reply to a reply), only with helper
+     posting on (helperPost:true, as for post). Claude opens the post first (/groups/<group>/posts/<pid>/). Before
+     anything is typed the address must be that group (group: its id or name, or a list of both) and that post, else
+     wrong-group or wrong-post. A reply: it finds the comment by its ids (sorted Newest, scrolling the dialog, opening
+     "View N replies"), clicks its Reply, and checks that the box that opens names `to` (Facebook puts the person's name
+     in it). A comment on the post: the post's own box ("Write a comment…" or "Comment as …"), which must be empty. It
+     types as post does (Lexical: a moment after focus, execCommand insertText, shift+Enter between lines), checks the
+     box holds the text, presses Enter, and waits up to 15 s for a new comment with that text (by one of `me`, the
+     user's names, when given). Returns {sent:true, cid, rid, id (the new comment's own id: rid for a reply), who, at},
+     or {sent:false, err, stage, entered, detail}: only "unconfirmed" means it may have gone out. */
+  async function mcGroupComment(a, id) {
+    a = a || {};
+    const t0 = Date.now();
+    const out = o => Object.assign({ sent: false, entered: false, ms: Date.now() - t0 }, o);
+    const str = x => typeof x === 'string' && !!x.trim();
+    if (a.helperPost !== true)
+      return out({
+        err: 'not-opted-in',
+        stage: 'optin',
+        detail: 'helper posting is off (meta/chat.helperPost): a group comment posts only with the helper',
+      });
+    const groups = []
+      .concat(a.group || [])
+      .map(x => (typeof x === 'number' ? String(x) : x))
+      .filter(str);
+    if (
+      !groups.length ||
+      !str(a.pid) ||
+      !str(a.text) ||
+      (a.cid != null && !(str(a.cid) && str(a.to))) ||
+      (a.rid != null && !(str(a.rid) && a.cid != null)) ||
+      (a.me != null && !Array.isArray(a.me))
+    )
+      return out({
+        err: 'bad-args',
+        stage: 'args',
+        detail:
+          'groupComment needs group, pid and text (strings); a reply also cid and to, and rid for a reply to a reply; me a list of names',
+      });
+    const b = busy();
+    if (b) return out(Object.assign({ stage: 'args' }, b));
+    window.__mcPosting = 'comment on ' + a.pid;
+    try {
+      return await commentOne(a, groups, out, t0, id);
+    } finally {
+      window.__mcPosting = null;
+    }
+  }
+  async function commentOne(a, groups, out, t0, id) {
+    const mark = stage => {
+      if (id)
+        sessionStorage.setItem(
+          'mc_res_' + id,
+          JSON.stringify({ running: true, stage, entered: stage === 'typing' || stage === 'enter', pid: a.pid }),
+        );
+    };
+    /* the address, before anything is typed: this group and this post */
+    const g = String(groupOf());
+    if (!groups.includes(g))
+      return out({
+        err: 'wrong-group',
+        stage: 'check',
+        detail: 'the tab is on group ' + g + ', not ' + groups.join(' or ') + '; nothing was typed',
+      });
+    const pid = (location.pathname.match(/\/posts\/(\d+)/) || [])[1] || null;
+    if (pid !== String(a.pid))
+      return out({
+        err: 'wrong-post',
+        stage: 'check',
+        detail: 'the tab is on post ' + pid + ', not ' + a.pid + '; nothing was typed',
+      });
+    mark('open');
+    const d = await postDialog();
+    if (!d) return out({ err: 'no-post', stage: 'check', detail: 'no post dialog on this page; nothing was typed' });
+    const arts = () => Array.from(d.querySelectorAll('[role="article"]'));
+    const boxes = () =>
+      Array.from(d.querySelectorAll('[role="textbox"][contenteditable="true"]')).filter(x => x.getClientRects().length);
+    const flat = s => String(s || '').replace(/\s+/g, '');
+    let box = null;
+    if (a.cid) {
+      mark('find');
+      const want = ar => {
+        const i = cIds(ar);
+        return i.cid === String(a.cid) && (i.rid || null) === (a.rid ? String(a.rid) : null);
+      };
+      await sortNewest(d);
+      let ar = null;
+      for (let still = 0, k = 0; k < 120 && still < 3 && !(ar = arts().find(want)); k++) {
+        const v = Array.from(d.querySelectorAll('[role="button"]')).find(x =>
+          /^View \d+ repl(y|ies)$/.test(N(x.innerText)),
+        );
+        if (v) {
+          v.click();
+          await sleep(500);
+          continue;
+        }
+        const n = arts().length;
+        const sc = dScroller(d);
+        if (!sc) break;
+        sc.scrollTop = sc.scrollHeight;
+        await sleep(500);
+        still = arts().length > n ? 0 : still + 1;
+      }
+      if (!ar)
+        return out({
+          err: 'comment-not-found',
+          stage: 'find',
+          detail: 'comment ' + a.cid + (a.rid ? ' / reply ' + a.rid : '') + ' is not on this post; nothing was typed',
+        });
+      const rb = Array.from(ar.querySelectorAll('[role="button"]')).find(x => /^Reply$/.test(N(x.innerText)));
+      if (!rb)
+        return out({ err: 'no-reply-button', stage: 'find', detail: 'the comment has no Reply; nothing was typed' });
+      const had = new Set(boxes());
+      rb.click();
+      for (let k = 0; k < 20 && !box; k++) {
+        await sleep(150);
+        box = boxes().find(x => !had.has(x)) || null;
+      }
+      if (!box)
+        return out({
+          err: 'no-box',
+          stage: 'reply',
+          detail: 'no reply box opened under the comment; nothing was typed',
+        });
+      const names = [box.getAttribute('aria-label'), box.getAttribute('aria-placeholder'), box.innerText]
+        .map(N)
+        .join(' ')
+        .toLowerCase();
+      if (!names.includes(N(a.to).toLowerCase()))
+        return out({
+          err: 'wrong-reply-target',
+          stage: 'reply',
+          detail: 'the reply box does not name ' + a.to + '; nothing was typed',
+        });
+    } else {
+      box = boxes().find(x => /^(write a comment|comment as)\b/i.test(N(x.getAttribute('aria-label'))));
+      if (!box)
+        return out({
+          err: 'no-box',
+          stage: 'check',
+          detail: 'no "Write a comment" box on the post; nothing was typed',
+        });
+    }
+    /* a reply box may hold only the person's name, a post's box nothing (else it's the user's draft, left as it is) */
+    const pre = N(box.innerText);
+    if (pre && !(a.cid && flat(a.to).toLowerCase().includes(flat(pre).toLowerCase())))
+      return out({
+        err: 'box-not-empty',
+        stage: 'check',
+        detail: "the box already holds text (the user's draft), left as it is; nothing was typed",
+      });
+    const ckey = ar => {
+      const i = cIds(ar);
+      return i.cid + '/' + (i.rid || '');
+    };
+    const before = new Set(arts().map(ckey));
+    const me = (a.me || []).map(x => N(x).toLowerCase()).filter(Boolean);
+    const byMe = ar => {
+      if (!me.length) return true;
+      const au = Array.from(ar.querySelectorAll('a[href*="/user/"]')).find(x => N(x.textContent));
+      const w = au ? N(au.textContent).toLowerCase() : '';
+      return me.some(m => w === m || w.startsWith(m + ' '));
+    };
+    const fresh = () => arts().filter(ar => !before.has(ckey(ar)) && byMe(ar));
+    const match = () =>
+      fresh()
+        .reverse()
+        .find(ar => {
+          const i = cIds(ar);
+          const t = ar.querySelector('div[dir="auto"]');
+          return flat(t && t.innerText).endsWith(flat(a.text)) && (a.cid ? i.rid && i.cid === String(a.cid) : !i.rid);
+        });
+    mark('type');
+    box.focus();
+    await sleep(150);
+    /* the caret after what the box holds (the name in a reply box), and a space after that name */
+    const sel = getSelection();
+    sel.selectAllChildren(box);
+    sel.collapseToEnd();
+    await sleep(100);
+    let typed = '';
+    const holds = () => box.isConnected && flat(box.innerText) === flat(pre) + flat(typed);
+    if (pre && !/\s$/.test(box.innerText)) document.execCommand('insertText', false, ' ');
+    const parts = a.text.replace(/\r\n?/g, '\n').split('\n');
+    let entered = false;
+    for (let p = 0; p < parts.length; p++) {
+      if (p) {
+        mark('typing');
+        entered = true;
+        key(box, true);
+        await sleep(150);
+        /* a shift+Enter taken as Enter posts what was typed: the box lost it, or a comment from you shows up */
+        if (fresh().length || !holds())
+          return out({
+            err: 'unconfirmed',
+            stage: 'typing',
+            entered: true,
+            partial: true,
+            detail: 'a scripted shift+Enter may have posted the first line(s): leave the row sending',
+          });
+      }
+      if (parts[p]) document.execCommand('insertText', false, parts[p]);
+      typed += parts[p];
+      await sleep(40);
+    }
+    await sleep(200);
+    if (!holds()) {
+      await sleep(1200);
+      if (fresh().length)
+        return out({
+          err: 'unconfirmed',
+          stage: 'type',
+          entered,
+          partial: true,
+          detail: 'a comment from you appeared while typing: leave the row sending',
+        });
+      if (box.isConnected) await clear(box);
+      return out({
+        err: 'type-mismatch',
+        stage: 'type',
+        entered,
+        cleared: !box.isConnected || !N(box.innerText),
+        detail: 'the box did not hold the comment as queued; nothing was sent',
+      });
+    }
+    mark('enter');
+    key(box, false);
+    for (let k = 0; k < 60; k++) {
+      await sleep(250);
+      const el = match();
+      if (el) {
+        const i = cIds(el);
+        const au = Array.from(el.querySelectorAll('a[href*="/user/"]')).find(x => N(x.textContent));
+        return {
+          sent: true,
+          cid: i.cid,
+          rid: i.rid,
+          id: i.rid || i.cid,
+          who: au ? N(au.textContent) : '',
+          at: new Date().toISOString(),
+          entered: true,
+          ms: Date.now() - t0,
+        };
+      }
+    }
+    if (holds() && !fresh().length)
+      return out({
+        err: 'enter-not-accepted',
+        stage: 'enter',
+        entered: true,
+        held: true,
+        detail: 'the box still holds the whole comment and no new comment from you appeared: Enter was not accepted',
+      });
+    return out({
+      err: 'unconfirmed',
+      stage: 'confirm',
+      entered: true,
+      detail: 'the comment may have been posted but did not show up within 15 s: leave the row sending',
     });
   }
   /* notifs{since, more}: on /notifications/, reads the items without clicking any (a click marks it read): each
@@ -3110,7 +3383,8 @@
     groupPost: a => mcGroupPost(a),
     notifs: a => mcNotifs(a),
     groupCapture: a => mcGroupCapture(a),
-    ping: () => ({ v: '4.3' }),
+    groupComment: (a, id) => mcGroupComment(a, id),
+    ping: () => ({ v: '4.4' }),
   };
   /* Bridge: Claude's browser tool dispatches 'mc-cmd' with a JSON string; the answer lands in sessionStorage 'mc_res_<id>'. Works whether the userscript runs in the page or in the extension's own world.
      Heard on window while capturing, so it runs before an older copy's listener on document (2.3 and before), which

@@ -1205,6 +1205,29 @@ class TestHelper2(unittest.TestCase):
             self.assertIn(state, doc)
         self.assertIn("**stop posting**", doc, "an unconfirmed post leaves at most one row in sending (outbox.md)")
 
+    def test_G3a_group_comment_maps_every_result_and_never_types_off_target(self):
+        """G3a (#131): groupComment posts only with the opt-in, checks the group and post before typing, and outbox.md ›
+        Group comments says what to do with each of its results (only unconfirmed may have posted, and stops posting)."""
+        doc = section(in_skill("references", "outbox.md"), "Group comments")
+        code = self.src[self.src.index("async function mcGroupComment(") : self.src.index("/* notifs{since")]
+        errs = set(re.findall(r"err: '([\w-]+)'", code)) | set(re.findall(r"^\s+return \{ err: '([\w-]+)'", code))
+        self.assertTrue(
+            {"not-opted-in", "wrong-group", "wrong-post", "wrong-reply-target", "unconfirmed"} <= errs, errs
+        )
+        for e in sorted(errs | {"post-running", "scan-running", "jump-running"}):
+            self.assertTrue("`%s`" % e in doc or 'err:"%s"' % e in doc, "outbox.md › Group comments doesn't say " + e)
+        self.assertIn("a.helperPost !== true", code)
+        guard, typing = code.index("err: 'wrong-post'"), code.index("execCommand('insertText'")
+        self.assertLess(guard, typing, "the group and post are checked before anything is typed")
+        for s in ('`{state:"sending"}`', "add `sent` with `sentAt`", "Add `failed`", "**stop posting**", "`sentCid`"):
+            self.assertIn(s, doc)
+        self.assertIn("**Never start it twice for a row**", doc)
+        self.assertIn(
+            "`groupComment{group,pid,cid,rid,to,text,me,helperPost:true}`",
+            section(in_skill("references", "helper.md"), "Commands"),
+        )
+        self.assertIn("**Never post a comment** unless the user approved it", in_skill("references", "groups.md"))
+
     def settle(self):
         """The bullets of posting-with-helper.md's step 4, keyed by the first code span in each."""
         doc = in_skill("references", "posting-with-helper.md")
@@ -2297,11 +2320,11 @@ class TestOutboxStates(unittest.TestCase):
     ALL_STATES = ("queued", "sending", "sent", "failed", "unconfirmed", "cancelled", "dismissed")
 
     def page_writes(self):
-        """The page's five outbox writes: Queue reply and React (set), Cancel, Dismiss and the react picker's cancel of a
-        queued reaction (update)."""
+        """The page's six outbox writes: Queue reply, a group's Queue comment (G3a) and React (set), Cancel, Dismiss and
+        the react picker's cancel of a queued reaction (update)."""
         page = in_skill("assets", "page.html")
         writes = re.findall(r'doc\("outbox/"\s*\+\s*[\w.]+\)\s*\.(set|update)\(\s*(\{[^{}]*\})\s*\)', page)
-        self.assertEqual(len(writes), 5, "expected exactly 5 outbox writes in page.html; the regex or the page changed")
+        self.assertEqual(len(writes), 6, "expected exactly 6 outbox writes in page.html; the regex or the page changed")
         return writes
 
     def outbox_line(self):

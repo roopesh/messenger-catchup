@@ -71,8 +71,9 @@
                                      older photos.
   catchup.py chats META.json [KEY]   Several chats on one page (F1). Without KEY: the one write that adds meta/chat.chats
                                      to a page from before F1 ({} when it has it). With KEY: where that chat's documents
-                                     live, its --chat argument, whether its replies go out without asking, and for a
-                                     pending chat the meta/chat-KEY to seed. references/chats.md.
+                                     live, its --chat argument, whether its replies go out without asking, for a
+                                     group where its posts are (postUrl, for its queued comments), and for a pending
+                                     chat the meta/chat-KEY to seed. references/chats.md.
   catchup.py run-plan META.json SKIPPED.json [--done=KEY,KEY] [--failed=KEY,KEY] [--started=ISO] [--stop]
                      [--scheduled]   A run over every chat (F1): the next chat (the first chat, then those the last run
                                      left in refresh/skipped, the others by order, pending ones last), none with --stop
@@ -390,7 +391,8 @@ def chats_cmd(meta_file, key=None):
     }
     set_chat(was)
     if is_group(c):
-        # F25: a group is read by references/groups.md, not a Messenger scan
+        # F25: a group is read by references/groups.md, not a Messenger scan; its queued comments (collections.outbox,
+        # approved by `auto`) post on the post at postUrl (G3a, references/outbox.md › Group comments)
         out.update(
             {
                 "kind": "group",
@@ -398,6 +400,7 @@ def chats_cmd(meta_file, key=None):
                 "url": c.get("url"),
                 "start": c.get("start") or {"days": 7},
                 "read": c.get("read") or "all",
+                "postUrl": "https://www.facebook.com/groups/%s/posts/{pid}/" % c.get("group"),
             }
         )
         if c.get("state") == "pending":

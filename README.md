@@ -8,6 +8,7 @@ A Claude plugin that keeps a private **catch-up page** for your Facebook Messeng
 - **For a group:** **Summary** (what's new, and Needs you: your name in a comment, a reply to your comment, or a mention from your notifications), **Posts** (newest activity first, new posts and comments marked), **Ask** (questions about the group: Claude reads its most active posts and searches every post and comment; each citation, like #p12/c3, opens that comment in Posts), **By day** (each day's new posts and comments, placed by Facebook's ages) and **Stats** (posts and comments per day, the most active people, the busiest days and hours, and your own).
 - **A group and its chat:** when a group goes with a chat (Add a group, or the group's Settings card), both Stats tabs end with **With …**: one timeline, the people in both, the group posts named in the chat, deals per seller, when each place is busy, you, and the topics they share. Under a chat message like "tent's up in the group", Messages shows **Probably:** and the group post it most likely means (same person, near the time, a word in common), which opens the post.
 - **Reply from the page.** Each message has **Reply here** (with "@" to tag people and photos you attach) and **React**. Queued replies and reactions go out at the start of every refresh, or right away when you ask Claude to **"send replies"**. Claude posts only what you queued, and only if you turned on auto-posting or confirm it in chat.
+- **Comment in a group from the page.** A group's Posts has **Comment here** on each post and **Reply here** on each comment (text only for now). They're queued like replies and posted by the helper, so they need helper posting on; the group's own setting (Settings › Queued comments) says whether they go out without asking.
 - **Reactions count as answers.** A 👍 from you on a question to you answers it, a laugh never does: Ask and the summary read reactions by one meaning table (the plugin's `references/reactions.md`), and you can tell Claude when a reaction means something else in your chat. With the helper (4.0+), Claude also knows who reacted on the messages that ask or name you; without it, a reaction there reads as "probably yours".
 - **Photos and GIFs are stored** on the page, packed by day so they fit its storage, and searchable by what they show.
 
@@ -27,7 +28,7 @@ You can ask in plain words; each also runs as a slash command.
 |---|---|---|
 | `setup` (`/messenger-catchup:setup`) | "set up messenger catch-up" | Checks the requirements, creates the page, asks a few questions, loads the first history, sets up the schedule. Also changes or stops the schedule, and schedules reply checks |
 | `refresh` (`/messenger-catchup:refresh`) | "refresh my catch-up" (scheduled runs too) | Posts approved queued replies first, then reads every chat and group on the page, stores what's new, threads and summarizes it, and reports. A scheduled run stops after 15 minutes and skips chats that aren't due; one you ask for refreshes everything |
-| `replies` (`/messenger-catchup:replies`) | "send replies" | Posts the approved replies and reactions you queued, then stops: no refresh, so it's quick and cheap |
+| `replies` (`/messenger-catchup:replies`) | "send replies" | Posts the approved replies, reactions and group comments you queued, then stops: no refresh, so it's quick and cheap |
 | `reply-check` (`/messenger-catchup:reply-check`) | "check replies" | A cheap check: one read of the page's settings plus one per active chat, handing over to `replies` only when a reply waits. Say **"schedule reply checks"** to have it run by itself every hour (the shortest interval Claude's schedulers allow), as a recurring task tied to your computer; "stop reply checks" ends it. For a reply right away, say **"send replies"** |
 
 ## Requirements (read this)
@@ -43,10 +44,10 @@ The helper (`helper.user.js`) is a userscript for Tampermonkey or Violentmonkey.
 
 Install it from [https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js](https://github.com/roopesh/messenger-catchup/releases/latest/download/helper.user.js) (the extension opens its install page). Installed copies update themselves from this repo's latest release, and the page tells you when a Chrome's helper is behind, naming that Chrome.
 - It runs on facebook.com's **messages**, **groups** and **notifications** pages with your session, so you're trusting this repo's releases. Only the owner can publish them, and `main` is branch-protected.
-- On groups and notifications it only reads: it never clicks inside a post and never opens a notification. Reading the notifications page does clear Facebook's red badge.
+- On groups and notifications it only reads: it never clicks inside a post and never opens a notification, except to post a comment you queued and approved (helper posting on): then it clicks that comment's Reply and types in the comment box. Reading the notifications page does clear Facebook's red badge.
 - Since helper 4.0 it opens Messenger's "see who reacted" list on new messages that reply to you, name you or ask a question (at most 30 a refresh), reads it and closes it with Escape. It never clicks inside that list, where a click on your own row would remove your reaction. Since helper 4.1 each refresh also reads reactions again on messages already stored, back to your last Mark caught up (at most 400 messages and a minute), and on the open questions and messages to you from the last 3 days, so a 👍 you give a question after it was stored counts as your answer, and a mention you answer with your own 👍 leaves Needs you.
 - Since helper 3.7 it asks Tampermonkey for permission to read Facebook's image servers (`fbcdn.net`, `fbsbx.com`), which it uses to store GIFs on the page. Without that permission GIFs stay links to Messenger.
-- It posts a reply itself only if you ask Claude to turn on helper posting. Real "@" mentions and photo replies need helper posting; without it, a mention goes out as plain text and a photo reply waits in the queue.
+- It posts a reply itself only if you ask Claude to turn on helper posting. Real "@" mentions, photo replies and group comments need helper posting; without it, a mention goes out as plain text and a photo reply or a group comment waits in the queue.
 
 ## Layout
 | Path | What it is |
@@ -87,7 +88,7 @@ Changes go through a PR with a version bump; see [CLAUDE.md](CLAUDE.md) and [CHA
 
 ## Privacy
 - Each user's data lives only in their own private claude.ai artifact.
-- The plugin contains no personal data. Facebook is read-only except for the replies and reactions you queue, and those are posted only if you turn on auto-posting (for the page or a chat) or confirm each one in chat.
+- The plugin contains no personal data. Facebook is read-only except for the replies, reactions and group comments you queue, and those are posted only if you turn on auto-posting (for the page, a chat or a group) or confirm each one in chat.
 
 ## Caveat
 Facebook changes its pages often. If reading starts failing, the labels and markup the helper relies on may have changed; the helper's checks name what it couldn't find.
