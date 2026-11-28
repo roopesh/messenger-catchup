@@ -15395,6 +15395,54 @@ async function gifs() {
     'F39: on a touch screen a tap plays the GIF and a second tap stops it, without opening the viewer ' +
       JSON.stringify([t1, t2]),
   );
+  // #134: a GIF the helper couldn't download (phfail, "gif: …") is owed like a photo: a try per run, given up after 3
+  const gm = n => range(0, n, i => mk(i, i === 3 || i === 5 || i === 7 ? { p: 'a' + i, b: '' } : {}));
+  const gifFail = (n, why) =>
+    JSON.stringify(
+      Object.assign(cap(gm(n), { gifs: [7] }), { phfail: [{ i: 7, k: 0, e: 'gif: ' + why }], phskip: [] }),
+    );
+  const line7 = (want, ms) =>
+    until(p, w => ((document.querySelector('#m7') || {}).textContent || '').includes(w), want, ms);
+  await setRun(p, 'g1');
+  const g1 = await paste(p, gifFail(10, 'no-url'));
+  const b1 = (await get(p, 'photos/b0')) || {};
+  const owed1 = await line7('🎞 GIF (not stored yet)');
+  ok(
+    g1 &&
+      g1.state === 'done' &&
+      JSON.stringify((b1.byK || {})['7']) === '{"0":null}' &&
+      JSON.stringify((b1.tries || {})['7']) === '{"0":{"n":1,"run":"g1"}}' &&
+      (await get(p, 'meta/chat')).photosOwed.n === 1 &&
+      !!owed1,
+    '#134: a GIF in phfail gets an owed slot and one try, and shows "🎞 GIF (not stored yet)" (' +
+      JSON.stringify([b1.byK, b1.tries, g1 && g1.msg]) +
+      ')',
+  );
+  await setRun(p, 'g2');
+  await paste(p, gifFail(11, 'too-large 4.2 MB'));
+  const t2g = (await tryOf(p, 7)) || {};
+  const still = await line7('🎞 GIF (not stored yet)');
+  await setRun(p, 'g3');
+  const g3 = await paste(p, gifFail(12, 'HTTP 404'));
+  const b3 = (await get(p, 'photos/b0')) || {};
+  const gone = await line7("🎞 GIF (couldn't be downloaded: open in Messenger)");
+  ok(
+    t2g.n === 2 &&
+      !!still &&
+      g3 &&
+      g3.state === 'done' &&
+      JSON.stringify((b3.byK || {})['7']) === '{"0":{"e":"no-fetch"}}' &&
+      JSON.stringify(g3.gaveUp) === '[{"i":7,"k":0,"e":"no-fetch"}]' &&
+      (await get(p, 'meta/chat')).photosOwed === null &&
+      !!gone,
+    '#134: the GIF counts a try per run (2: still owed) and the third run gives it up ("no-fetch"), shown as ' +
+      '"couldn\'t be downloaded: open in Messenger" (' +
+      JSON.stringify([t2g, b3.byK, g3 && g3.gaveUp]) +
+      ')',
+  );
+  const m5 = await p.evaluate(() => (document.querySelector('#m5') || {}).textContent || '');
+  ok(!/GIF \(/.test(m5), '#134: a stored GIF shows no GIF note (' + m5.slice(0, 60) + ')');
+  ok(p.errors.length === 0, '#134: no page errors ' + JSON.stringify(p.errors));
   await p.close();
 }
 async function capPage(o = {}) {

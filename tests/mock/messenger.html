@@ -95,7 +95,7 @@
    "104-0,100-0" (those photos, message-photo, never load: their img has no src, as a lazy image off screen),
    mock_skeleton="104-0" (those photo links hold no img yet, only a placeholder box), mock_sharedaid (every photo of a
    message links to the same attachment id), mock_gif="105,110" (those messages are a GIF only: an img "GIF Image" from
-   cdn.fbsbx.com, as Messenger shows one, with no photo link: F39). Messages sent from the composer stay after a reload, below the others, as
+   cdn.fbsbx.com, as Messenger shows one, with no photo link: F39; mock_lazy="110-0" leaves its src out). Messages sent from the composer stay after a reload, below the others, as
    in Messenger (mock_sentlog, written by the page). */
       const MODE = k => localStorage.getItem("mock_" + k);
       const lazy = (i, j) => (MODE("lazy") || "").split(",").includes(i + "-" + j);
@@ -507,7 +507,7 @@
           const g = document.createElement("div");
           const im = document.createElement("img");
           im.alt = "GIF Image";
-          im.src = "https://cdn.fbsbx.com/v/t59/g" + o.i + ".webp";
+          if (!lazy(o.i, 0)) im.src = "https://cdn.fbsbx.com/v/t59/g" + o.i + ".webp";
           g.append(im);
           d.append(g);
         }

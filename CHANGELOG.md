@@ -2,6 +2,19 @@
 
 One entry per release. Every merged PR is a release: it bumps `VERSION` and adds an entry here (see [CLAUDE.md](CLAUDE.md) › Versioning). Newest first. Component versions (`PAGE_VERSION`, helper) are noted when they change.
 
+## [1.66.1] - 2026-11-27
+**A GIF that doesn't download is owed and retried, with its reason, instead of dropped silently** (#134). PATCH. Helper 4.5, page 8.4.
+
+### Fixed
+- **A GIF the helper didn't store left no trace:** a download that failed, a wrong type, a file over 3 MB, no `https:` address read for its image, or an injected helper (no Tampermonkey download) all left the message in `gifs` with no slot, shown as "GIF (open in Messenger)" and never retried. On the owner's page, three of four GIFs in one refresh.
+  - **Helper 4.5:** each GIF slot it doesn't store goes in the capture's `phfail` (`{i, k, e}`, as photos), with `e` `"gif: <why>"`: `no-url` (slot 0), `no-download`, `too-large <n> MB`, `type <type>`, `HTTP <status>`, `error` or `timeout`. A slot in the skip list is neither fetched nor listed. The capture summary lists them after `gifs`: `FAILED #812 (gif: too-large 4.2 MB)`. `GIF_MAX` stays 3 MB (the base64 goes through a paste).
+  - **The page** already owes a `phfail` slot (`null`), counts a try per refresh run and gives it up after 3 (`no-fetch`), so a failed GIF now takes that path. **Page 8.4** shows such a GIF as "🎞 GIF (not stored yet)" while it's owed and "🎞 GIF (couldn't be downloaded: open in Messenger)" once given up; a GIF with no slot (an older helper's) keeps "🎞 GIF (open in Messenger)". It also brings the new helper's embedded copy.
+  - **Refresh:** `references/photos.md` says how to read and report a failed GIF's reason; `references/database.md` and `references/helper.md` note the change. The live check is the owner's next refresh that meets one (L1).
+
+### Tests
+- sim (H10): without Tampermonkey's download every GIF is `no-download` (one with no image address `no-url`); with it, one GIF is stored and the others are listed with `HTTP 404`, `error`, `type text/html`, `too-large 4.2 MB` and `no-url`, in `phfail` and the summary; GIF slots in the skip list are neither fetched nor listed. The mock's `mock_lazy` now also leaves a GIF's image without its address.
+- page (gifs): a GIF in `phfail` gets an owed slot and one try and shows "not stored yet"; the second run counts a second try; the third gives it up (`no-fetch`, in `gaveUp`, `photosOwed` cleared) and it shows "couldn't be downloaded: open in Messenger"; a stored GIF shows no note.
+
 ## [1.66.0] - 2026-11-27
 **Comment on a group's post, or reply to a comment, from the page** (F25 G3a, #131). MINOR. Helper 4.4, page 8.3.
 

@@ -933,18 +933,23 @@ sim('H1-H4, H6: photo ids and slots, the skip list, failures listed, run id', { 
 });
 /* F39: a GIF-only message (an img "GIF Image" from cdn.fbsbx.com, no photo link). With Tampermonkey's download
    (stubbed here with fetch, as GM_xmlhttpRequest answers) the capture stores the GIF in slot 0 of its message, up to
-   3 MB; one that fails or is too big stays a link (in gifs only). Without it (an injected copy), GIFs stay links. */
-sim('H10: GIFs stored with Tampermonkey’s download, links without it', { s: 30 }, async b => {
+   3 MB. #134: one that isn't stored goes in phfail with why, and the summary lists it: an HTTP status, a download
+   error, a wrong type, too large, no https address read (the img had no src yet). Without the download (an injected
+   copy) every GIF is "no-download". */
+sim('H10: GIFs stored with Tampermonkey’s download; each one not stored listed with why', { s: 30 }, async b => {
   const { ctx, p } = await fresh(b);
   const jpg = fs.readFileSync(path.join(__dirname, 'mock', 'fbcdn', 'p100.jpg'));
   await ctx.route('https://cdn.fbsbx.com/**', r => {
     const u = r.request().url();
+    if (/g108/.test(u)) return r.fulfill({ status: 404, contentType: 'text/plain', body: 'gone' });
     if (/g110/.test(u)) return r.abort();
-    if (/g115/.test(u)) return r.fulfill({ contentType: 'image/webp', body: Buffer.alloc(3 * 1024 * 1024 + 10) });
+    if (/g113/.test(u)) return r.fulfill({ contentType: 'text/html', body: '<p>not a gif</p>' });
+    if (/g115/.test(u)) return r.fulfill({ contentType: 'image/webp', body: Buffer.alloc(4404019) });
     return r.fulfill({ contentType: 'image/webp', body: jpg });
   });
   const { capture } = photoKeysOn(p);
-  const without = await capture({ gif: '105,110,115' });
+  const GIFS = [105, 108, 110, 113, 115, 118];
+  const without = await capture({ gif: GIFS.join(), lazy: '118-0' });
   await ctx.addInitScript(() => {
     window.GM_xmlhttpRequest = o =>
       fetch(o.url).then(
@@ -957,26 +962,53 @@ sim('H10: GIFs stored with Tampermonkey’s download, links without it', { s: 30
         () => o.onerror(),
       );
   });
-  const withGm = await capture({ gif: '105,110,115' });
-  const g = withGm.cap.photos.filter(ph => [105, 110, 115].includes(ph.i));
+  const withGm = await capture({ gif: GIFS.join(), lazy: '118-0' });
+  const g = withGm.cap.photos.filter(ph => GIFS.includes(ph.i));
+  const fails = c => (c.phfail || []).map(f => f.i + ':' + f.k + ':' + f.e).join('|');
   ok(
     without.res &&
       without.res.stage === 'captured' &&
-      JSON.stringify(without.cap.gifs) === '[105,110,115]' &&
-      !without.cap.photos.some(ph => [105, 110, 115].includes(ph.i)) &&
-      withGm.res &&
+      JSON.stringify(without.cap.gifs) === JSON.stringify(GIFS) &&
+      !without.cap.photos.some(ph => GIFS.includes(ph.i)) &&
+      fails(without.cap) ===
+        '105:0:gif: no-download|108:0:gif: no-download|110:0:gif: no-download|113:0:gif: no-download|' +
+          '115:0:gif: no-download|118:0:gif: no-url' &&
+      / FAILED #105 \(gif: no-download\), #108 .* #118 \(gif: no-url\) /.test(without.res.capture),
+    'H10: without the download every GIF is in phfail as "no-download" (and #118, with no address, "no-url"), ' +
+      'listed in the summary (' +
+      JSON.stringify([fails(without.cap), without.res && without.res.capture]) +
+      ')',
+  );
+  ok(
+    withGm.res &&
       withGm.res.stage === 'captured' &&
-      JSON.stringify(withGm.cap.gifs) === '[105,110,115]' &&
+      JSON.stringify(withGm.cap.gifs) === JSON.stringify(GIFS) &&
       g.length === 1 &&
       g[0].i === 105 &&
       g[0].k === 0 &&
       g[0].type === 'image/webp' &&
       /\n/.test(g[0].b64) &&
-      JSON.stringify(withGm.cap.phfail) === '[]' &&
-      / \(stored 1\)/.test(withGm.res.capture),
-    'H10: with the download, #105’s GIF is stored in slot 0 (webp, lined base64); #110 (fails) and #115 (over 3 MB) stay links; without it all three stay links (' +
-      JSON.stringify([without.cap.gifs, g.map(x => [x.i, x.k, x.type]), withGm.res && withGm.res.capture]) +
+      fails(withGm.cap) ===
+        '108:0:gif: HTTP 404|110:0:gif: error|113:0:gif: type text/html|115:0:gif: too-large 4.2 MB|' +
+          '118:0:gif: no-url' &&
+      new RegExp(
+        ' \\(stored 1\\) FAILED #108 \\(gif: HTTP 404\\), #110 \\(gif: error\\), #113 \\(gif: type text/html\\), ' +
+          '#115 \\(gif: too-large 4\\.2 MB\\), #118 \\(gif: no-url\\) ',
+      ).test(withGm.res.capture),
+    'H10: with the download, #105’s GIF is stored in slot 0 (webp, lined base64); each one not stored is in phfail ' +
+      'with why (HTTP 404, error, type, too-large 4.2 MB, no-url) and in the summary (' +
+      JSON.stringify([g.map(x => [x.i, x.k, x.type]), fails(withGm.cap), withGm.res && withGm.res.capture]) +
       ')',
+  );
+  // #134: a GIF slot the page already holds (in the skip list) is neither fetched nor listed, even with no address
+  const sk = await capture({ gif: GIFS.join(), lazy: '118-0' }, { skip: { 105: [0], 118: [0] } });
+  ok(
+    sk.res &&
+      sk.res.stage === 'captured' &&
+      !sk.cap.photos.some(ph => ph.i === 105) &&
+      !/105|118/.test(fails(sk.cap)) &&
+      /108/.test(fails(sk.cap)),
+    'H10: GIF slots in the skip list are neither fetched nor listed as failed (' + fails(sk.cap) + ')',
   );
   await ctx.close();
 });
